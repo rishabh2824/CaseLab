@@ -1,0 +1,32 @@
+# Node / Vite
+node_modules/
+dist/
+build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.pytest_cache/
+
+# Env files / secrets
+.env
+.env.*
+
+# IDE
+.idea/
+
+# OS / misc
+.DS_Store
+Thumbs.db
+
+# SQLite / local DB
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
