@@ -22,6 +22,12 @@ class Settings:
         )
         self.db_url = os.getenv("DB_URL", "")
         self.db_token = os.getenv("DB_TOKEN", "")
+        raw_frontend_urls = os.getenv("FRONTEND_URLS", "")
+        self.frontend_urls = [
+            url.strip()
+            for url in raw_frontend_urls.split(",")
+            if url.strip()
+        ]
 
 
 @lru_cache(maxsize=1)
