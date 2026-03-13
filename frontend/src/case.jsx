@@ -22,6 +22,7 @@ function Case() {
     const [simulationDurationMinutes, setSimulationDurationMinutes] = useState(null)
     const [totalPersonas, setTotalPersonas] = useState(null)
     const [personas, setPersonas] = useState([])
+    const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const showPersonas = typeof totalPersonas === 'number' && totalPersonas >= 1
     const createEmptyPersona = (overrides = {}) => ({
         name: '',
@@ -114,7 +115,7 @@ function Case() {
         }
 
         const uploadFile = async (file, prefix) => {
-            const response = await fetch('/api/v1/uploads/presign', {
+            const response = await fetch(`${apiBase}/api/v1/uploads/presign`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -196,7 +197,7 @@ function Case() {
                 totalNonReferredPersonas: totalPersonas,
                 personas: personasPayload,
             }
-            const saveResponse = await fetch('/api/v1/cases', {
+            const saveResponse = await fetch(`${apiBase}/api/v1/cases`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
