@@ -16,6 +16,7 @@ import { useState } from 'react'
 
 function Case() {
     const [submitError, setSubmitError] = useState('')
+    const [submitSuccess, setSubmitSuccess] = useState('')
     const [caseName, setCaseName] = useState('')
     const [initialBrief, setInitialBrief] = useState('')
     const [commonInformation, setCommonInformation] = useState('')
@@ -104,9 +105,11 @@ function Case() {
             setSubmitError(
                 'At least one non-referred persona must not be scheduled.',
             )
+            setSubmitSuccess('')
             return
         }
         setSubmitError('')
+        setSubmitSuccess('')
 
         const buildPrefix = () => {
             const raw = caseName.trim().toLowerCase()
@@ -207,8 +210,10 @@ function Case() {
             }
             const saved = await saveResponse.json()
             console.log('Case saved:', saved)
+            setSubmitSuccess('Case saved successfully.')
         } catch (error) {
             setSubmitError(error.message || 'Upload failed.')
+            setSubmitSuccess('')
         }
     }
     const renderPersonaFields = (persona, updatePersona) => (
@@ -749,6 +754,11 @@ function Case() {
                     {submitError && (
                         <Text c="red" size="sm">
                             {submitError}
+                        </Text>
+                    )}
+                    {submitSuccess && (
+                        <Text c="green" size="sm">
+                            {submitSuccess}
                         </Text>
                     )}
                     <Button type="submit">Submit</Button>
