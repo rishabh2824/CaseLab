@@ -28,6 +28,13 @@ class Settings:
             for url in raw_frontend_urls.split(",")
             if url.strip()
         ]
+        self.llm_key = os.getenv("LLM_KEY", "")
+        self.llm_model = os.getenv("LLM_MODEL", "anthropic/claude-opus-4.6")
+        self.llm_base_url = os.getenv(
+            "LLM_BASE_URL",
+            "https://openrouter.ai/api/v1/chat/completions",
+        )
+        self.sim_debug = os.getenv("SIM_DEBUG", "false").lower() in {"1", "true", "yes"}
 
 
 @lru_cache(maxsize=1)

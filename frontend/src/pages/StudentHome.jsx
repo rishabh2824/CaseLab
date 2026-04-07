@@ -1,13 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const sharedFiles = [
-    {
-        id: 'invoice',
-        name: 'sterling_invoices.xlsx',
-        description: 'from Maria Reyes',
-    },
-]
+const sharedFiles = []
 
 function StudentHome() {
     const [caseData, setCaseData] = useState(null)
@@ -15,19 +9,43 @@ function StudentHome() {
     const [notes, setNotes] = useState('')
     const [activeContactId, setActiveContactId] = useState(null)
     const [elapsedSeconds, setElapsedSeconds] = useState(0)
+    const [runId, setRunId] = useState(null)
+    const [messagesByPersona, setMessagesByPersona] = useState({})
+    const [inputValue, setInputValue] = useState('')
+    const [isSending, setIsSending] = useState(false)
+    const [activePersonaId, setActivePersonaId] = useState(null)
+    const [sharedFiles, setSharedFiles] = useState([])
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const navigate = useNavigate()
 
     useEffect(() => {
-        const loadCase = async () => {
+        const loadSimulation = async () => {
             try {
-                const response = await fetch(`${apiBase}/api/v1/cases/active`)
+                const storedRun = sessionStorage.getItem('caseLabRunId')
+                const endpoint = storedRun
+                    ? `${apiBase}/api/v1/simulations/${storedRun}`
+                    : `${apiBase}/api/v1/simulations/start`
+                let response = await fetch(endpoint, {
+                    method: storedRun ? 'GET' : 'POST',
+                })
+                if (storedRun && response.status === 404) {
+                    sessionStorage.removeItem('caseLabRunId')
+                    response = await fetch(`${apiBase}/api/v1/simulations/start`, {
+                        method: 'POST',
+                    })
+                }
                 if (!response.ok) {
-                    throw new Error('Failed to load case.')
+                    throw new Error('Failed to load simulation.')
                 }
                 const data = await response.json()
+                if (data.run_id) {
+                    setRunId(data.run_id)
+                    sessionStorage.setItem('caseLabRunId', data.run_id)
+                } else if (storedRun) {
+                    setRunId(storedRun)
+                }
                 setCaseData(data.case)
-                const normalizedContacts = (data.personas ?? []).map((persona) => {
+                const normalizedContacts = (data.contacts ?? []).map((persona) => {
                     const initials = persona.name
                         ? persona.name
                               .split(' ')
@@ -51,17 +69,24 @@ function StudentHome() {
                         title: persona.role || 'Role',
                         status,
                         availability,
+                        isReferred: persona.is_referred ?? false,
+                        available: persona.available ?? false,
+                        availableIn: persona.available_in ?? null,
+                        expiresIn: persona.expires_in ?? null,
                     }
                 })
                 setContacts(normalizedContacts)
                 if (normalizedContacts.length > 0) {
-                    setActiveContactId(normalizedContacts[0].id)
+                    const active = data.active_persona_id || normalizedContacts[0].id
+                    setActiveContactId(active)
+                    setActivePersonaId(active)
                 }
+                setSharedFiles(data.shared_files ?? [])
             } catch (error) {
                 console.error(error)
             }
         }
-        loadCase()
+        loadSimulation()
     }, [apiBase])
     useEffect(() => {
         const storedStart = sessionStorage.getItem('caseLabStart')
@@ -87,6 +112,7 @@ function StudentHome() {
     useEffect(() => {
         if (typeof totalDurationSeconds === 'number' && elapsedSeconds >= totalDurationSeconds) {
             sessionStorage.removeItem('caseLabStart')
+            sessionStorage.removeItem('caseLabRunId')
             navigate('/')
         }
     }, [elapsedSeconds, totalDurationSeconds, navigate])
@@ -99,10 +125,57 @@ function StudentHome() {
 
     const handleEndSimulation = () => {
         sessionStorage.removeItem('caseLabStart')
+        sessionStorage.removeItem('caseLabRunId')
         navigate('/')
     }
     const activeContact =
         contacts.find((contact) => contact.id === activeContactId) || contacts[0]
+    const activePersonaAvailable =
+        activeContactId === activePersonaId &&
+        contacts.find((c) => c.id === activeContactId)?.available
+
+    useEffect(() => {
+        const intervalId = window.setInterval(async () => {
+            const storedRun = sessionStorage.getItem('caseLabRunId')
+            if (!storedRun) return
+            try {
+                const response = await fetch(
+                    `${apiBase}/api/v1/simulations/${storedRun}`,
+                )
+                if (!response.ok) return
+                const data = await response.json()
+                const normalizedContacts = (data.contacts ?? []).map((persona) => {
+                    const initials = persona.name
+                        ? persona.name
+                              .split(' ')
+                              .filter(Boolean)
+                              .slice(0, 2)
+                              .map((part) => part[0].toUpperCase())
+                              .join('')
+                        : 'NA'
+                    return {
+                        id: persona.id,
+                        initials,
+                        name: persona.name || 'Unnamed',
+                        title: persona.role || 'Role',
+                        status: persona.available ? 'Available' : 'Unavailable',
+                        availability: persona.availability_duration,
+                        isReferred: persona.is_referred ?? false,
+                        available: persona.available ?? false,
+                        availableIn: persona.available_in ?? null,
+                        expiresIn: persona.expires_in ?? null,
+                    }
+                })
+                setContacts(normalizedContacts)
+                if (data.shared_files) {
+                    setSharedFiles(data.shared_files)
+                }
+            } catch (error) {
+                console.error(error)
+            }
+        }, 15000)
+        return () => window.clearInterval(intervalId)
+    }, [apiBase])
 
     return (
         <div className="min-h-screen bg-slate-50">
@@ -136,7 +209,13 @@ function StudentHome() {
                                 <button
                                     key={contact.id}
                                     type="button"
-                                    disabled
+                                    disabled={!contact.available}
+                                    onClick={() => {
+                                        if (contact.available) {
+                                            setActiveContactId(contact.id)
+                                            setActivePersonaId(contact.id)
+                                        }
+                                    }}
                                     className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2 text-left text-sm transition ${
                                         contact.id === activeContactId
                                             ? 'border-[#5b5fc7] bg-white shadow-sm'
@@ -155,10 +234,26 @@ function StudentHome() {
                                     <div className="flex-1">
                                         <p className="font-semibold text-slate-900">{contact.name}</p>
                                         <p className="text-xs text-slate-500">{contact.title}</p>
-                                        <p className="text-[11px] text-emerald-600">{contact.status}</p>
+                                        <p className="text-[11px] text-emerald-600">
+                                            {contact.available
+                                                ? 'Available'
+                                                : contact.availableIn
+                                                  ? `Available in ${contact.availableIn} min`
+                                                  : 'Unavailable'}
+                                        </p>
                                         {typeof contact.availability === 'number' && (
                                             <p className="text-[11px] text-slate-400">
                                                 Available for {contact.availability} min
+                                            </p>
+                                        )}
+                                        {typeof contact.expiresIn === 'number' && contact.expiresIn > 0 && (
+                                            <p className="text-[11px] text-slate-400">
+                                                Expires in {contact.expiresIn} min
+                                            </p>
+                                        )}
+                                        {contact.isReferred && (
+                                            <p className="text-[11px] text-slate-400">
+                                                Referred contact
                                             </p>
                                         )}
                                     </div>
@@ -172,12 +267,25 @@ function StudentHome() {
                             Shared files
                         </h2>
                         <div className="mt-3 space-y-2 rounded-xl bg-white p-3 shadow-sm">
-                            {sharedFiles.map((file) => (
-                                <div key={file.id}>
-                                    <p className="text-sm font-semibold text-[#5b5fc7]">{file.name}</p>
-                                    <p className="text-xs text-slate-500">{file.description}</p>
-                                </div>
-                            ))}
+                            {sharedFiles.length === 0 ? (
+                                <p className="text-xs text-slate-500">No shared files yet.</p>
+                            ) : (
+                                sharedFiles.map((file) => (
+                                    <div key={file.file_id}>
+                                        <a
+                                            className="text-sm font-semibold text-[#5b5fc7] underline"
+                                            href={file.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                        >
+                                            {file.file_name}
+                                        </a>
+                                        <p className="text-xs text-slate-500">
+                                            {file.content_type || 'File'}
+                                        </p>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </div>
                 </aside>
@@ -199,22 +307,134 @@ function StudentHome() {
                     </div>
 
                     <div className="mt-5 rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
-                        Chat history is empty.
+                        {(messagesByPersona[activeContactId] ?? []).length === 0 ? (
+                            'Chat history is empty.'
+                        ) : (
+                            <div className="space-y-3 text-left">
+                                {(messagesByPersona[activeContactId] ?? []).map(
+                                    (msg, index) => (
+                                    <div
+                                        key={`${msg.role}-${index}`}
+                                        className={`rounded-2xl px-4 py-3 text-sm ${
+                                            msg.role === 'user'
+                                                ? 'bg-[#eef0ff] text-slate-700'
+                                                : 'bg-slate-50 text-slate-700'
+                                        }`}
+                                    >
+                                        {msg.content}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                     <div className="mt-6 flex items-center gap-3 border-t pt-4">
                         <input
                             type="text"
-                            placeholder="Type your message to Tom..."
-                            disabled
-                            className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-400"
+                            placeholder="Type your message..."
+                            disabled={!activePersonaAvailable || isSending}
+                            className={`flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-100 ${
+                                activePersonaAvailable
+                                    ? 'bg-white text-slate-700'
+                                    : 'bg-slate-50 text-slate-400'
+                            }`}
+                            value={inputValue}
+                            onChange={(event) => setInputValue(event.currentTarget.value)}
                         />
                         <button
                             type="button"
-                            disabled
-                            className="rounded-xl bg-slate-300 px-4 py-3 text-sm font-semibold text-white"
+                            disabled={!activePersonaAvailable || isSending || !inputValue.trim()}
+                            onClick={async () => {
+                                if (!runId || !activeContactId || !inputValue.trim()) return
+                                const message = inputValue.trim()
+                                setMessagesByPersona((prev) => {
+                                    const next = { ...prev }
+                                    const current = next[activeContactId] ?? []
+                                    next[activeContactId] = [
+                                        ...current,
+                                        { role: 'user', content: message },
+                                    ]
+                                    return next
+                                })
+                                setInputValue('')
+                                setIsSending(true)
+                                try {
+                                const response = await fetch(
+                                    `${apiBase}/api/v1/simulations/${runId}/message`,
+                                    {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            persona_id: activeContactId,
+                                            message,
+                                        }),
+                                    },
+                                )
+                                    if (!response.ok) {
+                                        throw new Error('Failed to send message.')
+                                    }
+                                    const data = await response.json()
+                                    setMessagesByPersona((prev) => {
+                                        const next = { ...prev }
+                                        const current = next[activeContactId] ?? []
+                                        next[activeContactId] = [
+                                            ...current,
+                                            { role: 'assistant', content: data.reply },
+                                        ]
+                                        return next
+                                    })
+                                    if (data.new_contacts?.length) {
+                                        setContacts((prev) => {
+                                            const existingIds = new Set(prev.map((c) => c.id))
+                                            const additional = data.new_contacts
+                                                .filter((c) => !existingIds.has(c.id))
+                                                .map((persona) => {
+                                                    const initials = persona.name
+                                                        ? persona.name
+                                                              .split(' ')
+                                                              .filter(Boolean)
+                                                              .slice(0, 2)
+                                                              .map((part) => part[0].toUpperCase())
+                                                              .join('')
+                                                        : 'NA'
+                                                    return {
+                                                        id: persona.id,
+                                                        initials,
+                                                        name: persona.name || 'Unnamed',
+                                                        title: persona.role || 'Role',
+                                                        status: 'Available',
+                                                        availability: persona.availability_duration,
+                                                        isReferred: true,
+                                                        available: persona.available ?? true,
+                                                        availableIn: persona.available_in ?? null,
+                                                        expiresIn: persona.expires_in ?? null,
+                                                    }
+                                                })
+                                            return [...prev, ...additional]
+                                        })
+                                    }
+                                    if (data.shared_files?.length) {
+                                        setSharedFiles((prev) => {
+                                            const existingIds = new Set(prev.map((f) => f.file_id))
+                                            const additions = data.shared_files.filter(
+                                                (file) => !existingIds.has(file.file_id),
+                                            )
+                                            return [...prev, ...additions]
+                                        })
+                                    }
+                                } catch (error) {
+                                    console.error(error)
+                                } finally {
+                                    setIsSending(false)
+                                }
+                            }}
+                            className={`rounded-xl px-4 py-3 text-sm font-semibold text-white ${
+                                !activePersonaAvailable || isSending || !inputValue.trim()
+                                    ? 'bg-slate-300'
+                                    : 'bg-[#5b5fc7]'
+                            }`}
                         >
-                            Send
+                            {isSending ? 'Sending...' : 'Send'}
                         </button>
                     </div>
                 </section>

@@ -1,32 +1,24 @@
-# Node / Vite
-node_modules/
-dist/
-build/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.venv/
-venv/
-.pytest_cache/
-
-# Env files / secrets
 .env
 .env.*
 
-# IDE
-.idea/
+node_modules/
+frontend/node_modules/
 
-# OS / misc
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+dist/
+build/
+
+.idea/
+.pytest_cache/
+
+*.sqlite
+*.db
+
 .DS_Store
 Thumbs.db
 
-# SQLite / local DB
-*.db
-*.sqlite
-*.sqlite3
-
-# Logs
 *.log

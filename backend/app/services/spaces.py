@@ -27,3 +27,14 @@ def create_presigned_put_url(object_key: str, content_type=None) -> str:
         Params=params,
         ExpiresIn=settings.spaces_presign_expiry_seconds,
     )
+
+
+def create_presigned_get_url(object_key: str) -> str:
+    settings = get_settings()
+    client = get_spaces_client()
+    params: dict[str, str] = {"Bucket": settings.spaces_bucket, "Key": object_key}
+    return client.generate_presigned_url(
+        "get_object",
+        Params=params,
+        ExpiresIn=settings.spaces_presign_expiry_seconds,
+    )

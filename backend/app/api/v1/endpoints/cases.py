@@ -178,3 +178,51 @@ async def create_case(payload: CasePayload):
             pass
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"case_id": case_id}
+
+
+@router.get("/active")
+async def get_active_case():
+    client = get_db_client()
+    row = await client.execute(
+        """
+        select id, case_name, initial_brief, simulation_duration
+        from cases
+        limit 1
+        """
+    )
+    if not row.rows:
+        raise HTTPException(status_code=404, detail="No case found.")
+    case_id, case_name, initial_brief, simulation_duration = row.rows[0]
+    persona_rows = await client.execute(
+        """
+        select p.id, p.name, p.role, p.scheduled_time, p.availability_duration
+        from personas p
+        where p.case_id = ?
+          and p.id not in (
+            select referred_persona_id
+            from persona_referrals
+            where case_id = ?
+          )
+        order by p.name
+        """,
+        (case_id, case_id),
+    )
+    personas = [
+        {
+            "id": p_id,
+            "name": name,
+            "role": role,
+            "scheduled_time": scheduled_time,
+            "availability_duration": availability_duration,
+        }
+        for (p_id, name, role, scheduled_time, availability_duration) in persona_rows.rows
+    ]
+    return {
+        "case": {
+            "id": case_id,
+            "case_name": case_name,
+            "initial_brief": initial_brief,
+            "simulation_duration": simulation_duration,
+        },
+        "personas": personas,
+    }
