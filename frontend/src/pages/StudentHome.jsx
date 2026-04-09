@@ -15,8 +15,16 @@ function StudentHome() {
     const [isSending, setIsSending] = useState(false)
     const [activePersonaId, setActivePersonaId] = useState(null)
     const [sharedFiles, setSharedFiles] = useState([])
+    const [notifications, setNotifications] = useState([])
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const navigate = useNavigate()
+    const pushNotification = (message) => {
+        const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+        setNotifications((prev) => [...prev, { id, message }])
+        window.setTimeout(() => {
+            setNotifications((prev) => prev.filter((item) => item.id !== id))
+        }, 4000)
+    }
 
     useEffect(() => {
         const loadSimulation = async () => {
@@ -134,6 +142,97 @@ function StudentHome() {
         activeContactId === activePersonaId &&
         contacts.find((c) => c.id === activeContactId)?.available
 
+    const sendMessage = async () => {
+        if (!runId || !activeContactId || !inputValue.trim()) return
+        if (!activePersonaAvailable || isSending) return
+        const message = inputValue.trim()
+        setMessagesByPersona((prev) => {
+            const next = { ...prev }
+            const current = next[activeContactId] ?? []
+            next[activeContactId] = [...current, { role: 'user', content: message }]
+            return next
+        })
+        setInputValue('')
+        setIsSending(true)
+        try {
+            const response = await fetch(
+                `${apiBase}/api/v1/simulations/${runId}/message`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        persona_id: activeContactId,
+                        message,
+                    }),
+                },
+            )
+            if (!response.ok) {
+                throw new Error('Failed to send message.')
+            }
+            const data = await response.json()
+            setMessagesByPersona((prev) => {
+                const next = { ...prev }
+                const current = next[activeContactId] ?? []
+                next[activeContactId] = [
+                    ...current,
+                    { role: 'assistant', content: data.reply },
+                ]
+                return next
+            })
+            if (data.new_contacts?.length) {
+                setContacts((prev) => {
+                    const existingIds = new Set(prev.map((c) => c.id))
+                    const additional = data.new_contacts
+                        .filter((c) => !existingIds.has(c.id))
+                        .map((persona) => {
+                            const initials = persona.name
+                                ? persona.name
+                                      .split(' ')
+                                      .filter(Boolean)
+                                      .slice(0, 2)
+                                      .map((part) => part[0].toUpperCase())
+                                      .join('')
+                                : 'NA'
+                            return {
+                                id: persona.id,
+                                initials,
+                                name: persona.name || 'Unnamed',
+                                title: persona.role || 'Role',
+                                status: 'Available',
+                                availability: persona.availability_duration,
+                                isReferred: true,
+                                available: persona.available ?? true,
+                                availableIn: persona.available_in ?? null,
+                                expiresIn: persona.expires_in ?? null,
+                            }
+                        })
+                    additional.forEach((contact) => {
+                        pushNotification(
+                            `New contact unlocked: ${contact.name} (${contact.title})`,
+                        )
+                    })
+                    return [...prev, ...additional]
+                })
+            }
+            if (data.shared_files?.length) {
+                setSharedFiles((prev) => {
+                    const existingIds = new Set(prev.map((f) => f.file_id))
+                    const additions = data.shared_files.filter(
+                        (file) => !existingIds.has(file.file_id),
+                    )
+                    additions.forEach((file) => {
+                        pushNotification(`File shared: ${file.file_name}`)
+                    })
+                    return [...prev, ...additions]
+                })
+            }
+        } catch (error) {
+            console.error(error)
+        } finally {
+            setIsSending(false)
+        }
+    }
+
     useEffect(() => {
         const intervalId = window.setInterval(async () => {
             const storedRun = sessionStorage.getItem('caseLabRunId')
@@ -166,9 +265,29 @@ function StudentHome() {
                         expiresIn: persona.expires_in ?? null,
                     }
                 })
-                setContacts(normalizedContacts)
+                setContacts((prev) => {
+                    const prevIds = new Set(prev.map((contact) => contact.id))
+                    const newOnes = normalizedContacts.filter(
+                        (contact) => !prevIds.has(contact.id),
+                    )
+                    newOnes.forEach((contact) => {
+                        pushNotification(
+                            `New contact unlocked: ${contact.name} (${contact.title})`,
+                        )
+                    })
+                    return normalizedContacts
+                })
                 if (data.shared_files) {
-                    setSharedFiles(data.shared_files)
+                    setSharedFiles((prev) => {
+                        const prevIds = new Set(prev.map((file) => file.file_id))
+                        const newOnes = data.shared_files.filter(
+                            (file) => !prevIds.has(file.file_id),
+                        )
+                        newOnes.forEach((file) => {
+                            pushNotification(`File shared: ${file.file_name}`)
+                        })
+                        return data.shared_files
+                    })
                 }
             } catch (error) {
                 console.error(error)
@@ -329,104 +448,29 @@ function StudentHome() {
                     </div>
 
                     <div className="mt-6 flex items-center gap-3 border-t pt-4">
-                        <input
-                            type="text"
+                        <textarea
                             placeholder="Type your message..."
                             disabled={!activePersonaAvailable || isSending}
-                            className={`flex-1 rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-100 ${
+                            className={`flex-1 resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-100 ${
                                 activePersonaAvailable
                                     ? 'bg-white text-slate-700'
                                     : 'bg-slate-50 text-slate-400'
                             }`}
+                            rows={2}
                             value={inputValue}
                             onChange={(event) => setInputValue(event.currentTarget.value)}
+                            onKeyDown={async (event) => {
+                                if (event.key === 'Enter' && !event.shiftKey) {
+                                    event.preventDefault()
+                                    await sendMessage()
+                                }
+                            }}
                         />
                         <button
                             type="button"
                             disabled={!activePersonaAvailable || isSending || !inputValue.trim()}
                             onClick={async () => {
-                                if (!runId || !activeContactId || !inputValue.trim()) return
-                                const message = inputValue.trim()
-                                setMessagesByPersona((prev) => {
-                                    const next = { ...prev }
-                                    const current = next[activeContactId] ?? []
-                                    next[activeContactId] = [
-                                        ...current,
-                                        { role: 'user', content: message },
-                                    ]
-                                    return next
-                                })
-                                setInputValue('')
-                                setIsSending(true)
-                                try {
-                                const response = await fetch(
-                                    `${apiBase}/api/v1/simulations/${runId}/message`,
-                                    {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            persona_id: activeContactId,
-                                            message,
-                                        }),
-                                    },
-                                )
-                                    if (!response.ok) {
-                                        throw new Error('Failed to send message.')
-                                    }
-                                    const data = await response.json()
-                                    setMessagesByPersona((prev) => {
-                                        const next = { ...prev }
-                                        const current = next[activeContactId] ?? []
-                                        next[activeContactId] = [
-                                            ...current,
-                                            { role: 'assistant', content: data.reply },
-                                        ]
-                                        return next
-                                    })
-                                    if (data.new_contacts?.length) {
-                                        setContacts((prev) => {
-                                            const existingIds = new Set(prev.map((c) => c.id))
-                                            const additional = data.new_contacts
-                                                .filter((c) => !existingIds.has(c.id))
-                                                .map((persona) => {
-                                                    const initials = persona.name
-                                                        ? persona.name
-                                                              .split(' ')
-                                                              .filter(Boolean)
-                                                              .slice(0, 2)
-                                                              .map((part) => part[0].toUpperCase())
-                                                              .join('')
-                                                        : 'NA'
-                                                    return {
-                                                        id: persona.id,
-                                                        initials,
-                                                        name: persona.name || 'Unnamed',
-                                                        title: persona.role || 'Role',
-                                                        status: 'Available',
-                                                        availability: persona.availability_duration,
-                                                        isReferred: true,
-                                                        available: persona.available ?? true,
-                                                        availableIn: persona.available_in ?? null,
-                                                        expiresIn: persona.expires_in ?? null,
-                                                    }
-                                                })
-                                            return [...prev, ...additional]
-                                        })
-                                    }
-                                    if (data.shared_files?.length) {
-                                        setSharedFiles((prev) => {
-                                            const existingIds = new Set(prev.map((f) => f.file_id))
-                                            const additions = data.shared_files.filter(
-                                                (file) => !existingIds.has(file.file_id),
-                                            )
-                                            return [...prev, ...additions]
-                                        })
-                                    }
-                                } catch (error) {
-                                    console.error(error)
-                                } finally {
-                                    setIsSending(false)
-                                }
+                                await sendMessage()
                             }}
                             className={`rounded-xl px-4 py-3 text-sm font-semibold text-white ${
                                 !activePersonaAvailable || isSending || !inputValue.trim()
@@ -434,7 +478,15 @@ function StudentHome() {
                                     : 'bg-[#5b5fc7]'
                             }`}
                         >
-                            {isSending ? 'Sending...' : 'Send'}
+                            {isSending ? (
+                                <span className="typing-dots" aria-label="Typing">
+                                    <span />
+                                    <span />
+                                    <span />
+                                </span>
+                            ) : (
+                                'Send'
+                            )}
                         </button>
                     </div>
                 </section>
@@ -484,6 +536,18 @@ function StudentHome() {
                     </div>
                 </aside>
             </main>
+            {notifications.length > 0 && (
+                <div className="fixed left-6 top-6 z-50 space-y-2">
+                    {notifications.map((note) => (
+                        <div
+                            key={note.id}
+                            className="rounded-xl border border-[#d6d9ff] bg-white px-4 py-3 text-sm text-slate-700 shadow-lg"
+                        >
+                            {note.message}
+                        </div>
+                    ))}
+                </div>
+            )}
             <button
                 type="button"
                 onClick={handleEndSimulation}
