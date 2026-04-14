@@ -4,23 +4,45 @@ import { useNavigate } from 'react-router-dom'
 function Home() {
     const [accessCode, setAccessCode] = useState('')
     const [error, setError] = useState('')
+    const [isSubmitting, setIsSubmitting] = useState(false)
     const navigate = useNavigate()
+    const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
 
-    const handleSubmit = (event) => {
+    const handleSubmit = async (event) => {
         event.preventDefault()
         const normalized = accessCode.trim().toUpperCase()
-        if (normalized === 'STUDENT') {
-            setError('')
-            sessionStorage.setItem('caseLabStart', String(Date.now()))
-            navigate('/student')
-            return
-        }
         if (normalized === 'ADMIN') {
             setError('')
             navigate('/admin')
             return
         }
-        setError('Invalid access code.')
+        if (!normalized) {
+            setError('Invalid access code.')
+            return
+        }
+        setIsSubmitting(true)
+        try {
+            const response = await fetch(`${apiBase}/api/v1/simulations/start`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_code: normalized }),
+            })
+            if (!response.ok) {
+                setError('Invalid access code.')
+                return
+            }
+            const data = await response.json()
+            setError('')
+            sessionStorage.setItem('caseLabStart', String(Date.now()))
+            sessionStorage.setItem('caseLabAccessCode', normalized)
+            sessionStorage.setItem('caseLabRunId', data.run_id)
+            sessionStorage.setItem('caseLabBootstrap', JSON.stringify(data))
+            navigate('/student')
+        } catch (fetchError) {
+            setError('Failed to start simulation.')
+        } finally {
+            setIsSubmitting(false)
+        }
     }
 
     return (
@@ -47,9 +69,10 @@ function Home() {
                     )}
                     <button
                         type="submit"
+                        disabled={isSubmitting}
                         className="w-full rounded-xl bg-slate-900 px-5 py-4 text-base font-semibold text-white shadow-md transition hover:bg-slate-800"
                     >
-                        Continue
+                        {isSubmitting ? 'Starting...' : 'Continue'}
                     </button>
                 </form>
             </div>

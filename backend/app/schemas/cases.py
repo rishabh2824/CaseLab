@@ -52,5 +52,6 @@ class CasePayload(BaseModel):
     initialBrief: str
     commonInformation: Optional[str] = None
     simulationDurationMinutes: Optional[int] = None
+    accessCode: Optional[str] = None
     totalNonReferredPersonas: int
     personas: List[PersonaPayload] = Field(default_factory=list)

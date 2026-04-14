@@ -29,17 +29,79 @@ function StudentHome() {
     useEffect(() => {
         const loadSimulation = async () => {
             try {
+                const bootstrap = sessionStorage.getItem('caseLabBootstrap')
+                if (bootstrap) {
+                    const data = JSON.parse(bootstrap)
+                    sessionStorage.removeItem('caseLabBootstrap')
+                    setRunId(data.run_id)
+                    sessionStorage.setItem('caseLabRunId', data.run_id)
+                    setCaseData(data.case)
+                    const normalizedContacts = (data.contacts ?? []).map((persona) => {
+                        const initials = persona.name
+                            ? persona.name
+                                  .split(' ')
+                                  .filter(Boolean)
+                                  .slice(0, 2)
+                                  .map((part) => part[0].toUpperCase())
+                                  .join('')
+                            : 'NA'
+                        const scheduled = typeof persona.scheduled_time === 'number'
+                            ? persona.scheduled_time
+                            : 0
+                        const availability = persona.availability_duration
+                        let status = 'Available'
+                        if (scheduled && scheduled > 0) {
+                            status = `Available in ${scheduled} min`
+                        }
+                        return {
+                            id: persona.id,
+                            initials,
+                            name: persona.name || 'Unnamed',
+                            title: persona.role || 'Role',
+                            status,
+                            availability,
+                            isReferred: persona.is_referred ?? false,
+                            available: persona.available ?? false,
+                            availableIn: persona.available_in ?? null,
+                            expiresIn: persona.expires_in ?? null,
+                        }
+                    })
+                    setContacts(normalizedContacts)
+                    if (normalizedContacts.length > 0) {
+                        const active = data.active_persona_id || normalizedContacts[0].id
+                        setActiveContactId(active)
+                        setActivePersonaId(active)
+                    }
+                    setSharedFiles(data.shared_files ?? [])
+                    return
+                }
                 const storedRun = sessionStorage.getItem('caseLabRunId')
-                const endpoint = storedRun
-                    ? `${apiBase}/api/v1/simulations/${storedRun}`
-                    : `${apiBase}/api/v1/simulations/start`
-                let response = await fetch(endpoint, {
-                    method: storedRun ? 'GET' : 'POST',
-                })
-                if (storedRun && response.status === 404) {
-                    sessionStorage.removeItem('caseLabRunId')
+                const storedAccessCode = sessionStorage.getItem('caseLabAccessCode')
+                let response
+                if (storedRun) {
+                    response = await fetch(`${apiBase}/api/v1/simulations/${storedRun}`, {
+                        method: 'GET',
+                    })
+                } else if (storedAccessCode) {
                     response = await fetch(`${apiBase}/api/v1/simulations/start`, {
                         method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ access_code: storedAccessCode }),
+                    })
+                } else {
+                    navigate('/')
+                    return
+                }
+                if (storedRun && response.status === 404) {
+                    sessionStorage.removeItem('caseLabRunId')
+                    if (!storedAccessCode) {
+                        navigate('/')
+                        return
+                    }
+                    response = await fetch(`${apiBase}/api/v1/simulations/start`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ access_code: storedAccessCode }),
                     })
                 }
                 if (!response.ok) {
@@ -95,7 +157,7 @@ function StudentHome() {
             }
         }
         loadSimulation()
-    }, [apiBase])
+    }, [apiBase, navigate])
     useEffect(() => {
         const storedStart = sessionStorage.getItem('caseLabStart')
         if (!storedStart) {
@@ -121,6 +183,8 @@ function StudentHome() {
         if (typeof totalDurationSeconds === 'number' && elapsedSeconds >= totalDurationSeconds) {
             sessionStorage.removeItem('caseLabStart')
             sessionStorage.removeItem('caseLabRunId')
+            sessionStorage.removeItem('caseLabAccessCode')
+            sessionStorage.removeItem('caseLabBootstrap')
             navigate('/')
         }
     }, [elapsedSeconds, totalDurationSeconds, navigate])
@@ -134,6 +198,8 @@ function StudentHome() {
     const handleEndSimulation = () => {
         sessionStorage.removeItem('caseLabStart')
         sessionStorage.removeItem('caseLabRunId')
+        sessionStorage.removeItem('caseLabAccessCode')
+        sessionStorage.removeItem('caseLabBootstrap')
         navigate('/')
     }
     const activeContact =

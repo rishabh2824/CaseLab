@@ -12,18 +12,25 @@ import {
     Textarea,
     Title,
 } from '@mantine/core'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 
 function Case() {
     const [submitError, setSubmitError] = useState('')
     const [submitSuccess, setSubmitSuccess] = useState('')
+    const [isLoadingTemplate, setIsLoadingTemplate] = useState(false)
     const [caseName, setCaseName] = useState('')
     const [initialBrief, setInitialBrief] = useState('')
     const [commonInformation, setCommonInformation] = useState('')
     const [simulationDurationMinutes, setSimulationDurationMinutes] = useState(null)
+    const [accessCode, setAccessCode] = useState('')
     const [totalPersonas, setTotalPersonas] = useState(null)
     const [personas, setPersonas] = useState([])
+    const [searchParams] = useSearchParams()
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
+    const templateId = searchParams.get('template')
+    const editCaseId = searchParams.get('caseId')
+    const isEditMode = Boolean(editCaseId)
     const showPersonas = typeof totalPersonas === 'number' && totalPersonas >= 1
     const createEmptyPersona = (overrides = {}) => ({
         name: '',
@@ -99,6 +106,52 @@ function Case() {
         const normalized = normalizePersona(persona)
         return typeof normalized.scheduledAfterMinutes !== 'number'
     })
+    useEffect(() => {
+        const sourceCaseId = editCaseId || templateId
+        if (!sourceCaseId) {
+            return
+        }
+        const loadTemplate = async () => {
+            setIsLoadingTemplate(true)
+            setSubmitError('')
+            setSubmitSuccess('')
+            try {
+                const response = await fetch(`${apiBase}/api/v1/cases/${sourceCaseId}`)
+                if (!response.ok) {
+                    throw new Error(
+                        isEditMode
+                            ? 'Failed to load case for editing.'
+                            : 'Failed to load case template.',
+                    )
+                }
+                const data = await response.json()
+                const templateCase = data.case
+                setCaseName(templateCase.caseName ?? '')
+                setInitialBrief(templateCase.initialBrief ?? '')
+                setCommonInformation(templateCase.commonInformation ?? '')
+                setSimulationDurationMinutes(
+                    templateCase.simulationDurationMinutes ?? null,
+                )
+                setAccessCode(templateCase.accessCode ?? '')
+                setTotalPersonas(templateCase.totalNonReferredPersonas ?? null)
+                setPersonas(
+                    (templateCase.personas ?? []).map((persona) =>
+                        normalizePersona(persona),
+                    ),
+                )
+            } catch (error) {
+                setSubmitError(
+                    error.message ||
+                        (isEditMode
+                            ? 'Failed to load case for editing.'
+                            : 'Failed to load case template.'),
+                )
+            } finally {
+                setIsLoadingTemplate(false)
+            }
+        }
+        loadTemplate()
+    }, [apiBase, editCaseId, isEditMode, templateId])
     const handleSubmit = async (event) => {
         event.preventDefault()
         if (!hasUnscheduledRootPersona) {
@@ -197,20 +250,33 @@ function Case() {
                 initialBrief: initialBrief.trim(),
                 commonInformation: commonInformation.trim(),
                 simulationDurationMinutes,
+                accessCode: accessCode.trim(),
                 totalNonReferredPersonas: totalPersonas,
                 personas: personasPayload,
             }
-            const saveResponse = await fetch(`${apiBase}/api/v1/cases`, {
-                method: 'POST',
+            const saveResponse = await fetch(
+                isEditMode
+                    ? `${apiBase}/api/v1/cases/${editCaseId}`
+                    : `${apiBase}/api/v1/cases`,
+                {
+                method: isEditMode ? 'PUT' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             })
             if (!saveResponse.ok) {
-                throw new Error('Failed to save case to the backend.')
+                throw new Error(
+                    isEditMode
+                        ? 'Failed to update case in the backend.'
+                        : 'Failed to save case to the backend.',
+                )
             }
             const saved = await saveResponse.json()
             console.log('Case saved:', saved)
-            setSubmitSuccess('Case saved successfully.')
+            setSubmitSuccess(
+                isEditMode
+                    ? 'Case updated successfully.'
+                    : 'Case saved successfully.',
+            )
         } catch (error) {
             setSubmitError(error.message || 'Upload failed.')
             setSubmitSuccess('')
@@ -352,7 +418,7 @@ function Case() {
                                         <FileInput
                                             label="Upload file"
                                             placeholder="Select a file"
-                                            value={fileEntry.file ?? null}
+                                            value={fileEntry.file instanceof File ? fileEntry.file : null}
                                             onChange={(value) => {
                                                 updatePersona((prev) => {
                                                     const nextFiles = [...(prev.files ?? [])]
@@ -366,6 +432,11 @@ function Case() {
                                                 })
                                             }}
                                         />
+                                        {fileEntry.file && !(fileEntry.file instanceof File) && (
+                                            <Text size="xs" c="dimmed">
+                                                Existing file: {fileEntry.file.file_name}
+                                            </Text>
+                                        )}
                                         <Textarea
                                             label="Describe the conditions under which the persona will share the file"
                                             placeholder="Describe the conditions"
@@ -583,7 +654,14 @@ function Case() {
             <Paper radius="md" p="lg" withBorder>
                 <form onSubmit={handleSubmit}>
                     <Stack gap="lg">
-                    <Title order={1} ta="center">New Case Study</Title>
+                    <Title order={1} ta="center">
+                        {isEditMode ? 'Edit Case Study' : 'New Case Study'}
+                    </Title>
+                    {isLoadingTemplate && (
+                        <Text c="dimmed" size="sm" ta="center">
+                            {isEditMode ? 'Loading case...' : 'Loading case template...'}
+                        </Text>
+                    )}
 
                     <Accordion defaultValue="case-info" variant="separated">
                         {/*Section 1*/}
@@ -629,6 +707,15 @@ function Case() {
                                         hideControls
                                         value={simulationDurationMinutes}
                                         onChange={setSimulationDurationMinutes}
+                                    />
+                                    <TextInput
+                                        label="Access code"
+                                        placeholder="Enter access code"
+                                        required
+                                        value={accessCode}
+                                        onChange={(event) => {
+                                            setAccessCode(event.currentTarget.value)
+                                        }}
                                     />
                                     <NumberInput
                                         label="Enter the Number of AI personas that are not referred"
@@ -761,7 +848,9 @@ function Case() {
                             {submitSuccess}
                         </Text>
                     )}
-                    <Button type="submit">Submit</Button>
+                    <Button type="submit" disabled={isLoadingTemplate}>
+                        Submit
+                    </Button>
                     </Stack>
                 </form>
             </Paper>

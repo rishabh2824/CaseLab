@@ -141,6 +141,105 @@ async def insert_referrals(
             )
 
 
+async def build_persona_payload(client, persona_id: str) -> dict:
+    persona_row = await client.execute(
+        """
+        select name, role, known_facts, unknown_facts, hidden_facts,
+               personality_traits, scheduled_time, availability_duration
+        from personas
+        where id = ?
+        """,
+        (persona_id,),
+    )
+    if not persona_row.rows:
+        raise HTTPException(status_code=404, detail="Persona not found.")
+    (
+        name,
+        role,
+        known_facts,
+        unknown_facts,
+        hidden_facts,
+        personality_traits,
+        scheduled_time,
+        availability_duration,
+    ) = persona_row.rows[0]
+    file_rows = await client.execute(
+        """
+        select f.bucket, f.object_key, f.file_name, f.content_type,
+               pf.share_conditions, pf.perceived_contents
+        from persona_files pf
+        left join files f on f.id = pf.file_id
+        where pf.persona_id = ?
+        """,
+        (persona_id,),
+    )
+    files = [
+        {
+            "file": (
+                {
+                    "bucket": bucket,
+                    "object_key": object_key,
+                    "file_name": file_name,
+                    "content_type": content_type,
+                }
+                if bucket and object_key and file_name
+                else None
+            ),
+            "shareConditions": share_conditions,
+            "perceivedContents": perceived_contents,
+        }
+        for (
+            bucket,
+            object_key,
+            file_name,
+            content_type,
+            share_conditions,
+            perceived_contents,
+        ) in file_rows.rows
+    ]
+    referral_rows = await client.execute(
+        """
+        select referred_persona_id, trigger_type, condition_trigger, time_trigger
+        from persona_referrals
+        where parent_persona_id = ?
+        """,
+        (persona_id,),
+    )
+    referrals = []
+    for referred_persona_id, trigger_type, condition_trigger, time_trigger in referral_rows.rows:
+        referred_persona = await build_persona_payload(client, referred_persona_id)
+        referrals.append(
+            {
+                "name": referred_persona["name"],
+                "triggerType": trigger_type,
+                "conditions": condition_trigger,
+                "revealDelayMinutes": time_trigger,
+                "persona": referred_persona,
+            }
+        )
+    return {
+        "name": name,
+        "role": role,
+        "knownFacts": known_facts,
+        "unknownFacts": unknown_facts,
+        "hiddenFacts": hidden_facts,
+        "personalityTraits": personality_traits,
+        "scheduledAfterMinutes": scheduled_time or None,
+        "availabilityMinutes": availability_duration,
+        "fileCount": len(files),
+        "files": files,
+        "referralOutCount": len(referrals),
+        "referrals": referrals,
+    }
+
+
+async def save_case_structure(client, case_id: str, payload: CasePayload) -> None:
+    for persona in payload.personas:
+        persona_id = await insert_persona(client, case_id, persona)
+        if persona.referrals:
+            await insert_referrals(client, case_id, persona_id, persona.referrals)
+
+
 @router.post("")
 async def create_case(payload: CasePayload):
     client = get_db_client()
@@ -151,31 +250,141 @@ async def create_case(payload: CasePayload):
             insert into cases (
                 id,
                 case_name,
+                access_code,
                 initial_brief,
                 common_information,
                 simulation_duration,
                 non_referred
             )
-            values (?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 case_id,
                 payload.caseName,
+                payload.accessCode,
                 payload.initialBrief,
                 payload.commonInformation,
                 payload.simulationDurationMinutes,
                 payload.totalNonReferredPersonas,
             ),
         )
-        for persona in payload.personas:
-            persona_id = await insert_persona(client, case_id, persona)
-            if persona.referrals:
-                await insert_referrals(client, case_id, persona_id, persona.referrals)
+        await save_case_structure(client, case_id, payload)
     except Exception as exc:
         try:
             await client.execute("delete from cases where id = ?", (case_id,))
         except Exception:
             pass
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"case_id": case_id}
+
+
+@router.get("")
+async def list_cases():
+    client = get_db_client()
+    rows = await client.execute(
+        """
+        select id, case_name, access_code
+        from cases
+        order by case_name
+        """
+    )
+    return {
+        "cases": [
+            {"id": case_id, "case_name": case_name, "access_code": access_code}
+            for case_id, case_name, access_code in rows.rows
+        ]
+    }
+
+
+@router.get("/{case_id}")
+async def get_case(case_id: str):
+    client = get_db_client()
+    case_row = await client.execute(
+        """
+        select id, case_name, access_code, initial_brief, common_information,
+               simulation_duration, non_referred
+        from cases
+        where id = ?
+        """,
+        (case_id,),
+    )
+    if not case_row.rows:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    (
+        resolved_case_id,
+        case_name,
+        access_code,
+        initial_brief,
+        common_information,
+        simulation_duration,
+        non_referred,
+    ) = case_row.rows[0]
+    root_persona_rows = await client.execute(
+        """
+        select p.id
+        from personas p
+        where p.case_id = ?
+          and p.id not in (
+            select referred_persona_id
+            from persona_referrals
+            where case_id = ?
+          )
+        order by p.name
+        """,
+        (resolved_case_id, resolved_case_id),
+    )
+    personas = [
+        await build_persona_payload(client, persona_id)
+        for (persona_id,) in root_persona_rows.rows
+    ]
+    return {
+        "case": {
+            "id": resolved_case_id,
+            "caseName": case_name,
+            "accessCode": access_code,
+            "initialBrief": initial_brief,
+            "commonInformation": common_information,
+            "simulationDurationMinutes": simulation_duration,
+            "totalNonReferredPersonas": non_referred,
+            "personas": personas,
+        }
+    }
+
+
+@router.put("/{case_id}")
+async def update_case(case_id: str, payload: CasePayload):
+    client = get_db_client()
+    existing = await client.execute(
+        "select id from cases where id = ?",
+        (case_id,),
+    )
+    if not existing.rows:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    try:
+        await client.execute(
+            """
+            update cases
+            set case_name = ?,
+                access_code = ?,
+                initial_brief = ?,
+                common_information = ?,
+                simulation_duration = ?,
+                non_referred = ?
+            where id = ?
+            """,
+            (
+                payload.caseName,
+                payload.accessCode,
+                payload.initialBrief,
+                payload.commonInformation,
+                payload.simulationDurationMinutes,
+                payload.totalNonReferredPersonas,
+                case_id,
+            ),
+        )
+        await client.execute("delete from personas where case_id = ?", (case_id,))
+        await save_case_structure(client, case_id, payload)
+    except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"case_id": case_id}
 

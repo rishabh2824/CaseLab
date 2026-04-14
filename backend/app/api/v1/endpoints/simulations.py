@@ -2,6 +2,7 @@ import time
 import uuid
 import re
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from app.db.turso import get_db_client
 from app.core.settings import get_settings
 from app.services.llm import (chat_completion_structured, classify_referral, classify_condition)
@@ -12,6 +13,10 @@ router = APIRouter(prefix="/simulations", tags=["simulations"])
 
 RUNS: dict[str, dict] = {}
 RUN_TTL_SECONDS = 60 * 60 * 4
+
+
+class StartSimulationPayload(BaseModel):
+    access_code: str
 
 
 def _format_persona_row(row):
@@ -31,14 +36,21 @@ def _format_persona_row(row):
     }
 
 
-async def _get_case_snapshot(client):
-    row = await client.execute(
-        """
-        select id, case_name, initial_brief, simulation_duration, common_information
+async def _get_case_snapshot(client, access_code: str | None = None, case_id: str | None = None):
+    query = """
+        select id, case_name, initial_brief, simulation_duration, common_information, access_code
         from cases
-        limit 1
-        """
-    )
+    """
+    params = ()
+    if case_id:
+        query += " where id = ?"
+        params = (case_id,)
+    elif access_code:
+        query += " where upper(access_code) = upper(?)"
+        params = (access_code,)
+    else:
+        query += " limit 1"
+    row = await client.execute(query, params)
     if not row.rows:
         raise HTTPException(status_code=404, detail="No case found.")
     (
@@ -47,6 +59,7 @@ async def _get_case_snapshot(client):
         initial_brief,
         simulation_duration,
         common_information,
+        resolved_access_code,
     ) = row.rows[0]
     return {
         "id": case_id,
@@ -54,6 +67,7 @@ async def _get_case_snapshot(client):
         "initial_brief": initial_brief,
         "simulation_duration": simulation_duration,
         "common_information": common_information,
+        "access_code": resolved_access_code,
     }
 
 
@@ -289,9 +303,12 @@ def _persona_availability(persona, available_at_minutes: int, elapsed_minutes: i
 
 
 @router.post("/start")
-async def start_simulation():
+async def start_simulation(payload: StartSimulationPayload):
     client = get_db_client()
-    case_snapshot = await _get_case_snapshot(client)
+    access_code = payload.access_code.strip()
+    if not access_code:
+        raise HTTPException(status_code=400, detail="Access code is required.")
+    case_snapshot = await _get_case_snapshot(client, access_code=access_code)
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     if not root_personas:
         raise HTTPException(status_code=400, detail="No root personas found.")
@@ -337,7 +354,7 @@ async def start_simulation():
 async def get_simulation_state(run_id: str):
     run = _get_run(run_id)
     client = get_db_client()
-    case_snapshot = await _get_case_snapshot(client)
+    case_snapshot = await _get_case_snapshot(client, case_id=run["case_id"])
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     unlocked_ids = run["unlocked_referred_ids"]
     elapsed_minutes = _elapsed_minutes(run)
@@ -396,7 +413,7 @@ async def send_message(run_id: str, payload: dict):
     elapsed_minutes = _elapsed_minutes(run)
     # Check availability for root/referred persona
     client = get_db_client()
-    case_snapshot = await _get_case_snapshot(client)
+    case_snapshot = await _get_case_snapshot(client, case_id=run["case_id"])
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     root_map = {p["id"]: p for p in root_personas}
     if persona_id in root_map:

@@ -4,6 +4,7 @@
 CREATE TABLE cases (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_name TEXT NOT NULL,
+  access_code TEXT,
   initial_brief TEXT NOT NULL,
   common_information TEXT,
   simulation_duration INTEGER,
