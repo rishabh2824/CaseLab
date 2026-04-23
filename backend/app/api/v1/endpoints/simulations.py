@@ -302,6 +302,22 @@ def _persona_availability(persona, available_at_minutes: int, elapsed_minutes: i
     return {"available": True, "available_in": 0, "expires_in": None}
 
 
+def _format_run_histories(run: dict, persona_ids: set[str] | None = None) -> dict:
+    histories = {}
+    for persona_id, messages in run["history"].items():
+        if persona_ids is not None and persona_id not in persona_ids:
+            continue
+        histories[persona_id] = [
+            {
+                "role": message.get("role"),
+                "content": message.get("content", ""),
+            }
+            for message in messages
+            if message.get("role") in {"user", "assistant"}
+        ]
+    return histories
+
+
 @router.post("/start")
 async def start_simulation(payload: StartSimulationPayload):
     client = get_db_client()
@@ -347,6 +363,7 @@ async def start_simulation(payload: StartSimulationPayload):
         "contacts": contacts,
         "active_persona_id": RUNS[run_id]["active_persona_id"],
         "shared_files": [],
+        "histories": {},
     }
 
 
@@ -388,6 +405,7 @@ async def get_simulation_state(run_id: str):
             )
             referred.append({**persona, **availability, "is_referred": True})
     contacts = contacts + referred
+    visible_persona_ids = {persona["id"] for persona in contacts}
     return {
         "run_id": run_id,
         "case": {
@@ -399,6 +417,60 @@ async def get_simulation_state(run_id: str):
         "contacts": contacts,
         "active_persona_id": run["active_persona_id"],
         "shared_files": list(run["shared_files"].values()),
+        "histories": _format_run_histories(run, visible_persona_ids),
+    }
+
+
+@router.get("/{run_id}/export")
+async def export_simulation_history(run_id: str):
+    run = _get_run(run_id)
+    client = get_db_client()
+    case_snapshot = await _get_case_snapshot(client, case_id=run["case_id"])
+    root_personas = await _get_root_personas(client, case_snapshot["id"])
+    unlocked_ids = run["unlocked_referred_ids"]
+    personas = [{**persona, "is_referred": False} for persona in root_personas]
+
+    if unlocked_ids:
+        rows = await client.execute(
+            """
+            select id, name, role, scheduled_time, availability_duration
+            from personas
+            where id in ({})
+            """.format(
+                ",".join(["?"] * len(unlocked_ids))
+            ),
+            tuple(unlocked_ids),
+        )
+        referred_personas = [
+            {**_format_persona_row(row), "is_referred": True}
+            for row in rows.rows
+        ]
+        referred_personas.sort(
+            key=lambda persona: run["unlocked_at"].get(persona["id"], 0)
+        )
+        personas.extend(referred_personas)
+
+    return {
+        "case": {
+            "id": case_snapshot["id"],
+            "case_name": case_snapshot["case_name"],
+        },
+        "personas": [
+            {
+                "id": persona["id"],
+                "name": persona["name"],
+                "role": persona["role"],
+                "messages": [
+                    {
+                        "role": message.get("role"),
+                        "content": message.get("content", ""),
+                    }
+                    for message in run["history"].get(persona["id"], [])
+                    if message.get("role") in {"user", "assistant"}
+                ],
+            }
+            for persona in personas
+        ],
     }
 
 

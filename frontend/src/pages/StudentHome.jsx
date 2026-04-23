@@ -1,7 +1,155 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const sharedFiles = []
+const PDF_PAGE_WIDTH = 612
+const PDF_MARGIN = 54
+const PDF_LINE_HEIGHT = 15
+const PDF_BODY_FONT_SIZE = 10
+const PDF_TITLE_FONT_SIZE = 14
+
+const normalizePdfText = (value) =>
+    String(value ?? '')
+        .replace(/\u2018|\u2019/g, "'")
+        .replace(/\u201c|\u201d/g, '"')
+        .replace(/\u2013|\u2014/g, '-')
+        .replace(/\u2026/g, '...')
+        .replace(/[^\x20-\x7E\r\n\t]/g, '?')
+
+const escapePdfString = (value) =>
+    normalizePdfText(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
+
+const wrapPdfLine = (line, maxChars) => {
+    const normalized = normalizePdfText(line).replace(/\t/g, '    ')
+    if (!normalized.trim()) return ['']
+    const words = normalized.split(/\s+/)
+    const lines = []
+    let current = ''
+
+    words.forEach((word) => {
+        if (word.length > maxChars) {
+            if (current) {
+                lines.push(current)
+                current = ''
+            }
+            for (let index = 0; index < word.length; index += maxChars) {
+                lines.push(word.slice(index, index + maxChars))
+            }
+            return
+        }
+        const next = current ? `${current} ${word}` : word
+        if (next.length > maxChars) {
+            lines.push(current)
+            current = word
+        } else {
+            current = next
+        }
+    })
+
+    if (current) lines.push(current)
+    return lines
+}
+
+const wrapPdfText = (text, maxChars) =>
+    normalizePdfText(text)
+        .split(/\r?\n/)
+        .flatMap((line) => wrapPdfLine(line, maxChars))
+
+const slugifyFileName = (value) => {
+    const slug = String(value || 'case-lab-chat-export')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+    return slug || 'case-lab-chat-export'
+}
+
+const normalizeHistories = (histories = {}) =>
+    Object.fromEntries(
+        Object.entries(histories).map(([personaId, messages]) => [
+            personaId,
+            (messages ?? []).filter(
+                (message) =>
+                    (message.role === 'user' || message.role === 'assistant') &&
+                    typeof message.content === 'string',
+            ),
+        ]),
+    )
+
+const buildChatPdfBlob = (personas) => {
+    const printablePersonas =
+        personas.length > 0
+            ? personas
+            : [{ name: 'No unlocked personas', role: '', messages: [] }]
+    const objects = [
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '',
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+    ]
+    const pageIds = []
+
+    printablePersonas.forEach((persona) => {
+        const speakerName = persona.name || 'Persona'
+        const title = persona.role ? `${speakerName} - ${persona.role}` : speakerName
+        const lines = [title, '']
+        const messages = persona.messages ?? []
+
+        if (messages.length === 0) {
+            lines.push('No chat history.')
+        } else {
+            messages.forEach((message) => {
+                const label = message.role === 'user' ? 'You' : speakerName
+                lines.push(...wrapPdfText(`${label}: ${message.content ?? ''}`, 92))
+                lines.push('')
+            })
+        }
+
+        const pageHeight = Math.max(
+            792,
+            PDF_MARGIN * 2 + lines.length * PDF_LINE_HEIGHT,
+        )
+        const content = lines
+            .map((line, index) => {
+                const isTitle = index === 0
+                const font = isTitle
+                    ? `/F2 ${PDF_TITLE_FONT_SIZE} Tf`
+                    : `/F1 ${PDF_BODY_FONT_SIZE} Tf`
+                const y = pageHeight - PDF_MARGIN - index * PDF_LINE_HEIGHT
+                return `BT ${font} ${PDF_MARGIN} ${y.toFixed(2)} Td (${escapePdfString(line)}) Tj ET`
+            })
+            .join('\n')
+        const contentId = objects.length + 1
+        objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`)
+        const pageId = objects.length + 1
+        objects.push(
+            `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PDF_PAGE_WIDTH} ${pageHeight.toFixed(
+                2,
+            )}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>`,
+        )
+        pageIds.push(pageId)
+    })
+
+    objects[1] = `<< /Type /Pages /Kids [${pageIds
+        .map((id) => `${id} 0 R`)
+        .join(' ')}] /Count ${pageIds.length} >>`
+
+    let pdf = '%PDF-1.4\n'
+    const offsets = []
+    objects.forEach((object, index) => {
+        offsets.push(pdf.length)
+        pdf += `${index + 1} 0 obj\n${object}\nendobj\n`
+    })
+    const xrefOffset = pdf.length
+    pdf += `xref\n0 ${objects.length + 1}\n`
+    pdf += '0000000000 65535 f \n'
+    offsets.forEach((offset) => {
+        pdf += `${String(offset).padStart(10, '0')} 00000 n \n`
+    })
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n`
+    pdf += `startxref\n${xrefOffset}\n%%EOF`
+
+    return new Blob([pdf], { type: 'application/pdf' })
+}
 
 function StudentHome() {
     const [caseData, setCaseData] = useState(null)
@@ -16,6 +164,7 @@ function StudentHome() {
     const [activePersonaId, setActivePersonaId] = useState(null)
     const [sharedFiles, setSharedFiles] = useState([])
     const [notifications, setNotifications] = useState([])
+    const [isExporting, setIsExporting] = useState(false)
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const navigate = useNavigate()
     const pushNotification = (message) => {
@@ -73,6 +222,7 @@ function StudentHome() {
                         setActivePersonaId(active)
                     }
                     setSharedFiles(data.shared_files ?? [])
+                    setMessagesByPersona(normalizeHistories(data.histories))
                     return
                 }
                 const storedRun = sessionStorage.getItem('caseLabRunId')
@@ -152,6 +302,7 @@ function StudentHome() {
                     setActivePersonaId(active)
                 }
                 setSharedFiles(data.shared_files ?? [])
+                setMessagesByPersona(normalizeHistories(data.histories))
             } catch (error) {
                 console.error(error)
             }
@@ -201,6 +352,31 @@ function StudentHome() {
         sessionStorage.removeItem('caseLabAccessCode')
         sessionStorage.removeItem('caseLabBootstrap')
         navigate('/')
+    }
+    const handleExportPdf = async () => {
+        if (!runId || isExporting) return
+        setIsExporting(true)
+        try {
+            const response = await fetch(`${apiBase}/api/v1/simulations/${runId}/export`)
+            if (!response.ok) {
+                throw new Error('Failed to export chat history.')
+            }
+            const data = await response.json()
+            const blob = buildChatPdfBlob(data.personas ?? [])
+            const url = window.URL.createObjectURL(blob)
+            const link = document.createElement('a')
+            link.href = url
+            link.download = `${slugifyFileName(data.case?.case_name)}-chat-history.pdf`
+            document.body.appendChild(link)
+            link.click()
+            link.remove()
+            window.setTimeout(() => window.URL.revokeObjectURL(url), 1000)
+        } catch (error) {
+            console.error(error)
+            pushNotification('Unable to export PDF. Please try again.')
+        } finally {
+            setIsExporting(false)
+        }
     }
     const activeContact =
         contacts.find((contact) => contact.id === activeContactId) || contacts[0]
@@ -355,6 +531,10 @@ function StudentHome() {
                         return data.shared_files
                     })
                 }
+                setMessagesByPersona((prev) => ({
+                    ...prev,
+                    ...normalizeHistories(data.histories),
+                }))
             } catch (error) {
                 console.error(error)
             }
@@ -377,8 +557,13 @@ function StudentHome() {
                             {caseData?.case_name ?? 'Loading case...'}
                         </p>
                     </div>
-                    <button className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide">
-                        Export PDF
+                    <button
+                        type="button"
+                        disabled={!runId || isExporting}
+                        onClick={handleExportPdf}
+                        className="rounded-md bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-wide disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {isExporting ? 'Exporting...' : 'Export PDF'}
                     </button>
                 </div>
             </header>
