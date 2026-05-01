@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 const PDF_PAGE_WIDTH = 612
@@ -63,15 +63,18 @@ const slugifyFileName = (value) => {
     return slug || 'case-lab-chat-export'
 }
 
+const normalizeMessages = (messages = []) =>
+    (messages ?? []).filter(
+        (message) =>
+            (message.role === 'user' || message.role === 'assistant') &&
+            typeof message.content === 'string',
+    )
+
 const normalizeHistories = (histories = {}) =>
     Object.fromEntries(
         Object.entries(histories).map(([personaId, messages]) => [
             personaId,
-            (messages ?? []).filter(
-                (message) =>
-                    (message.role === 'user' || message.role === 'assistant') &&
-                    typeof message.content === 'string',
-            ),
+            normalizeMessages(messages),
         ]),
     )
 
@@ -165,6 +168,7 @@ function StudentHome() {
     const [sharedFiles, setSharedFiles] = useState([])
     const [notifications, setNotifications] = useState([])
     const [isExporting, setIsExporting] = useState(false)
+    const sendingPersonaIdRef = useRef(null)
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const navigate = useNavigate()
     const pushNotification = (message) => {
@@ -387,15 +391,17 @@ function StudentHome() {
     const sendMessage = async () => {
         if (!runId || !activeContactId || !inputValue.trim()) return
         if (!activePersonaAvailable || isSending) return
+        const personaId = activeContactId
         const message = inputValue.trim()
         setMessagesByPersona((prev) => {
             const next = { ...prev }
-            const current = next[activeContactId] ?? []
-            next[activeContactId] = [...current, { role: 'user', content: message }]
+            const current = next[personaId] ?? []
+            next[personaId] = [...current, { role: 'user', content: message }]
             return next
         })
         setInputValue('')
         setIsSending(true)
+        sendingPersonaIdRef.current = personaId
         try {
             const response = await fetch(
                 `${apiBase}/api/v1/simulations/${runId}/message`,
@@ -403,7 +409,7 @@ function StudentHome() {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        persona_id: activeContactId,
+                        persona_id: personaId,
                         message,
                     }),
                 },
@@ -414,11 +420,15 @@ function StudentHome() {
             const data = await response.json()
             setMessagesByPersona((prev) => {
                 const next = { ...prev }
-                const current = next[activeContactId] ?? []
-                next[activeContactId] = [
-                    ...current,
-                    { role: 'assistant', content: data.reply },
-                ]
+                if (Array.isArray(data.history)) {
+                    next[personaId] = normalizeMessages(data.history)
+                } else {
+                    const current = next[personaId] ?? []
+                    next[personaId] = [
+                        ...current,
+                        { role: 'assistant', content: data.reply },
+                    ]
+                }
                 return next
             })
             if (data.new_contacts?.length) {
@@ -471,6 +481,9 @@ function StudentHome() {
         } catch (error) {
             console.error(error)
         } finally {
+            if (sendingPersonaIdRef.current === personaId) {
+                sendingPersonaIdRef.current = null
+            }
             setIsSending(false)
         }
     }
@@ -531,10 +544,17 @@ function StudentHome() {
                         return data.shared_files
                     })
                 }
-                setMessagesByPersona((prev) => ({
-                    ...prev,
-                    ...normalizeHistories(data.histories),
-                }))
+                setMessagesByPersona((prev) => {
+                    const incomingHistories = normalizeHistories(data.histories)
+                    const pendingPersonaId = sendingPersonaIdRef.current
+                    if (pendingPersonaId) {
+                        delete incomingHistories[pendingPersonaId]
+                    }
+                    return {
+                        ...prev,
+                        ...incomingHistories,
+                    }
+                })
             } catch (error) {
                 console.error(error)
             }

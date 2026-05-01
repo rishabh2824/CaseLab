@@ -550,6 +550,7 @@ async def send_message(run_id: str, payload: dict):
         *sanitized_history,
         {"role": "user", "content": user_message},
     ]
+    history.append({"role": "user", "content": user_message})
     try:
         result = await chat_completion_structured(messages)
     except Exception as exc:
@@ -569,7 +570,7 @@ async def send_message(run_id: str, payload: dict):
             if condition:
                 min_messages = _extract_min_message_threshold(condition)
                 if min_messages is not None:
-                    current_count = _count_user_messages(history) + 1
+                    current_count = _count_user_messages(history)
                     should_unlock = current_count >= min_messages
                 else:
                     should_unlock = await classify_referral(condition, history_for_classifier)
@@ -599,7 +600,6 @@ async def send_message(run_id: str, payload: dict):
             history_for_classifier[-6:],
         )
         assistant_reply = f"{assistant_reply} {intro}"
-    history.append({"role": "user", "content": user_message})
     history.append({"role": "assistant", "content": assistant_reply})
 
     shared_files = []
@@ -626,6 +626,7 @@ async def send_message(run_id: str, payload: dict):
 
     return {
         "reply": assistant_reply,
+        "history": _format_run_histories(run, {persona_id}).get(persona_id, []),
         "new_contacts": newly_unlocked,
         "shared_files": shared_files,
     }
