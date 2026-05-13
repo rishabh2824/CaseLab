@@ -78,7 +78,7 @@ const normalizeHistories = (histories = {}) =>
         ]),
     )
 
-const buildChatPdfBlob = (personas) => {
+const buildChatPdfBlob = (personas, notes = '') => {
     const printablePersonas =
         personas.length > 0
             ? personas
@@ -91,22 +91,7 @@ const buildChatPdfBlob = (personas) => {
     ]
     const pageIds = []
 
-    printablePersonas.forEach((persona) => {
-        const speakerName = persona.name || 'Persona'
-        const title = persona.role ? `${speakerName} - ${persona.role}` : speakerName
-        const lines = [title, '']
-        const messages = persona.messages ?? []
-
-        if (messages.length === 0) {
-            lines.push('No chat history.')
-        } else {
-            messages.forEach((message) => {
-                const label = message.role === 'user' ? 'You' : speakerName
-                lines.push(...wrapPdfText(`${label}: ${message.content ?? ''}`, 92))
-                lines.push('')
-            })
-        }
-
+    const addPage = (lines) => {
         const pageHeight = Math.max(
             792,
             PDF_MARGIN * 2 + lines.length * PDF_LINE_HEIGHT,
@@ -130,6 +115,34 @@ const buildChatPdfBlob = (personas) => {
             )}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentId} 0 R >>`,
         )
         pageIds.push(pageId)
+    }
+
+    const notesLines = ['My Notes', '']
+    const trimmedNotes = notes.trim()
+    if (trimmedNotes) {
+        notesLines.push(...wrapPdfText(trimmedNotes, 92))
+    } else {
+        notesLines.push('No notes.')
+    }
+    addPage(notesLines)
+
+    printablePersonas.forEach((persona) => {
+        const speakerName = persona.name || 'Persona'
+        const title = persona.role ? `${speakerName} - ${persona.role}` : speakerName
+        const lines = [title, '']
+        const messages = persona.messages ?? []
+
+        if (messages.length === 0) {
+            lines.push('No chat history.')
+        } else {
+            messages.forEach((message) => {
+                const label = message.role === 'user' ? 'You' : speakerName
+                lines.push(...wrapPdfText(`${label}: ${message.content ?? ''}`, 92))
+                lines.push('')
+            })
+        }
+
+        addPage(lines)
     })
 
     objects[1] = `<< /Type /Pages /Kids [${pageIds
@@ -169,6 +182,7 @@ function StudentHome() {
     const [notifications, setNotifications] = useState([])
     const [isExporting, setIsExporting] = useState(false)
     const sendingPersonaIdRef = useRef(null)
+    const chatInputRef = useRef(null)
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const navigate = useNavigate()
     const pushNotification = (message) => {
@@ -366,7 +380,7 @@ function StudentHome() {
                 throw new Error('Failed to export chat history.')
             }
             const data = await response.json()
-            const blob = buildChatPdfBlob(data.personas ?? [])
+            const blob = buildChatPdfBlob(data.personas ?? [], notes)
             const url = window.URL.createObjectURL(blob)
             const link = document.createElement('a')
             link.href = url
@@ -485,6 +499,9 @@ function StudentHome() {
                 sendingPersonaIdRef.current = null
             }
             setIsSending(false)
+            window.setTimeout(() => {
+                chatInputRef.current?.focus()
+            }, 0)
         }
     }
 
@@ -696,7 +713,7 @@ function StudentHome() {
                         </span>
                     </div>
 
-                    <div className="mt-5 rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+                    <div className="mt-5 max-h-[55vh] min-h-72 overflow-y-auto rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
                         {(messagesByPersona[activeContactId] ?? []).length === 0 ? (
                             'Chat history is empty.'
                         ) : (
@@ -705,7 +722,7 @@ function StudentHome() {
                                     (msg, index) => (
                                     <div
                                         key={`${msg.role}-${index}`}
-                                        className={`rounded-2xl px-4 py-3 text-sm ${
+                                        className={`whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm ${
                                             msg.role === 'user'
                                                 ? 'bg-[#eef0ff] text-slate-700'
                                                 : 'bg-slate-50 text-slate-700'
@@ -720,6 +737,7 @@ function StudentHome() {
 
                     <div className="mt-6 flex items-center gap-3 border-t pt-4">
                         <textarea
+                            ref={chatInputRef}
                             placeholder="Type your message..."
                             disabled={!activePersonaAvailable || isSending}
                             className={`flex-1 resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-100 ${
@@ -740,6 +758,9 @@ function StudentHome() {
                         <button
                             type="button"
                             disabled={!activePersonaAvailable || isSending || !inputValue.trim()}
+                            onMouseDown={(event) => {
+                                event.preventDefault()
+                            }}
                             onClick={async () => {
                                 await sendMessage()
                             }}
