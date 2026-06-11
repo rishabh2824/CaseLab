@@ -3,9 +3,9 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from backend.schemas.uploads import PresignUploadRequest, PresignUploadResponse
-from backend.services.spaces import create_presigned_put_url
-from backend.settings import get_settings
+from schemas.uploads import PresignUploadRequest, PresignUploadResponse
+from services.spaces import create_presigned_put_url
+from settings import get_settings
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 

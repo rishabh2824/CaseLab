@@ -1,7 +1,7 @@
 import boto3
 from botocore.config import Config
 
-from backend.settings import get_settings
+from settings import get_settings
 
 
 def get_spaces_client():

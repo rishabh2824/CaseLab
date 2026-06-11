@@ -2,7 +2,7 @@ from functools import lru_cache
 
 import libsql_client
 
-from backend.settings import get_settings
+from settings import get_settings
 
 
 @lru_cache(maxsize=1)

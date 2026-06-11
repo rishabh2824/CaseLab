@@ -2,8 +2,8 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from backend.turso import get_db_client
-from backend.schemas.cases import CasePayload, FileEntry, PersonaPayload, ReferralPayload
+from schemas.cases import CasePayload, FileEntry, PersonaPayload, ReferralPayload
+from turso import get_db_client
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 

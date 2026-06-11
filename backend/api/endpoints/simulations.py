@@ -3,16 +3,16 @@ import uuid
 import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from backend.services.llm import (
+from services.llm import (
     chat_completion_structured,
     classify_condition,
     classify_message_safety,
     classify_referral,
     generate_contact_introduction,
 )
-from backend.services.spaces import create_presigned_get_url
-from backend.settings import get_settings
-from backend.turso import get_db_client
+from services.spaces import create_presigned_get_url
+from settings import get_settings
+from turso import get_db_client
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
 

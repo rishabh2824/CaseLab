@@ -3,7 +3,7 @@ import json
 import asyncio
 import httpx
 
-from backend.settings import get_settings
+from settings import get_settings
 
 
 def _extract_json(text: str) -> dict | None:
