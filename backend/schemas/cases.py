@@ -29,6 +29,7 @@ class ReferralPayload(BaseModel):
 class PersonaPayload(BaseModel):
     name: str = ""
     role: str = ""
+    profilePhoto: Optional[FileRef] = None
     knownFacts: Optional[str] = None
     unknownFacts: Optional[str] = None
     hiddenFacts: Optional[str] = None

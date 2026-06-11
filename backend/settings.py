@@ -7,7 +7,7 @@ from functools import lru_cache
 
 class Settings:
     def __init__(self) -> None:
-        base_dir = Path(__file__).resolve().parents[2]
+        base_dir = Path(__file__).resolve().parent
         load_dotenv(base_dir / ".env")
         self.spaces_key = os.getenv("SPACES_KEY", "")
         self.spaces_secret = os.getenv("SPACES_SECRET", "")

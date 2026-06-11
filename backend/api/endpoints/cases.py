@@ -2,8 +2,8 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from app.db.turso import get_db_client
-from app.schemas.cases import CasePayload, FileEntry, PersonaPayload, ReferralPayload
+from backend.turso import get_db_client
+from backend.schemas.cases import CasePayload, FileEntry, PersonaPayload, ReferralPayload
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
@@ -64,6 +64,9 @@ async def insert_persona(
 ) -> str:
     persona_id = uuid.uuid4().hex
     scheduled_time = persona.scheduledAfterMinutes or 0
+    profile_photo_file_id = None
+    if persona.profilePhoto:
+        profile_photo_file_id = await get_or_create_file_id(client, persona.profilePhoto)
     await client.execute(
         """
         insert into personas (
@@ -71,6 +74,7 @@ async def insert_persona(
             case_id,
             name,
             role,
+            profile_photo_file_id,
             known_facts,
             unknown_facts,
             hidden_facts,
@@ -78,13 +82,14 @@ async def insert_persona(
             scheduled_time,
             availability_duration
         )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             persona_id,
             case_id,
             persona.name,
             persona.role,
+            profile_photo_file_id,
             persona.knownFacts,
             persona.unknownFacts,
             persona.hiddenFacts,
@@ -144,10 +149,21 @@ async def insert_referrals(
 async def build_persona_payload(client, persona_id: str) -> dict:
     persona_row = await client.execute(
         """
-        select name, role, known_facts, unknown_facts, hidden_facts,
-               personality_traits, scheduled_time, availability_duration
-        from personas
-        where id = ?
+        select p.name,
+               p.role,
+               photo.bucket,
+               photo.object_key,
+               photo.file_name,
+               photo.content_type,
+               p.known_facts,
+               p.unknown_facts,
+               p.hidden_facts,
+               p.personality_traits,
+               p.scheduled_time,
+               p.availability_duration
+        from personas p
+        left join files photo on photo.id = p.profile_photo_file_id
+        where p.id = ?
         """,
         (persona_id,),
     )
@@ -156,6 +172,10 @@ async def build_persona_payload(client, persona_id: str) -> dict:
     (
         name,
         role,
+        photo_bucket,
+        photo_object_key,
+        photo_file_name,
+        photo_content_type,
         known_facts,
         unknown_facts,
         hidden_facts,
@@ -163,6 +183,16 @@ async def build_persona_payload(client, persona_id: str) -> dict:
         scheduled_time,
         availability_duration,
     ) = persona_row.rows[0]
+    profile_photo = (
+        {
+            "bucket": photo_bucket,
+            "object_key": photo_object_key,
+            "file_name": photo_file_name,
+            "content_type": photo_content_type,
+        }
+        if photo_bucket and photo_object_key and photo_file_name
+        else None
+    )
     file_rows = await client.execute(
         """
         select f.bucket, f.object_key, f.file_name, f.content_type,
@@ -220,6 +250,7 @@ async def build_persona_payload(client, persona_id: str) -> dict:
     return {
         "name": name,
         "role": role,
+        "profilePhoto": profile_photo,
         "knownFacts": known_facts,
         "unknownFacts": unknown_facts,
         "hiddenFacts": hidden_facts,
@@ -404,8 +435,17 @@ async def get_active_case():
     case_id, case_name, initial_brief, simulation_duration = row.rows[0]
     persona_rows = await client.execute(
         """
-        select p.id, p.name, p.role, p.scheduled_time, p.availability_duration
+        select p.id,
+               p.name,
+               p.role,
+               photo.bucket,
+               photo.object_key,
+               photo.file_name,
+               photo.content_type,
+               p.scheduled_time,
+               p.availability_duration
         from personas p
+        left join files photo on photo.id = p.profile_photo_file_id
         where p.case_id = ?
           and p.id not in (
             select referred_persona_id
@@ -421,10 +461,30 @@ async def get_active_case():
             "id": p_id,
             "name": name,
             "role": role,
+            "profile_photo": (
+                {
+                    "bucket": photo_bucket,
+                    "object_key": photo_object_key,
+                    "file_name": photo_file_name,
+                    "content_type": photo_content_type,
+                }
+                if photo_bucket and photo_object_key and photo_file_name
+                else None
+            ),
             "scheduled_time": scheduled_time,
             "availability_duration": availability_duration,
         }
-        for (p_id, name, role, scheduled_time, availability_duration) in persona_rows.rows
+        for (
+            p_id,
+            name,
+            role,
+            photo_bucket,
+            photo_object_key,
+            photo_file_name,
+            photo_content_type,
+            scheduled_time,
+            availability_duration,
+        ) in persona_rows.rows
     ]
     return {
         "case": {

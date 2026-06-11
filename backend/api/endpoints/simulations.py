@@ -3,16 +3,71 @@ import uuid
 import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.db.turso import get_db_client
-from app.core.settings import get_settings
-from app.services.llm import (chat_completion_structured, classify_referral, classify_condition)
-from app.services.llm import generate_contact_introduction
-from app.services.spaces import create_presigned_get_url
+from backend.services.llm import (
+    chat_completion_structured,
+    classify_condition,
+    classify_message_safety,
+    classify_referral,
+    generate_contact_introduction,
+)
+from backend.services.spaces import create_presigned_get_url
+from backend.settings import get_settings
+from backend.turso import get_db_client
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
 
 RUNS: dict[str, dict] = {}
 RUN_TTL_SECONDS = 60 * 60 * 4
+NONSENSE_END_THRESHOLD = 3
+HARASSMENT_END_THRESHOLD = 2
+
+
+def _get_persona_chat_state(run: dict, persona_id: str) -> dict:
+    persona_chat_state = run.setdefault("persona_chat_state", {})
+    return persona_chat_state.setdefault(
+        persona_id,
+        {
+            "warning_count": 0,
+            "ended": False,
+            "end_reason": None,
+            "last_flag_type": None,
+        },
+    )
+
+
+def _chat_state_payload(run: dict, persona_id: str) -> dict:
+    state = _get_persona_chat_state(run, persona_id)
+    return {
+        "chat_ended": state["ended"],
+        "chat_end_reason": state["end_reason"],
+        "warning_count": state["warning_count"],
+    }
+
+
+def _build_boundary_reply(persona_name: str, label: str, should_end: bool) -> str:
+    name = persona_name or "I"
+    if should_end:
+        if label == "severe_abuse":
+            return (
+                f"{name} is ending this conversation now because of abusive language. "
+                "Please continue the case respectfully with another contact."
+            )
+        if label == "harassment":
+            return (
+                f"{name} is ending this conversation now because the messages have become disrespectful. "
+                "Please continue the case respectfully with another contact."
+            )
+        return (
+            f"{name} is ending this conversation because the messages are not coherent enough to continue. "
+            "Please send clear case-related questions to another contact."
+        )
+    if label == "harassment":
+        return (
+            "I can help with the case, but I will not continue if the messages stay disrespectful or harassing."
+        )
+    return (
+        "I am not able to follow that. Please send a clear, case-related question if you want to continue."
+    )
 
 
 class StartSimulationPayload(BaseModel):
@@ -24,6 +79,10 @@ def _format_persona_row(row):
         persona_id,
         name,
         role,
+        photo_bucket,
+        photo_object_key,
+        photo_file_name,
+        photo_content_type,
         scheduled_time,
         availability_duration,
     ) = row
@@ -31,6 +90,17 @@ def _format_persona_row(row):
         "id": persona_id,
         "name": name,
         "role": role,
+        "profile_photo": (
+            {
+                "bucket": photo_bucket,
+                "object_key": photo_object_key,
+                "file_name": photo_file_name,
+                "content_type": photo_content_type,
+                "url": create_presigned_get_url(photo_object_key),
+            }
+            if photo_bucket and photo_object_key and photo_file_name
+            else None
+        ),
         "scheduled_time": scheduled_time,
         "availability_duration": availability_duration,
     }
@@ -74,8 +144,17 @@ async def _get_case_snapshot(client, access_code: str | None = None, case_id: st
 async def _get_root_personas(client, case_id):
     rows = await client.execute(
         """
-        select p.id, p.name, p.role, p.scheduled_time, p.availability_duration
+        select p.id,
+               p.name,
+               p.role,
+               photo.bucket,
+               photo.object_key,
+               photo.file_name,
+               photo.content_type,
+               p.scheduled_time,
+               p.availability_duration
         from personas p
+        left join files photo on photo.id = p.profile_photo_file_id
         where p.case_id = ?
           and p.id not in (
             select referred_persona_id
@@ -92,15 +171,36 @@ async def _get_root_personas(client, case_id):
 async def _get_persona_details(client, persona_id):
     row = await client.execute(
         """
-        select name, role, known_facts, unknown_facts, hidden_facts, personality_traits
-        from personas
-        where id = ?
+        select p.name,
+               p.role,
+               photo.bucket,
+               photo.object_key,
+               photo.file_name,
+               photo.content_type,
+               p.known_facts,
+               p.unknown_facts,
+               p.hidden_facts,
+               p.personality_traits
+        from personas p
+        left join files photo on photo.id = p.profile_photo_file_id
+        where p.id = ?
         """,
         (persona_id,),
     )
     if not row.rows:
         raise HTTPException(status_code=404, detail="Persona not found.")
-    name, role, known, unknown, hidden, traits = row.rows[0]
+    (
+        name,
+        role,
+        photo_bucket,
+        photo_object_key,
+        photo_file_name,
+        photo_content_type,
+        known,
+        unknown,
+        hidden,
+        traits,
+    ) = row.rows[0]
     files = await client.execute(
         """
         select f.id, f.bucket, f.object_key, f.file_name, f.content_type,
@@ -134,6 +234,17 @@ async def _get_persona_details(client, persona_id):
     return {
         "name": name,
         "role": role,
+        "profile_photo": (
+            {
+                "bucket": photo_bucket,
+                "object_key": photo_object_key,
+                "file_name": photo_file_name,
+                "content_type": photo_content_type,
+                "url": create_presigned_get_url(photo_object_key),
+            }
+            if photo_bucket and photo_object_key and photo_file_name
+            else None
+        ),
         "known_facts": known,
         "unknown_facts": unknown,
         "hidden_facts": hidden,
@@ -146,9 +257,12 @@ async def _get_referrals_for_parent(client, case_id, parent_persona_id):
     rows = await client.execute(
         """
         select pr.referred_persona_id, pr.trigger_type, pr.condition_trigger, pr.time_trigger,
-               p.name, p.role, p.scheduled_time, p.availability_duration
+               p.name, p.role,
+               photo.bucket, photo.object_key, photo.file_name, photo.content_type,
+               p.scheduled_time, p.availability_duration
         from persona_referrals pr
         join personas p on p.id = pr.referred_persona_id
+        left join files photo on photo.id = p.profile_photo_file_id
         where pr.case_id = ? and pr.parent_persona_id = ?
         """,
         (case_id, parent_persona_id),
@@ -162,6 +276,10 @@ async def _get_referrals_for_parent(client, case_id, parent_persona_id):
             time_trigger,
             name,
             role,
+            photo_bucket,
+            photo_object_key,
+            photo_file_name,
+            photo_content_type,
             scheduled_time,
             availability_duration,
         ) = row
@@ -175,6 +293,17 @@ async def _get_referrals_for_parent(client, case_id, parent_persona_id):
                     "id": referred_persona_id,
                     "name": name,
                     "role": role,
+                    "profile_photo": (
+                        {
+                            "bucket": photo_bucket,
+                            "object_key": photo_object_key,
+                            "file_name": photo_file_name,
+                            "content_type": photo_content_type,
+                            "url": create_presigned_get_url(photo_object_key),
+                        }
+                        if photo_bucket and photo_object_key and photo_file_name
+                        else None
+                    ),
                     "scheduled_time": scheduled_time,
                     "availability_duration": availability_duration,
                     "is_referred": True,
@@ -339,6 +468,7 @@ async def start_simulation(payload: StartSimulationPayload):
         "unlocked_at": {},
         "shared_files": {},
         "history": {},
+        "persona_chat_state": {},
     }
     elapsed_minutes = _elapsed_minutes(RUNS[run_id])
     contacts = []
@@ -348,7 +478,14 @@ async def start_simulation(payload: StartSimulationPayload):
             persona.get("scheduled_time") or 0,
             elapsed_minutes,
         )
-        contacts.append({**persona, **availability, "is_referred": False})
+        contacts.append(
+            {
+                **persona,
+                **availability,
+                "is_referred": False,
+                **_chat_state_payload(RUNS[run_id], persona["id"]),
+            }
+        )
     active_candidates = [c for c in contacts if c["available"]]
     if active_candidates:
         RUNS[run_id]["active_persona_id"] = active_candidates[0]["id"]
@@ -382,14 +519,30 @@ async def get_simulation_state(run_id: str):
             persona.get("scheduled_time") or 0,
             elapsed_minutes,
         )
-        contacts.append({**persona, **availability, "is_referred": False})
+        contacts.append(
+            {
+                **persona,
+                **availability,
+                "is_referred": False,
+                **_chat_state_payload(run, persona["id"]),
+            }
+        )
     referred = []
     if unlocked_ids:
         rows = await client.execute(
             """
-            select id, name, role, scheduled_time, availability_duration
-            from personas
-            where id in ({})
+            select p.id,
+                   p.name,
+                   p.role,
+                   photo.bucket,
+                   photo.object_key,
+                   photo.file_name,
+                   photo.content_type,
+                   p.scheduled_time,
+                   p.availability_duration
+            from personas p
+            left join files photo on photo.id = p.profile_photo_file_id
+            where p.id in ({})
             """.format(
                 ",".join(["?"] * len(unlocked_ids))
             ),
@@ -403,7 +556,14 @@ async def get_simulation_state(run_id: str):
                 available_at,
                 elapsed_minutes,
             )
-            referred.append({**persona, **availability, "is_referred": True})
+            referred.append(
+                {
+                    **persona,
+                    **availability,
+                    "is_referred": True,
+                    **_chat_state_payload(run, persona["id"]),
+                }
+            )
     contacts = contacts + referred
     visible_persona_ids = {persona["id"] for persona in contacts}
     return {
@@ -433,9 +593,18 @@ async def export_simulation_history(run_id: str):
     if unlocked_ids:
         rows = await client.execute(
             """
-            select id, name, role, scheduled_time, availability_duration
-            from personas
-            where id in ({})
+            select p.id,
+                   p.name,
+                   p.role,
+                   photo.bucket,
+                   photo.object_key,
+                   photo.file_name,
+                   photo.content_type,
+                   p.scheduled_time,
+                   p.availability_duration
+            from personas p
+            left join files photo on photo.id = p.profile_photo_file_id
+            where p.id in ({})
             """.format(
                 ",".join(["?"] * len(unlocked_ids))
             ),
@@ -497,9 +666,18 @@ async def send_message(run_id: str, payload: dict):
     elif persona_id in run["unlocked_referred_ids"]:
         persona_row = await client.execute(
             """
-            select id, name, role, scheduled_time, availability_duration
-            from personas
-            where id = ?
+            select p.id,
+                   p.name,
+                   p.role,
+                   photo.bucket,
+                   photo.object_key,
+                   photo.file_name,
+                   photo.content_type,
+                   p.scheduled_time,
+                   p.availability_duration
+            from personas p
+            left join files photo on photo.id = p.profile_photo_file_id
+            where p.id = ?
             """,
             (persona_id,),
         )
@@ -513,6 +691,9 @@ async def send_message(run_id: str, payload: dict):
     if not availability["available"]:
         raise HTTPException(status_code=400, detail="Persona is not available yet.")
     run["active_persona_id"] = persona_id
+    chat_state = _get_persona_chat_state(run, persona_id)
+    if chat_state["ended"]:
+        raise HTTPException(status_code=400, detail="This conversation has ended.")
 
     referrals = await _get_referrals_for_parent(client, case_snapshot["id"], persona_id)
     locked_referral_names = [
@@ -522,6 +703,42 @@ async def send_message(run_id: str, payload: dict):
     ]
     persona_details = await _get_persona_details(client, persona_id)
     history = run["history"].setdefault(persona_id, [])
+    filtered_history = [msg for msg in history if msg.get("role") != "system"]
+    history_for_classifier = filtered_history + [
+        {"role": "user", "content": user_message}
+    ]
+    message_label = await classify_message_safety(user_message, history_for_classifier)
+    if settings.sim_debug:
+        print("SIM DEBUG: message safety ->", message_label)
+    if message_label != "normal":
+        history.append({"role": "user", "content": user_message})
+        chat_state["last_flag_type"] = message_label
+        if message_label == "severe_abuse":
+            chat_state["ended"] = True
+            chat_state["end_reason"] = message_label
+        else:
+            chat_state["warning_count"] += 1
+            threshold = (
+                HARASSMENT_END_THRESHOLD
+                if message_label == "harassment"
+                else NONSENSE_END_THRESHOLD
+            )
+            if chat_state["warning_count"] >= threshold:
+                chat_state["ended"] = True
+                chat_state["end_reason"] = message_label
+        assistant_reply = _build_boundary_reply(
+            persona_details["name"],
+            message_label,
+            chat_state["ended"],
+        )
+        history.append({"role": "assistant", "content": assistant_reply})
+        return {
+            "reply": assistant_reply,
+            "history": _format_run_histories(run, {persona_id}).get(persona_id, []),
+            "new_contacts": [],
+            "shared_files": [],
+            **_chat_state_payload(run, persona_id),
+        }
     system_prompt = _build_system_prompt(
         case_snapshot, persona_details, locked_referral_names
     )
@@ -542,7 +759,6 @@ async def send_message(run_id: str, payload: dict):
                 for ref in referrals
             ],
         )
-    filtered_history = [msg for msg in history if msg.get("role") != "system"]
     sanitized_history = _sanitize_history(filtered_history, locked_referral_names)
     combined_system = f"{structured_instruction}\n\n---\n\n{system_prompt}"
     messages = [
@@ -556,9 +772,7 @@ async def send_message(run_id: str, payload: dict):
     except Exception as exc:
         raise HTTPException(status_code=502, detail="LLM request timed out.") from exc
     assistant_reply = result["reply"]
-    history_for_classifier = sanitized_history + [
-        {"role": "user", "content": user_message}
-    ]
+    history_for_classifier = sanitized_history + [{"role": "user", "content": user_message}]
 
     newly_unlocked = []
     for referral in referrals:
@@ -584,12 +798,22 @@ async def send_message(run_id: str, payload: dict):
                 if should_unlock:
                     run["unlocked_referred_ids"].add(referred_id)
                     run["unlocked_at"][referred_id] = elapsed_minutes
-                    newly_unlocked.append(referral["persona"])
+                    newly_unlocked.append(
+                        {
+                            **referral["persona"],
+                            **_chat_state_payload(run, referred_id),
+                        }
+                    )
         elif referral["trigger_type"] == "time":
             if referral["time_trigger"] and elapsed_minutes >= referral["time_trigger"]:
                 run["unlocked_referred_ids"].add(referred_id)
                 run["unlocked_at"][referred_id] = elapsed_minutes
-                newly_unlocked.append(referral["persona"])
+                newly_unlocked.append(
+                    {
+                        **referral["persona"],
+                        **_chat_state_payload(run, referred_id),
+                    }
+                )
     if settings.sim_debug:
         print("SIM DEBUG: newly_unlocked ->", newly_unlocked)
 
@@ -629,4 +853,5 @@ async def send_message(run_id: str, payload: dict):
         "history": _format_run_histories(run, {persona_id}).get(persona_id, []),
         "new_contacts": newly_unlocked,
         "shared_files": shared_files,
+        **_chat_state_payload(run, persona_id),
     }

@@ -3,7 +3,7 @@ import json
 import asyncio
 import httpx
 
-from app.core.settings import get_settings
+from backend.settings import get_settings
 
 
 def _extract_json(text: str) -> dict | None:
@@ -150,6 +150,91 @@ async def classify_referral(condition: str, conversation: list[dict]) -> bool:
 
 async def classify_condition(condition: str, conversation: list[dict]) -> bool:
     return await classify_referral(condition, conversation)
+
+
+def _looks_like_nonsense(message: str) -> bool:
+    cleaned = (message or "").strip()
+    if not cleaned:
+        return True
+    normalized = re.sub(r"\s+", " ", cleaned.lower())
+    tokens = [token for token in re.split(r"\s+", normalized) if token]
+    alnum_chars = [char for char in normalized if char.isalnum()]
+
+    if len(normalized) >= 12 and len(alnum_chars) / max(len(normalized), 1) < 0.35:
+        return True
+    if re.fullmatch(r"(.)\1{7,}", normalized):
+        return True
+    if len(tokens) >= 4 and len(set(tokens)) == 1:
+        return True
+    return False
+
+
+async def classify_message_safety(user_message: str, conversation: list[dict]) -> str:
+    if _looks_like_nonsense(user_message):
+        return "nonsense"
+
+    settings = get_settings()
+    transcript = "\n".join(
+        f"{msg.get('role')}: {msg.get('content', '')}"
+        for msg in conversation[-6:]
+        if msg.get("role") != "system"
+    )
+    if not transcript:
+        transcript = "No prior conversation."
+
+    payload = {
+        "model": settings.llm_model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a strict conversation safety classifier for a case simulation. "
+                    "Classify the latest user message in context. "
+                    "Return ONLY one label from this set: NORMAL, NONSENSE, HARASSMENT, SEVERE_ABUSE.\n"
+                    "Use NONSENSE for spam, gibberish, or repeatedly incoherent case-irrelevant input.\n"
+                    "Use HARASSMENT for rude, insulting, or abusive behavior that is not an extreme threat.\n"
+                    "Use SEVERE_ABUSE for explicit threats, severe harassment, or clearly intolerable abuse.\n"
+                    "Otherwise return NORMAL."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Recent conversation:\n{transcript}\n\n"
+                    f"Latest user message:\n{user_message}"
+                ),
+            },
+        ],
+        "temperature": 0,
+        "max_tokens": 10,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.llm_key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://caselab.local",
+        "X-Title": "caseLab",
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        for attempt in range(2):
+            try:
+                response = await client.post(
+                    settings.llm_base_url, json=payload, headers=headers
+                )
+                response.raise_for_status()
+                data = response.json()
+                label = data["choices"][0]["message"]["content"].strip().upper()
+                if label.startswith("SEVERE_ABUSE"):
+                    return "severe_abuse"
+                if label.startswith("HARASSMENT"):
+                    return "harassment"
+                if label.startswith("NONSENSE"):
+                    return "nonsense"
+                return "normal"
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError):
+                if attempt == 1:
+                    return "normal"
+                await asyncio.sleep(1 + attempt)
+    return "normal"
 
 
 async def generate_contact_introduction(

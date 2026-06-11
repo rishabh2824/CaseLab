@@ -35,6 +35,7 @@ function Case() {
     const createEmptyPersona = (overrides = {}) => ({
         name: '',
         role: '',
+        profilePhoto: null,
         knownFacts: '',
         unknownFacts: '',
         hiddenFacts: '',
@@ -213,8 +214,22 @@ function Case() {
             return { ...entry }
         }
 
+        const normalizeProfilePhoto = async (profilePhoto, prefix) => {
+            if (!profilePhoto) {
+                return null
+            }
+            if (profilePhoto instanceof File) {
+                return await uploadFile(profilePhoto, prefix)
+            }
+            return profilePhoto
+        }
+
         const buildPersonaPayload = async (persona, prefix) => {
             const normalized = normalizePersona(persona)
+            const profilePhoto = await normalizeProfilePhoto(
+                normalized.profilePhoto,
+                prefix,
+            )
             const files = await Promise.all(
                 (normalized.files ?? []).map((entry) => normalizeFileEntry(entry, prefix)),
             )
@@ -235,6 +250,7 @@ function Case() {
             )
             return {
                 ...normalized,
+                profilePhoto,
                 files,
                 referrals,
             }
@@ -304,6 +320,21 @@ function Case() {
                     updatePersona((prev) => ({ ...prev, role: value }))
                 }}
             />
+            <FileInput
+                label="Profile photo"
+                placeholder="Upload a profile photo"
+                accept="image/*"
+                value={persona.profilePhoto instanceof File ? persona.profilePhoto : null}
+                onChange={(value) => {
+                    updatePersona((prev) => ({ ...prev, profilePhoto: value }))
+                }}
+                clearable
+            />
+            {persona.profilePhoto && !(persona.profilePhoto instanceof File) && (
+                <Text size="xs" c="dimmed">
+                    Existing photo: {persona.profilePhoto.file_name}
+                </Text>
+            )}
             <Textarea
                 label="Information they know"
                 placeholder="- Fact 1\n- Fact 2"

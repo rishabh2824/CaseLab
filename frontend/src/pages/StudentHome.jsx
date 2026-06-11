@@ -78,6 +78,44 @@ const normalizeHistories = (histories = {}) =>
         ]),
     )
 
+const getPersonaInitials = (name) =>
+    name
+        ? name
+              .split(' ')
+              .filter(Boolean)
+              .slice(0, 2)
+              .map((part) => part[0].toUpperCase())
+              .join('')
+        : 'NA'
+
+const mapContact = (persona) => {
+    const scheduled = typeof persona.scheduled_time === 'number' ? persona.scheduled_time : 0
+    const availability = persona.availability_duration
+    let status = 'Available'
+    if (scheduled && scheduled > 0) {
+        status = `Available in ${scheduled} min`
+    }
+    return {
+        id: persona.id,
+        initials: getPersonaInitials(persona.name),
+        name: persona.name || 'Unnamed',
+        title: persona.role || 'Role',
+        profilePhotoUrl:
+            persona.profile_photo?.url ||
+            persona.profilePhoto?.url ||
+            null,
+        status,
+        availability,
+        isReferred: persona.is_referred ?? false,
+        available: persona.available ?? false,
+        availableIn: persona.available_in ?? null,
+        expiresIn: persona.expires_in ?? null,
+        chatEnded: persona.chat_ended ?? false,
+        chatEndReason: persona.chat_end_reason ?? null,
+        warningCount: persona.warning_count ?? 0,
+    }
+}
+
 const buildChatPdfBlob = (personas, notes = '') => {
     const printablePersonas =
         personas.length > 0
@@ -183,8 +221,41 @@ function StudentHome() {
     const [isExporting, setIsExporting] = useState(false)
     const sendingPersonaIdRef = useRef(null)
     const chatInputRef = useRef(null)
+    const messagesEndRef = useRef(null)
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const navigate = useNavigate()
+    const focusChatInput = () => {
+        window.requestAnimationFrame(() => {
+            chatInputRef.current?.focus()
+        })
+    }
+    const scrollChatToEnd = () => {
+        window.requestAnimationFrame(() => {
+            messagesEndRef.current?.scrollIntoView({ block: 'end' })
+        })
+    }
+    const renderContactAvatar = (contact) => {
+        if (contact.profilePhotoUrl) {
+            return (
+                <img
+                    src={contact.profilePhotoUrl}
+                    alt={`${contact.name} profile`}
+                    className="h-9 w-9 rounded-full object-cover"
+                />
+            )
+        }
+        return (
+            <div
+                className={`grid h-9 w-9 place-items-center rounded-full text-xs font-semibold ${
+                    contact.id === activeContactId
+                        ? 'bg-[#5b5fc7] text-white'
+                        : 'bg-slate-200 text-slate-600'
+                }`}
+            >
+                {contact.initials}
+            </div>
+        )
+    }
     const pushNotification = (message) => {
         const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`
         setNotifications((prev) => [...prev, { id, message }])
@@ -203,36 +274,7 @@ function StudentHome() {
                     setRunId(data.run_id)
                     sessionStorage.setItem('caseLabRunId', data.run_id)
                     setCaseData(data.case)
-                    const normalizedContacts = (data.contacts ?? []).map((persona) => {
-                        const initials = persona.name
-                            ? persona.name
-                                  .split(' ')
-                                  .filter(Boolean)
-                                  .slice(0, 2)
-                                  .map((part) => part[0].toUpperCase())
-                                  .join('')
-                            : 'NA'
-                        const scheduled = typeof persona.scheduled_time === 'number'
-                            ? persona.scheduled_time
-                            : 0
-                        const availability = persona.availability_duration
-                        let status = 'Available'
-                        if (scheduled && scheduled > 0) {
-                            status = `Available in ${scheduled} min`
-                        }
-                        return {
-                            id: persona.id,
-                            initials,
-                            name: persona.name || 'Unnamed',
-                            title: persona.role || 'Role',
-                            status,
-                            availability,
-                            isReferred: persona.is_referred ?? false,
-                            available: persona.available ?? false,
-                            availableIn: persona.available_in ?? null,
-                            expiresIn: persona.expires_in ?? null,
-                        }
-                    })
+                    const normalizedContacts = (data.contacts ?? []).map(mapContact)
                     setContacts(normalizedContacts)
                     if (normalizedContacts.length > 0) {
                         const active = data.active_persona_id || normalizedContacts[0].id
@@ -283,36 +325,7 @@ function StudentHome() {
                     setRunId(storedRun)
                 }
                 setCaseData(data.case)
-                const normalizedContacts = (data.contacts ?? []).map((persona) => {
-                    const initials = persona.name
-                        ? persona.name
-                              .split(' ')
-                              .filter(Boolean)
-                              .slice(0, 2)
-                              .map((part) => part[0].toUpperCase())
-                              .join('')
-                        : 'NA'
-                    const scheduled = typeof persona.scheduled_time === 'number'
-                        ? persona.scheduled_time
-                        : 0
-                    const availability = persona.availability_duration
-                    let status = 'Available'
-                    if (scheduled && scheduled > 0) {
-                        status = `Available in ${scheduled} min`
-                    }
-                    return {
-                        id: persona.id,
-                        initials,
-                        name: persona.name || 'Unnamed',
-                        title: persona.role || 'Role',
-                        status,
-                        availability,
-                        isReferred: persona.is_referred ?? false,
-                        available: persona.available ?? false,
-                        availableIn: persona.available_in ?? null,
-                        expiresIn: persona.expires_in ?? null,
-                    }
-                })
+                const normalizedContacts = (data.contacts ?? []).map(mapContact)
                 setContacts(normalizedContacts)
                 if (normalizedContacts.length > 0) {
                     const active = data.active_persona_id || normalizedContacts[0].id
@@ -400,7 +413,18 @@ function StudentHome() {
         contacts.find((contact) => contact.id === activeContactId) || contacts[0]
     const activePersonaAvailable =
         activeContactId === activePersonaId &&
-        contacts.find((c) => c.id === activeContactId)?.available
+        contacts.find((c) => c.id === activeContactId)?.available &&
+        !contacts.find((c) => c.id === activeContactId)?.chatEnded
+
+    useEffect(() => {
+        if (!activeContactId || !activePersonaAvailable || isSending) return
+        focusChatInput()
+    }, [activeContactId, activePersonaAvailable, isSending])
+
+    useEffect(() => {
+        if (!activeContactId) return
+        scrollChatToEnd()
+    }, [activeContactId, messagesByPersona])
 
     const sendMessage = async () => {
         if (!runId || !activeContactId || !inputValue.trim()) return
@@ -429,7 +453,14 @@ function StudentHome() {
                 },
             )
             if (!response.ok) {
-                throw new Error('Failed to send message.')
+                let errorMessage = 'Failed to send message.'
+                try {
+                    const errorData = await response.json()
+                    errorMessage = errorData.detail || errorMessage
+                } catch {
+                    // Ignore JSON parse failures here.
+                }
+                throw new Error(errorMessage)
             }
             const data = await response.json()
             setMessagesByPersona((prev) => {
@@ -445,33 +476,29 @@ function StudentHome() {
                 }
                 return next
             })
+            setContacts((prev) =>
+                prev.map((contact) =>
+                    contact.id === personaId
+                        ? {
+                              ...contact,
+                              chatEnded: data.chat_ended ?? contact.chatEnded,
+                              chatEndReason: data.chat_end_reason ?? contact.chatEndReason,
+                              warningCount: data.warning_count ?? contact.warningCount,
+                          }
+                        : contact,
+                ),
+            )
             if (data.new_contacts?.length) {
                 setContacts((prev) => {
                     const existingIds = new Set(prev.map((c) => c.id))
                     const additional = data.new_contacts
                         .filter((c) => !existingIds.has(c.id))
-                        .map((persona) => {
-                            const initials = persona.name
-                                ? persona.name
-                                      .split(' ')
-                                      .filter(Boolean)
-                                      .slice(0, 2)
-                                      .map((part) => part[0].toUpperCase())
-                                      .join('')
-                                : 'NA'
-                            return {
-                                id: persona.id,
-                                initials,
-                                name: persona.name || 'Unnamed',
-                                title: persona.role || 'Role',
-                                status: 'Available',
-                                availability: persona.availability_duration,
-                                isReferred: true,
-                                available: persona.available ?? true,
-                                availableIn: persona.available_in ?? null,
-                                expiresIn: persona.expires_in ?? null,
-                            }
-                        })
+                        .map((persona) => ({
+                            ...mapContact(persona),
+                            status: 'Available',
+                            isReferred: true,
+                            available: persona.available ?? true,
+                        }))
                     additional.forEach((contact) => {
                         pushNotification(
                             `New contact unlocked: ${contact.name} (${contact.title})`,
@@ -494,14 +521,25 @@ function StudentHome() {
             }
         } catch (error) {
             console.error(error)
+            if (error.message === 'This conversation has ended.') {
+                setContacts((prev) =>
+                    prev.map((contact) =>
+                        contact.id === personaId
+                            ? {
+                                  ...contact,
+                                  chatEnded: true,
+                                  chatEndReason: contact.chatEndReason || 'harassment',
+                              }
+                            : contact,
+                    ),
+                )
+            }
         } finally {
             if (sendingPersonaIdRef.current === personaId) {
                 sendingPersonaIdRef.current = null
             }
             setIsSending(false)
-            window.setTimeout(() => {
-                chatInputRef.current?.focus()
-            }, 0)
+            focusChatInput()
         }
     }
 
@@ -515,28 +553,10 @@ function StudentHome() {
                 )
                 if (!response.ok) return
                 const data = await response.json()
-                const normalizedContacts = (data.contacts ?? []).map((persona) => {
-                    const initials = persona.name
-                        ? persona.name
-                              .split(' ')
-                              .filter(Boolean)
-                              .slice(0, 2)
-                              .map((part) => part[0].toUpperCase())
-                              .join('')
-                        : 'NA'
-                    return {
-                        id: persona.id,
-                        initials,
-                        name: persona.name || 'Unnamed',
-                        title: persona.role || 'Role',
-                        status: persona.available ? 'Available' : 'Unavailable',
-                        availability: persona.availability_duration,
-                        isReferred: persona.is_referred ?? false,
-                        available: persona.available ?? false,
-                        availableIn: persona.available_in ?? null,
-                        expiresIn: persona.expires_in ?? null,
-                    }
-                })
+                const normalizedContacts = (data.contacts ?? []).map((persona) => ({
+                    ...mapContact(persona),
+                    status: persona.available ? 'Available' : 'Unavailable',
+                }))
                 setContacts((prev) => {
                     const prevIds = new Set(prev.map((contact) => contact.id))
                     const newOnes = normalizedContacts.filter(
@@ -629,15 +649,7 @@ function StudentHome() {
                                             : 'border-transparent bg-white/70 hover:border-slate-200'
                                     }`}
                                 >
-                                    <div
-                                        className={`grid h-9 w-9 place-items-center rounded-full text-xs font-semibold ${
-                                            contact.id === activeContactId
-                                                ? 'bg-[#5b5fc7] text-white'
-                                                : 'bg-slate-200 text-slate-600'
-                                        }`}
-                                    >
-                                        {contact.initials}
-                                    </div>
+                                    {renderContactAvatar(contact)}
                                     <div className="flex-1">
                                         <p className="font-semibold text-slate-900">{contact.name}</p>
                                         <p className="text-xs text-slate-500">{contact.title}</p>
@@ -656,6 +668,11 @@ function StudentHome() {
                                         {typeof contact.expiresIn === 'number' && contact.expiresIn > 0 && (
                                             <p className="text-[11px] text-slate-400">
                                                 Expires in {contact.expiresIn} min
+                                            </p>
+                                        )}
+                                        {contact.chatEnded && (
+                                            <p className="text-[11px] text-rose-500">
+                                                Conversation ended
                                             </p>
                                         )}
                                         {contact.isReferred && (
@@ -707,11 +724,24 @@ function StudentHome() {
                                 {activeContact?.title ?? ''}
                             </p>
                         </div>
-                        <span className="inline-flex items-center gap-2 text-xs text-emerald-600">
-                            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                            Available
-                        </span>
+                        {activeContact?.chatEnded ? (
+                            <span className="inline-flex items-center gap-2 text-xs text-rose-600">
+                                <span className="h-2 w-2 rounded-full bg-rose-500" />
+                                Conversation ended
+                            </span>
+                        ) : (
+                            <span className="inline-flex items-center gap-2 text-xs text-emerald-600">
+                                <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                Available
+                            </span>
+                        )}
                     </div>
+
+                    {activeContact?.chatEnded && (
+                        <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                            This persona has ended the conversation for this chat.
+                        </div>
+                    )}
 
                     <div className="mt-5 max-h-[55vh] min-h-72 overflow-y-auto rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
                         {(messagesByPersona[activeContactId] ?? []).length === 0 ? (
@@ -731,6 +761,7 @@ function StudentHome() {
                                         {msg.content}
                                     </div>
                                 ))}
+                                <div ref={messagesEndRef} />
                             </div>
                         )}
                     </div>
@@ -738,7 +769,12 @@ function StudentHome() {
                     <div className="mt-6 flex items-center gap-3 border-t pt-4">
                         <textarea
                             ref={chatInputRef}
-                            placeholder="Type your message..."
+                            autoFocus
+                            placeholder={
+                                activeContact?.chatEnded
+                                    ? 'This conversation has ended.'
+                                    : 'Type your message...'
+                            }
                             disabled={!activePersonaAvailable || isSending}
                             className={`flex-1 resize-none rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-100 ${
                                 activePersonaAvailable

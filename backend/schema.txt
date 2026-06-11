@@ -17,13 +17,15 @@ CREATE TABLE personas (
   case_id TEXT NOT NULL,
   name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT '',
+  profile_photo_file_id TEXT,
   known_facts TEXT,
   unknown_facts TEXT,
   hidden_facts TEXT,
   personality_traits TEXT,
   scheduled_time INTEGER NOT NULL DEFAULT 0,
   availability_duration INTEGER,
-  FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE
+  FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE,
+  FOREIGN KEY (profile_photo_file_id) REFERENCES files(id) ON DELETE SET NULL
 );
 
 -- 3. REFERRAL RELATIONSHIP

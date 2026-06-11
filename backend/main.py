@@ -1,8 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1.router import api_router
-from app.core.settings import get_settings
+from backend.api.router import api_router
+from backend.settings import get_settings
 
 settings = get_settings()
 app = FastAPI(title="caseLab API")
