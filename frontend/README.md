@@ -1,16 +1,27 @@
-# React + Vite
+# caseLab frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite SPA for Wisconsin Case Lab.
 
-Currently, two official plugins are available:
+## Prerequisites
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Node 20+
+- pnpm (`npm i -g pnpm`)
 
-## React Compiler
+## Setup
 
-The React Compiler is currently not compatible with SWC. See [this issue](https://github.com/vitejs/vite-plugin-react/issues/428) for tracking the progress.
+```bash
+pnpm install
+cp .env.example .env   # set VITE_API_BASE
+```
 
-## Expanding the ESLint configuration
+## Scripts
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- `pnpm dev` — start the dev server (proxies `/api` to `http://127.0.0.1:8000`)
+- `pnpm build` — production build to `dist/`
+- `pnpm preview` — preview the production build
+- `pnpm lint` — Biome lint + checks
+- `pnpm format` — Biome auto-format
+
+## Environment
+
+`VITE_API_BASE` — base URL of the backend. No trailing slash. See `.env.example`.
