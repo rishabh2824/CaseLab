@@ -4,6 +4,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from functools import lru_cache
 
+# Fixed in code (not env-configurable) so there's one place to change models.
+LLM_MODEL = "anthropic/claude-sonnet-5"  # frontier model for the persona reply
+LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-4.5"  # cheap model for YES/NO judges + intros
+
 
 class Settings:
     def __init__(self) -> None:
@@ -28,8 +32,10 @@ class Settings:
             for url in raw_frontend_urls.split(",")
             if url.strip()
         ]
+        self.admin_token = os.getenv("ADMIN_TOKEN", "Admin")
         self.llm_key = os.getenv("LLM_KEY", "")
-        self.llm_model = os.getenv("LLM_MODEL", "anthropic/claude-opus-4.6")
+        self.llm_model = LLM_MODEL
+        self.llm_classifier_model = LLM_CLASSIFIER_MODEL
         self.llm_base_url = os.getenv(
             "LLM_BASE_URL",
             "https://openrouter.ai/api/v1/chat/completions",

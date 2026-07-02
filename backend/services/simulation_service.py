@@ -1,8 +1,26 @@
+"""Simulation engine.
+
+Holds the in-memory run store and all simulation logic: availability windows,
+prompt building, safety handling, referral unlocking, and file sharing. The
+router layer (`api/simulations.py`) only forwards requests to the operations at
+the bottom of this module.
+
+NOTE: ``RUNS`` is per-process in-memory state. Runs are lost on restart and are
+NOT shared across workers/instances, so the API must be run with a single
+worker on a single instance.
+"""
+
+import asyncio
+import logging
+import re
 import time
 import uuid
-import re
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+
+from fastapi import HTTPException
+
+from models.simulations import SendMessagePayload, StartSimulationPayload
+from services import simulation_repository as repo
+from services.db import get_db_client
 from services.llm import (
     chat_completion_structured,
     classify_condition,
@@ -12,14 +30,53 @@ from services.llm import (
 )
 from services.spaces import create_presigned_get_url
 from settings import get_settings
-from turso import get_db_client
 
-router = APIRouter(prefix="/simulations", tags=["simulations"])
+logger = logging.getLogger("caselab.simulations")
 
 RUNS: dict[str, dict] = {}
-RUN_TTL_SECONDS = 60 * 60 * 4
+RUN_TTL_SECONDS = 60 * 60 * 2  # a run is removed 2 hours after it starts
+CLEANUP_INTERVAL_SECONDS = 5 * 60  # how often the background sweeper runs
 NONSENSE_END_THRESHOLD = 3
 HARASSMENT_END_THRESHOLD = 2
+
+
+def purge_expired_runs() -> int:
+    """Remove every run older than RUN_TTL_SECONDS. Returns the count removed.
+
+    Called both by the background sweeper and lazily by _get_run, so an expired
+    run is gone whether or not anyone touches it again.
+    """
+    now = time.time()
+    expired = [
+        run_id
+        for run_id, run in RUNS.items()
+        if now - run["start_time"] > RUN_TTL_SECONDS
+    ]
+    for run_id in expired:
+        del RUNS[run_id]
+    if expired:
+        logger.info(
+            "Purged %d expired simulation run(s); %d still active",
+            len(expired),
+            len(RUNS),
+        )
+    return len(expired)
+
+
+async def cleanup_expired_runs_forever(interval: int = CLEANUP_INTERVAL_SECONDS) -> None:
+    """Background loop that periodically purges expired runs.
+
+    Started from the FastAPI lifespan in main.py and cancelled on shutdown.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            purge_expired_runs()
+        except Exception:
+            logger.exception("Error while purging expired simulation runs")
+
+
+# --- chat state ------------------------------------------------------------
 
 
 def _get_persona_chat_state(run: dict, persona_id: str) -> dict:
@@ -70,8 +127,7 @@ def _build_boundary_reply(persona_name: str, label: str, should_end: bool) -> st
     )
 
 
-class StartSimulationPayload(BaseModel):
-    access_code: str
+# --- persona / case reads (shaping around the repository) ------------------
 
 
 def _format_persona_row(row):
@@ -107,21 +163,8 @@ def _format_persona_row(row):
 
 
 async def _get_case_snapshot(client, access_code: str | None = None, case_id: str | None = None):
-    query = """
-        select id, case_name, initial_brief, simulation_duration, common_information, access_code
-        from cases
-    """
-    params = ()
-    if case_id:
-        query += " where id = ?"
-        params = (case_id,)
-    elif access_code:
-        query += " where upper(access_code) = upper(?)"
-        params = (access_code,)
-    else:
-        query += " limit 1"
-    row = await client.execute(query, params)
-    if not row.rows:
+    row = await repo.fetch_case_snapshot(client, access_code=access_code, case_id=case_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="No case found.")
     (
         case_id,
@@ -130,7 +173,7 @@ async def _get_case_snapshot(client, access_code: str | None = None, case_id: st
         simulation_duration,
         common_information,
         resolved_access_code,
-    ) = row.rows[0]
+    ) = row
     return {
         "id": case_id,
         "case_name": case_name,
@@ -142,52 +185,13 @@ async def _get_case_snapshot(client, access_code: str | None = None, case_id: st
 
 
 async def _get_root_personas(client, case_id):
-    rows = await client.execute(
-        """
-        select p.id,
-               p.name,
-               p.role,
-               photo.bucket,
-               photo.object_key,
-               photo.file_name,
-               photo.content_type,
-               p.scheduled_time,
-               p.availability_duration
-        from personas p
-        left join files photo on photo.id = p.profile_photo_file_id
-        where p.case_id = ?
-          and p.id not in (
-            select referred_persona_id
-            from persona_referrals
-            where case_id = ?
-          )
-        order by p.name
-        """,
-        (case_id, case_id),
-    )
-    return [_format_persona_row(row) for row in rows.rows]
+    rows = await repo.fetch_root_personas(client, case_id)
+    return [_format_persona_row(row) for row in rows]
 
 
 async def _get_persona_details(client, persona_id):
-    row = await client.execute(
-        """
-        select p.name,
-               p.role,
-               photo.bucket,
-               photo.object_key,
-               photo.file_name,
-               photo.content_type,
-               p.known_facts,
-               p.unknown_facts,
-               p.hidden_facts,
-               p.personality_traits
-        from personas p
-        left join files photo on photo.id = p.profile_photo_file_id
-        where p.id = ?
-        """,
-        (persona_id,),
-    )
-    if not row.rows:
+    row = await repo.fetch_persona_core(client, persona_id)
+    if row is None:
         raise HTTPException(status_code=404, detail="Persona not found.")
     (
         name,
@@ -200,17 +204,8 @@ async def _get_persona_details(client, persona_id):
         unknown,
         hidden,
         traits,
-    ) = row.rows[0]
-    files = await client.execute(
-        """
-        select f.id, f.bucket, f.object_key, f.file_name, f.content_type,
-               pf.share_conditions, pf.perceived_contents
-        from persona_files pf
-        left join files f on f.id = pf.file_id
-        where pf.persona_id = ?
-        """,
-        (persona_id,),
-    )
+    ) = row
+    files = await repo.fetch_persona_file_entries(client, persona_id)
     file_entries = [
         {
             "file_id": file_id,
@@ -229,7 +224,7 @@ async def _get_persona_details(client, persona_id):
             content_type,
             share_conditions,
             perceived_contents,
-        ) in files.rows
+        ) in files
     ]
     return {
         "name": name,
@@ -254,21 +249,9 @@ async def _get_persona_details(client, persona_id):
 
 
 async def _get_referrals_for_parent(client, case_id, parent_persona_id):
-    rows = await client.execute(
-        """
-        select pr.referred_persona_id, pr.trigger_type, pr.condition_trigger, pr.time_trigger,
-               p.name, p.role,
-               photo.bucket, photo.object_key, photo.file_name, photo.content_type,
-               p.scheduled_time, p.availability_duration
-        from persona_referrals pr
-        join personas p on p.id = pr.referred_persona_id
-        left join files photo on photo.id = p.profile_photo_file_id
-        where pr.case_id = ? and pr.parent_persona_id = ?
-        """,
-        (case_id, parent_persona_id),
-    )
+    rows = await repo.fetch_referrals_for_parent(client, case_id, parent_persona_id)
     referrals = []
-    for row in rows.rows:
+    for row in rows:
         (
             referred_persona_id,
             trigger_type,
@@ -311,6 +294,9 @@ async def _get_referrals_for_parent(client, case_id, parent_persona_id):
             }
         )
     return referrals
+
+
+# --- prompt building & classification helpers ------------------------------
 
 
 def _build_system_prompt(case_snapshot, persona_details, locked_referral_names=None):
@@ -380,8 +366,6 @@ def _sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict
     return sanitized
 
 
-
-
 def _build_structured_instruction() -> str:
     return (
         "You must reply in strict JSON with one key:\n"
@@ -389,6 +373,9 @@ def _build_structured_instruction() -> str:
         "Return ONLY JSON with no code fences and no extra text.\n"
         "Keep reply to 1-3 sentences."
     )
+
+
+# --- run lifecycle ---------------------------------------------------------
 
 
 def _get_run(run_id: str) -> dict:
@@ -447,7 +434,9 @@ def _format_run_histories(run: dict, persona_ids: set[str] | None = None) -> dic
     return histories
 
 
-@router.post("/start")
+# --- operations (called by the router) -------------------------------------
+
+
 async def start_simulation(payload: StartSimulationPayload):
     client = get_db_client()
     access_code = payload.access_code.strip()
@@ -504,7 +493,6 @@ async def start_simulation(payload: StartSimulationPayload):
     }
 
 
-@router.get("/{run_id}")
 async def get_simulation_state(run_id: str):
     run = _get_run(run_id)
     client = get_db_client()
@@ -529,26 +517,8 @@ async def get_simulation_state(run_id: str):
         )
     referred = []
     if unlocked_ids:
-        rows = await client.execute(
-            """
-            select p.id,
-                   p.name,
-                   p.role,
-                   photo.bucket,
-                   photo.object_key,
-                   photo.file_name,
-                   photo.content_type,
-                   p.scheduled_time,
-                   p.availability_duration
-            from personas p
-            left join files photo on photo.id = p.profile_photo_file_id
-            where p.id in ({})
-            """.format(
-                ",".join(["?"] * len(unlocked_ids))
-            ),
-            tuple(unlocked_ids),
-        )
-        for row in rows.rows:
+        rows = await repo.fetch_personas_by_ids(client, unlocked_ids)
+        for row in rows:
             persona = _format_persona_row(row)
             available_at = run["unlocked_at"].get(persona["id"], elapsed_minutes)
             availability = _persona_availability(
@@ -581,7 +551,6 @@ async def get_simulation_state(run_id: str):
     }
 
 
-@router.get("/{run_id}/export")
 async def export_simulation_history(run_id: str):
     run = _get_run(run_id)
     client = get_db_client()
@@ -591,28 +560,10 @@ async def export_simulation_history(run_id: str):
     personas = [{**persona, "is_referred": False} for persona in root_personas]
 
     if unlocked_ids:
-        rows = await client.execute(
-            """
-            select p.id,
-                   p.name,
-                   p.role,
-                   photo.bucket,
-                   photo.object_key,
-                   photo.file_name,
-                   photo.content_type,
-                   p.scheduled_time,
-                   p.availability_duration
-            from personas p
-            left join files photo on photo.id = p.profile_photo_file_id
-            where p.id in ({})
-            """.format(
-                ",".join(["?"] * len(unlocked_ids))
-            ),
-            tuple(unlocked_ids),
-        )
+        rows = await repo.fetch_personas_by_ids(client, unlocked_ids)
         referred_personas = [
             {**_format_persona_row(row), "is_referred": True}
-            for row in rows.rows
+            for row in rows
         ]
         referred_personas.sort(
             key=lambda persona: run["unlocked_at"].get(persona["id"], 0)
@@ -643,11 +594,10 @@ async def export_simulation_history(run_id: str):
     }
 
 
-@router.post("/{run_id}/message")
-async def send_message(run_id: str, payload: dict):
+async def handle_message(run_id: str, payload: SendMessagePayload):
     run = _get_run(run_id)
-    persona_id = payload.get("persona_id")
-    user_message = payload.get("message", "").strip()
+    persona_id = payload.persona_id
+    user_message = payload.message.strip()
     settings = get_settings()
     if not persona_id or not user_message:
         raise HTTPException(status_code=400, detail="persona_id and message are required.")
@@ -664,26 +614,10 @@ async def send_message(run_id: str, payload: dict):
             elapsed_minutes,
         )
     elif persona_id in run["unlocked_referred_ids"]:
-        persona_row = await client.execute(
-            """
-            select p.id,
-                   p.name,
-                   p.role,
-                   photo.bucket,
-                   photo.object_key,
-                   photo.file_name,
-                   photo.content_type,
-                   p.scheduled_time,
-                   p.availability_duration
-            from personas p
-            left join files photo on photo.id = p.profile_photo_file_id
-            where p.id = ?
-            """,
-            (persona_id,),
-        )
-        if not persona_row.rows:
+        persona_rows = await repo.fetch_persona_row(client, persona_id)
+        if not persona_rows:
             raise HTTPException(status_code=404, detail="Persona not found.")
-        persona = _format_persona_row(persona_row.rows[0])
+        persona = _format_persona_row(persona_rows[0])
         available_at = run["unlocked_at"].get(persona_id, elapsed_minutes)
         availability = _persona_availability(persona, available_at, elapsed_minutes)
     else:

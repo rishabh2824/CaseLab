@@ -3,7 +3,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 
-from schemas.uploads import PresignUploadRequest, PresignUploadResponse
+from models.uploads import PresignUploadRequest, PresignUploadResponse
 from services.spaces import create_presigned_put_url
 from settings import get_settings
 

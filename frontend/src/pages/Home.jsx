@@ -10,19 +10,27 @@ function Home() {
 
     const handleSubmit = async (event) => {
         event.preventDefault()
-        const normalized = accessCode.trim().toUpperCase()
-        if (normalized === 'ADMIN') {
-            setError('')
-            navigate('/admin')
-            return
-        }
-        if (!normalized) {
+        const code = accessCode.trim()
+        if (!code) {
             setError('Invalid access code.')
             return
         }
         setIsSubmitting(true)
         try {
-            const response = await fetch(`${apiBase}/api/v1/simulations/start`, {
+            // Ask the backend whether this code is the admin code (verified
+            // server-side). If so, remember it for admin API calls this session.
+            const adminResponse = await fetch(`${apiBase}/api/admin/verify`, {
+                headers: { 'X-Admin-Token': code },
+            })
+            if (adminResponse.ok) {
+                sessionStorage.setItem('caseLabAdminToken', code)
+                setError('')
+                navigate('/admin')
+                return
+            }
+            // Otherwise treat it as a student case access code.
+            const normalized = code.toUpperCase()
+            const response = await fetch(`${apiBase}/api/simulations/start`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ access_code: normalized }),
@@ -38,6 +46,7 @@ function Home() {
             sessionStorage.setItem('caseLabRunId', data.run_id)
             sessionStorage.setItem('caseLabBootstrap', JSON.stringify(data))
             navigate('/student')
+            // eslint-disable-next-line no-unused-vars
         } catch (fetchError) {
             setError('Failed to start simulation.')
         } finally {

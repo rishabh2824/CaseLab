@@ -7,11 +7,14 @@ function AdminTemplatePicker({ mode = 'template' }) {
     const [loading, setLoading] = useState(true)
     const navigate = useNavigate()
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
+    const adminToken = sessionStorage.getItem('caseLabAdminToken') || ''
 
     useEffect(() => {
         const loadCases = async () => {
             try {
-                const response = await fetch(`${apiBase}/api/v1/cases`)
+                const response = await fetch(`${apiBase}/api/cases`, {
+                    headers: { 'X-Admin-Token': adminToken },
+                })
                 if (!response.ok) {
                     throw new Error('Failed to load cases.')
                 }
@@ -24,7 +27,7 @@ function AdminTemplatePicker({ mode = 'template' }) {
             }
         }
         loadCases()
-    }, [apiBase])
+    }, [apiBase, adminToken])
 
     const isEditMode = mode === 'edit'
     return (

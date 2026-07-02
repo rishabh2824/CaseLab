@@ -28,6 +28,9 @@ function Case() {
     const [personas, setPersonas] = useState([])
     const [searchParams] = useSearchParams()
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
+    // NOTE: all backend routes are mounted under `${apiBase}/api/...`
+    // Admin endpoints require the token the admin entered on the home screen.
+    const adminToken = sessionStorage.getItem('caseLabAdminToken') || ''
     const templateId = searchParams.get('template')
     const editCaseId = searchParams.get('caseId')
     const isEditMode = Boolean(editCaseId)
@@ -117,7 +120,9 @@ function Case() {
             setSubmitError('')
             setSubmitSuccess('')
             try {
-                const response = await fetch(`${apiBase}/api/v1/cases/${sourceCaseId}`)
+                const response = await fetch(`${apiBase}/api/cases/${sourceCaseId}`, {
+                    headers: { 'X-Admin-Token': adminToken },
+                })
                 if (!response.ok) {
                     throw new Error(
                         isEditMode
@@ -152,7 +157,7 @@ function Case() {
             }
         }
         loadTemplate()
-    }, [apiBase, editCaseId, isEditMode, templateId])
+    }, [apiBase, adminToken, editCaseId, isEditMode, templateId])
     const handleSubmit = async (event) => {
         event.preventDefault()
         if (!hasUnscheduledRootPersona) {
@@ -172,9 +177,9 @@ function Case() {
         }
 
         const uploadFile = async (file, prefix) => {
-            const response = await fetch(`${apiBase}/api/v1/uploads/presign`, {
+            const response = await fetch(`${apiBase}/api/uploads/presign`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
                 body: JSON.stringify({
                     file_name: file.name,
                     content_type: file.type || null,
@@ -272,11 +277,11 @@ function Case() {
             }
             const saveResponse = await fetch(
                 isEditMode
-                    ? `${apiBase}/api/v1/cases/${editCaseId}`
-                    : `${apiBase}/api/v1/cases`,
+                    ? `${apiBase}/api/cases/${editCaseId}`
+                    : `${apiBase}/api/cases`,
                 {
                 method: isEditMode ? 'PUT' : 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
                 body: JSON.stringify(payload),
             })
             if (!saveResponse.ok) {

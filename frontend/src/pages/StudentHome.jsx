@@ -289,11 +289,11 @@ function StudentHome() {
                 const storedAccessCode = sessionStorage.getItem('caseLabAccessCode')
                 let response
                 if (storedRun) {
-                    response = await fetch(`${apiBase}/api/v1/simulations/${storedRun}`, {
+                    response = await fetch(`${apiBase}/api/simulations/${storedRun}`, {
                         method: 'GET',
                     })
                 } else if (storedAccessCode) {
-                    response = await fetch(`${apiBase}/api/v1/simulations/start`, {
+                    response = await fetch(`${apiBase}/api/simulations/start`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ access_code: storedAccessCode }),
@@ -308,7 +308,7 @@ function StudentHome() {
                         navigate('/')
                         return
                     }
-                    response = await fetch(`${apiBase}/api/v1/simulations/start`, {
+                    response = await fetch(`${apiBase}/api/simulations/start`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ access_code: storedAccessCode }),
@@ -388,7 +388,7 @@ function StudentHome() {
         if (!runId || isExporting) return
         setIsExporting(true)
         try {
-            const response = await fetch(`${apiBase}/api/v1/simulations/${runId}/export`)
+            const response = await fetch(`${apiBase}/api/simulations/${runId}/export`)
             if (!response.ok) {
                 throw new Error('Failed to export chat history.')
             }
@@ -442,7 +442,7 @@ function StudentHome() {
         sendingPersonaIdRef.current = personaId
         try {
             const response = await fetch(
-                `${apiBase}/api/v1/simulations/${runId}/message`,
+                `${apiBase}/api/simulations/${runId}/message`,
                 {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -549,7 +549,7 @@ function StudentHome() {
             if (!storedRun) return
             try {
                 const response = await fetch(
-                    `${apiBase}/api/v1/simulations/${storedRun}`,
+                    `${apiBase}/api/simulations/${storedRun}`,
                 )
                 if (!response.ok) return
                 const data = await response.json()
