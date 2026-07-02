@@ -1,56 +1,53 @@
+import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { apiFetch } from '../api/client'
 
 function Home() {
     const [accessCode, setAccessCode] = useState('')
     const [error, setError] = useState('')
-    const [isSubmitting, setIsSubmitting] = useState(false)
     const navigate = useNavigate()
-    const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
 
-    const handleSubmit = async (event) => {
+    const { mutate: submit, isPending: isSubmitting } = useMutation({
+        mutationFn: async (code) => {
+            // Admin path: verify the token server-side.
+            try {
+                await apiFetch('/api/admin/verify', { adminToken: code })
+                return { kind: 'admin', code }
+            } catch {
+                // Not an admin token — treat as a student access code.
+            }
+            const normalized = code.toUpperCase()
+            const data = await apiFetch('/api/simulations/start', {
+                method: 'POST',
+                body: { access_code: normalized },
+            })
+            return { kind: 'student', normalized, data }
+        },
+        onSuccess: (result) => {
+            setError('')
+            if (result.kind === 'admin') {
+                sessionStorage.setItem('caseLabAdminToken', result.code)
+                navigate('/admin')
+                return
+            }
+            sessionStorage.setItem('caseLabStart', String(Date.now()))
+            sessionStorage.setItem('caseLabAccessCode', result.normalized)
+            sessionStorage.setItem('caseLabRunId', result.data.run_id)
+            sessionStorage.setItem('caseLabBootstrap', JSON.stringify(result.data))
+            navigate('/student')
+        },
+        onError: () => setError('Invalid access code.'),
+    })
+
+    const handleSubmit = (event) => {
         event.preventDefault()
         const code = accessCode.trim()
         if (!code) {
             setError('Invalid access code.')
             return
         }
-        setIsSubmitting(true)
-        try {
-            // Ask the backend whether this code is the admin code (verified
-            // server-side). If so, remember it for admin API calls this session.
-            const adminResponse = await fetch(`${apiBase}/api/admin/verify`, {
-                headers: { 'X-Admin-Token': code },
-            })
-            if (adminResponse.ok) {
-                sessionStorage.setItem('caseLabAdminToken', code)
-                setError('')
-                navigate('/admin')
-                return
-            }
-            // Otherwise treat it as a student case access code.
-            const normalized = code.toUpperCase()
-            const response = await fetch(`${apiBase}/api/simulations/start`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ access_code: normalized }),
-            })
-            if (!response.ok) {
-                setError('Invalid access code.')
-                return
-            }
-            const data = await response.json()
-            setError('')
-            sessionStorage.setItem('caseLabStart', String(Date.now()))
-            sessionStorage.setItem('caseLabAccessCode', normalized)
-            sessionStorage.setItem('caseLabRunId', data.run_id)
-            sessionStorage.setItem('caseLabBootstrap', JSON.stringify(data))
-            navigate('/student')
-        } catch {
-            setError('Failed to start simulation.')
-        } finally {
-            setIsSubmitting(false)
-        }
+        submit(code)
     }
 
     return (
