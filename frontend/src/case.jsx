@@ -16,6 +16,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { apiFetch } from './api/client'
+import { useSessionStore } from './stores/sessionStore'
 
 function Case() {
     const [submitError, setSubmitError] = useState('')
@@ -29,7 +30,7 @@ function Case() {
     const [personas, setPersonas] = useState([])
     const [searchParams] = useSearchParams()
     // Admin endpoints require the token the admin entered on the home screen.
-    const adminToken = sessionStorage.getItem('caseLabAdminToken') || ''
+    const adminToken = useSessionStore((s) => s.adminToken)
     const templateId = searchParams.get('template')
     const editCaseId = searchParams.get('caseId')
     const isEditMode = Boolean(editCaseId)

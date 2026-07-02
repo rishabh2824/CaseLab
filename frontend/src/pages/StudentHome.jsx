@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api/client'
+import { useSessionStore } from '../stores/sessionStore'
 
 const PDF_PAGE_WIDTH = 612
 const PDF_MARGIN = 54
@@ -216,6 +217,12 @@ function StudentHome() {
     const messagesEndRef = useRef(null)
     const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const navigate = useNavigate()
+    const storeRunId = useSessionStore((s) => s.runId)
+    const accessCode = useSessionStore((s) => s.accessCode)
+    const startTime = useSessionStore((s) => s.startTime)
+    const consumeBootstrap = useSessionStore((s) => s.consumeBootstrap)
+    const setStoreRunId = useSessionStore((s) => s.setRunId)
+    const clearRun = useSessionStore((s) => s.clearRun)
     const focusChatInput = () => {
         window.requestAnimationFrame(() => {
             chatInputRef.current?.focus()
@@ -259,26 +266,24 @@ function StudentHome() {
     useEffect(() => {
         const loadSimulation = async () => {
             try {
-                const bootstrap = sessionStorage.getItem('caseLabBootstrap')
-                if (bootstrap) {
-                    const data = JSON.parse(bootstrap)
-                    sessionStorage.removeItem('caseLabBootstrap')
-                    setRunId(data.run_id)
-                    sessionStorage.setItem('caseLabRunId', data.run_id)
-                    setCaseData(data.case)
-                    const normalizedContacts = (data.contacts ?? []).map(mapContact)
+                const bootstrapData = consumeBootstrap()
+                if (bootstrapData) {
+                    setRunId(bootstrapData.run_id)
+                    setStoreRunId(bootstrapData.run_id)
+                    setCaseData(bootstrapData.case)
+                    const normalizedContacts = (bootstrapData.contacts ?? []).map(mapContact)
                     setContacts(normalizedContacts)
                     if (normalizedContacts.length > 0) {
-                        const active = data.active_persona_id || normalizedContacts[0].id
+                        const active = bootstrapData.active_persona_id || normalizedContacts[0].id
                         setActiveContactId(active)
                         setActivePersonaId(active)
                     }
-                    setSharedFiles(data.shared_files ?? [])
-                    setMessagesByPersona(normalizeHistories(data.histories))
+                    setSharedFiles(bootstrapData.shared_files ?? [])
+                    setMessagesByPersona(normalizeHistories(bootstrapData.histories))
                     return
                 }
-                const storedRun = sessionStorage.getItem('caseLabRunId')
-                const storedAccessCode = sessionStorage.getItem('caseLabAccessCode')
+                const storedRun = storeRunId
+                const storedAccessCode = accessCode
                 let response
                 if (storedRun) {
                     response = await fetch(`${apiBase}/api/simulations/${storedRun}`, {
@@ -295,7 +300,7 @@ function StudentHome() {
                     return
                 }
                 if (storedRun && response.status === 404) {
-                    sessionStorage.removeItem('caseLabRunId')
+                    setStoreRunId('')
                     if (!storedAccessCode) {
                         navigate('/')
                         return
@@ -312,7 +317,7 @@ function StudentHome() {
                 const data = await response.json()
                 if (data.run_id) {
                     setRunId(data.run_id)
-                    sessionStorage.setItem('caseLabRunId', data.run_id)
+                    setStoreRunId(data.run_id)
                 } else if (storedRun) {
                     setRunId(storedRun)
                 }
@@ -331,20 +336,15 @@ function StudentHome() {
             }
         }
         loadSimulation()
-    }, [apiBase, navigate])
+    }, [apiBase, navigate, consumeBootstrap, storeRunId, accessCode, setStoreRunId])
     useEffect(() => {
-        const storedStart = sessionStorage.getItem('caseLabStart')
-        if (!storedStart) {
-            sessionStorage.setItem('caseLabStart', String(Date.now()))
-        }
         const intervalId = window.setInterval(() => {
-            const startValue = sessionStorage.getItem('caseLabStart')
-            const startTime = startValue ? Number(startValue) : Date.now()
-            const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000))
+            const start = startTime ?? Date.now()
+            const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000))
             setElapsedSeconds(elapsed)
         }, 1000)
         return () => window.clearInterval(intervalId)
-    }, [])
+    }, [startTime])
 
     const totalDurationSeconds = useMemo(() => {
         if (typeof caseData?.simulation_duration === 'number') {
@@ -355,13 +355,10 @@ function StudentHome() {
 
     useEffect(() => {
         if (typeof totalDurationSeconds === 'number' && elapsedSeconds >= totalDurationSeconds) {
-            sessionStorage.removeItem('caseLabStart')
-            sessionStorage.removeItem('caseLabRunId')
-            sessionStorage.removeItem('caseLabAccessCode')
-            sessionStorage.removeItem('caseLabBootstrap')
+            clearRun()
             navigate('/')
         }
-    }, [elapsedSeconds, totalDurationSeconds, navigate])
+    }, [elapsedSeconds, totalDurationSeconds, navigate, clearRun])
 
     const formatTime = (totalSeconds) => {
         const minutes = Math.floor(totalSeconds / 60)
@@ -370,10 +367,7 @@ function StudentHome() {
     }
 
     const handleEndSimulation = () => {
-        sessionStorage.removeItem('caseLabStart')
-        sessionStorage.removeItem('caseLabRunId')
-        sessionStorage.removeItem('caseLabAccessCode')
-        sessionStorage.removeItem('caseLabBootstrap')
+        clearRun()
         navigate('/')
     }
     const exportMutation = useMutation({
@@ -526,9 +520,8 @@ function StudentHome() {
         refetchInterval: 15000,
         refetchOnWindowFocus: false,
         queryFn: async () => {
-            const storedRun = sessionStorage.getItem('caseLabRunId')
-            if (!storedRun) return null
-            const data = await apiFetch(`/api/simulations/${storedRun}`)
+            if (!runId) return null
+            const data = await apiFetch(`/api/simulations/${runId}`)
             const normalizedContacts = (data.contacts ?? []).map((persona) => ({
                 ...mapContact(persona),
                 status: persona.available ? 'Available' : 'Unavailable',
