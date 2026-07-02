@@ -8,8 +8,8 @@ import {
     Select,
     Stack,
     Text,
-    TextInput,
     Textarea,
+    TextInput,
     Title,
 } from '@mantine/core'
 import { useEffect, useState } from 'react'
@@ -135,15 +135,11 @@ function Case() {
                 setCaseName(templateCase.caseName ?? '')
                 setInitialBrief(templateCase.initialBrief ?? '')
                 setCommonInformation(templateCase.commonInformation ?? '')
-                setSimulationDurationMinutes(
-                    templateCase.simulationDurationMinutes ?? null,
-                )
+                setSimulationDurationMinutes(templateCase.simulationDurationMinutes ?? null)
                 setAccessCode(templateCase.accessCode ?? '')
                 setTotalPersonas(templateCase.totalNonReferredPersonas ?? null)
                 setPersonas(
-                    (templateCase.personas ?? []).map((persona) =>
-                        normalizePersona(persona),
-                    ),
+                    (templateCase.personas ?? []).map((persona) => normalizePersona(persona)),
                 )
             } catch (error) {
                 setSubmitError(
@@ -161,9 +157,7 @@ function Case() {
     const handleSubmit = async (event) => {
         event.preventDefault()
         if (!hasUnscheduledRootPersona) {
-            setSubmitError(
-                'At least one non-referred persona must not be scheduled.',
-            )
+            setSubmitError('At least one non-referred persona must not be scheduled.')
             setSubmitSuccess('')
             return
         }
@@ -231,10 +225,7 @@ function Case() {
 
         const buildPersonaPayload = async (persona, prefix) => {
             const normalized = normalizePersona(persona)
-            const profilePhoto = await normalizeProfilePhoto(
-                normalized.profilePhoto,
-                prefix,
-            )
+            const profilePhoto = await normalizeProfilePhoto(normalized.profilePhoto, prefix)
             const files = await Promise.all(
                 (normalized.files ?? []).map((entry) => normalizeFileEntry(entry, prefix)),
             )
@@ -246,10 +237,7 @@ function Case() {
                         triggerType: normalizedReferral.triggerType,
                         conditions: normalizedReferral.conditions,
                         revealDelayMinutes: normalizedReferral.revealDelayMinutes,
-                        persona: await buildPersonaPayload(
-                            normalizedReferral.persona,
-                            prefix,
-                        ),
+                        persona: await buildPersonaPayload(normalizedReferral.persona, prefix),
                     }
                 }),
             )
@@ -276,14 +264,13 @@ function Case() {
                 personas: personasPayload,
             }
             const saveResponse = await fetch(
-                isEditMode
-                    ? `${apiBase}/api/cases/${editCaseId}`
-                    : `${apiBase}/api/cases`,
+                isEditMode ? `${apiBase}/api/cases/${editCaseId}` : `${apiBase}/api/cases`,
                 {
-                method: isEditMode ? 'PUT' : 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
-                body: JSON.stringify(payload),
-            })
+                    method: isEditMode ? 'PUT' : 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
+                    body: JSON.stringify(payload),
+                },
+            )
             if (!saveResponse.ok) {
                 throw new Error(
                     isEditMode
@@ -293,11 +280,7 @@ function Case() {
             }
             const saved = await saveResponse.json()
             console.log('Case saved:', saved)
-            setSubmitSuccess(
-                isEditMode
-                    ? 'Case updated successfully.'
-                    : 'Case saved successfully.',
-            )
+            setSubmitSuccess(isEditMode ? 'Case updated successfully.' : 'Case saved successfully.')
         } catch (error) {
             setSubmitError(error.message || 'Upload failed.')
             setSubmitSuccess('')
@@ -454,7 +437,11 @@ function Case() {
                                         <FileInput
                                             label="Upload file"
                                             placeholder="Select a file"
-                                            value={fileEntry.file instanceof File ? fileEntry.file : null}
+                                            value={
+                                                fileEntry.file instanceof File
+                                                    ? fileEntry.file
+                                                    : null
+                                            }
                                             onChange={(value) => {
                                                 updatePersona((prev) => {
                                                     const nextFiles = [...(prev.files ?? [])]
@@ -463,7 +450,10 @@ function Case() {
                                                         shareConditions: '',
                                                         perceivedContents: '',
                                                     }
-                                                    nextFiles[fileIndex] = { ...existingFile, file: value }
+                                                    nextFiles[fileIndex] = {
+                                                        ...existingFile,
+                                                        file: value,
+                                                    }
                                                     return { ...prev, files: nextFiles }
                                                 })
                                             }}
@@ -565,10 +555,7 @@ function Case() {
                                 value={`persona-referral-${referralIndex}`}
                             >
                                 <Accordion.Control>
-                                    {getPersonaLabel(
-                                        { name: referral.name },
-                                        'Referred Persona',
-                                    )}
+                                    {getPersonaLabel({ name: referral.name }, 'Referred Persona')}
                                 </Accordion.Control>
                                 <Accordion.Panel>
                                     <Stack gap="xs">
@@ -690,203 +677,226 @@ function Case() {
             <Paper radius="md" p="lg" withBorder>
                 <form onSubmit={handleSubmit}>
                     <Stack gap="lg">
-                    <Title order={1} ta="center">
-                        {isEditMode ? 'Edit Case Study' : 'New Case Study'}
-                    </Title>
-                    {isLoadingTemplate && (
-                        <Text c="dimmed" size="sm" ta="center">
-                            {isEditMode ? 'Loading case...' : 'Loading case template...'}
-                        </Text>
-                    )}
+                        <Title order={1} ta="center">
+                            {isEditMode ? 'Edit Case Study' : 'New Case Study'}
+                        </Title>
+                        {isLoadingTemplate && (
+                            <Text c="dimmed" size="sm" ta="center">
+                                {isEditMode ? 'Loading case...' : 'Loading case template...'}
+                            </Text>
+                        )}
 
-                    <Accordion defaultValue="case-info" variant="separated">
-                        {/*Section 1*/}
-                        <Accordion.Item value="case-info">
-                            <Accordion.Control fw={700} fz="lg">Case Information</Accordion.Control>
-                            <Accordion.Panel>
-                                <Stack gap="md">
-                                    <TextInput
-                                        label="Case name"
-                                        placeholder="Enter case name"
-                                        required
-                                        value={caseName}
-                                        onChange={(event) => {
-                                            setCaseName(event.currentTarget.value)
-                                        }}
-                                    />
-                                    <Textarea
-                                        label="Initial brief"
-                                        placeholder="Summarize the initial brief"
-                                        minRows={3}
-                                        autosize
-                                        required
-                                        value={initialBrief}
-                                        onChange={(event) => {
-                                            setInitialBrief(event.currentTarget.value)
-                                        }}
-                                    />
-                                    <Textarea
-                                        label="Enter common information for all personas"
-                                        placeholder="Describe the common information"
-                                        minRows={3}
-                                        autosize
-                                        value={commonInformation}
-                                        onChange={(event) => {
-                                            setCommonInformation(event.currentTarget.value)
-                                        }}
-                                    />
-                                    <NumberInput
-                                        label="Simulation duration (Minutes)"
-                                        placeholder="Leave empty for unlimited"
-                                        min={1}
-                                        allowDecimal={false}
-                                        hideControls
-                                        value={simulationDurationMinutes}
-                                        onChange={setSimulationDurationMinutes}
-                                    />
-                                    <TextInput
-                                        label="Access code"
-                                        placeholder="Enter access code"
-                                        required
-                                        value={accessCode}
-                                        onChange={(event) => {
-                                            setAccessCode(event.currentTarget.value)
-                                        }}
-                                    />
-                                    <NumberInput
-                                        label="Enter the Number of AI personas that are not referred"
-                                        placeholder="e.g., 5"
-                                        min={1}
-                                        allowDecimal={false}
-                                        required
-                                        hideControls
-                                        value={totalPersonas}
-                                        error={totalPersonasError}
-                                        onChange={(value) => {
-                                            setTotalPersonas(value)
-                                            if (typeof value === 'number' && value >= 1) {
-                                                setPersonas((prev) => {
-                                                    const next = [...prev]
-                                                    if (next.length > value) {
-                                                        return next.slice(0, value)
-                                                    }
-                                                    while (next.length < value) {
-                                                        next.push(createEmptyPersona())
-                                                    }
-                                                    return next
-                                                })
-                                            } else {
-                                                setPersonas([])
-                                            }
-                                        }}
-                                    />
-                                </Stack>
-                            </Accordion.Panel>
-                        </Accordion.Item>
-                        <Accordion.Item value="ai-personas">
-                            <Accordion.Control fw={700} fz="lg">
-                                AI Personas
-                            </Accordion.Control>
-                            <Accordion.Panel>
-                                {showPersonas && (
-                                    <Accordion variant="separated">
-                                        {Array.from({ length: totalPersonas }, (_, index) => {
-                                            const personaNumber = index + 1
-                                            const persona = normalizePersona(personas[index])
-                                            const updatePersona = (updater) =>
-                                                updatePersonaAt(index, updater)
-                                            const personaLabel = getPersonaLabel(
-                                                persona,
-                                                `Persona ${personaNumber}`,
-                                            )
-                                            return (
-                                                <Accordion.Item
-                                                    key={`persona-${personaNumber}`}
-                                                    value={`persona-${personaNumber}`}
-                                                >
-                                                    <Accordion.Control>
-                                                        {personaLabel}
-                                                    </Accordion.Control>
-                                                    <Accordion.Panel>
-                                                        {renderPersonaFields(persona, updatePersona)}
-                                                    </Accordion.Panel>
-                                                </Accordion.Item>
-                                            )
-                                        })}
-                                        {personas.flatMap((persona, index) => {
-                                            const basePersona = normalizePersona(persona)
-                                            const referredItems = []
-                                            const collectReferred = (currentPersona, path, parentLabel) => {
-                                                const normalized = normalizePersona(currentPersona)
-                                                normalized.referrals.forEach((referral, referralIndex) => {
-                                                    const normalizedReferral = normalizeReferral(referral)
-                                                    const childPath = [...path, referralIndex]
-                                                    const referralLabel = getPersonaLabel(
-                                                        { name: normalizedReferral.name },
-                                                        'Referred Persona',
-                                                    )
-                                                    referredItems.push({
-                                                        path: childPath,
-                                                        persona: normalizePersona(normalizedReferral.persona),
-                                                        label: referralLabel,
-                                                        parentLabel,
+                        <Accordion defaultValue="case-info" variant="separated">
+                            {/*Section 1*/}
+                            <Accordion.Item value="case-info">
+                                <Accordion.Control fw={700} fz="lg">
+                                    Case Information
+                                </Accordion.Control>
+                                <Accordion.Panel>
+                                    <Stack gap="md">
+                                        <TextInput
+                                            label="Case name"
+                                            placeholder="Enter case name"
+                                            required
+                                            value={caseName}
+                                            onChange={(event) => {
+                                                setCaseName(event.currentTarget.value)
+                                            }}
+                                        />
+                                        <Textarea
+                                            label="Initial brief"
+                                            placeholder="Summarize the initial brief"
+                                            minRows={3}
+                                            autosize
+                                            required
+                                            value={initialBrief}
+                                            onChange={(event) => {
+                                                setInitialBrief(event.currentTarget.value)
+                                            }}
+                                        />
+                                        <Textarea
+                                            label="Enter common information for all personas"
+                                            placeholder="Describe the common information"
+                                            minRows={3}
+                                            autosize
+                                            value={commonInformation}
+                                            onChange={(event) => {
+                                                setCommonInformation(event.currentTarget.value)
+                                            }}
+                                        />
+                                        <NumberInput
+                                            label="Simulation duration (Minutes)"
+                                            placeholder="Leave empty for unlimited"
+                                            min={1}
+                                            allowDecimal={false}
+                                            hideControls
+                                            value={simulationDurationMinutes}
+                                            onChange={setSimulationDurationMinutes}
+                                        />
+                                        <TextInput
+                                            label="Access code"
+                                            placeholder="Enter access code"
+                                            required
+                                            value={accessCode}
+                                            onChange={(event) => {
+                                                setAccessCode(event.currentTarget.value)
+                                            }}
+                                        />
+                                        <NumberInput
+                                            label="Enter the Number of AI personas that are not referred"
+                                            placeholder="e.g., 5"
+                                            min={1}
+                                            allowDecimal={false}
+                                            required
+                                            hideControls
+                                            value={totalPersonas}
+                                            error={totalPersonasError}
+                                            onChange={(value) => {
+                                                setTotalPersonas(value)
+                                                if (typeof value === 'number' && value >= 1) {
+                                                    setPersonas((prev) => {
+                                                        const next = [...prev]
+                                                        if (next.length > value) {
+                                                            return next.slice(0, value)
+                                                        }
+                                                        while (next.length < value) {
+                                                            next.push(createEmptyPersona())
+                                                        }
+                                                        return next
                                                     })
-                                                    const childLabel = getPersonaLabel(
-                                                        normalizedReferral.persona,
-                                                        'Referred Persona',
-                                                    )
-                                                    collectReferred(
-                                                        normalizePersona(normalizedReferral.persona),
-                                                        childPath,
-                                                        childLabel,
-                                                    )
-                                                })
-                                            }
-                                            const baseLabel = getPersonaLabel(
-                                                basePersona,
-                                                `Persona ${index + 1}`,
-                                            )
-                                            collectReferred(basePersona, [index], baseLabel)
-                                            return referredItems.map((item) => {
+                                                } else {
+                                                    setPersonas([])
+                                                }
+                                            }}
+                                        />
+                                    </Stack>
+                                </Accordion.Panel>
+                            </Accordion.Item>
+                            <Accordion.Item value="ai-personas">
+                                <Accordion.Control fw={700} fz="lg">
+                                    AI Personas
+                                </Accordion.Control>
+                                <Accordion.Panel>
+                                    {showPersonas && (
+                                        <Accordion variant="separated">
+                                            {Array.from({ length: totalPersonas }, (_, index) => {
+                                                const personaNumber = index + 1
+                                                const persona = normalizePersona(personas[index])
                                                 const updatePersona = (updater) =>
-                                                    updateReferredPersonaByPath(item.path, updater)
-                                                const pathKey = item.path.join('-')
+                                                    updatePersonaAt(index, updater)
+                                                const personaLabel = getPersonaLabel(
+                                                    persona,
+                                                    `Persona ${personaNumber}`,
+                                                )
                                                 return (
                                                     <Accordion.Item
-                                                        key={`referred-${pathKey}`}
-                                                        value={`referred-${pathKey}`}
+                                                        key={`persona-${personaNumber}`}
+                                                        value={`persona-${personaNumber}`}
                                                     >
                                                         <Accordion.Control>
-                                                            {`${item.label} <- ${item.parentLabel}`}
+                                                            {personaLabel}
                                                         </Accordion.Control>
                                                         <Accordion.Panel>
                                                             {renderPersonaFields(
-                                                                normalizePersona(item.persona),
+                                                                persona,
                                                                 updatePersona,
                                                             )}
                                                         </Accordion.Panel>
                                                     </Accordion.Item>
                                                 )
-                                            })
-                                        })}
-                                    </Accordion>
-                                )}
-                            </Accordion.Panel>
-                        </Accordion.Item>
-                    </Accordion>
-                    {submitError && (
-                        <Text c="red" size="sm">
-                            {submitError}
-                        </Text>
-                    )}
-                    {submitSuccess && (
-                        <Text c="green" size="sm">
-                            {submitSuccess}
-                        </Text>
-                    )}
-                    <Button type="submit" disabled={isLoadingTemplate}>
-                        Submit
-                    </Button>
+                                            })}
+                                            {personas.flatMap((persona, index) => {
+                                                const basePersona = normalizePersona(persona)
+                                                const referredItems = []
+                                                const collectReferred = (
+                                                    currentPersona,
+                                                    path,
+                                                    parentLabel,
+                                                ) => {
+                                                    const normalized =
+                                                        normalizePersona(currentPersona)
+                                                    normalized.referrals.forEach(
+                                                        (referral, referralIndex) => {
+                                                            const normalizedReferral =
+                                                                normalizeReferral(referral)
+                                                            const childPath = [
+                                                                ...path,
+                                                                referralIndex,
+                                                            ]
+                                                            const referralLabel = getPersonaLabel(
+                                                                { name: normalizedReferral.name },
+                                                                'Referred Persona',
+                                                            )
+                                                            referredItems.push({
+                                                                path: childPath,
+                                                                persona: normalizePersona(
+                                                                    normalizedReferral.persona,
+                                                                ),
+                                                                label: referralLabel,
+                                                                parentLabel,
+                                                            })
+                                                            const childLabel = getPersonaLabel(
+                                                                normalizedReferral.persona,
+                                                                'Referred Persona',
+                                                            )
+                                                            collectReferred(
+                                                                normalizePersona(
+                                                                    normalizedReferral.persona,
+                                                                ),
+                                                                childPath,
+                                                                childLabel,
+                                                            )
+                                                        },
+                                                    )
+                                                }
+                                                const baseLabel = getPersonaLabel(
+                                                    basePersona,
+                                                    `Persona ${index + 1}`,
+                                                )
+                                                collectReferred(basePersona, [index], baseLabel)
+                                                return referredItems.map((item) => {
+                                                    const updatePersona = (updater) =>
+                                                        updateReferredPersonaByPath(
+                                                            item.path,
+                                                            updater,
+                                                        )
+                                                    const pathKey = item.path.join('-')
+                                                    return (
+                                                        <Accordion.Item
+                                                            key={`referred-${pathKey}`}
+                                                            value={`referred-${pathKey}`}
+                                                        >
+                                                            <Accordion.Control>
+                                                                {`${item.label} <- ${item.parentLabel}`}
+                                                            </Accordion.Control>
+                                                            <Accordion.Panel>
+                                                                {renderPersonaFields(
+                                                                    normalizePersona(item.persona),
+                                                                    updatePersona,
+                                                                )}
+                                                            </Accordion.Panel>
+                                                        </Accordion.Item>
+                                                    )
+                                                })
+                                            })}
+                                        </Accordion>
+                                    )}
+                                </Accordion.Panel>
+                            </Accordion.Item>
+                        </Accordion>
+                        {submitError && (
+                            <Text c="red" size="sm">
+                                {submitError}
+                            </Text>
+                        )}
+                        {submitSuccess && (
+                            <Text c="green" size="sm">
+                                {submitSuccess}
+                            </Text>
+                        )}
+                        <Button type="submit" disabled={isLoadingTemplate}>
+                            Submit
+                        </Button>
                     </Stack>
                 </form>
             </Paper>
@@ -895,12 +905,3 @@ function Case() {
 }
 
 export default Case
-
-
-
-
-
-
-
-
-

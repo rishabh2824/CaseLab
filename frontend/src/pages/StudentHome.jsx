@@ -100,10 +100,7 @@ const mapContact = (persona) => {
         initials: getPersonaInitials(persona.name),
         name: persona.name || 'Unnamed',
         title: persona.role || 'Role',
-        profilePhotoUrl:
-            persona.profile_photo?.url ||
-            persona.profilePhoto?.url ||
-            null,
+        profilePhotoUrl: persona.profile_photo?.url || persona.profilePhoto?.url || null,
         status,
         availability,
         isReferred: persona.is_referred ?? false,
@@ -118,9 +115,7 @@ const mapContact = (persona) => {
 
 const buildChatPdfBlob = (personas, notes = '') => {
     const printablePersonas =
-        personas.length > 0
-            ? personas
-            : [{ name: 'No unlocked personas', role: '', messages: [] }]
+        personas.length > 0 ? personas : [{ name: 'No unlocked personas', role: '', messages: [] }]
     const objects = [
         '<< /Type /Catalog /Pages 2 0 R >>',
         '',
@@ -130,10 +125,7 @@ const buildChatPdfBlob = (personas, notes = '') => {
     const pageIds = []
 
     const addPage = (lines) => {
-        const pageHeight = Math.max(
-            792,
-            PDF_MARGIN * 2 + lines.length * PDF_LINE_HEIGHT,
-        )
+        const pageHeight = Math.max(792, PDF_MARGIN * 2 + lines.length * PDF_LINE_HEIGHT)
         const content = lines
             .map((line, index) => {
                 const isTitle = index === 0
@@ -409,8 +401,7 @@ function StudentHome() {
             setIsExporting(false)
         }
     }
-    const activeContact =
-        contacts.find((contact) => contact.id === activeContactId) || contacts[0]
+    const activeContact = contacts.find((contact) => contact.id === activeContactId) || contacts[0]
     const activePersonaAvailable =
         activeContactId === activePersonaId &&
         contacts.find((c) => c.id === activeContactId)?.available &&
@@ -441,17 +432,14 @@ function StudentHome() {
         setIsSending(true)
         sendingPersonaIdRef.current = personaId
         try {
-            const response = await fetch(
-                `${apiBase}/api/simulations/${runId}/message`,
-                {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        persona_id: personaId,
-                        message,
-                    }),
-                },
-            )
+            const response = await fetch(`${apiBase}/api/simulations/${runId}/message`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    persona_id: personaId,
+                    message,
+                }),
+            })
             if (!response.ok) {
                 let errorMessage = 'Failed to send message.'
                 try {
@@ -469,10 +457,7 @@ function StudentHome() {
                     next[personaId] = normalizeMessages(data.history)
                 } else {
                     const current = next[personaId] ?? []
-                    next[personaId] = [
-                        ...current,
-                        { role: 'assistant', content: data.reply },
-                    ]
+                    next[personaId] = [...current, { role: 'assistant', content: data.reply }]
                 }
                 return next
             })
@@ -500,9 +485,7 @@ function StudentHome() {
                             available: persona.available ?? true,
                         }))
                     additional.forEach((contact) => {
-                        pushNotification(
-                            `New contact unlocked: ${contact.name} (${contact.title})`,
-                        )
+                        pushNotification(`New contact unlocked: ${contact.name} (${contact.title})`)
                     })
                     return [...prev, ...additional]
                 })
@@ -548,9 +531,7 @@ function StudentHome() {
             const storedRun = sessionStorage.getItem('caseLabRunId')
             if (!storedRun) return
             try {
-                const response = await fetch(
-                    `${apiBase}/api/simulations/${storedRun}`,
-                )
+                const response = await fetch(`${apiBase}/api/simulations/${storedRun}`)
                 if (!response.ok) return
                 const data = await response.json()
                 const normalizedContacts = (data.contacts ?? []).map((persona) => ({
@@ -559,13 +540,9 @@ function StudentHome() {
                 }))
                 setContacts((prev) => {
                     const prevIds = new Set(prev.map((contact) => contact.id))
-                    const newOnes = normalizedContacts.filter(
-                        (contact) => !prevIds.has(contact.id),
-                    )
+                    const newOnes = normalizedContacts.filter((contact) => !prevIds.has(contact.id))
                     newOnes.forEach((contact) => {
-                        pushNotification(
-                            `New contact unlocked: ${contact.name} (${contact.title})`,
-                        )
+                        pushNotification(`New contact unlocked: ${contact.name} (${contact.title})`)
                     })
                     return normalizedContacts
                 })
@@ -651,7 +628,9 @@ function StudentHome() {
                                 >
                                     {renderContactAvatar(contact)}
                                     <div className="flex-1">
-                                        <p className="font-semibold text-slate-900">{contact.name}</p>
+                                        <p className="font-semibold text-slate-900">
+                                            {contact.name}
+                                        </p>
                                         <p className="text-xs text-slate-500">{contact.title}</p>
                                         <p className="text-[11px] text-emerald-600">
                                             {contact.available
@@ -665,11 +644,12 @@ function StudentHome() {
                                                 Available for {contact.availability} min
                                             </p>
                                         )}
-                                        {typeof contact.expiresIn === 'number' && contact.expiresIn > 0 && (
-                                            <p className="text-[11px] text-slate-400">
-                                                Expires in {contact.expiresIn} min
-                                            </p>
-                                        )}
+                                        {typeof contact.expiresIn === 'number' &&
+                                            contact.expiresIn > 0 && (
+                                                <p className="text-[11px] text-slate-400">
+                                                    Expires in {contact.expiresIn} min
+                                                </p>
+                                            )}
                                         {contact.chatEnded && (
                                             <p className="text-[11px] text-rose-500">
                                                 Conversation ended
@@ -720,9 +700,7 @@ function StudentHome() {
                             <p className="text-xs uppercase tracking-wide text-slate-500">
                                 {activeContact?.name ?? 'Select a contact'}
                             </p>
-                            <p className="text-sm text-slate-500">
-                                {activeContact?.title ?? ''}
-                            </p>
+                            <p className="text-sm text-slate-500">{activeContact?.title ?? ''}</p>
                         </div>
                         {activeContact?.chatEnded ? (
                             <span className="inline-flex items-center gap-2 text-xs text-rose-600">
@@ -748,8 +726,7 @@ function StudentHome() {
                             'Chat history is empty.'
                         ) : (
                             <div className="space-y-3 text-left">
-                                {(messagesByPersona[activeContactId] ?? []).map(
-                                    (msg, index) => (
+                                {(messagesByPersona[activeContactId] ?? []).map((msg, index) => (
                                     <div
                                         key={`${msg.role}-${index}`}
                                         className={`whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm ${
@@ -821,7 +798,9 @@ function StudentHome() {
 
                 <aside className="space-y-4">
                     <div className="rounded-2xl bg-white p-4 shadow-sm">
-                        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Case Brief</h3>
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Case Brief
+                        </h3>
                         <p className="mt-2 text-sm text-slate-600">
                             {caseData?.initial_brief ?? 'Loading brief...'}
                         </p>
@@ -854,7 +833,9 @@ function StudentHome() {
                     </div>
 
                     <div className="rounded-2xl bg-white p-4 shadow-sm">
-                        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Your Notes</h3>
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            Your Notes
+                        </h3>
                         <textarea
                             className="mt-3 h-40 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-100"
                             placeholder="Write your notes here..."

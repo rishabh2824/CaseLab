@@ -46,8 +46,7 @@ function Home() {
             sessionStorage.setItem('caseLabRunId', data.run_id)
             sessionStorage.setItem('caseLabBootstrap', JSON.stringify(data))
             navigate('/student')
-            // eslint-disable-next-line no-unused-vars
-        } catch (fetchError) {
+        } catch {
             setError('Failed to start simulation.')
         } finally {
             setIsSubmitting(false)
@@ -57,14 +56,13 @@ function Home() {
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 flex items-center justify-center px-6">
             <div className="w-full max-w-xl text-center">
-                <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight text-slate-900"
+                <h1
+                    className="text-4xl sm:text-5xl font-semibold tracking-tight text-slate-900"
                     style={{ fontFamily: "'Space Grotesk', sans-serif" }}
                 >
                     wisconsin case lab
                 </h1>
-                <p className="mt-3 text-sm text-slate-500">
-                    Enter your access code to continue.
-                </p>
+                <p className="mt-3 text-sm text-slate-500">Enter your access code to continue.</p>
                 <form onSubmit={handleSubmit} className="mt-10 space-y-4">
                     <input
                         type="text"
@@ -73,9 +71,7 @@ function Home() {
                         value={accessCode}
                         onChange={(event) => setAccessCode(event.currentTarget.value)}
                     />
-                    {error && (
-                        <p className="text-sm text-red-500">{error}</p>
-                    )}
+                    {error && <p className="text-sm text-red-500">{error}</p>}
                     <button
                         type="submit"
                         disabled={isSubmitting}
