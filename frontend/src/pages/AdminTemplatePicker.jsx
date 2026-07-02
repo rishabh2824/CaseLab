@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api/client'
+import { useSessionStore } from '../stores/sessionStore'
 
 function AdminTemplatePicker({ mode = 'template' }) {
     const navigate = useNavigate()
-    const adminToken = sessionStorage.getItem('caseLabAdminToken') || ''
+    const adminToken = useSessionStore((s) => s.adminToken)
 
     const {
         data,

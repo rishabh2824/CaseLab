@@ -5,12 +5,13 @@ import AdminHome from './pages/AdminHome.jsx'
 import AdminTemplatePicker from './pages/AdminTemplatePicker.jsx'
 import Home from './pages/Home.jsx'
 import StudentHome from './pages/StudentHome.jsx'
+import { useSessionStore } from './stores/sessionStore'
 
 // Client-side guard: bounce anyone without an admin token back to the home
 // screen. This is UX polish only — the API is the real gate (admin endpoints
 // return 401 without a valid token).
 function RequireAdmin() {
-    const hasAdminToken = Boolean(sessionStorage.getItem('caseLabAdminToken'))
+    const hasAdminToken = useSessionStore((s) => Boolean(s.adminToken))
     return hasAdminToken ? <Outlet /> : <Navigate to="/" replace />
 }
 

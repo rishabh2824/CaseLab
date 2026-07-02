@@ -2,11 +2,14 @@ import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '../api/client'
+import { useSessionStore } from '../stores/sessionStore'
 
 function Home() {
     const [accessCode, setAccessCode] = useState('')
     const [error, setError] = useState('')
     const navigate = useNavigate()
+    const setAdminToken = useSessionStore((s) => s.setAdminToken)
+    const startRun = useSessionStore((s) => s.startRun)
 
     const { mutate: submit, isPending: isSubmitting } = useMutation({
         mutationFn: async (code) => {
@@ -27,14 +30,16 @@ function Home() {
         onSuccess: (result) => {
             setError('')
             if (result.kind === 'admin') {
-                sessionStorage.setItem('caseLabAdminToken', result.code)
+                setAdminToken(result.code)
                 navigate('/admin')
                 return
             }
-            sessionStorage.setItem('caseLabStart', String(Date.now()))
-            sessionStorage.setItem('caseLabAccessCode', result.normalized)
-            sessionStorage.setItem('caseLabRunId', result.data.run_id)
-            sessionStorage.setItem('caseLabBootstrap', JSON.stringify(result.data))
+            startRun({
+                runId: result.data.run_id,
+                accessCode: result.normalized,
+                bootstrap: result.data,
+                startTime: Date.now(),
+            })
             navigate('/student')
         },
         onError: () => setError('Invalid access code.'),
