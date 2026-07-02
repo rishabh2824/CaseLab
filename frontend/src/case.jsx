@@ -12,13 +12,14 @@ import {
     TextInput,
     Title,
 } from '@mantine/core'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { apiFetch } from './api/client'
 
 function Case() {
     const [submitError, setSubmitError] = useState('')
     const [submitSuccess, setSubmitSuccess] = useState('')
-    const [isLoadingTemplate, setIsLoadingTemplate] = useState(false)
     const [caseName, setCaseName] = useState('')
     const [initialBrief, setInitialBrief] = useState('')
     const [commonInformation, setCommonInformation] = useState('')
@@ -27,8 +28,6 @@ function Case() {
     const [totalPersonas, setTotalPersonas] = useState(null)
     const [personas, setPersonas] = useState([])
     const [searchParams] = useSearchParams()
-    const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
-    // NOTE: all backend routes are mounted under `${apiBase}/api/...`
     // Admin endpoints require the token the admin entered on the home screen.
     const adminToken = sessionStorage.getItem('caseLabAdminToken') || ''
     const templateId = searchParams.get('template')
@@ -110,50 +109,58 @@ function Case() {
         const normalized = normalizePersona(persona)
         return typeof normalized.scheduledAfterMinutes !== 'number'
     })
+    const sourceCaseId = editCaseId || templateId
+
+    const {
+        data: loadedCase,
+        isFetching: isLoadingTemplate,
+        error: loadError,
+    } = useQuery({
+        queryKey: ['case', sourceCaseId],
+        queryFn: () => apiFetch(`/api/cases/${sourceCaseId}`, { adminToken }),
+        enabled: Boolean(sourceCaseId),
+    })
+
     useEffect(() => {
-        const sourceCaseId = editCaseId || templateId
-        if (!sourceCaseId) {
-            return
+        if (!loadedCase?.case) return
+        const templateCase = loadedCase.case
+        setCaseName(templateCase.caseName ?? '')
+        setInitialBrief(templateCase.initialBrief ?? '')
+        setCommonInformation(templateCase.commonInformation ?? '')
+        setSimulationDurationMinutes(templateCase.simulationDurationMinutes ?? null)
+        setAccessCode(templateCase.accessCode ?? '')
+        setTotalPersonas(templateCase.totalNonReferredPersonas ?? null)
+        setPersonas((templateCase.personas ?? []).map((persona) => normalizePersona(persona)))
+    }, [loadedCase])
+
+    useEffect(() => {
+        if (loadError) {
+            setSubmitError(
+                loadError.message ||
+                    (isEditMode
+                        ? 'Failed to load case for editing.'
+                        : 'Failed to load case template.'),
+            )
         }
-        const loadTemplate = async () => {
-            setIsLoadingTemplate(true)
-            setSubmitError('')
+    }, [loadError, isEditMode])
+
+    const saveMutation = useMutation({
+        mutationFn: (payload) =>
+            apiFetch(isEditMode ? `/api/cases/${editCaseId}` : '/api/cases', {
+                method: isEditMode ? 'PUT' : 'POST',
+                adminToken,
+                body: payload,
+            }),
+        onSuccess: () =>
+            setSubmitSuccess(
+                isEditMode ? 'Case updated successfully.' : 'Case saved successfully.',
+            ),
+        onError: (error) => {
+            setSubmitError(error.message || 'Upload failed.')
             setSubmitSuccess('')
-            try {
-                const response = await fetch(`${apiBase}/api/cases/${sourceCaseId}`, {
-                    headers: { 'X-Admin-Token': adminToken },
-                })
-                if (!response.ok) {
-                    throw new Error(
-                        isEditMode
-                            ? 'Failed to load case for editing.'
-                            : 'Failed to load case template.',
-                    )
-                }
-                const data = await response.json()
-                const templateCase = data.case
-                setCaseName(templateCase.caseName ?? '')
-                setInitialBrief(templateCase.initialBrief ?? '')
-                setCommonInformation(templateCase.commonInformation ?? '')
-                setSimulationDurationMinutes(templateCase.simulationDurationMinutes ?? null)
-                setAccessCode(templateCase.accessCode ?? '')
-                setTotalPersonas(templateCase.totalNonReferredPersonas ?? null)
-                setPersonas(
-                    (templateCase.personas ?? []).map((persona) => normalizePersona(persona)),
-                )
-            } catch (error) {
-                setSubmitError(
-                    error.message ||
-                        (isEditMode
-                            ? 'Failed to load case for editing.'
-                            : 'Failed to load case template.'),
-                )
-            } finally {
-                setIsLoadingTemplate(false)
-            }
-        }
-        loadTemplate()
-    }, [apiBase, adminToken, editCaseId, isEditMode, templateId])
+        },
+    })
+
     const handleSubmit = async (event) => {
         event.preventDefault()
         if (!hasUnscheduledRootPersona) {
@@ -171,19 +178,15 @@ function Case() {
         }
 
         const uploadFile = async (file, prefix) => {
-            const response = await fetch(`${apiBase}/api/uploads/presign`, {
+            const presign = await apiFetch('/api/uploads/presign', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
-                body: JSON.stringify({
+                adminToken,
+                body: {
                     file_name: file.name,
                     content_type: file.type || null,
                     prefix,
-                }),
+                },
             })
-            if (!response.ok) {
-                throw new Error('Failed to get presigned upload URL.')
-            }
-            const presign = await response.json()
             const putResponse = await fetch(presign.upload_url, {
                 method: 'PUT',
                 headers: {
@@ -263,24 +266,7 @@ function Case() {
                 totalNonReferredPersonas: totalPersonas,
                 personas: personasPayload,
             }
-            const saveResponse = await fetch(
-                isEditMode ? `${apiBase}/api/cases/${editCaseId}` : `${apiBase}/api/cases`,
-                {
-                    method: isEditMode ? 'PUT' : 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': adminToken },
-                    body: JSON.stringify(payload),
-                },
-            )
-            if (!saveResponse.ok) {
-                throw new Error(
-                    isEditMode
-                        ? 'Failed to update case in the backend.'
-                        : 'Failed to save case to the backend.',
-                )
-            }
-            const saved = await saveResponse.json()
-            console.log('Case saved:', saved)
-            setSubmitSuccess(isEditMode ? 'Case updated successfully.' : 'Case saved successfully.')
+            saveMutation.mutate(payload)
         } catch (error) {
             setSubmitError(error.message || 'Upload failed.')
             setSubmitSuccess('')
