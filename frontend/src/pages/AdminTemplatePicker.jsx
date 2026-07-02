@@ -1,33 +1,22 @@
-import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { apiFetch } from '../api/client'
 
 function AdminTemplatePicker({ mode = 'template' }) {
-    const [cases, setCases] = useState([])
-    const [error, setError] = useState('')
-    const [loading, setLoading] = useState(true)
     const navigate = useNavigate()
-    const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
     const adminToken = sessionStorage.getItem('caseLabAdminToken') || ''
 
-    useEffect(() => {
-        const loadCases = async () => {
-            try {
-                const response = await fetch(`${apiBase}/api/cases`, {
-                    headers: { 'X-Admin-Token': adminToken },
-                })
-                if (!response.ok) {
-                    throw new Error('Failed to load cases.')
-                }
-                const data = await response.json()
-                setCases(data.cases ?? [])
-            } catch (loadError) {
-                setError(loadError.message || 'Failed to load cases.')
-            } finally {
-                setLoading(false)
-            }
-        }
-        loadCases()
-    }, [apiBase, adminToken])
+    const {
+        data,
+        isLoading: loading,
+        error: queryError,
+    } = useQuery({
+        queryKey: ['cases'],
+        queryFn: () => apiFetch('/api/cases', { adminToken }),
+    })
+
+    const cases = data?.cases ?? []
+    const error = queryError ? queryError.message || 'Failed to load cases.' : ''
 
     const isEditMode = mode === 'edit'
     return (
