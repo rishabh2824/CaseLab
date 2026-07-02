@@ -1,5 +1,7 @@
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { apiFetch } from '../api/client'
 
 const PDF_PAGE_WIDTH = 612
 const PDF_MARGIN = 54
@@ -206,11 +208,9 @@ function StudentHome() {
     const [runId, setRunId] = useState(null)
     const [messagesByPersona, setMessagesByPersona] = useState({})
     const [inputValue, setInputValue] = useState('')
-    const [isSending, setIsSending] = useState(false)
     const [activePersonaId, setActivePersonaId] = useState(null)
     const [sharedFiles, setSharedFiles] = useState([])
     const [notifications, setNotifications] = useState([])
-    const [isExporting, setIsExporting] = useState(false)
     const sendingPersonaIdRef = useRef(null)
     const chatInputRef = useRef(null)
     const messagesEndRef = useRef(null)
@@ -376,15 +376,9 @@ function StudentHome() {
         sessionStorage.removeItem('caseLabBootstrap')
         navigate('/')
     }
-    const handleExportPdf = async () => {
-        if (!runId || isExporting) return
-        setIsExporting(true)
-        try {
-            const response = await fetch(`${apiBase}/api/simulations/${runId}/export`)
-            if (!response.ok) {
-                throw new Error('Failed to export chat history.')
-            }
-            const data = await response.json()
+    const exportMutation = useMutation({
+        mutationFn: () => apiFetch(`/api/simulations/${runId}/export`),
+        onSuccess: (data) => {
             const blob = buildChatPdfBlob(data.personas ?? [], notes)
             const url = window.URL.createObjectURL(blob)
             const link = document.createElement('a')
@@ -394,12 +388,18 @@ function StudentHome() {
             link.click()
             link.remove()
             window.setTimeout(() => window.URL.revokeObjectURL(url), 1000)
-        } catch (error) {
+        },
+        onError: (error) => {
             console.error(error)
             pushNotification('Unable to export PDF. Please try again.')
-        } finally {
-            setIsExporting(false)
-        }
+        },
+    })
+
+    const isExporting = exportMutation.isPending
+
+    const handleExportPdf = () => {
+        if (!runId || isExporting) return
+        exportMutation.mutate()
     }
     const activeContact = contacts.find((contact) => contact.id === activeContactId) || contacts[0]
     const activePersonaAvailable =
@@ -407,50 +407,15 @@ function StudentHome() {
         contacts.find((c) => c.id === activeContactId)?.available &&
         !contacts.find((c) => c.id === activeContactId)?.chatEnded
 
-    useEffect(() => {
-        if (!activeContactId || !activePersonaAvailable || isSending) return
-        focusChatInput()
-    }, [activeContactId, activePersonaAvailable, isSending])
-
-    useEffect(() => {
-        if (!activeContactId) return
-        scrollChatToEnd()
-    }, [activeContactId, messagesByPersona])
-
-    const sendMessage = async () => {
-        if (!runId || !activeContactId || !inputValue.trim()) return
-        if (!activePersonaAvailable || isSending) return
-        const personaId = activeContactId
-        const message = inputValue.trim()
-        setMessagesByPersona((prev) => {
-            const next = { ...prev }
-            const current = next[personaId] ?? []
-            next[personaId] = [...current, { role: 'user', content: message }]
-            return next
-        })
-        setInputValue('')
-        setIsSending(true)
-        sendingPersonaIdRef.current = personaId
-        try {
-            const response = await fetch(`${apiBase}/api/simulations/${runId}/message`, {
+    const sendMutation = useMutation({
+        mutationFn: async ({ personaId, message }) => {
+            const data = await apiFetch(`/api/simulations/${runId}/message`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    persona_id: personaId,
-                    message,
-                }),
+                body: { persona_id: personaId, message },
             })
-            if (!response.ok) {
-                let errorMessage = 'Failed to send message.'
-                try {
-                    const errorData = await response.json()
-                    errorMessage = errorData.detail || errorMessage
-                } catch {
-                    // Ignore JSON parse failures here.
-                }
-                throw new Error(errorMessage)
-            }
-            const data = await response.json()
+            return { data, personaId }
+        },
+        onSuccess: ({ data, personaId }) => {
             setMessagesByPersona((prev) => {
                 const next = { ...prev }
                 if (Array.isArray(data.history)) {
@@ -502,7 +467,8 @@ function StudentHome() {
                     return [...prev, ...additions]
                 })
             }
-        } catch (error) {
+        },
+        onError: (error, { personaId }) => {
             console.error(error)
             if (error.message === 'This conversation has ended.') {
                 setContacts((prev) =>
@@ -517,64 +483,85 @@ function StudentHome() {
                     ),
                 )
             }
-        } finally {
+        },
+        onSettled: (_data, _error, { personaId }) => {
             if (sendingPersonaIdRef.current === personaId) {
                 sendingPersonaIdRef.current = null
             }
-            setIsSending(false)
             focusChatInput()
-        }
+        },
+    })
+
+    const isSending = sendMutation.isPending
+
+    const sendMessage = () => {
+        if (!runId || !activeContactId || !inputValue.trim()) return
+        if (!activePersonaAvailable || isSending) return
+        const personaId = activeContactId
+        const message = inputValue.trim()
+        setMessagesByPersona((prev) => {
+            const next = { ...prev }
+            const current = next[personaId] ?? []
+            next[personaId] = [...current, { role: 'user', content: message }]
+            return next
+        })
+        setInputValue('')
+        sendingPersonaIdRef.current = personaId
+        sendMutation.mutate({ personaId, message })
     }
 
     useEffect(() => {
-        const intervalId = window.setInterval(async () => {
+        if (!activeContactId || !activePersonaAvailable || isSending) return
+        focusChatInput()
+    }, [activeContactId, activePersonaAvailable, isSending])
+
+    useEffect(() => {
+        if (!activeContactId) return
+        scrollChatToEnd()
+    }, [activeContactId, messagesByPersona])
+
+    useQuery({
+        queryKey: ['simulation', runId],
+        enabled: Boolean(runId),
+        refetchInterval: 15000,
+        refetchOnWindowFocus: false,
+        queryFn: async () => {
             const storedRun = sessionStorage.getItem('caseLabRunId')
-            if (!storedRun) return
-            try {
-                const response = await fetch(`${apiBase}/api/simulations/${storedRun}`)
-                if (!response.ok) return
-                const data = await response.json()
-                const normalizedContacts = (data.contacts ?? []).map((persona) => ({
-                    ...mapContact(persona),
-                    status: persona.available ? 'Available' : 'Unavailable',
-                }))
-                setContacts((prev) => {
-                    const prevIds = new Set(prev.map((contact) => contact.id))
-                    const newOnes = normalizedContacts.filter((contact) => !prevIds.has(contact.id))
-                    newOnes.forEach((contact) => {
-                        pushNotification(`New contact unlocked: ${contact.name} (${contact.title})`)
-                    })
-                    return normalizedContacts
+            if (!storedRun) return null
+            const data = await apiFetch(`/api/simulations/${storedRun}`)
+            const normalizedContacts = (data.contacts ?? []).map((persona) => ({
+                ...mapContact(persona),
+                status: persona.available ? 'Available' : 'Unavailable',
+            }))
+            setContacts((prev) => {
+                const prevIds = new Set(prev.map((contact) => contact.id))
+                const newOnes = normalizedContacts.filter((contact) => !prevIds.has(contact.id))
+                newOnes.forEach((contact) => {
+                    pushNotification(`New contact unlocked: ${contact.name} (${contact.title})`)
                 })
-                if (data.shared_files) {
-                    setSharedFiles((prev) => {
-                        const prevIds = new Set(prev.map((file) => file.file_id))
-                        const newOnes = data.shared_files.filter(
-                            (file) => !prevIds.has(file.file_id),
-                        )
-                        newOnes.forEach((file) => {
-                            pushNotification(`File shared: ${file.file_name}`)
-                        })
-                        return data.shared_files
+                return normalizedContacts
+            })
+            if (data.shared_files) {
+                setSharedFiles((prev) => {
+                    const prevIds = new Set(prev.map((file) => file.file_id))
+                    const newOnes = data.shared_files.filter((file) => !prevIds.has(file.file_id))
+                    newOnes.forEach((file) => {
+                        pushNotification(`File shared: ${file.file_name}`)
                     })
-                }
-                setMessagesByPersona((prev) => {
-                    const incomingHistories = normalizeHistories(data.histories)
-                    const pendingPersonaId = sendingPersonaIdRef.current
-                    if (pendingPersonaId) {
-                        delete incomingHistories[pendingPersonaId]
-                    }
-                    return {
-                        ...prev,
-                        ...incomingHistories,
-                    }
+                    return data.shared_files
                 })
-            } catch (error) {
-                console.error(error)
             }
-        }, 15000)
-        return () => window.clearInterval(intervalId)
-    }, [apiBase])
+            setMessagesByPersona((prev) => {
+                const incomingHistories = normalizeHistories(data.histories)
+                const pendingPersonaId = sendingPersonaIdRef.current
+                if (pendingPersonaId) {
+                    delete incomingHistories[pendingPersonaId]
+                }
+                return { ...prev, ...incomingHistories }
+            })
+            return data
+        },
+    })
 
     return (
         <div className="min-h-screen bg-slate-50">
