@@ -1,8 +1,7 @@
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
-// Centralized session state. Previously stored as loose `caseLab*` keys in
-// sessionStorage across four files; now one typed source of truth.
+// Centralized session state.
 export const useSessionStore = create(
     persist(
         (set, get) => ({

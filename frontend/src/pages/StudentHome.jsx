@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { apiFetch } from '../api/client'
+import { apiFetch, streamChat } from '../api/client'
 import { useSessionStore } from '../stores/sessionStore'
 
 const PDF_PAGE_WIDTH = 612
@@ -401,69 +401,102 @@ function StudentHome() {
         contacts.find((c) => c.id === activeContactId)?.available &&
         !contacts.find((c) => c.id === activeContactId)?.chatEnded
 
+    const applyMessageMeta = (personaId, data) => {
+        setContacts((prev) =>
+            prev.map((contact) =>
+                contact.id === personaId
+                    ? {
+                          ...contact,
+                          chatEnded: data.chat_ended ?? contact.chatEnded,
+                          chatEndReason: data.chat_end_reason ?? contact.chatEndReason,
+                          warningCount: data.warning_count ?? contact.warningCount,
+                      }
+                    : contact,
+            ),
+        )
+        if (data.new_contacts?.length) {
+            setContacts((prev) => {
+                const existingIds = new Set(prev.map((c) => c.id))
+                const additional = data.new_contacts
+                    .filter((c) => !existingIds.has(c.id))
+                    .map((persona) => ({
+                        ...mapContact(persona),
+                        status: 'Available',
+                        isReferred: true,
+                        available: persona.available ?? true,
+                    }))
+                additional.forEach((contact) => {
+                    pushNotification(`New contact unlocked: ${contact.name} (${contact.title})`)
+                })
+                return [...prev, ...additional]
+            })
+        }
+        if (data.shared_files?.length) {
+            setSharedFiles((prev) => {
+                const existingIds = new Set(prev.map((f) => f.file_id))
+                const additions = data.shared_files.filter((file) => !existingIds.has(file.file_id))
+                additions.forEach((file) => {
+                    pushNotification(`File shared: ${file.file_name}`)
+                })
+                return [...prev, ...additions]
+            })
+        }
+    }
+
     const sendMutation = useMutation({
         mutationFn: async ({ personaId, message }) => {
-            const data = await apiFetch(`/api/simulations/${runId}/message`, {
-                method: 'POST',
-                body: { persona_id: personaId, message },
-            })
-            return { data, personaId }
-        },
-        onSuccess: ({ data, personaId }) => {
+            // Append an empty assistant bubble that fills in as deltas stream.
             setMessagesByPersona((prev) => {
-                const next = { ...prev }
-                if (Array.isArray(data.history)) {
-                    next[personaId] = normalizeMessages(data.history)
-                } else {
-                    const current = next[personaId] ?? []
-                    next[personaId] = [...current, { role: 'assistant', content: data.reply }]
-                }
-                return next
+                const current = prev[personaId] ?? []
+                return { ...prev, [personaId]: [...current, { role: 'assistant', content: '' }] }
             })
-            setContacts((prev) =>
-                prev.map((contact) =>
-                    contact.id === personaId
-                        ? {
-                              ...contact,
-                              chatEnded: data.chat_ended ?? contact.chatEnded,
-                              chatEndReason: data.chat_end_reason ?? contact.chatEndReason,
-                              warningCount: data.warning_count ?? contact.warningCount,
-                          }
-                        : contact,
-                ),
-            )
-            if (data.new_contacts?.length) {
-                setContacts((prev) => {
-                    const existingIds = new Set(prev.map((c) => c.id))
-                    const additional = data.new_contacts
-                        .filter((c) => !existingIds.has(c.id))
-                        .map((persona) => ({
-                            ...mapContact(persona),
-                            status: 'Available',
-                            isReferred: true,
-                            available: persona.available ?? true,
-                        }))
-                    additional.forEach((contact) => {
-                        pushNotification(`New contact unlocked: ${contact.name} (${contact.title})`)
-                    })
-                    return [...prev, ...additional]
-                })
-            }
-            if (data.shared_files?.length) {
-                setSharedFiles((prev) => {
-                    const existingIds = new Set(prev.map((f) => f.file_id))
-                    const additions = data.shared_files.filter(
-                        (file) => !existingIds.has(file.file_id),
-                    )
-                    additions.forEach((file) => {
-                        pushNotification(`File shared: ${file.file_name}`)
-                    })
-                    return [...prev, ...additions]
-                })
-            }
+            let streamed = ''
+            let streamError = null
+            await streamChat(`/api/simulations/${runId}/message`, {
+                body: { persona_id: personaId, message },
+                onEvent: (event) => {
+                    if (event.type === 'meta') {
+                        // Contacts/files/chat-state are known up front — reflect
+                        // them immediately, before the reply finishes streaming.
+                        applyMessageMeta(personaId, event.data)
+                    } else if (event.type === 'delta') {
+                        streamed += event.data.text ?? ''
+                        setMessagesByPersona((prev) => {
+                            const msgs = [...(prev[personaId] ?? [])]
+                            const last = msgs.length - 1
+                            if (last >= 0 && msgs[last].role === 'assistant') {
+                                msgs[last] = { ...msgs[last], content: streamed }
+                            }
+                            return { ...prev, [personaId]: msgs }
+                        })
+                    } else if (event.type === 'done') {
+                        if (Array.isArray(event.data.history)) {
+                            setMessagesByPersona((prev) => ({
+                                ...prev,
+                                [personaId]: normalizeMessages(event.data.history),
+                            }))
+                        }
+                    } else if (event.type === 'error') {
+                        streamError = new Error(
+                            event.data.detail || 'The reply could not be generated.',
+                        )
+                    }
+                },
+            })
+            if (streamError) throw streamError
+            return { personaId }
         },
         onError: (error, { personaId }) => {
             console.error(error)
+            // Drop a dangling empty assistant bubble if nothing streamed.
+            setMessagesByPersona((prev) => {
+                const msgs = prev[personaId] ?? []
+                const last = msgs[msgs.length - 1]
+                if (last && last.role === 'assistant' && !last.content) {
+                    return { ...prev, [personaId]: msgs.slice(0, -1) }
+                }
+                return prev
+            })
             if (error.message === 'This conversation has ended.') {
                 setContacts((prev) =>
                     prev.map((contact) =>
@@ -476,6 +509,8 @@ function StudentHome() {
                             : contact,
                     ),
                 )
+            } else {
+                pushNotification(error.message || 'Message failed. Please try again.')
             }
         },
         onSettled: (_data, _error, { personaId }) => {
