@@ -40,7 +40,6 @@ class Settings:
             "LLM_BASE_URL",
             "https://openrouter.ai/api/v1/chat/completions",
         )
-        self.sim_debug = os.getenv("SIM_DEBUG", "false").lower() in {"1", "true", "yes"}
 
 
 @lru_cache(maxsize=1)

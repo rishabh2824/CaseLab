@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.router import api_router
+from services.db import close_db_client
 from services.llm import close_client, init_client
 from services.simulation_service import cleanup_expired_runs_forever
 from settings import get_settings
@@ -37,6 +38,7 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         await close_client()
+        await close_db_client()
 
 
 app = FastAPI(title="caseLab API", version="1.0.0", lifespan=lifespan)
@@ -45,7 +47,10 @@ if settings.frontend_urls:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.frontend_urls,
-        allow_credentials=True,
+        # No cookies/session credentials are used — admin auth travels as an
+        # explicit X-Admin-Token header, not a cookie — so credentialed CORS
+        # isn't needed. Keeping this False is strictly tighter.
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -56,8 +61,3 @@ else:
     )
 
 app.include_router(api_router, prefix="/api")
-
-
-@app.get("/health", tags=["meta"])
-async def health() -> dict:
-    return {"status": "ok"}

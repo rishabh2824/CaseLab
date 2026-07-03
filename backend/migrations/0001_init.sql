@@ -1,11 +1,9 @@
--- Case Lab Schema (SQLite)
--- NOTE: kept for reference only. The source of truth is now the versioned
--- migrations in backend/migrations/ (see backend/README.md, "Database
--- migrations"). Schema changes should be added as a new migration file, not
--- edited here.
+-- Baseline schema, matching backend/schema.txt.
+-- IF NOT EXISTS makes this safe to run against a database that already has
+-- these tables (e.g. the existing Turso DB, created manually before this
+-- migration runner existed).
 
--- 1. CASES
-CREATE TABLE cases (
+CREATE TABLE IF NOT EXISTS cases (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_name TEXT NOT NULL,
   access_code TEXT,
@@ -15,8 +13,7 @@ CREATE TABLE cases (
   non_referred INTEGER NOT NULL CHECK (non_referred >= 1)
 );
 
--- 2. PERSONAS
-CREATE TABLE personas (
+CREATE TABLE IF NOT EXISTS personas (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_id TEXT NOT NULL,
   name TEXT NOT NULL DEFAULT '',
@@ -32,9 +29,8 @@ CREATE TABLE personas (
   FOREIGN KEY (profile_photo_file_id) REFERENCES files(id) ON DELETE SET NULL
 );
 
--- 3. REFERRAL RELATIONSHIP
--- Replaces 'enum' with a CHECK constraint
-CREATE TABLE persona_referrals (
+-- trigger_type uses a CHECK constraint instead of a SQL enum.
+CREATE TABLE IF NOT EXISTS persona_referrals (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_id TEXT NOT NULL,
   parent_persona_id TEXT NOT NULL,
@@ -47,8 +43,8 @@ CREATE TABLE persona_referrals (
   FOREIGN KEY (referred_persona_id) REFERENCES personas(id) ON DELETE CASCADE
 );
 
--- 4. FILES (Metadata for your DO Spaces)
-CREATE TABLE files (
+-- Metadata for objects stored in DigitalOcean Spaces.
+CREATE TABLE IF NOT EXISTS files (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   bucket TEXT NOT NULL,
   object_key TEXT NOT NULL,
@@ -58,8 +54,7 @@ CREATE TABLE files (
   UNIQUE(bucket, object_key)
 );
 
--- 5. PERSONA FILES
-CREATE TABLE persona_files (
+CREATE TABLE IF NOT EXISTS persona_files (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   persona_id TEXT NOT NULL,
   file_id TEXT,

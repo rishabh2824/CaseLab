@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends
-
 from .admin import router as admin_router
 from .cases import router as cases_router
 from .dependencies import require_admin

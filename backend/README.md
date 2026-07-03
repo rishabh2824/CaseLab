@@ -10,7 +10,7 @@ plain top-level (`from models... import`, `from services... import`) with no
 
 ```
 backend/
-├── main.py         # FastAPI app + CORS + /health; mounts the API router under /api
+├── main.py         # FastAPI app + CORS; mounts the API router under /api
 ├── settings.py     # Env-driven settings (Spaces, DB, LLM, CORS origins)
 ├── api/            # Receives requests from the frontend (thin HTTP routers)
 │   ├── router.py   #   aggregates the routers below
@@ -21,11 +21,17 @@ backend/
 │   ├── cases.py
 │   └── uploads.py
 ├── services/       # Talk to the DB and external systems; hold the actual logic
-│   ├── db.py       #   libSQL / Turso client
+│   ├── db.py       #   libSQL / Turso client + row-to-dict helpers
 │   ├── spaces.py   #   DigitalOcean Spaces (object storage)
 │   └── llm.py      #   model calls
-└── scripts/        # One-off operational scripts (e.g. Spaces CORS setup)
+├── migrations/     # Versioned .sql schema migrations (see below)
+└── scripts/        # One-off operational scripts (Spaces CORS setup, migrate)
 ```
+
+Repository functions (`services/*_repository.py`) return **dicts keyed by
+column name** (via `libsql_client`'s `Row.asdict()`), not positional tuples —
+so a caller reads `row["case_name"]`, and reordering a `SELECT`'s columns
+can't silently shift which value lands in which field.
 
 ## Environment variables
 
@@ -42,7 +48,6 @@ Create `backend/.env` (git-ignored). See the keys below:
 | `FRONTEND_URLS` | yes | Comma-separated allowed origins for CORS |
 | `ADMIN_TOKEN` | no | Shared admin code that unlocks the admin API. Defaults to `Admin`; set a strong value in production. Admins enter it on the home screen; it is sent as the `X-Admin-Token` header on admin/write requests. |
 | `LLM_KEY` / `LLM_BASE_URL` | yes | OpenRouter-compatible chat completions |
-| `SIM_DEBUG` | no | `true` to log simulation internals |
 
 The chat models themselves are **not** env-configurable — they're fixed constants
 at the top of [`settings.py`](settings.py): `LLM_MODEL` (frontier, used for the
@@ -74,3 +79,23 @@ Run once (and again whenever `FRONTEND_URLS` changes):
 cd backend
 python -m scripts.configure_spaces_cors
 ```
+
+## Database migrations
+
+Schema changes live as versioned `.sql` files in `migrations/`, applied by a
+minimal runner (no ORM) that tracks what's been run in a `_schema_migrations`
+table — see [`scripts/migrate.py`](scripts/migrate.py) for the full rationale.
+`0001_init.sql` is the existing schema (from the old `schema.txt`), written
+with `CREATE TABLE IF NOT EXISTS` so it's safe to run against the current
+database even though its tables already exist.
+
+Run after pulling changes that add a migration, and whenever setting up a new
+database:
+
+```bash
+cd backend
+python -m scripts.migrate
+```
+
+To add a schema change, create `migrations/000N_description.sql` (next
+number) with the SQL statements, then run the command above.

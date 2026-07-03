@@ -1,10 +1,13 @@
 import re
 import json
 import asyncio
+import logging
 
 import httpx
 
 from settings import get_settings
+
+logger = logging.getLogger("caselab.llm")
 
 
 def _headers(settings) -> dict:
@@ -42,11 +45,25 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """Timeouts and rate-limit/server errors are worth retrying; other 4xx
+    (bad request, auth, etc.) will fail identically every time, so don't burn
+    attempts/backoff on them."""
+    if isinstance(exc, (httpx.ReadTimeout, httpx.ConnectTimeout)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 429 or status >= 500
+    return False
+
+
 async def _chat(payload: dict, *, timeout: float, retries: int) -> dict:
     """POST a chat-completions payload and return the parsed JSON response body.
 
-    Retries on connection/timeout/HTTP errors with linear backoff. Raises the
-    last error if every attempt fails; callers decide how to degrade.
+    Retries retryable errors (timeouts, 429, 5xx) with linear backoff; other
+    errors (e.g. a 400 for an unsupported parameter) raise immediately so the
+    caller can react without wasted delay. Raises the last error if every
+    attempt fails; callers decide how to degrade.
     """
     settings = get_settings()
     if not settings.llm_key:
@@ -63,8 +80,9 @@ async def _chat(payload: dict, *, timeout: float, retries: int) -> dict:
             return response.json()
         except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError) as exc:
             last_error = exc
-            if attempt < retries - 1:
-                await asyncio.sleep(1 + attempt)
+            if not _is_retryable(exc) or attempt == retries - 1:
+                break
+            await asyncio.sleep(1 + attempt)
     raise last_error or RuntimeError("LLM request failed.")
 
 
@@ -72,97 +90,104 @@ def _message_content(data: dict) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-def _extract_json(text: str) -> dict | None:
-    cleaned = re.sub(r"^\s*```json\s*|\s*```\s*$", "", text.strip(), flags=re.IGNORECASE)
+def _parse_stream_delta(line: str) -> str | None:
+    """Pull the incremental text out of one OpenAI/OpenRouter SSE line.
+
+    Returns the content delta, or None for keep-alive comments, ``[DONE]``,
+    and lines with no content.
+    """
+    if not line.startswith("data:"):
+        return None
+    data = line[len("data:") :].strip()
+    if not data or data == "[DONE]":
+        return None
     try:
-        return json.loads(cleaned)
+        chunk = json.loads(data)
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                return None
-    return None
+        return None
+    try:
+        return chunk["choices"][0]["delta"].get("content")
+    except (KeyError, IndexError, TypeError):
+        return None
 
 
-async def chat_completion_structured(messages: list[dict]) -> dict:
-    """Main in-character persona reply. Uses the primary (frontier) model."""
+async def chat_completion_stream(messages: list[dict]):
+    """Stream the in-character persona reply as plain-text chunks from the
+    primary (frontier) model.
+
+    Yields content deltas as they arrive. Retries only if the request fails
+    *before* any content has been yielded — once a partial reply has been
+    emitted it can't be un-sent, so a mid-stream failure propagates.
+    """
     settings = get_settings()
-    if settings.sim_debug:
-        print("LLM DEBUG: request ->", [m["role"] for m in messages])
+    if not settings.llm_key:
+        raise RuntimeError("LLM_KEY is not configured.")
     payload = {
         "model": settings.llm_model,
         "messages": messages,
         "temperature": 0.6,
         "max_tokens": 300,
+        "stream": True,
     }
-    data = await _chat(payload, timeout=90, retries=3)
-    content = _message_content(data)
-    if settings.sim_debug:
-        print("LLM DEBUG: raw response ->", content)
-    parsed = _extract_json(content)
-    if not isinstance(parsed, dict):
-        # One retry with a stricter instruction (now also resilient via _chat).
-        strict_messages = messages + [
-            {
-                "role": "system",
-                "content": "Return ONLY valid JSON with a single key: reply. No extra text.",
-            }
-        ]
-        strict_payload = {**payload, "messages": strict_messages}
-        data = await _chat(strict_payload, timeout=90, retries=3)
-        content = _message_content(data)
-        if settings.sim_debug:
-            print("LLM DEBUG: raw retry response ->", content)
-        parsed = _extract_json(content)
-    if not isinstance(parsed, dict):
-        parsed = {"reply": content}
-    if settings.sim_debug:
-        print("LLM DEBUG: parsed ->", parsed)
-    reply = parsed.get("reply", "")
-    # Strip leading bracketed speaker tags like "[Mary, CFO ...]"
-    reply = re.sub(r"^\s*\[[^\]]+\]\s*", "", reply).strip()
-    reply = re.sub(r"^\s*```json\s*|\s*```\s*$", "", reply, flags=re.IGNORECASE).strip()
-    return {"reply": reply}
+    headers = _headers(settings)
+    client = _get_client()
+
+    last_error: Exception | None = None
+    for attempt in range(3):
+        yielded = False
+        try:
+            async with client.stream(
+                "POST", settings.llm_base_url, json=payload, headers=headers, timeout=90
+            ) as response:
+                if response.status_code >= 400:
+                    await response.aread()  # streamed body must be read before raise
+                    response.raise_for_status()
+                async for line in response.aiter_lines():
+                    content = _parse_stream_delta(line)
+                    if content:
+                        yielded = True
+                        yield content
+            return
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError) as exc:
+            last_error = exc
+            if yielded or not _is_retryable(exc) or attempt == 2:
+                raise
+            await asyncio.sleep(1 + attempt)
+    if last_error:
+        raise last_error
 
 
-async def classify_referral(condition: str, conversation: list[dict]) -> bool:
-    """YES/NO judge for a referral condition. Uses the cheaper classifier model."""
-    settings = get_settings()
-    transcript_lines = []
+def _format_transcript(conversation: list[dict]) -> tuple[str, int, int]:
+    """Render a conversation as a plain transcript plus user/assistant counts.
+
+    Shared by the referral and file-share judges so they see identical input.
+    """
+    lines = []
     user_count = 0
     assistant_count = 0
     for message in conversation:
         role = message.get("role")
         if role == "system":
             continue
-        content = message.get("content", "")
-        transcript_lines.append(f"{role}: {content}")
+        lines.append(f"{role}: {message.get('content', '')}")
         if role == "user":
             user_count += 1
-        if role == "assistant":
+        elif role == "assistant":
             assistant_count += 1
-    transcript = "\n".join(transcript_lines) if transcript_lines else "No conversation yet."
+    transcript = "\n".join(lines) if lines else "No conversation yet."
+    return transcript, user_count, assistant_count
+
+
+async def _yes_no_judge(system_prompt: str, user_prompt: str) -> bool:
+    """Run a strict YES/NO classifier on the cheap model. Fails closed (False)
+    on any error, since these gate unlocking content the user shouldn't get by
+    default."""
+    settings = get_settings()
     payload = {
         "model": settings.llm_classifier_model,
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a strict classifier. Determine if the referral condition is satisfied "
-                    "given the conversation. Use common sense and the overall intent, not exact wording. "
-                    "Reply with ONLY 'YES' or 'NO'."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Referral condition:\n{condition}\n\n"
-                    f"Conversation (most recent last):\n{transcript}\n\n"
-                    f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
-                ),
-            },
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         "temperature": 0,
     }
@@ -170,12 +195,41 @@ async def classify_referral(condition: str, conversation: list[dict]) -> bool:
         data = await _chat(payload, timeout=60, retries=3)
     except Exception:
         return False
-    answer = _message_content(data).strip().upper()
-    return answer.startswith("YES")
+    return _message_content(data).strip().upper().startswith("YES")
 
 
-async def classify_condition(condition: str, conversation: list[dict]) -> bool:
-    return await classify_referral(condition, conversation)
+async def classify_referral(condition: str, conversation: list[dict]) -> bool:
+    """Decide whether a referral's unlock condition is satisfied. Cheap model."""
+    transcript, user_count, assistant_count = _format_transcript(conversation)
+    system_prompt = (
+        "You are a strict classifier deciding whether to UNLOCK A NEW CONTACT (a "
+        "referral) in a case simulation. Determine if the referral's unlock condition "
+        "is satisfied given the conversation. Use common sense and the overall intent, "
+        "not exact wording. Reply with ONLY 'YES' or 'NO'."
+    )
+    user_prompt = (
+        f"Referral unlock condition:\n{condition}\n\n"
+        f"Conversation (most recent last):\n{transcript}\n\n"
+        f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
+    )
+    return await _yes_no_judge(system_prompt, user_prompt)
+
+
+async def classify_file_share(condition: str, conversation: list[dict]) -> bool:
+    """Decide whether a file's sharing condition is satisfied. Cheap model."""
+    transcript, user_count, assistant_count = _format_transcript(conversation)
+    system_prompt = (
+        "You are a strict classifier deciding whether to SHARE A FILE with the user in "
+        "a case simulation. Determine if the file's sharing condition is satisfied given "
+        "the conversation. Use common sense and the overall intent, not exact wording. "
+        "Reply with ONLY 'YES' or 'NO'."
+    )
+    user_prompt = (
+        f"File sharing condition:\n{condition}\n\n"
+        f"Conversation (most recent last):\n{transcript}\n\n"
+        f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
+    )
+    return await _yes_no_judge(system_prompt, user_prompt)
 
 
 def _looks_like_nonsense(message: str) -> bool:
@@ -247,52 +301,3 @@ async def classify_message_safety(user_message: str, conversation: list[dict]) -
     if label.startswith("NONSENSE"):
         return "nonsense"
     return "normal"
-
-
-async def generate_contact_introduction(
-    persona_details: dict,
-    newly_unlocked: list[dict],
-    recent_conversation: list[dict],
-) -> str:
-    """One short in-character intro sentence. Uses the cheaper classifier model."""
-    settings = get_settings()
-    names_and_roles = ", ".join(
-        f"{persona['name']} ({persona['role']})" for persona in newly_unlocked
-    )
-    transcript = "\n".join(
-        f"{msg['role']}: {msg['content']}"
-        for msg in recent_conversation
-        if msg.get("role") != "system"
-    )
-    payload = {
-        "model": settings.llm_classifier_model,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    f"You are {persona_details['name']}, {persona_details['role']}. "
-                    "Write one short, natural sentence introducing colleagues to the consultant. "
-                    "Stay in character. Be brief. Do not repeat prior sentences."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Recent conversation:\n{transcript}\n\n"
-                    f"Introduce these contacts naturally: {names_and_roles}. "
-                    "One sentence only."
-                ),
-            },
-        ],
-        "temperature": 0.6,
-        "max_tokens": 80,
-    }
-    try:
-        data = await _chat(payload, timeout=30, retries=2)
-        return _message_content(data).strip()
-    except Exception:
-        pass
-    return " ".join(
-        f"I'd like to connect you with {persona['name']}, our {persona['role']}."
-        for persona in newly_unlocked
-    )

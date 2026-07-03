@@ -1,15 +1,25 @@
 """Data access for the cases domain.
 
 All SQL for cases / personas / files / referrals lives here. Functions take the
-db client as their first argument and return raw rows (or ids for inserts);
-response shaping and domain logic live in the service/router layers.
+db client as their first argument. Reads return plain dicts keyed by column
+name (via ``row.asdict()``), not positional tuples, so callers aren't coupled
+to select-column order. Response shaping and domain logic live in the
+service/router layers.
 """
 
 import uuid
 
 from models.cases import FileEntry, PersonaPayload, ReferralPayload
+from services.db import row_to_dict, rows_to_dicts
 
 # --- cases: writes ---------------------------------------------------------
+
+
+def _normalize_access_code(access_code: str | None) -> str | None:
+    """Treat a blank access code the same as "no code" (the frontend sends ''
+    for an unset field, not null), so it doesn't collide with the partial
+    UNIQUE index on upper(access_code) (see migrations/0002)."""
+    return access_code.strip() if access_code and access_code.strip() else None
 
 
 async def insert_case(client, case_id: str, payload) -> None:
@@ -29,7 +39,7 @@ async def insert_case(client, case_id: str, payload) -> None:
         (
             case_id,
             payload.caseName,
-            payload.accessCode,
+            _normalize_access_code(payload.accessCode),
             payload.initialBrief,
             payload.commonInformation,
             payload.simulationDurationMinutes,
@@ -52,7 +62,7 @@ async def update_case_fields(client, case_id: str, payload) -> None:
         """,
         (
             payload.caseName,
-            payload.accessCode,
+            _normalize_access_code(payload.accessCode),
             payload.initialBrief,
             payload.commonInformation,
             payload.simulationDurationMinutes,
@@ -81,7 +91,28 @@ async def case_exists(client, case_id: str) -> bool:
     return bool(result.rows)
 
 
-async def fetch_cases(client):
+async def access_code_taken(client, access_code: str, exclude_case_id: str | None = None) -> bool:
+    """Whether another case already has this access code (case-insensitive).
+
+    A quick pre-check for a friendly 409; the partial UNIQUE index in
+    migrations/0002 is the actual guarantee against a race between this check
+    and the write.
+    """
+    normalized = _normalize_access_code(access_code)
+    if normalized is None:
+        return False
+    result = await client.execute(
+        """
+        select id from cases
+        where upper(access_code) = upper(?)
+          and (? is null or id != ?)
+        """,
+        (normalized, exclude_case_id, exclude_case_id),
+    )
+    return bool(result.rows)
+
+
+async def fetch_cases(client) -> list[dict]:
     result = await client.execute(
         """
         select id, case_name, access_code
@@ -89,10 +120,10 @@ async def fetch_cases(client):
         order by case_name
         """
     )
-    return result.rows
+    return rows_to_dicts(result.rows)
 
 
-async def fetch_case(client, case_id: str):
+async def fetch_case(client, case_id: str) -> dict | None:
     result = await client.execute(
         """
         select id, case_name, access_code, initial_brief, common_information,
@@ -102,10 +133,10 @@ async def fetch_case(client, case_id: str):
         """,
         (case_id,),
     )
-    return result.rows[0] if result.rows else None
+    return row_to_dict(result.rows[0]) if result.rows else None
 
 
-async def fetch_first_case(client):
+async def fetch_first_case(client) -> dict | None:
     result = await client.execute(
         """
         select id, case_name, initial_brief, simulation_duration
@@ -113,10 +144,10 @@ async def fetch_first_case(client):
         limit 1
         """
     )
-    return result.rows[0] if result.rows else None
+    return row_to_dict(result.rows[0]) if result.rows else None
 
 
-async def fetch_root_persona_ids(client, case_id: str):
+async def fetch_root_persona_ids(client, case_id: str) -> list[str]:
     result = await client.execute(
         """
         select p.id
@@ -131,10 +162,10 @@ async def fetch_root_persona_ids(client, case_id: str):
         """,
         (case_id, case_id),
     )
-    return result.rows
+    return [row["id"] for row in result.rows]
 
 
-async def fetch_root_personas_with_photo(client, case_id: str):
+async def fetch_root_personas_with_photo(client, case_id: str) -> list[dict]:
     result = await client.execute(
         """
         select p.id,
@@ -158,10 +189,10 @@ async def fetch_root_personas_with_photo(client, case_id: str):
         """,
         (case_id, case_id),
     )
-    return result.rows
+    return rows_to_dicts(result.rows)
 
 
-async def fetch_persona(client, persona_id: str):
+async def fetch_persona(client, persona_id: str) -> dict | None:
     result = await client.execute(
         """
         select p.name,
@@ -182,10 +213,10 @@ async def fetch_persona(client, persona_id: str):
         """,
         (persona_id,),
     )
-    return result.rows[0] if result.rows else None
+    return row_to_dict(result.rows[0]) if result.rows else None
 
 
-async def fetch_persona_files(client, persona_id: str):
+async def fetch_persona_files(client, persona_id: str) -> list[dict]:
     result = await client.execute(
         """
         select f.bucket, f.object_key, f.file_name, f.content_type,
@@ -196,10 +227,10 @@ async def fetch_persona_files(client, persona_id: str):
         """,
         (persona_id,),
     )
-    return result.rows
+    return rows_to_dicts(result.rows)
 
 
-async def fetch_persona_referrals(client, persona_id: str):
+async def fetch_persona_referrals(client, persona_id: str) -> list[dict]:
     result = await client.execute(
         """
         select referred_persona_id, trigger_type, condition_trigger, time_trigger
@@ -208,7 +239,7 @@ async def fetch_persona_referrals(client, persona_id: str):
         """,
         (persona_id,),
     )
-    return result.rows
+    return rows_to_dicts(result.rows)
 
 
 # --- files / personas / referrals: writes ----------------------------------
@@ -239,7 +270,7 @@ async def get_or_create_file_id(client, file_ref) -> str:
         (file_ref.bucket, file_ref.object_key),
     )
     if result.rows:
-        return result.rows[0][0]
+        return row_to_dict(result.rows[0])["id"]
     return await insert_file(client, file_ref)
 
 

@@ -1,11 +1,16 @@
 """Data access for the simulations domain (read-only queries).
 
-Returns raw rows; presigned-URL generation and response shaping happen in
-``simulation_service``.
+Reads return plain dicts keyed by column name (via ``row.asdict()``), not
+positional tuples, so callers aren't coupled to select-column order.
+Presigned-URL generation and response shaping happen in ``simulation_service``.
 """
 
+from services.db import row_to_dict, rows_to_dicts
 
-async def fetch_case_snapshot(client, access_code: str | None = None, case_id: str | None = None):
+
+async def fetch_case_snapshot(
+    client, access_code: str | None = None, case_id: str | None = None
+) -> dict | None:
     query = """
         select id, case_name, initial_brief, simulation_duration, common_information, access_code
         from cases
@@ -20,10 +25,10 @@ async def fetch_case_snapshot(client, access_code: str | None = None, case_id: s
     else:
         query += " limit 1"
     result = await client.execute(query, params)
-    return result.rows[0] if result.rows else None
+    return row_to_dict(result.rows[0]) if result.rows else None
 
 
-async def fetch_root_personas(client, case_id: str):
+async def fetch_root_personas(client, case_id: str) -> list[dict]:
     result = await client.execute(
         """
         select p.id,
@@ -47,10 +52,10 @@ async def fetch_root_personas(client, case_id: str):
         """,
         (case_id, case_id),
     )
-    return result.rows
+    return rows_to_dicts(result.rows)
 
 
-async def fetch_persona_core(client, persona_id: str):
+async def fetch_persona_core(client, persona_id: str) -> dict | None:
     result = await client.execute(
         """
         select p.name,
@@ -69,10 +74,10 @@ async def fetch_persona_core(client, persona_id: str):
         """,
         (persona_id,),
     )
-    return result.rows[0] if result.rows else None
+    return row_to_dict(result.rows[0]) if result.rows else None
 
 
-async def fetch_persona_file_entries(client, persona_id: str):
+async def fetch_persona_file_entries(client, persona_id: str) -> list[dict]:
     result = await client.execute(
         """
         select f.id, f.bucket, f.object_key, f.file_name, f.content_type,
@@ -83,10 +88,10 @@ async def fetch_persona_file_entries(client, persona_id: str):
         """,
         (persona_id,),
     )
-    return result.rows
+    return rows_to_dicts(result.rows)
 
 
-async def fetch_referrals_for_parent(client, case_id: str, parent_persona_id: str):
+async def fetch_referrals_for_parent(client, case_id: str, parent_persona_id: str) -> list[dict]:
     result = await client.execute(
         """
         select pr.referred_persona_id, pr.trigger_type, pr.condition_trigger, pr.time_trigger,
@@ -100,10 +105,10 @@ async def fetch_referrals_for_parent(client, case_id: str, parent_persona_id: st
         """,
         (case_id, parent_persona_id),
     )
-    return result.rows
+    return rows_to_dicts(result.rows)
 
 
-async def fetch_personas_by_ids(client, ids):
+async def fetch_personas_by_ids(client, ids) -> list[dict]:
     result = await client.execute(
         """
         select p.id,
@@ -123,10 +128,10 @@ async def fetch_personas_by_ids(client, ids):
         ),
         tuple(ids),
     )
-    return result.rows
+    return rows_to_dicts(result.rows)
 
 
-async def fetch_persona_row(client, persona_id: str):
+async def fetch_persona_row(client, persona_id: str) -> dict | None:
     result = await client.execute(
         """
         select p.id,
@@ -144,4 +149,4 @@ async def fetch_persona_row(client, persona_id: str):
         """,
         (persona_id,),
     )
-    return result.rows
+    return row_to_dict(result.rows[0]) if result.rows else None

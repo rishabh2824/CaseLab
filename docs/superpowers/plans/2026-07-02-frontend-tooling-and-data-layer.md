@@ -23,12 +23,12 @@
 
 - [ ] **Step 1: Fix `pnpm-workspace.yaml`**
 
-It currently holds placeholder text. Replace the entire file with:
+It currently holds placeholder text. Replace the entire file with (pnpm 11+ syntax — `onlyBuiltDependencies` was removed in v11 and replaced by `allowBuilds`):
 
 ```yaml
-onlyBuiltDependencies:
-  - '@swc/core'
-  - esbuild
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
 ```
 
 - [ ] **Step 2: Remove the npm lockfile**

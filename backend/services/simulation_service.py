@@ -11,6 +11,7 @@ worker on a single instance.
 """
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -22,14 +23,12 @@ from models.simulations import SendMessagePayload, StartSimulationPayload
 from services import simulation_repository as repo
 from services.db import get_db_client
 from services.llm import (
-    chat_completion_structured,
-    classify_condition,
+    chat_completion_stream,
+    classify_file_share,
     classify_message_safety,
     classify_referral,
-    generate_contact_introduction,
 )
 from services.spaces import create_presigned_get_url
-from settings import get_settings
 
 logger = logging.getLogger("caselab.simulations")
 
@@ -130,35 +129,24 @@ def _build_boundary_reply(persona_name: str, label: str, should_end: bool) -> st
 # --- persona / case reads (shaping around the repository) ------------------
 
 
-def _format_persona_row(row):
-    (
-        persona_id,
-        name,
-        role,
-        photo_bucket,
-        photo_object_key,
-        photo_file_name,
-        photo_content_type,
-        scheduled_time,
-        availability_duration,
-    ) = row
+def _format_persona_row(row: dict) -> dict:
     return {
-        "id": persona_id,
-        "name": name,
-        "role": role,
+        "id": row["id"],
+        "name": row["name"],
+        "role": row["role"],
         "profile_photo": (
             {
-                "bucket": photo_bucket,
-                "object_key": photo_object_key,
-                "file_name": photo_file_name,
-                "content_type": photo_content_type,
-                "url": create_presigned_get_url(photo_object_key),
+                "bucket": row["bucket"],
+                "object_key": row["object_key"],
+                "file_name": row["file_name"],
+                "content_type": row["content_type"],
+                "url": create_presigned_get_url(row["object_key"]),
             }
-            if photo_bucket and photo_object_key and photo_file_name
+            if row["bucket"] and row["object_key"] and row["file_name"]
             else None
         ),
-        "scheduled_time": scheduled_time,
-        "availability_duration": availability_duration,
+        "scheduled_time": row["scheduled_time"],
+        "availability_duration": row["availability_duration"],
     }
 
 
@@ -166,22 +154,29 @@ async def _get_case_snapshot(client, access_code: str | None = None, case_id: st
     row = await repo.fetch_case_snapshot(client, access_code=access_code, case_id=case_id)
     if row is None:
         raise HTTPException(status_code=404, detail="No case found.")
-    (
-        case_id,
-        case_name,
-        initial_brief,
-        simulation_duration,
-        common_information,
-        resolved_access_code,
-    ) = row
     return {
-        "id": case_id,
-        "case_name": case_name,
-        "initial_brief": initial_brief,
-        "simulation_duration": simulation_duration,
-        "common_information": common_information,
-        "access_code": resolved_access_code,
+        "id": row["id"],
+        "case_name": row["case_name"],
+        "initial_brief": row["initial_brief"],
+        "simulation_duration": row["simulation_duration"],
+        "common_information": row["common_information"],
+        "access_code": row["access_code"],
     }
+
+
+async def _get_run_case_snapshot(run: dict, client):
+    """Case snapshot for a run, cached on the run.
+
+    The case is fixed for the life of a run, so re-querying it on every message
+    is wasted work. The snapshot holds no presigned URLs, so caching it is safe
+    (unlike persona/file rows, whose URLs expire and are re-signed each read).
+    """
+    cached = run.get("case_snapshot")
+    if cached is not None:
+        return cached
+    snapshot = await _get_case_snapshot(client, case_id=run["case_id"])
+    run["case_snapshot"] = snapshot
+    return snapshot
 
 
 async def _get_root_personas(client, case_id):
@@ -190,60 +185,43 @@ async def _get_root_personas(client, case_id):
 
 
 async def _get_persona_details(client, persona_id):
-    row = await repo.fetch_persona_core(client, persona_id)
-    if row is None:
+    # The two reads are independent; run them as concurrent HTTP requests.
+    persona, files = await asyncio.gather(
+        repo.fetch_persona_core(client, persona_id),
+        repo.fetch_persona_file_entries(client, persona_id),
+    )
+    if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found.")
-    (
-        name,
-        role,
-        photo_bucket,
-        photo_object_key,
-        photo_file_name,
-        photo_content_type,
-        known,
-        unknown,
-        hidden,
-        traits,
-    ) = row
-    files = await repo.fetch_persona_file_entries(client, persona_id)
     file_entries = [
         {
-            "file_id": file_id,
-            "bucket": bucket,
-            "object_key": object_key,
-            "file_name": file_name,
-            "content_type": content_type,
-            "share_conditions": share_conditions,
-            "perceived_contents": perceived_contents,
+            "file_id": row["id"],
+            "bucket": row["bucket"],
+            "object_key": row["object_key"],
+            "file_name": row["file_name"],
+            "content_type": row["content_type"],
+            "share_conditions": row["share_conditions"],
+            "perceived_contents": row["perceived_contents"],
         }
-        for (
-            file_id,
-            bucket,
-            object_key,
-            file_name,
-            content_type,
-            share_conditions,
-            perceived_contents,
-        ) in files
+        for row in files
     ]
     return {
-        "name": name,
-        "role": role,
+        "name": persona["name"],
+        "role": persona["role"],
         "profile_photo": (
             {
-                "bucket": photo_bucket,
-                "object_key": photo_object_key,
-                "file_name": photo_file_name,
-                "content_type": photo_content_type,
-                "url": create_presigned_get_url(photo_object_key),
+                "bucket": persona["bucket"],
+                "object_key": persona["object_key"],
+                "file_name": persona["file_name"],
+                "content_type": persona["content_type"],
+                "url": create_presigned_get_url(persona["object_key"]),
             }
-            if photo_bucket and photo_object_key and photo_file_name
+            if persona["bucket"] and persona["object_key"] and persona["file_name"]
             else None
         ),
-        "known_facts": known,
-        "unknown_facts": unknown,
-        "hidden_facts": hidden,
-        "personality_traits": traits,
+        "known_facts": persona["known_facts"],
+        "unknown_facts": persona["unknown_facts"],
+        "hidden_facts": persona["hidden_facts"],
+        "personality_traits": persona["personality_traits"],
         "files": file_entries,
     }
 
@@ -252,43 +230,30 @@ async def _get_referrals_for_parent(client, case_id, parent_persona_id):
     rows = await repo.fetch_referrals_for_parent(client, case_id, parent_persona_id)
     referrals = []
     for row in rows:
-        (
-            referred_persona_id,
-            trigger_type,
-            condition_trigger,
-            time_trigger,
-            name,
-            role,
-            photo_bucket,
-            photo_object_key,
-            photo_file_name,
-            photo_content_type,
-            scheduled_time,
-            availability_duration,
-        ) = row
+        referred_persona_id = row["referred_persona_id"]
         referrals.append(
             {
                 "referred_persona_id": referred_persona_id,
-                "trigger_type": trigger_type,
-                "condition_trigger": condition_trigger or "",
-                "time_trigger": time_trigger,
+                "trigger_type": row["trigger_type"],
+                "condition_trigger": row["condition_trigger"] or "",
+                "time_trigger": row["time_trigger"],
                 "persona": {
                     "id": referred_persona_id,
-                    "name": name,
-                    "role": role,
+                    "name": row["name"],
+                    "role": row["role"],
                     "profile_photo": (
                         {
-                            "bucket": photo_bucket,
-                            "object_key": photo_object_key,
-                            "file_name": photo_file_name,
-                            "content_type": photo_content_type,
-                            "url": create_presigned_get_url(photo_object_key),
+                            "bucket": row["bucket"],
+                            "object_key": row["object_key"],
+                            "file_name": row["file_name"],
+                            "content_type": row["content_type"],
+                            "url": create_presigned_get_url(row["object_key"]),
                         }
-                        if photo_bucket and photo_object_key and photo_file_name
+                        if row["bucket"] and row["object_key"] and row["file_name"]
                         else None
                     ),
-                    "scheduled_time": scheduled_time,
-                    "availability_duration": availability_duration,
+                    "scheduled_time": row["scheduled_time"],
+                    "availability_duration": row["availability_duration"],
                     "is_referred": True,
                 },
             }
@@ -299,31 +264,77 @@ async def _get_referrals_for_parent(client, case_id, parent_persona_id):
 # --- prompt building & classification helpers ------------------------------
 
 
-def _build_system_prompt(case_snapshot, persona_details, locked_referral_names=None):
-    file_lines = []
-    for entry in persona_details["files"]:
-        file_name = entry["file_name"] or "Unnamed file"
-        share_conditions = entry["share_conditions"] or "No conditions specified"
-        perceived_contents = entry["perceived_contents"] or "No description"
-        file_lines.append(
-            f"- {file_name} (share conditions: {share_conditions}; perceived contents: {perceived_contents})"
-        )
-    files_section = "\n".join(file_lines) if file_lines else "None"
-    suppression = ""
-    if locked_referral_names:
-        suppression = (
-            "\nDo NOT mention, introduce, or hint at these contacts yet: "
-            f"{', '.join(locked_referral_names)}. "
-            "Speak as if you do not have a specific person to refer to."
-        )
+def _build_system_prompt(
+    case_snapshot,
+    persona_details,
+    *,
+    locked_referral_names,
+    newly_unlocked_contacts,
+    newly_shared_file_names,
+    withheld_file_names,
+):
+    """Build the persona's system prompt, GROUNDED in the decisions already made
+    for this turn.
+
+    The referral/file unlock decisions are resolved before this is called, so
+    the prompt tells the persona exactly what it may and may not do — rather
+    than the persona improvising a referral/file offer that the mechanical
+    checks then contradict.
+    """
     known_facts = persona_details.get("known_facts") or "None"
-    if locked_referral_names and known_facts:
+    # Redact still-locked contacts from the facts the model sees, so it can't
+    # surface a name it isn't allowed to reveal yet.
+    if locked_referral_names and known_facts != "None":
         for name in locked_referral_names:
             known_facts = re.sub(
                 rf"\b{re.escape(name)}\b",
                 "[undisclosed contact]",
                 known_facts,
             )
+
+    # --- referral guidance ---
+    referral_lines = []
+    if newly_unlocked_contacts:
+        contacts = ", ".join(
+            f"{c['name']} ({c['role']})" for c in newly_unlocked_contacts
+        )
+        referral_lines.append(
+            "You have JUST decided to connect the user with a new contact. Introduce "
+            f"them naturally in your reply: {contacts}."
+        )
+    if locked_referral_names:
+        referral_lines.append(
+            "Do NOT mention, introduce, hint at, or offer to connect the user with "
+            f"anyone else, including: {', '.join(locked_referral_names)}. Speak as if "
+            "you have no other specific person to refer them to."
+        )
+    if not newly_unlocked_contacts:
+        referral_lines.append(
+            "You are NOT introducing any new contact this turn. Do not promise or offer "
+            "to connect the user with anyone."
+        )
+    referral_section = " ".join(referral_lines)
+
+    # --- file guidance ---
+    file_lines = []
+    if newly_shared_file_names:
+        file_lines.append(
+            "You are sharing the following file(s) with the user right now (they are "
+            f"being delivered alongside your reply): {', '.join(newly_shared_file_names)}. "
+            "Mention them naturally."
+        )
+    if withheld_file_names:
+        file_lines.append(
+            "You possess the following file(s) but must NOT share, send, or offer to "
+            f"send them this turn: {', '.join(withheld_file_names)}."
+        )
+    if not newly_shared_file_names:
+        file_lines.append(
+            "You are NOT sharing any file this turn. Do not claim to send, attach, or "
+            "provide a file."
+        )
+    file_section = " ".join(file_lines)
+
     return (
         "You are a persona in a case simulation. Stay in character.\n"
         "Respond naturally and conversationally in 1-3 concise sentences.\n"
@@ -334,9 +345,11 @@ def _build_system_prompt(case_snapshot, persona_details, locked_referral_names=N
         f"Personality traits: {persona_details.get('personality_traits') or 'None'}\n"
         f"Information you know: {known_facts}\n"
         "Never fabricate details outside your known facts. If asked about unknown facts, say you do not know.\n"
-        f"Files you have access to:\n{files_section}\n"
-        "Do not share files unless the user has satisfied the sharing conditions."
-        f"{suppression}"
+        f"Referrals: {referral_section}\n"
+        f"Files: {file_section}\n"
+        "Strict rule: only introduce a contact or share a file if explicitly permitted "
+        "above. Never promise, imply, or offer a referral or file that is not listed as "
+        "available this turn."
     )
 
 
@@ -366,13 +379,56 @@ def _sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict
     return sanitized
 
 
-def _build_structured_instruction() -> str:
+def _build_reply_instruction() -> str:
     return (
-        "You must reply in strict JSON with one key:\n"
-        '  - "reply": string\n'
-        "Return ONLY JSON with no code fences and no extra text.\n"
-        "Keep reply to 1-3 sentences."
+        "Reply in plain text, in character, in 1-3 concise sentences. "
+        "Do not use JSON, code fences, quotation marks around the whole reply, "
+        "or a speaker-name prefix."
     )
+
+
+def _clean_reply(text: str) -> str:
+    reply = (text or "").strip()
+    # Strip a leading bracketed speaker tag like "[Mary, CFO ...]" if the model
+    # emits one despite the instruction.
+    reply = re.sub(r"^\s*\[[^\]]+\]\s*", "", reply).strip()
+    return reply
+
+
+def _sse(event: str, data: dict) -> str:
+    """Format one Server-Sent Event frame."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+async def _resolve_referral_unlock(
+    referral: dict,
+    decision_history: list[dict],
+    elapsed_minutes: int,
+) -> bool:
+    """Whether this referral's trigger is satisfied right now. The only case
+    that hits the network is an unconditioned "conditions" trigger; time
+    triggers and message-count thresholds resolve locally.
+
+    ``decision_history`` is the conversation including the current user message
+    (so message-count thresholds count this turn)."""
+    if referral["trigger_type"] == "conditions":
+        condition = referral["condition_trigger"].strip()
+        if not condition:
+            return False
+        min_messages = _extract_min_message_threshold(condition)
+        if min_messages is not None:
+            return _count_user_messages(decision_history) >= min_messages
+        return await classify_referral(condition, decision_history)
+    if referral["trigger_type"] == "time":
+        return bool(referral["time_trigger"] and elapsed_minutes >= referral["time_trigger"])
+    return False
+
+
+async def _resolve_file_share(file_entry: dict, decision_history: list[dict]) -> bool:
+    condition = (file_entry.get("share_conditions") or "").strip()
+    if not condition:
+        return False
+    return await classify_file_share(condition, decision_history)
 
 
 # --- run lifecycle ---------------------------------------------------------
@@ -451,6 +507,7 @@ async def start_simulation(payload: StartSimulationPayload):
     run_id = uuid.uuid4().hex
     RUNS[run_id] = {
         "case_id": case_snapshot["id"],
+        "case_snapshot": case_snapshot,  # cached for the life of the run
         "start_time": time.time(),
         "active_persona_id": initial_persona["id"],
         "unlocked_referred_ids": set(),
@@ -496,7 +553,7 @@ async def start_simulation(payload: StartSimulationPayload):
 async def get_simulation_state(run_id: str):
     run = _get_run(run_id)
     client = get_db_client()
-    case_snapshot = await _get_case_snapshot(client, case_id=run["case_id"])
+    case_snapshot = await _get_run_case_snapshot(run, client)
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     unlocked_ids = run["unlocked_referred_ids"]
     elapsed_minutes = _elapsed_minutes(run)
@@ -554,7 +611,7 @@ async def get_simulation_state(run_id: str):
 async def export_simulation_history(run_id: str):
     run = _get_run(run_id)
     client = get_db_client()
-    case_snapshot = await _get_case_snapshot(client, case_id=run["case_id"])
+    case_snapshot = await _get_run_case_snapshot(run, client)
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     unlocked_ids = run["unlocked_referred_ids"]
     personas = [{**persona, "is_referred": False} for persona in root_personas]
@@ -594,17 +651,68 @@ async def export_simulation_history(run_id: str):
     }
 
 
-async def handle_message(run_id: str, payload: SendMessagePayload):
+async def _resolve_turn_decisions(
+    client, case_id, persona_id, decision_history, run, elapsed_minutes
+) -> dict:
+    """Fetch the persona's referrals + details and resolve every unlock/share
+    for this turn. Reads run state but does NOT mutate it — the caller applies
+    the results only if the message passes the safety check.
+
+    Runs concurrently with the safety classifier (which needs no DB), so the
+    two cheap-model waves overlap instead of running back to back.
+    """
+    referrals, persona_details = await asyncio.gather(
+        _get_referrals_for_parent(client, case_id, persona_id),
+        _get_persona_details(client, persona_id),
+    )
+    pending_referrals = [
+        referral
+        for referral in referrals
+        if referral["referred_persona_id"] not in run["unlocked_referred_ids"]
+    ]
+    pending_files = [
+        file_entry
+        for file_entry in persona_details["files"]
+        if file_entry.get("file_id") and file_entry["file_id"] not in run["shared_files"]
+    ]
+    referral_results, file_results = await asyncio.gather(
+        asyncio.gather(
+            *(
+                _resolve_referral_unlock(referral, decision_history, elapsed_minutes)
+                for referral in pending_referrals
+            )
+        ),
+        asyncio.gather(
+            *(_resolve_file_share(file_entry, decision_history) for file_entry in pending_files)
+        ),
+    )
+    return {
+        "referrals": referrals,
+        "persona_details": persona_details,
+        "pending_referrals": pending_referrals,
+        "pending_files": pending_files,
+        "referral_results": referral_results,
+        "file_results": file_results,
+    }
+
+
+async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
+    """Validate the turn, resolve/apply unlocks & shares, and build the reply
+    inputs — everything up to (but not including) generating the reply.
+
+    Returns a "prepared" dict consumed by stream_message. Raises HTTPException
+    for any client error, which must happen HERE (before streaming starts) so
+    the client gets a normal error status rather than a half-open stream.
+    """
     run = _get_run(run_id)
     persona_id = payload.persona_id
     user_message = payload.message.strip()
-    settings = get_settings()
     if not persona_id or not user_message:
         raise HTTPException(status_code=400, detail="persona_id and message are required.")
     elapsed_minutes = _elapsed_minutes(run)
     # Check availability for root/referred persona
     client = get_db_client()
-    case_snapshot = await _get_case_snapshot(client, case_id=run["case_id"])
+    case_snapshot = await _get_run_case_snapshot(run, client)
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     root_map = {p["id"]: p for p in root_personas}
     if persona_id in root_map:
@@ -614,10 +722,10 @@ async def handle_message(run_id: str, payload: SendMessagePayload):
             elapsed_minutes,
         )
     elif persona_id in run["unlocked_referred_ids"]:
-        persona_rows = await repo.fetch_persona_row(client, persona_id)
-        if not persona_rows:
+        persona_row = await repo.fetch_persona_row(client, persona_id)
+        if persona_row is None:
             raise HTTPException(status_code=404, detail="Persona not found.")
-        persona = _format_persona_row(persona_rows[0])
+        persona = _format_persona_row(persona_row)
         available_at = run["unlocked_at"].get(persona_id, elapsed_minutes)
         availability = _persona_availability(persona, available_at, elapsed_minutes)
     else:
@@ -629,23 +737,27 @@ async def handle_message(run_id: str, payload: SendMessagePayload):
     if chat_state["ended"]:
         raise HTTPException(status_code=400, detail="This conversation has ended.")
 
-    referrals = await _get_referrals_for_parent(client, case_snapshot["id"], persona_id)
-    locked_referral_names = [
-        ref["persona"]["name"]
-        for ref in referrals
-        if ref["referred_persona_id"] not in run["unlocked_referred_ids"]
-    ]
-    persona_details = await _get_persona_details(client, persona_id)
+    # Record the user's turn once (kept by both the safety and normal paths).
     history = run["history"].setdefault(persona_id, [])
-    filtered_history = [msg for msg in history if msg.get("role") != "system"]
-    history_for_classifier = filtered_history + [
-        {"role": "user", "content": user_message}
-    ]
-    message_label = await classify_message_safety(user_message, history_for_classifier)
-    if settings.sim_debug:
-        print("SIM DEBUG: message safety ->", message_label)
+    history.append({"role": "user", "content": user_message})
+    # Full conversation incl. this message; used by the safety + unlock/share
+    # judges and (sanitized) as the reply context.
+    decision_history = [msg for msg in history if msg.get("role") != "system"]
+
+    # Safety only needs the in-memory conversation, so run it CONCURRENTLY with
+    # fetching persona data + resolving the unlock/share decisions. On the common
+    # (non-abusive) path this hides the safety round-trip entirely. Decisions are
+    # computed eagerly but only APPLIED below if the message passes safety.
+    message_label, decisions = await asyncio.gather(
+        classify_message_safety(user_message, decision_history),
+        _resolve_turn_decisions(
+            client, case_snapshot["id"], persona_id, decision_history, run, elapsed_minutes
+        ),
+    )
+    referrals = decisions["referrals"]
+    persona_details = decisions["persona_details"]
+
     if message_label != "normal":
-        history.append({"role": "user", "content": user_message})
         chat_state["last_flag_type"] = message_label
         if message_label == "severe_abuse":
             chat_state["ended"] = True
@@ -665,127 +777,139 @@ async def handle_message(run_id: str, payload: SendMessagePayload):
             message_label,
             chat_state["ended"],
         )
-        history.append({"role": "assistant", "content": assistant_reply})
+        # The boundary reply is a canned string; stream_message appends it to
+        # history and emits it as a single delta.
         return {
+            "kind": "boundary",
+            "run": run,
+            "persona_id": persona_id,
             "reply": assistant_reply,
-            "history": _format_run_histories(run, {persona_id}).get(persona_id, []),
-            "new_contacts": [],
-            "shared_files": [],
-            **_chat_state_payload(run, persona_id),
+            "meta": {
+                "new_contacts": [],
+                "shared_files": [],
+                **_chat_state_payload(run, persona_id),
+            },
         }
-    system_prompt = _build_system_prompt(
-        case_snapshot, persona_details, locked_referral_names
-    )
-    structured_instruction = _build_structured_instruction()
-    if settings.sim_debug:
-        print(
-            "SIM DEBUG: prompt lengths ->",
-            len(system_prompt),
-            len(structured_instruction),
-        )
-        print(
-            "SIM DEBUG: referrals ->",
-            [
-                {
-                    "id": ref["referred_persona_id"],
-                    "trigger_type": ref["trigger_type"],
-                }
-                for ref in referrals
-            ],
-        )
-    sanitized_history = _sanitize_history(filtered_history, locked_referral_names)
-    combined_system = f"{structured_instruction}\n\n---\n\n{system_prompt}"
-    messages = [
-        {"role": "system", "content": combined_system},
-        *sanitized_history,
-        {"role": "user", "content": user_message},
-    ]
-    history.append({"role": "user", "content": user_message})
-    try:
-        result = await chat_completion_structured(messages)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail="LLM request timed out.") from exc
-    assistant_reply = result["reply"]
-    history_for_classifier = sanitized_history + [{"role": "user", "content": user_message}]
 
+    # --- normal message: apply the decisions resolved above, then ground the
+    # persona's reply in that real outcome ---
+    pending_referrals = decisions["pending_referrals"]
+    pending_files = decisions["pending_files"]
+    referral_results = decisions["referral_results"]
+    file_results = decisions["file_results"]
+
+    # Apply referral unlocks.
     newly_unlocked = []
-    for referral in referrals:
+    for referral, should_unlock in zip(pending_referrals, referral_results):
         referred_id = referral["referred_persona_id"]
-        if referred_id in run["unlocked_referred_ids"]:
-            continue
-        if referral["trigger_type"] == "conditions":
-            condition = referral["condition_trigger"].strip()
-            if condition:
-                min_messages = _extract_min_message_threshold(condition)
-                if min_messages is not None:
-                    current_count = _count_user_messages(history)
-                    should_unlock = current_count >= min_messages
-                else:
-                    should_unlock = await classify_referral(condition, history_for_classifier)
-                if settings.sim_debug:
-                    print(
-                        "SIM DEBUG: referral condition ->",
-                        condition,
-                        "result ->",
-                        should_unlock,
-                    )
-                if should_unlock:
-                    run["unlocked_referred_ids"].add(referred_id)
-                    run["unlocked_at"][referred_id] = elapsed_minutes
-                    newly_unlocked.append(
-                        {
-                            **referral["persona"],
-                            **_chat_state_payload(run, referred_id),
-                        }
-                    )
-        elif referral["trigger_type"] == "time":
-            if referral["time_trigger"] and elapsed_minutes >= referral["time_trigger"]:
-                run["unlocked_referred_ids"].add(referred_id)
-                run["unlocked_at"][referred_id] = elapsed_minutes
-                newly_unlocked.append(
-                    {
-                        **referral["persona"],
-                        **_chat_state_payload(run, referred_id),
-                    }
-                )
-    if settings.sim_debug:
-        print("SIM DEBUG: newly_unlocked ->", newly_unlocked)
+        if should_unlock:
+            run["unlocked_referred_ids"].add(referred_id)
+            run["unlocked_at"][referred_id] = elapsed_minutes
+            newly_unlocked.append(
+                {**referral["persona"], **_chat_state_payload(run, referred_id)}
+            )
 
-    if newly_unlocked:
-        intro = await generate_contact_introduction(
-            persona_details,
-            newly_unlocked,
-            history_for_classifier[-6:],
-        )
-        assistant_reply = f"{assistant_reply} {intro}"
-    history.append({"role": "assistant", "content": assistant_reply})
-
+    # Apply file shares.
     shared_files = []
-    for file_entry in persona_details["files"]:
-        file_id = file_entry.get("file_id")
-        if not file_id or file_id in run["shared_files"]:
-            continue
-        condition = (file_entry.get("share_conditions") or "").strip()
-        if not condition:
-            continue
-        should_share = await classify_condition(condition, history_for_classifier)
-        if settings.sim_debug:
-            print("SIM DEBUG: file condition ->", condition, "result ->", should_share)
+    for file_entry, should_share in zip(pending_files, file_results):
         if should_share:
-            url = create_presigned_get_url(file_entry["object_key"])
+            file_id = file_entry["file_id"]
             shared_info = {
                 "file_id": file_id,
                 "file_name": file_entry.get("file_name") or "file",
                 "content_type": file_entry.get("content_type"),
-                "url": url,
+                "url": create_presigned_get_url(file_entry["object_key"]),
             }
             run["shared_files"][file_id] = shared_info
             shared_files.append(shared_info)
 
+    # Ground the persona's prompt in the decisions just made.
+    still_locked_names = [
+        ref["persona"]["name"]
+        for ref in referrals
+        if ref["referred_persona_id"] not in run["unlocked_referred_ids"]
+    ]
+    newly_unlocked_contacts = [
+        {"name": c["name"], "role": c["role"]} for c in newly_unlocked
+    ]
+    newly_shared_file_names = [info["file_name"] for info in shared_files]
+    withheld_file_names = [
+        file_entry.get("file_name") or "a file"
+        for file_entry in persona_details["files"]
+        if not file_entry.get("file_id")
+        or file_entry["file_id"] not in run["shared_files"]
+    ]
+
+    system_prompt = _build_system_prompt(
+        case_snapshot,
+        persona_details,
+        locked_referral_names=still_locked_names,
+        newly_unlocked_contacts=newly_unlocked_contacts,
+        newly_shared_file_names=newly_shared_file_names,
+        withheld_file_names=withheld_file_names,
+    )
+    reply_instruction = _build_reply_instruction()
+
+    # Sanitize prior assistant turns against names that remain locked; these
+    # messages are the reply context.
+    sanitized_history = _sanitize_history(decision_history, still_locked_names)
+    combined_system = f"{reply_instruction}\n\n---\n\n{system_prompt}"
+    messages = [{"role": "system", "content": combined_system}, *sanitized_history]
+
     return {
-        "reply": assistant_reply,
-        "history": _format_run_histories(run, {persona_id}).get(persona_id, []),
-        "new_contacts": newly_unlocked,
-        "shared_files": shared_files,
-        **_chat_state_payload(run, persona_id),
+        "kind": "normal",
+        "run": run,
+        "persona_id": persona_id,
+        "messages": messages,
+        "meta": {
+            "new_contacts": newly_unlocked,
+            "shared_files": shared_files,
+            **_chat_state_payload(run, persona_id),
+        },
     }
+
+
+async def stream_message(prepared: dict):
+    """Async generator of Server-Sent Events for one message turn.
+
+    Emits, in order:
+      - ``meta``  : new_contacts / shared_files / chat-state (already decided)
+      - ``delta`` : reply text chunks (one for a canned boundary reply, many
+                    when streaming the model)
+      - ``done``  : the final cleaned reply + updated history
+    or a single ``error`` event if generation fails mid-stream.
+    """
+    run = prepared["run"]
+    persona_id = prepared["persona_id"]
+
+    yield _sse("meta", prepared["meta"])
+
+    if prepared["kind"] == "boundary":
+        reply = prepared["reply"]
+        if reply:
+            yield _sse("delta", {"text": reply})
+    else:
+        parts: list[str] = []
+        try:
+            async for chunk in chat_completion_stream(prepared["messages"]):
+                parts.append(chunk)
+                yield _sse("delta", {"text": chunk})
+        except Exception:
+            logger.exception("Streaming reply failed for persona %s", persona_id)
+            yield _sse(
+                "error",
+                {"detail": "The reply could not be generated. Please try again."},
+            )
+            return
+        reply = _clean_reply("".join(parts))
+
+    run["history"].setdefault(persona_id, []).append(
+        {"role": "assistant", "content": reply}
+    )
+    yield _sse(
+        "done",
+        {
+            "reply": reply,
+            "history": _format_run_histories(run, {persona_id}).get(persona_id, []),
+        },
+    )
