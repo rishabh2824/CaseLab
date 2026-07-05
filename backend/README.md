@@ -60,8 +60,8 @@ intro sentences). Change them there if you need a different model.
 
 ```bash
 cd backend
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+uv sync
+uv run uvicorn main:app --reload --port 8000
 ```
 
 > The app **must** be launched with `backend/` as the working directory (that is
