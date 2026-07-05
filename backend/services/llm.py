@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 import httpx
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_incrementing
 
 from settings import get_settings
 
@@ -60,30 +61,31 @@ def _is_retryable(exc: Exception) -> bool:
 async def _chat(payload: dict, *, timeout: float, retries: int) -> dict:
     """POST a chat-completions payload and return the parsed JSON response body.
 
-    Retries retryable errors (timeouts, 429, 5xx) with linear backoff; other
-    errors (e.g. a 400 for an unsupported parameter) raise immediately so the
-    caller can react without wasted delay. Raises the last error if every
-    attempt fails; callers decide how to degrade.
+    Retries retryable errors (timeouts, 429, 5xx) with linear backoff (1s, 2s,
+    ...) via tenacity; other errors (e.g. a 400 for an unsupported parameter)
+    raise immediately. Reraises the last error if every attempt fails; callers
+    decide how to degrade.
     """
     settings = get_settings()
     if not settings.llm_key:
         raise RuntimeError("LLM_KEY is not configured.")
     headers = _headers(settings)
     client = _get_client()
-    last_error: Exception | None = None
-    for attempt in range(retries):
-        try:
-            response = await client.post(
-                settings.llm_base_url, json=payload, headers=headers, timeout=timeout
-            )
-            response.raise_for_status()
-            return response.json()
-        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError) as exc:
-            last_error = exc
-            if not _is_retryable(exc) or attempt == retries - 1:
-                break
-            await asyncio.sleep(1 + attempt)
-    raise last_error or RuntimeError("LLM request failed.")
+
+    @retry(
+        stop=stop_after_attempt(retries),
+        wait=wait_incrementing(start=1, increment=1),
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
+    async def _send() -> dict:
+        response = await client.post(
+            settings.llm_base_url, json=payload, headers=headers, timeout=timeout
+        )
+        response.raise_for_status()
+        return response.json()
+
+    return await _send()
 
 
 def _message_content(data: dict) -> str:

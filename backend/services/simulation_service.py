@@ -165,7 +165,7 @@ async def _get_case_snapshot(client, access_code: str | None = None, case_id: st
 
 
 async def _get_run_case_snapshot(run: dict, client):
-    """Case snapshot for a run, cached on the run.
+    """CaseForm snapshot for a run, cached on the run.
 
     The case is fixed for the life of a run, so re-querying it on every message
     is wasted work. The snapshot holds no presigned URLs, so caching it is safe
@@ -338,7 +338,7 @@ def _build_system_prompt(
     return (
         "You are a persona in a case simulation. Stay in character.\n"
         "Respond naturally and conversationally in 1-3 concise sentences.\n"
-        f"Case summary: {case_snapshot['initial_brief']}\n"
+        f"CaseForm summary: {case_snapshot['initial_brief']}\n"
         f"Common information: {case_snapshot.get('common_information') or 'None'}\n"
         f"Persona name: {persona_details['name']}\n"
         f"Role/title: {persona_details['role']}\n"
@@ -395,9 +395,10 @@ def _clean_reply(text: str) -> str:
     return reply
 
 
-def _sse(event: str, data: dict) -> str:
-    """Format one Server-Sent Event frame."""
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+def _sse(event: str, data: dict) -> dict:
+    """One Server-Sent Event as an sse-starlette dict; the response class
+    handles the wire framing (and keep-alive pings / disconnect detection)."""
+    return {"event": event, "data": json.dumps(data)}
 
 
 async def _resolve_referral_unlock(

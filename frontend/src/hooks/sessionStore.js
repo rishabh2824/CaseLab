@@ -14,7 +14,7 @@ export const useSessionStore = create(
             setAdminToken: (token) => set({ adminToken: token }),
 
             // Called when a student simulation starts. `bootstrap` is the full
-            // start-response payload, consumed once by StudentHome.
+            // start-response payload, consumed once by Home.
             startRun: ({ runId, accessCode, bootstrap, startTime }) =>
                 set({
                     runId: runId ?? '',

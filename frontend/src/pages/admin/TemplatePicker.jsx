@@ -1,9 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useSessionStore } from '../stores/sessionStore'
+import { useNavigate } from '@tanstack/react-router'
+import { apiFetch } from '../../client.js'
+import { useSessionStore } from '../../hooks/sessionStore.js'
 
-function AdminTemplatePicker({ mode = 'template' }) {
+function TemplatePicker({ mode = 'template' }) {
     const navigate = useNavigate()
     const adminToken = useSessionStore((s) => s.adminToken)
 
@@ -28,7 +28,7 @@ function AdminTemplatePicker({ mode = 'template' }) {
                         className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7]"
                         style={{ fontFamily: "'Space Grotesk', sans-serif" }}
                     >
-                        {isEditMode ? 'Edit Case' : 'Choose Template'}
+                        {isEditMode ? 'Edit CaseForm' : 'Choose Template'}
                     </p>
                     <h1
                         className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl"
@@ -68,8 +68,14 @@ function AdminTemplatePicker({ mode = 'template' }) {
                                 onClick={() =>
                                     navigate(
                                         isEditMode
-                                            ? `/admin/edit/form?caseId=${caseItem.id}`
-                                            : `/admin/new/form?template=${caseItem.id}`,
+                                            ? {
+                                                  to: '/admin/edit/form',
+                                                  search: { caseId: caseItem.id },
+                                              }
+                                            : {
+                                                  to: '/admin/new/form',
+                                                  search: { template: caseItem.id },
+                                              },
                                     )
                                 }
                                 className="w-full rounded-2xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#5b5fc7] hover:shadow-md"
@@ -90,4 +96,4 @@ function AdminTemplatePicker({ mode = 'template' }) {
     )
 }
 
-export default AdminTemplatePicker
+export default TemplatePicker

@@ -1,3 +1,5 @@
+import { createParser } from 'eventsource-parser'
+
 // Base URL of the backend. No trailing slash. All routes live under `${API_BASE}/api/...`.
 export const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/$/, '')
 
@@ -39,26 +41,12 @@ export async function apiFetch(path, { method = 'GET', body, adminToken, headers
     return text ? JSON.parse(text) : null
 }
 
-function parseSseFrame(raw) {
-    let eventType = 'message'
-    const dataLines = []
-    for (const line of raw.split('\n')) {
-        if (line.startsWith('event:')) eventType = line.slice(6).trim()
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim())
-    }
-    if (!dataLines.length) return null
-    try {
-        return { type: eventType, data: JSON.parse(dataLines.join('\n')) }
-    } catch {
-        return null
-    }
-}
-
 /**
  * POST to a Server-Sent-Events endpoint and invoke `onEvent({type, data})` for
  * each frame as it streams in. Pre-stream errors (non-2xx) throw like apiFetch,
  * so the caller can distinguish a rejected request from a mid-stream failure
- * (which arrives as an `error` event).
+ * (which arrives as an `error` event). SSE framing/decoding is handled by
+ * `eventsource-parser` (multi-byte-safe across chunk boundaries).
  *
  * @param {string} path
  * @param {object} opts
@@ -88,21 +76,22 @@ export async function streamChat(path, { body, adminToken, onEvent } = {}) {
         throw error
     }
 
+    const parser = createParser({
+        onEvent: (event) => {
+            let data
+            try {
+                data = JSON.parse(event.data)
+            } catch {
+                return
+            }
+            onEvent({ type: event.event || 'message', data })
+        },
+    })
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
-    let buffer = ''
     while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        // Frames are separated by a blank line (\n\n).
-        for (;;) {
-            const sep = buffer.indexOf('\n\n')
-            if (sep === -1) break
-            const frame = buffer.slice(0, sep)
-            buffer = buffer.slice(sep + 2)
-            const parsed = parseSseFrame(frame)
-            if (parsed) onEvent(parsed)
-        }
+        parser.feed(decoder.decode(value, { stream: true }))
     }
 }

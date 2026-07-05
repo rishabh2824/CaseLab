@@ -1,6 +1,6 @@
 # caseLab frontend
 
-React + Vite SPA for Wisconsin Case Lab.
+React + Vite SPA for Wisconsin CaseForm Lab.
 
 ## Prerequisites
 

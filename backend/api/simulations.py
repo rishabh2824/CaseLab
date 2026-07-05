@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
 
 from models.simulations import SendMessagePayload, StartSimulationPayload
 from services import simulation_service as sim
@@ -26,13 +26,7 @@ async def export_simulation_history(run_id: str):
 async def send_message(run_id: str, payload: SendMessagePayload):
     # Validate + resolve decisions up front: any client error is raised here as
     # a normal HTTP error, before the stream opens. The reply then streams as
-    # Server-Sent Events (metadata first, then reply text).
+    # Server-Sent Events (metadata first, then reply text). EventSourceResponse
+    # sets the SSE headers (text/event-stream, no-cache, X-Accel-Buffering: no).
     prepared = await sim.prepare_message(run_id, payload)
-    return StreamingResponse(
-        sim.stream_message(prepared),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disable proxy buffering so chunks flush
-        },
-    )
+    return EventSourceResponse(sim.stream_message(prepared))

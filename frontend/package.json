@@ -12,11 +12,15 @@
   },
   "dependencies": {
     "@mantine/core": "^8.3.15",
+    "@mantine/notifications": "^8.3.18",
     "@tailwindcss/vite": "^4.2.1",
     "@tanstack/react-query": "^5.101.2",
+    "@tanstack/react-router": "^1.170.17",
+    "eventsource-parser": "^3.1.0",
+    "immer": "^11.1.9",
+    "jspdf": "^4.2.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router-dom": "^7.13.1",
     "tailwindcss": "^4.2.1",
     "zustand": "^5.0.14"
   },

@@ -1,6 +1,6 @@
 # caseLab API
 
-FastAPI backend for the Wisconsin Case Lab simulation platform.
+FastAPI backend for the Wisconsin CaseForm Lab simulation platform.
 
 ## Layout
 
@@ -20,13 +20,15 @@ backend/
 ├── models/         # Pydantic request/response models (validate the data shape)
 │   ├── cases.py
 │   └── uploads.py
-├── services/       # Talk to the DB and external systems; hold the actual logic
-│   ├── db.py       #   libSQL / Turso client + row-to-dict helpers
-│   ├── spaces.py   #   DigitalOcean Spaces (object storage)
-│   └── llm.py      #   model calls
-├── migrations/     # Versioned .sql schema migrations (see below)
-└── scripts/        # One-off operational scripts (Spaces CORS setup, migrate)
+└── services/       # Talk to the DB and external systems; hold the actual logic
+    ├── db.py       #   libSQL / Turso client + row-to-dict helpers
+    ├── spaces.py   #   DigitalOcean Spaces (object storage)
+    └── llm.py      #   model calls
 ```
+
+Database schema changes are applied by hand via the Turso SQL console;
+[`schema.txt`](schema.txt) is a reference snapshot kept in sync with the live
+schema (there is no migration runner).
 
 Repository functions (`services/*_repository.py`) return **dicts keyed by
 column name** (via `libsql_client`'s `Row.asdict()`), not positional tuples —
@@ -73,29 +75,18 @@ uvicorn main:app --reload --port 8000
 
 Browser uploads PUT directly to Spaces, so the bucket needs a CORS policy that
 allows your frontend origin. Without it, uploads fail with `Failed to fetch`.
-Run once (and again whenever `FRONTEND_URLS` changes):
+Set this in the DigitalOcean control panel: **Spaces Object Storage → your
+bucket → Settings → CORS Configurations → Add**, allowing `GET`/`PUT` from
+each origin in `FRONTEND_URLS` (plus your local dev origin). Redo this
+whenever `FRONTEND_URLS` changes.
 
-```bash
-cd backend
-python -m scripts.configure_spaces_cors
-```
+## Database schema
 
-## Database migrations
-
-Schema changes live as versioned `.sql` files in `migrations/`, applied by a
-minimal runner (no ORM) that tracks what's been run in a `_schema_migrations`
-table — see [`scripts/migrate.py`](scripts/migrate.py) for the full rationale.
-`0001_init.sql` is the existing schema (from the old `schema.txt`), written
-with `CREATE TABLE IF NOT EXISTS` so it's safe to run against the current
-database even though its tables already exist.
-
-Run after pulling changes that add a migration, and whenever setting up a new
+There is no migration tool — schema changes are applied by hand via the Turso
+SQL console. After changing the schema, re-export it and update
+[`schema.txt`](schema.txt) so it stays an accurate mirror of the live
 database:
 
-```bash
-cd backend
-python -m scripts.migrate
+```sql
+SELECT sql FROM sqlite_master WHERE type IN ('table', 'index') AND sql IS NOT NULL ORDER BY type, name;
 ```
-
-To add a schema change, create `migrations/000N_description.sql` (next
-number) with the SQL statements, then run the command above.

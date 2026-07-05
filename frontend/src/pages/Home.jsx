@@ -1,8 +1,8 @@
 import { useMutation } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { apiFetch } from '../api/client'
-import { useSessionStore } from '../stores/sessionStore'
+import { apiFetch } from '../client.js'
+import { useSessionStore } from '../hooks/sessionStore.js'
 
 function Home() {
     const [accessCode, setAccessCode] = useState('')
@@ -31,7 +31,7 @@ function Home() {
             setError('')
             if (result.kind === 'admin') {
                 setAdminToken(result.code)
-                navigate('/admin')
+                navigate({ to: '/admin' })
                 return
             }
             startRun({
@@ -40,7 +40,7 @@ function Home() {
                 bootstrap: result.data,
                 startTime: Date.now(),
             })
-            navigate('/student')
+            navigate({ to: '/student' })
         },
         onError: () => setError('Invalid access code.'),
     })

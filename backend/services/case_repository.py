@@ -18,7 +18,7 @@ from services.db import row_to_dict, rows_to_dicts
 def _normalize_access_code(access_code: str | None) -> str | None:
     """Treat a blank access code the same as "no code" (the frontend sends ''
     for an unset field, not null), so it doesn't collide with the partial
-    UNIQUE index on upper(access_code) (see migrations/0002)."""
+    UNIQUE index on upper(access_code) (see schema.txt)."""
     return access_code.strip() if access_code and access_code.strip() else None
 
 
@@ -94,9 +94,9 @@ async def case_exists(client, case_id: str) -> bool:
 async def access_code_taken(client, access_code: str, exclude_case_id: str | None = None) -> bool:
     """Whether another case already has this access code (case-insensitive).
 
-    A quick pre-check for a friendly 409; the partial UNIQUE index in
-    migrations/0002 is the actual guarantee against a race between this check
-    and the write.
+    A quick pre-check for a friendly 409; the partial UNIQUE index
+    (idx_cases_access_code_upper, see schema.txt) is the actual guarantee
+    against a race between this check and the write.
     """
     normalized = _normalize_access_code(access_code)
     if normalized is None:

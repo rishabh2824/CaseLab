@@ -1,4 +1,4 @@
-"""Case domain logic.
+"""CaseForm domain logic.
 
 Orchestrates the repository reads/writes and shapes responses. Acquires the db
 client so the router layer stays free of any data access. Holds no raw SQL.
@@ -22,8 +22,8 @@ def _is_unique_violation(exc: Exception) -> bool:
     """Whether exc looks like a UNIQUE constraint violation from the DB.
 
     Defense in depth for a race between the pre-check in create_case/
-    update_case and the write itself; the partial UNIQUE index in
-    migrations/0002 is the actual guarantee.
+    update_case and the write itself; the partial UNIQUE index
+    (idx_cases_access_code_upper, see schema.txt) is the actual guarantee.
     """
     if not isinstance(exc, libsql_client.LibsqlError):
         return False
@@ -177,7 +177,7 @@ async def get_case(case_id: str) -> dict:
     client = get_db_client()
     case = await repo.fetch_case(client, case_id)
     if case is None:
-        raise HTTPException(status_code=404, detail="Case not found.")
+        raise HTTPException(status_code=404, detail="CaseForm not found.")
     root_persona_ids = await repo.fetch_root_persona_ids(client, case["id"])
     personas = [
         await build_persona_payload(client, persona_id)
@@ -200,7 +200,7 @@ async def get_case(case_id: str) -> dict:
 async def update_case(case_id: str, payload) -> dict:
     client = get_db_client()
     if not await repo.case_exists(client, case_id):
-        raise HTTPException(status_code=404, detail="Case not found.")
+        raise HTTPException(status_code=404, detail="CaseForm not found.")
     if payload.accessCode and await repo.access_code_taken(
         client, payload.accessCode, exclude_case_id=case_id
     ):

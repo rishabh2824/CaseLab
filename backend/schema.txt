@@ -1,35 +1,37 @@
--- Case Lab Schema (SQLite)
--- NOTE: kept for reference only. The source of truth is now the versioned
--- migrations in backend/migrations/ (see backend/README.md, "Database
--- migrations"). Schema changes should be added as a new migration file, not
--- edited here.
+-- CaseForm Lab Schema (SQLite)
+-- Reference snapshot of the live Turso schema. Schema changes are applied by
+-- hand via the Turso SQL console; update this file to match afterward so it
+-- stays an accurate mirror of the live database.
 
 -- 1. CASES
+-- access_code was added later via ALTER TABLE, so it's the last column here
+-- (matching the live DB) rather than logically grouped near case_name.
 CREATE TABLE cases (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_name TEXT NOT NULL,
-  access_code TEXT,
   initial_brief TEXT NOT NULL,
   common_information TEXT,
   simulation_duration INTEGER,
   non_referred INTEGER NOT NULL CHECK (non_referred >= 1)
-);
+, access_code TEXT);
 
 -- 2. PERSONAS
+-- profile_photo_file_id was added later via ALTER TABLE (inline REFERENCES,
+-- rather than a table-level FOREIGN KEY clause), so it's the last column here,
+-- matching the live DB.
 CREATE TABLE personas (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_id TEXT NOT NULL,
   name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT '',
-  profile_photo_file_id TEXT,
   known_facts TEXT,
   unknown_facts TEXT,
   hidden_facts TEXT,
   personality_traits TEXT,
   scheduled_time INTEGER NOT NULL DEFAULT 0,
-  availability_duration INTEGER,
-  FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE,
-  FOREIGN KEY (profile_photo_file_id) REFERENCES files(id) ON DELETE SET NULL
+  availability_duration INTEGER, profile_photo_file_id TEXT
+REFERENCES files(id) ON DELETE SET NULL,
+  FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE
 );
 
 -- 3. REFERRAL RELATIONSHIP
@@ -68,3 +70,8 @@ CREATE TABLE persona_files (
   FOREIGN KEY (persona_id) REFERENCES personas(id) ON DELETE CASCADE,
   FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
 );
+
+-- 6. INDEXES
+CREATE UNIQUE INDEX idx_cases_access_code_upper
+  ON cases (upper(access_code))
+  WHERE access_code IS NOT NULL AND access_code != '';

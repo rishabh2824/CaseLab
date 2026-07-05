@@ -1,6 +1,6 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate } from '@tanstack/react-router'
 
-function AdminHome() {
+function CreateCase() {
     const navigate = useNavigate()
 
     return (
@@ -11,24 +11,24 @@ function AdminHome() {
                         className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7]"
                         style={{ fontFamily: "'Space Grotesk', sans-serif" }}
                     >
-                        Admin Panel
+                        Create Case
                     </p>
                     <h1
                         className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl"
                         style={{ fontFamily: "'Space Grotesk', sans-serif" }}
                     >
-                        Choose what you want to work on
+                        How do you want to begin?
                     </h1>
                     <p className="mt-4 max-w-xl text-sm leading-6 text-slate-500">
-                        Create a new simulation case from scratch or open an existing case for
-                        editing.
+                        Start with a blank case builder or reuse an existing case as the base for a
+                        new one.
                     </p>
                 </div>
 
                 <div className="mt-12 grid gap-6 md:grid-cols-2">
                     <button
                         type="button"
-                        onClick={() => navigate('/admin/new')}
+                        onClick={() => navigate({ to: '/admin/new/scratch' })}
                         className="group rounded-3xl border border-[#d6d9ff] bg-white p-8 text-left shadow-sm transition hover:-translate-y-1 hover:border-[#5b5fc7] hover:shadow-lg"
                     >
                         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#5b5fc7]">
@@ -38,20 +38,16 @@ function AdminHome() {
                             className="mt-4 text-2xl font-semibold text-slate-900"
                             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
                         >
-                            Create New Case
+                            Start From Scratch
                         </h2>
                         <p className="mt-3 text-sm leading-6 text-slate-500">
-                            Start a fresh case setup, define personas, referral logic, and upload
-                            files.
+                            Open the empty case form and build everything from the ground up.
                         </p>
-                        <div className="mt-8 text-sm font-semibold text-slate-700 transition group-hover:text-[#5b5fc7]">
-                            Open case builder
-                        </div>
                     </button>
 
                     <button
                         type="button"
-                        onClick={() => navigate('/admin/edit')}
+                        onClick={() => navigate({ to: '/admin/new/template' })}
                         className="group rounded-3xl border border-slate-200 bg-[#f8f9ff] p-8 text-left shadow-sm transition hover:-translate-y-1 hover:border-[#5b5fc7] hover:shadow-lg"
                     >
                         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
@@ -61,15 +57,11 @@ function AdminHome() {
                             className="mt-4 text-2xl font-semibold text-slate-900"
                             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
                         >
-                            Edit Existing Case
+                            Use Existing Case As Template
                         </h2>
                         <p className="mt-3 text-sm leading-6 text-slate-500">
-                            Load an existing case and update its setup, personas, or supporting
-                            materials.
+                            Choose an existing case and preload its details into a new-case form.
                         </p>
-                        <div className="mt-8 text-sm font-semibold text-slate-700 transition group-hover:text-[#5b5fc7]">
-                            Open case list
-                        </div>
                     </button>
                 </div>
             </div>
@@ -77,4 +69,4 @@ function AdminHome() {
     )
 }
 
-export default AdminHome
+export default CreateCase
