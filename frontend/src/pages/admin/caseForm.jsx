@@ -25,6 +25,11 @@ import {
 } from './Helpers.js'
 import PersonaFields from './PersonaFields.jsx'
 
+// The backend enforces this same cap when a case is created/updated
+// (settings.MAX_SIMULATION_DURATION_MINUTES) — this is UX only, so an admin
+// gets an inline error instead of a failed submit.
+const MAX_SIMULATION_DURATION_MINUTES = 120
+
 function CaseForm() {
     const [submitError, setSubmitError] = useState('')
     const [submitSuccess, setSubmitSuccess] = useState('')
@@ -36,8 +41,8 @@ function CaseForm() {
     const [totalPersonas, setTotalPersonas] = useState(null)
     const [personas, setPersonas] = useState([])
     const search = useSearch({ strict: false })
-    // Admin endpoints require the token the admin entered on the home screen.
-    const adminToken = useSessionStore((s) => s.adminToken)
+    // Admin endpoints require the JWT minted at Google sign-in (Login.jsx).
+    const adminJwt = useSessionStore((s) => s.adminJwt)
     const templateId = search.template
     const editCaseId = search.caseId
     const isEditMode = Boolean(editCaseId)
@@ -75,6 +80,11 @@ function CaseForm() {
         typeof totalPersonas === 'number' && totalPersonas < 1
             ? 'At least 1 persona is required'
             : null
+    const simulationDurationError =
+        typeof simulationDurationMinutes === 'number' &&
+        simulationDurationMinutes > MAX_SIMULATION_DURATION_MINUTES
+            ? `Simulation duration cannot exceed ${MAX_SIMULATION_DURATION_MINUTES} minutes (2 hours).`
+            : null
     const hasUnscheduledRootPersona = personas.some((persona) => {
         const normalized = normalizePersona(persona)
         return typeof normalized.scheduledAfterMinutes !== 'number'
@@ -87,7 +97,7 @@ function CaseForm() {
         error: loadError,
     } = useQuery({
         queryKey: ['case', sourceCaseId],
-        queryFn: () => apiFetch(`/api/cases/${sourceCaseId}`, { adminToken }),
+        queryFn: () => apiFetch(`/api/cases/${sourceCaseId}`, { adminJwt }),
         enabled: Boolean(sourceCaseId),
     })
 
@@ -118,7 +128,7 @@ function CaseForm() {
         mutationFn: (payload) =>
             apiFetch(isEditMode ? `/api/cases/${editCaseId}` : '/api/cases', {
                 method: isEditMode ? 'PUT' : 'POST',
-                adminToken,
+                adminJwt,
                 body: payload,
             }),
         onSuccess: () =>
@@ -143,6 +153,11 @@ function CaseForm() {
             setSubmitSuccess('')
             return
         }
+        if (simulationDurationError) {
+            setSubmitError(simulationDurationError)
+            setSubmitSuccess('')
+            return
+        }
         setSubmitError('')
         setSubmitSuccess('')
 
@@ -154,7 +169,7 @@ function CaseForm() {
         const uploadFile = async (file, prefix) => {
             const presign = await apiFetch('/api/uploads/presign', {
                 method: 'POST',
-                adminToken,
+                adminJwt,
                 body: {
                     file_name: file.name,
                     content_type: file.type || null,
@@ -302,9 +317,11 @@ function CaseForm() {
                                             label="Simulation duration (Minutes)"
                                             placeholder="Leave empty for unlimited"
                                             min={1}
+                                            max={MAX_SIMULATION_DURATION_MINUTES}
                                             allowDecimal={false}
                                             hideControls
                                             value={simulationDurationMinutes}
+                                            error={simulationDurationError}
                                             onChange={setSimulationDurationMinutes}
                                         />
                                         <TextInput

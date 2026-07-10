@@ -5,7 +5,7 @@ import { useSessionStore } from '../../hooks/sessionStore.js'
 
 function TemplatePicker({ mode = 'template' }) {
     const navigate = useNavigate()
-    const adminToken = useSessionStore((s) => s.adminToken)
+    const adminJwt = useSessionStore((s) => s.adminJwt)
 
     const {
         data,
@@ -13,7 +13,7 @@ function TemplatePicker({ mode = 'template' }) {
         error: queryError,
     } = useQuery({
         queryKey: ['cases'],
-        queryFn: () => apiFetch('/api/cases', { adminToken }),
+        queryFn: () => apiFetch('/api/cases', { adminJwt }),
     })
 
     const cases = data?.cases ?? []
@@ -25,14 +25,12 @@ function TemplatePicker({ mode = 'template' }) {
             <div className="mx-auto max-w-4xl">
                 <div className="max-w-2xl">
                     <p
-                        className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7]"
-                        style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                        className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7] font-display"
                     >
                         {isEditMode ? 'Edit CaseForm' : 'Choose Template'}
                     </p>
                     <h1
-                        className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl"
-                        style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                        className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl font-display"
                     >
                         {isEditMode ? 'Select a case to edit' : 'Select an existing case'}
                     </h1>

@@ -1,10 +1,20 @@
+from functools import lru_cache
+
 import boto3
 from botocore.config import Config
-
 from settings import get_settings
 
 
+@lru_cache(maxsize=1)
 def get_spaces_client():
+    """Cached client, built once and reused (same pattern as get_db_client).
+
+    Construction loads/validates botocore service models and the credential
+    chain — real CPU work on the event loop — while generate_presigned_url
+    itself is cheap local signing and thread-safe to call on a shared client.
+    Building a fresh client per call was wasted work on every presigned URL
+    (every profile photo, every contact, every 15s poll, every student).
+    """
     settings = get_settings()
     return boto3.client(
         "s3",

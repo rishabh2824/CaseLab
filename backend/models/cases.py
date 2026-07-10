@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from settings import MAX_SIMULATION_DURATION_MINUTES
 
 
 class FileRef(BaseModel):
@@ -56,3 +58,14 @@ class CasePayload(BaseModel):
     accessCode: Optional[str] = None
     totalNonReferredPersonas: int
     personas: List[PersonaPayload] = Field(default_factory=list)
+
+    @field_validator("simulationDurationMinutes")
+    @classmethod
+    def _cap_simulation_duration(cls, value: Optional[int]) -> Optional[int]:
+        # The admin form caps this client-side too, but that's UX only — this
+        # is the actual guarantee (see settings.MAX_SIMULATION_DURATION_MINUTES).
+        if value is not None and value > MAX_SIMULATION_DURATION_MINUTES:
+            raise ValueError(
+                f"Simulation duration cannot exceed {MAX_SIMULATION_DURATION_MINUTES} minutes."
+            )
+        return value

@@ -26,3 +26,6 @@ Thumbs.db
 # Non-app-related local files
 docs/
 .ai/
+
+# superpowers brainstorming scratch
+.superpowers/

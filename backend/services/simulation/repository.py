@@ -2,7 +2,7 @@
 
 Reads return plain dicts keyed by column name (via ``row.asdict()``), not
 positional tuples, so callers aren't coupled to select-column order.
-Presigned-URL generation and response shaping happen in ``simulation_service``.
+Presigned-URL generation and response shaping happen in ``services.simulation.reads``.
 """
 
 from services.db import row_to_dict, rows_to_dicts
@@ -26,33 +26,6 @@ async def fetch_case_snapshot(
         query += " limit 1"
     result = await client.execute(query, params)
     return row_to_dict(result.rows[0]) if result.rows else None
-
-
-async def fetch_root_personas(client, case_id: str) -> list[dict]:
-    result = await client.execute(
-        """
-        select p.id,
-               p.name,
-               p.role,
-               photo.bucket,
-               photo.object_key,
-               photo.file_name,
-               photo.content_type,
-               p.scheduled_time,
-               p.availability_duration
-        from personas p
-        left join files photo on photo.id = p.profile_photo_file_id
-        where p.case_id = ?
-          and p.id not in (
-            select referred_persona_id
-            from persona_referrals
-            where case_id = ?
-          )
-        order by p.name
-        """,
-        (case_id, case_id),
-    )
-    return rows_to_dicts(result.rows)
 
 
 async def fetch_persona_core(client, persona_id: str) -> dict | None:

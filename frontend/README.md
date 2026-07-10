@@ -24,4 +24,8 @@ cp .env.example .env   # set VITE_API_BASE
 
 ## Environment
 
-`VITE_API_BASE` — base URL of the backend. No trailing slash. See `.env.example`.
+- `VITE_API_BASE` — base URL of the backend. No trailing slash. See `.env.example`.
+- `VITE_GOOGLE_CLIENT_ID` — Google OAuth client id for admin Google Sign-In
+  (`frontend/src/pages/admin/Login.jsx`). Must be the same client id the
+  backend's `GOOGLE_CLIENT_ID` checks the ID token's `aud` claim against
+  (`backend/settings.py`).

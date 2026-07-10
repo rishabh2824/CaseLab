@@ -1,4 +1,4 @@
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { apiFetch } from '../client.js'
@@ -8,44 +8,34 @@ import chevron from '../assets/Modified-Chevron-Layered-Grey.png'
 import bgImage from '../assets/Bg.jpg'
 import wsbLogo from '../assets/WSBLogo.png'
 
-const DISPLAY = "'Red Hat Display', sans-serif"
-const TEXT = "'Red Hat Text', sans-serif"
-
 function Home() {
     const [accessCode, setAccessCode] = useState('')
     const [error, setError] = useState('')
     const accessCodeRef = useRef(null)
     const navigate = useNavigate()
-    const setAdminToken = useSessionStore((s) => s.setAdminToken)
+    const queryClient = useQueryClient()
     const startRun = useSessionStore((s) => s.startRun)
 
+    // Students only now — admins go through /admin/login (Google SSO) via the
+    // "Admin Login" button below, not through this same form.
     const { mutate: submit, isPending: isSubmitting } = useMutation({
         mutationFn: async (code) => {
-            // Admin path: verify the token server-side.
-            try {
-                await apiFetch('/api/admin/verify', { adminToken: code })
-                return { kind: 'admin', code }
-            } catch {
-                // Not an admin token — treat as a student access code.
-            }
             const normalized = code.toUpperCase()
             const data = await apiFetch('/api/simulations/start', {
                 method: 'POST',
                 body: { access_code: normalized },
             })
-            return { kind: 'student', normalized, data }
+            return { normalized, data }
         },
         onSuccess: (result) => {
             setError('')
-            if (result.kind === 'admin') {
-                setAdminToken(result.code)
-                navigate({ to: '/admin' })
-                return
-            }
+            // Seed the query cache in memory (NOT sessionStorage) so the
+            // student view renders from the /start payload immediately, without
+            // a redundant GET on mount.
+            queryClient.setQueryData(['simulation', result.data.run_id], result.data)
             startRun({
                 runId: result.data.run_id,
                 accessCode: result.normalized,
-                bootstrap: result.data,
                 startTime: Date.now(),
             })
             navigate({ to: '/student' })
@@ -65,8 +55,8 @@ function Home() {
 
     return (
         <div
-            className="relative flex flex-col h-screen w-full items-center justify-center overflow-hidden bg-cover bg-center px-6"
-            style={{ fontFamily: TEXT, backgroundImage: `url(${bgImage})` }}
+            className="relative flex flex-col h-screen w-full items-center justify-center overflow-hidden bg-cover bg-center px-6 font-body"
+            style={{ backgroundImage: `url(${bgImage})` }}
         >
             {/*Red horizontal bar*/}
             <div className="absolute inset-x-0 top-0 h-1 bg-[#c5050c]" aria-hidden="true"/>
@@ -82,15 +72,15 @@ function Home() {
                 src={halfCircle}
                 alt=""
                 aria-hidden="true"
-                className="pointer-events-none absolute top-1/2 -left-28 z-0 w-72 max-w-none -translate-y-1/2 rotate-90 select-none opacity-[0.10]"
+                className="pointer-events-none absolute top-1/2 -left-28 z-0 w-72 max-w-none -translate-y-1/2 rotate-90 select-none opacity-[0.22]"
             />
 
             <img src={wsbLogo} alt="Wisconsin School of Business" className="absolute left-6 top-6 z-10 h-12 w-auto sm:h-20" />
 
             <button
                 type="button"
-                onClick={() => accessCodeRef.current?.focus()}
-                className="absolute bottom-6 right-6 z-10 rounded-full border border-[#d6d0c4] bg-white/70 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.2em] text-[#57534b] shadow-sm backdrop-blur transition hover:border-[#c5050c] hover:text-[#c5050c] sm:bottom-auto sm:top-6"
+                onClick={() => navigate({ to: '/admin/login' })}
+                className="absolute bottom-6 right-6 z-10 rounded-full border-2 border-[#c5050c] bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-[#57534b] shadow-sm backdrop-blur transition hover:bg-[#c5050c] hover:text-[#1a1a1a] sm:bottom-auto sm:top-12 sm:right-20"
             >
                 Admin Login
             </button>
@@ -107,8 +97,7 @@ function Home() {
                 </div>
 
                 <h1
-                    className="mt-4 text-4xl font-bold leading-[1.02] tracking-tight text-[#1a1a1a] sm:text-5xl"
-                    style={{ fontFamily: DISPLAY }}
+                    className="mt-4 text-4xl font-bold leading-[1.02] tracking-tight text-[#1a1a1a] sm:text-5xl font-display"
                 >
                     Wisconsin Case Lab
                 </h1>

@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from api.router import api_router
 from services.db import close_db_client
 from services.llm import close_client, init_client
-from services.simulation_service import cleanup_expired_runs_forever
+from services.simulation.state import cleanup_expired_runs_forever
 from settings import get_settings
 
 logging.basicConfig(
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     # of a fresh TLS handshake each time.
     init_client()
     # Background sweeper that removes simulation runs 2 hours after they start
-    # (see services.simulation_service.RUN_TTL_SECONDS).
+    # (see services.simulation.state.RUN_TTL_SECONDS).
     cleanup_task = asyncio.create_task(cleanup_expired_runs_forever())
     try:
         yield
@@ -41,15 +41,18 @@ async def lifespan(app: FastAPI):
         await close_db_client()
 
 
-app = FastAPI(title="caseLab API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="caseLab API",
+              version="1.0.0",
+              lifespan=lifespan,
+              docs_url=None, redoc_url=None, openapi_url=None)
 
 if settings.frontend_urls:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.frontend_urls,
         # No cookies/session credentials are used — admin auth travels as an
-        # explicit X-Admin-Token header, not a cookie — so credentialed CORS
-        # isn't needed. Keeping this False is strictly tighter.
+        # explicit `Authorization: Bearer <jwt>` header, not a cookie — so
+        # credentialed CORS isn't needed. Keeping this False is strictly tighter.
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],

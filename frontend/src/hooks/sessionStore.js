@@ -4,44 +4,54 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 // Centralized session state.
 export const useSessionStore = create(
     persist(
-        (set, get) => ({
-            adminToken: '',
+        (set) => ({
+            // Admin session: set by Login.jsx after POST /api/admin/login
+            // succeeds. adminJwt is sent as `Authorization: Bearer <adminJwt>`
+            // on admin/write requests (see client.js). adminRole is 1 (super
+            // admin) or 2 (admin), matching the `admins.role` CHECK constraint.
+            adminJwt: '',
+            adminRole: null,
+            adminEmail: '',
             runId: '',
             accessCode: '',
-            bootstrap: null,
             startTime: null,
 
-            setAdminToken: (token) => set({ adminToken: token }),
+            setAdmin: ({ adminJwt, adminRole, adminEmail }) =>
+                set({
+                    adminJwt: adminJwt ?? '',
+                    adminRole: adminRole ?? null,
+                    adminEmail: adminEmail ?? '',
+                }),
 
-            // Called when a student simulation starts. `bootstrap` is the full
-            // start-response payload, consumed once by Home.
-            startRun: ({ runId, accessCode, bootstrap, startTime }) =>
+            // Called when a student simulation starts. Only the run id/access
+            // code/start time are persisted — NOT the full /start response.
+            // useSimulationRun's mount effect re-fetches the run's state via a
+            // plain GET, so there's no need to smuggle the whole payload
+            // through sessionStorage (quota pressure, and staleness if the
+            // page is refreshed before it's "consumed").
+            startRun: ({ runId, accessCode, startTime }) =>
                 set({
                     runId: runId ?? '',
                     accessCode: accessCode ?? '',
-                    bootstrap: bootstrap ?? null,
                     startTime: startTime ?? Date.now(),
                 }),
 
             setRunId: (runId) => set({ runId }),
 
-            // Read the bootstrap payload exactly once, then clear it.
-            consumeBootstrap: () => {
-                const { bootstrap } = get()
-                if (bootstrap) set({ bootstrap: null })
-                return bootstrap
-            },
+            // Clear a student run (keeps admin session).
+            clearRun: () => set({ runId: '', accessCode: '', startTime: null }),
 
-            // Clear a student run (keeps adminToken).
-            clearRun: () => set({ runId: '', accessCode: '', bootstrap: null, startTime: null }),
+            // Clear the admin session only (logout from the admin area).
+            clearAdmin: () => set({ adminJwt: '', adminRole: null, adminEmail: '' }),
 
-            // Clear everything (logout).
+            // Clear everything.
             clearAll: () =>
                 set({
-                    adminToken: '',
+                    adminJwt: '',
+                    adminRole: null,
+                    adminEmail: '',
                     runId: '',
                     accessCode: '',
-                    bootstrap: null,
                     startTime: null,
                 }),
         }),

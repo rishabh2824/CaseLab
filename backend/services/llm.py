@@ -1,6 +1,5 @@
 import re
 import json
-import asyncio
 import logging
 
 import httpx
@@ -92,71 +91,29 @@ def _message_content(data: dict) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-def _parse_stream_delta(line: str) -> str | None:
-    """Pull the incremental text out of one OpenAI/OpenRouter SSE line.
+async def complete_persona_reply(messages: list[dict]) -> str:
+    """Generate the in-character persona turn on the primary (frontier) model
+    and return the raw completion text.
 
-    Returns the content delta, or None for keep-alive comments, ``[DONE]``,
-    and lines with no content.
+    Unlike a streamed reply, this is buffered: the model returns a single JSON
+    envelope (the reply text plus its own referral/file decisions), which the
+    caller must receive in full before it can apply unlocks/shares and emit
+    anything. Retries retryable failures (timeouts, 429, 5xx) via ``_chat``.
     """
-    if not line.startswith("data:"):
-        return None
-    data = line[len("data:") :].strip()
-    if not data or data == "[DONE]":
-        return None
-    try:
-        chunk = json.loads(data)
-    except json.JSONDecodeError:
-        return None
-    try:
-        return chunk["choices"][0]["delta"].get("content")
-    except (KeyError, IndexError, TypeError):
-        return None
-
-
-async def chat_completion_stream(messages: list[dict]):
-    """Stream the in-character persona reply as plain-text chunks from the
-    primary (frontier) model.
-
-    Yields content deltas as they arrive. Retries only if the request fails
-    *before* any content has been yielded — once a partial reply has been
-    emitted it can't be un-sent, so a mid-stream failure propagates.
-    """
-    settings = get_settings()
-    if not settings.llm_key:
-        raise RuntimeError("LLM_KEY is not configured.")
     payload = {
-        "model": settings.llm_model,
+        "model": get_settings().llm_model,
         "messages": messages,
         "temperature": 0.6,
-        "max_tokens": 300,
-        "stream": True,
+        "max_tokens": 600,
     }
-    headers = _headers(settings)
-    client = _get_client()
-
-    last_error: Exception | None = None
-    for attempt in range(3):
-        yielded = False
-        try:
-            async with client.stream(
-                "POST", settings.llm_base_url, json=payload, headers=headers, timeout=90
-            ) as response:
-                if response.status_code >= 400:
-                    await response.aread()  # streamed body must be read before raise
-                    response.raise_for_status()
-                async for line in response.aiter_lines():
-                    content = _parse_stream_delta(line)
-                    if content:
-                        yielded = True
-                        yield content
-            return
-        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError) as exc:
-            last_error = exc
-            if yielded or not _is_retryable(exc) or attempt == 2:
-                raise
-            await asyncio.sleep(1 + attempt)
-    if last_error:
-        raise last_error
+    data = await _chat(payload, timeout=90, retries=3)
+    # Usage carries the prompt-cache breakdown (cache_creation vs cache_read
+    # input tokens, or OpenRouter's prompt_tokens_details.cached_tokens); logged
+    # at DEBUG so cache hit rates can be checked without production noise.
+    usage = data.get("usage")
+    if usage:
+        logger.debug("persona reply usage: %s", usage)
+    return _message_content(data)
 
 
 def _format_transcript(conversation: list[dict]) -> tuple[str, int, int]:
@@ -252,7 +209,12 @@ def _looks_like_nonsense(message: str) -> bool:
 
 
 async def classify_message_safety(user_message: str, conversation: list[dict]) -> str:
-    """Safety label for the latest user message. Uses the classifier model."""
+    """Safety label for the latest user message: "normal" or "nonsense".
+    "nonsense" is deliberately broad — it covers gibberish/spam as well as
+    rude, harassing, or abusive messages. There's no separate immediate-end
+    tier; repeated nonsense (of any kind) ends the chat via the warning-count
+    threshold in prepare_message, rather than some messages ending it
+    instantly and others only warning."""
     if _looks_like_nonsense(user_message):
         return "nonsense"
 
@@ -273,10 +235,11 @@ async def classify_message_safety(user_message: str, conversation: list[dict]) -
                 "content": (
                     "You are a strict conversation safety classifier for a case simulation. "
                     "Classify the latest user message in context. "
-                    "Return ONLY one label from this set: NORMAL, NONSENSE, HARASSMENT, SEVERE_ABUSE.\n"
-                    "Use NONSENSE for spam, gibberish, or repeatedly incoherent case-irrelevant input.\n"
-                    "Use HARASSMENT for rude, insulting, or abusive behavior that is not an extreme threat.\n"
-                    "Use SEVERE_ABUSE for explicit threats, severe harassment, or clearly intolerable abuse.\n"
+                    "Return ONLY one label from this set: NORMAL, NONSENSE.\n"
+                    "Use NONSENSE for spam, gibberish, or repeatedly incoherent case-irrelevant "
+                    "input, AND for rude, insulting, harassing, or abusive messages, including "
+                    "explicit threats or severe abuse — anything that isn't a normal, coherent, "
+                    "case-related message.\n"
                     "Otherwise return NORMAL."
                 ),
             },
@@ -296,10 +259,6 @@ async def classify_message_safety(user_message: str, conversation: list[dict]) -
     except Exception:
         return "normal"
     label = _message_content(data).strip().upper()
-    if label.startswith("SEVERE_ABUSE"):
-        return "severe_abuse"
-    if label.startswith("HARASSMENT"):
-        return "harassment"
     if label.startswith("NONSENSE"):
         return "nonsense"
     return "normal"

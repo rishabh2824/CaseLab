@@ -1,21 +1,51 @@
 import { useNavigate } from '@tanstack/react-router'
+import { useSessionStore } from '../../hooks/sessionStore.js'
 
 function Home() {
     const navigate = useNavigate()
+    const adminEmail = useSessionStore((s) => s.adminEmail)
+    const adminRole = useSessionStore((s) => s.adminRole)
+    const clearAdmin = useSessionStore((s) => s.clearAdmin)
+
+    const handleSignOut = () => {
+        clearAdmin()
+        navigate({ to: '/admin/login' })
+    }
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 px-6 py-10">
             <div className="mx-auto flex min-h-[80vh] max-w-5xl flex-col justify-center">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-slate-400">
+                        Signed in as <span className="font-medium text-slate-600">{adminEmail}</span>
+                    </p>
+                    <div className="flex items-center gap-4">
+                        {adminRole === 1 && (
+                            <button
+                                type="button"
+                                onClick={() => navigate({ to: '/admin/admins' })}
+                                className="text-sm font-semibold text-[#5b5fc7] transition hover:text-[#4548a0]"
+                            >
+                                Manage admins
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            onClick={handleSignOut}
+                            className="text-sm font-semibold text-slate-500 transition hover:text-slate-700"
+                        >
+                            Sign out
+                        </button>
+                    </div>
+                </div>
                 <div className="max-w-2xl">
                     <p
-                        className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7]"
-                        style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                        className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7] font-display"
                     >
                         Admin Panel
                     </p>
                     <h1
-                        className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl"
-                        style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                        className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl font-display"
                     >
                         Choose what you want to work on
                     </h1>
@@ -35,8 +65,7 @@ function Home() {
                             Option 1
                         </p>
                         <h2
-                            className="mt-4 text-2xl font-semibold text-slate-900"
-                            style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                            className="mt-4 text-2xl font-semibold text-slate-900 font-display"
                         >
                             Create New Case
                         </h2>
@@ -58,8 +87,7 @@ function Home() {
                             Option 2
                         </p>
                         <h2
-                            className="mt-4 text-2xl font-semibold text-slate-900"
-                            style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                            className="mt-4 text-2xl font-semibold text-slate-900 font-display"
                         >
                             Edit Existing Case
                         </h2>

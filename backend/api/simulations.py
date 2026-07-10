@@ -2,7 +2,7 @@ from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
 from models.simulations import SendMessagePayload, StartSimulationPayload
-from services import simulation_service as sim
+from services.simulation import service as sim
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
 

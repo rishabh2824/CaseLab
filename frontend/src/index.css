@@ -1,8 +1,26 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Red+Hat+Display:wght@500;600;700;800;900&family=Red+Hat+Text:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap");
+/* Self-hosted (not a third-party Google Fonts request): only the two
+   families actually used app-wide, only the weights actually used. Swapping
+   a render-blocking cross-origin @import for local, Vite-bundled font files
+   removes both the extra DNS/TLS round trip and the GDPR question of a
+   third-party font request on every load. */
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/space-grotesk/500.css";
+@import "@fontsource/space-grotesk/600.css";
+@import "@fontsource/space-grotesk/700.css";
 @import "tailwindcss";
 
+@theme {
+    /* Exposed as the `font-body` / `font-display` utilities — use those
+       instead of an inline `style={{ fontFamily: ... }}`, so font usage
+       stays centralized here rather than ad-hoc per component. */
+    --font-body: "IBM Plex Sans", sans-serif;
+    --font-display: "Space Grotesk", sans-serif;
+}
+
 :root {
-    font-family: "IBM Plex Sans", sans-serif;
+    font-family: var(--font-body);
     color: #0f172a;
     background-color: #f8fafc;
 }

@@ -1,10 +1,27 @@
 """Data access for the cases domain.
 
-All SQL for cases / personas / files / referrals lives here. Functions take the
-db client as their first argument. Reads return plain dicts keyed by column
-name (via ``row.asdict()``), not positional tuples, so callers aren't coupled
-to select-column order. Response shaping and domain logic live in the
-service/router layers.
+All SQL for cases / personas / files / referrals lives here. Reads execute
+immediately and take the db client as their first argument, returning plain
+dicts keyed by column name (via ``row.asdict()``), not positional tuples, so
+callers aren't coupled to select-column order.
+
+Writes to ``cases``/``personas``/``persona_files``/``persona_referrals`` are
+BUILDERS, not executors: they return (or append to a caller-supplied list) the
+``(sql, params)`` statement tuple(s) without touching the DB. The caller
+(``case_service``) collects every statement for a create/update into one list
+and runs it through ``client.batch(...)``, which the libsql HTTP client wraps
+in a real BEGIN/COMMIT/ROLLBACK — so a whole case write is one atomic
+transaction instead of a sequence of independently-committed statements that
+can leave a case half-written if a later step fails.
+
+``files`` rows are the one exception: ``get_or_create_file_id``/``insert_file``
+still execute immediately, since a file's id must be known before it can be
+embedded in a persona/persona_files statement. A failure after that point
+rolls back the persona/case writes but leaves the file metadata row in place;
+that's a harmless orphan (the file already exists in Spaces either way), not
+data loss, so it doesn't need the same atomicity treatment.
+
+Response shaping and domain logic live in the service/router layers.
 """
 
 import uuid
@@ -22,8 +39,8 @@ def _normalize_access_code(access_code: str | None) -> str | None:
     return access_code.strip() if access_code and access_code.strip() else None
 
 
-async def insert_case(client, case_id: str, payload) -> None:
-    await client.execute(
+def insert_case(case_id: str, payload, owner_admin_id: str | None) -> tuple[str, tuple]:
+    return (
         """
         insert into cases (
             id,
@@ -32,9 +49,10 @@ async def insert_case(client, case_id: str, payload) -> None:
             initial_brief,
             common_information,
             simulation_duration,
-            non_referred
+            non_referred,
+            owner_admin_id
         )
-        values (?, ?, ?, ?, ?, ?, ?)
+        values (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             case_id,
@@ -44,12 +62,13 @@ async def insert_case(client, case_id: str, payload) -> None:
             payload.commonInformation,
             payload.simulationDurationMinutes,
             payload.totalNonReferredPersonas,
+            owner_admin_id,
         ),
     )
 
 
-async def update_case_fields(client, case_id: str, payload) -> None:
-    await client.execute(
+def update_case_fields(case_id: str, payload) -> tuple[str, tuple]:
+    return (
         """
         update cases
         set case_name = ?,
@@ -72,23 +91,21 @@ async def update_case_fields(client, case_id: str, payload) -> None:
     )
 
 
-async def delete_case(client, case_id: str) -> None:
-    await client.execute("delete from cases where id = ?", (case_id,))
-
-
-async def delete_personas_for_case(client, case_id: str) -> None:
-    await client.execute("delete from personas where case_id = ?", (case_id,))
+def delete_personas_for_case(case_id: str) -> tuple[str, tuple]:
+    return ("delete from personas where case_id = ?", (case_id,))
 
 
 # --- cases: reads ----------------------------------------------------------
 
 
-async def case_exists(client, case_id: str) -> bool:
+async def fetch_case_owner(client, case_id: str) -> dict | None:
+    """Cheap lookup for authorization checks (create/update) that don't need
+    the full case row — just whether it exists and who owns it."""
     result = await client.execute(
-        "select id from cases where id = ?",
+        "select id, owner_admin_id from cases where id = ?",
         (case_id,),
     )
-    return bool(result.rows)
+    return row_to_dict(result.rows[0]) if result.rows else None
 
 
 async def access_code_taken(client, access_code: str, exclude_case_id: str | None = None) -> bool:
@@ -112,14 +129,28 @@ async def access_code_taken(client, access_code: str, exclude_case_id: str | Non
     return bool(result.rows)
 
 
-async def fetch_cases(client) -> list[dict]:
-    result = await client.execute(
-        """
-        select id, case_name, access_code
-        from cases
-        order by case_name
-        """
-    )
+async def fetch_cases(client, owner_admin_id: str | None = None) -> list[dict]:
+    """List cases, optionally scoped to one owner. ``owner_admin_id=None``
+    means "no filter" — the caller (case_service) only passes ``None`` for a
+    super admin, who sees every case including legacy ``NULL``-owner ones."""
+    if owner_admin_id is None:
+        result = await client.execute(
+            """
+            select id, case_name, access_code
+            from cases
+            order by case_name
+            """
+        )
+    else:
+        result = await client.execute(
+            """
+            select id, case_name, access_code
+            from cases
+            where owner_admin_id = ?
+            order by case_name
+            """,
+            (owner_admin_id,),
+        )
     return rows_to_dicts(result.rows)
 
 
@@ -127,7 +158,7 @@ async def fetch_case(client, case_id: str) -> dict | None:
     result = await client.execute(
         """
         select id, case_name, access_code, initial_brief, common_information,
-               simulation_duration, non_referred
+               simulation_duration, non_referred, owner_admin_id
         from cases
         where id = ?
         """,
@@ -147,55 +178,14 @@ async def fetch_first_case(client) -> dict | None:
     return row_to_dict(result.rows[0]) if result.rows else None
 
 
-async def fetch_root_persona_ids(client, case_id: str) -> list[str]:
-    result = await client.execute(
-        """
-        select p.id
-        from personas p
-        where p.case_id = ?
-          and p.id not in (
-            select referred_persona_id
-            from persona_referrals
-            where case_id = ?
-          )
-        order by p.name
-        """,
-        (case_id, case_id),
-    )
-    return [row["id"] for row in result.rows]
-
-
-async def fetch_root_personas_with_photo(client, case_id: str) -> list[dict]:
+async def fetch_personas_for_case(client, case_id: str) -> list[dict]:
+    """Every persona (root + referred) belonging to a case, in one round-trip.
+    Callers index this by ``id`` to assemble the persona tree in memory instead
+    of fetching one persona at a time."""
     result = await client.execute(
         """
         select p.id,
                p.name,
-               p.role,
-               photo.bucket,
-               photo.object_key,
-               photo.file_name,
-               photo.content_type,
-               p.scheduled_time,
-               p.availability_duration
-        from personas p
-        left join files photo on photo.id = p.profile_photo_file_id
-        where p.case_id = ?
-          and p.id not in (
-            select referred_persona_id
-            from persona_referrals
-            where case_id = ?
-          )
-        order by p.name
-        """,
-        (case_id, case_id),
-    )
-    return rows_to_dicts(result.rows)
-
-
-async def fetch_persona(client, persona_id: str) -> dict | None:
-    result = await client.execute(
-        """
-        select p.name,
                p.role,
                photo.bucket,
                photo.object_key,
@@ -209,35 +199,42 @@ async def fetch_persona(client, persona_id: str) -> dict | None:
                p.availability_duration
         from personas p
         left join files photo on photo.id = p.profile_photo_file_id
-        where p.id = ?
+        where p.case_id = ?
         """,
-        (persona_id,),
-    )
-    return row_to_dict(result.rows[0]) if result.rows else None
-
-
-async def fetch_persona_files(client, persona_id: str) -> list[dict]:
-    result = await client.execute(
-        """
-        select f.bucket, f.object_key, f.file_name, f.content_type,
-               pf.share_conditions, pf.perceived_contents
-        from persona_files pf
-        left join files f on f.id = pf.file_id
-        where pf.persona_id = ?
-        """,
-        (persona_id,),
+        (case_id,),
     )
     return rows_to_dicts(result.rows)
 
 
-async def fetch_persona_referrals(client, persona_id: str) -> list[dict]:
+async def fetch_persona_files_for_case(client, case_id: str) -> list[dict]:
+    """Every persona_files row for every persona in the case, in one
+    round-trip. Callers index this by ``persona_id``."""
     result = await client.execute(
         """
-        select referred_persona_id, trigger_type, condition_trigger, time_trigger
-        from persona_referrals
-        where parent_persona_id = ?
+        select pf.persona_id,
+               f.bucket, f.object_key, f.file_name, f.content_type,
+               pf.share_conditions, pf.perceived_contents
+        from persona_files pf
+        join personas p on p.id = pf.persona_id
+        left join files f on f.id = pf.file_id
+        where p.case_id = ?
         """,
-        (persona_id,),
+        (case_id,),
+    )
+    return rows_to_dicts(result.rows)
+
+
+async def fetch_referrals_for_case(client, case_id: str) -> list[dict]:
+    """Every referral in the case, in one round-trip. Callers index this by
+    ``parent_persona_id`` (and, to find root personas, collect every
+    ``referred_persona_id``)."""
+    result = await client.execute(
+        """
+        select parent_persona_id, referred_persona_id, trigger_type, condition_trigger, time_trigger
+        from persona_referrals
+        where case_id = ?
+        """,
+        (case_id,),
     )
     return rows_to_dicts(result.rows)
 
@@ -274,64 +271,80 @@ async def get_or_create_file_id(client, file_ref) -> str:
     return await insert_file(client, file_ref)
 
 
-async def insert_persona_files(client, persona_id: str, files: list[FileEntry]) -> None:
+async def insert_persona_files(
+    client, persona_id: str, files: list[FileEntry], statements: list
+) -> None:
+    """Resolve each file's id (a live read/insert against ``files`` — see the
+    module docstring) and append its persona_files insert statement to
+    ``statements`` rather than executing it."""
     for entry in files:
         if not entry.file:
             continue
         file_id = await get_or_create_file_id(client, entry.file)
-        await client.execute(
-            """
-            insert into persona_files (id, persona_id, file_id, share_conditions, perceived_contents)
-            values (?, ?, ?, ?, ?)
-            """,
+        statements.append(
             (
-                uuid.uuid4().hex,
-                persona_id,
-                file_id,
-                entry.shareConditions,
-                entry.perceivedContents,
-            ),
+                """
+                insert into persona_files (id, persona_id, file_id, share_conditions, perceived_contents)
+                values (?, ?, ?, ?, ?)
+                """,
+                (
+                    uuid.uuid4().hex,
+                    persona_id,
+                    file_id,
+                    entry.shareConditions,
+                    entry.perceivedContents,
+                ),
+            )
         )
 
 
-async def insert_persona(client, case_id: str, persona: PersonaPayload) -> str:
+async def insert_persona(
+    client, case_id: str, persona: PersonaPayload, statements: list
+) -> str:
+    """Append this persona's insert statement (and its files' insert
+    statements) to ``statements``; returns the persona_id the caller (e.g.
+    ``insert_referrals``) needs to link a referral to it. The id is generated
+    here, in Python, rather than left to the table's default, precisely so it
+    can be referenced before the insert actually runs."""
     persona_id = uuid.uuid4().hex
     scheduled_time = persona.scheduledAfterMinutes or 0
     profile_photo_file_id = None
     if persona.profilePhoto:
         profile_photo_file_id = await get_or_create_file_id(client, persona.profilePhoto)
-    await client.execute(
-        """
-        insert into personas (
-            id,
-            case_id,
-            name,
-            role,
-            profile_photo_file_id,
-            known_facts,
-            unknown_facts,
-            hidden_facts,
-            personality_traits,
-            scheduled_time,
-            availability_duration
-        )
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+    statements.append(
         (
-            persona_id,
-            case_id,
-            persona.name,
-            persona.role,
-            profile_photo_file_id,
-            persona.knownFacts,
-            persona.unknownFacts,
-            persona.hiddenFacts,
-            persona.personalityTraits,
-            scheduled_time,
-            persona.availabilityMinutes,
-        ),
+            """
+            insert into personas (
+                id,
+                case_id,
+                name,
+                role,
+                profile_photo_file_id,
+                known_facts,
+                unknown_facts,
+                hidden_facts,
+                personality_traits,
+                scheduled_time,
+                availability_duration
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                persona_id,
+                case_id,
+                persona.name,
+                persona.role,
+                profile_photo_file_id,
+                persona.knownFacts,
+                persona.unknownFacts,
+                persona.hiddenFacts,
+                persona.personalityTraits,
+                scheduled_time,
+                persona.availabilityMinutes,
+            ),
+        )
     )
-    await insert_persona_files(client, persona_id, persona.files)
+    await insert_persona_files(client, persona_id, persona.files, statements)
     return persona_id
 
 
@@ -340,35 +353,38 @@ async def insert_referrals(
     case_id: str,
     parent_persona_id: str,
     referrals: list[ReferralPayload],
+    statements: list,
 ) -> None:
     for referral in referrals:
-        referred_persona_id = await insert_persona(client, case_id, referral.persona)
+        referred_persona_id = await insert_persona(client, case_id, referral.persona, statements)
         condition_trigger = (
             referral.conditions if referral.triggerType == "conditions" else None
         )
         time_trigger = referral.revealDelayMinutes if referral.triggerType == "time" else None
-        await client.execute(
-            """
-            insert into persona_referrals (
-                id,
-                case_id,
-                parent_persona_id,
-                referred_persona_id,
-                trigger_type,
-                condition_trigger,
-                time_trigger
-            )
-            values (?, ?, ?, ?, ?, ?, ?)
-            """,
+        statements.append(
             (
-                uuid.uuid4().hex,
-                case_id,
-                parent_persona_id,
-                referred_persona_id,
-                referral.triggerType,
-                condition_trigger,
-                time_trigger,
-            ),
+                """
+                insert into persona_referrals (
+                    id,
+                    case_id,
+                    parent_persona_id,
+                    referred_persona_id,
+                    trigger_type,
+                    condition_trigger,
+                    time_trigger
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    uuid.uuid4().hex,
+                    case_id,
+                    parent_persona_id,
+                    referred_persona_id,
+                    referral.triggerType,
+                    condition_trigger,
+                    time_trigger,
+                ),
+            )
         )
         if referral.persona.referrals:
             await insert_referrals(
@@ -376,4 +392,5 @@ async def insert_referrals(
                 case_id,
                 referred_persona_id,
                 referral.persona.referrals,
+                statements,
             )

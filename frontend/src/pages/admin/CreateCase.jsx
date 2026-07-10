@@ -8,14 +8,12 @@ function CreateCase() {
             <div className="mx-auto flex min-h-[80vh] max-w-5xl flex-col justify-center">
                 <div className="max-w-2xl">
                     <p
-                        className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7]"
-                        style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                        className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7] font-display"
                     >
                         Create Case
                     </p>
                     <h1
-                        className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl"
-                        style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                        className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl font-display"
                     >
                         How do you want to begin?
                     </h1>
@@ -35,8 +33,7 @@ function CreateCase() {
                             Option 1
                         </p>
                         <h2
-                            className="mt-4 text-2xl font-semibold text-slate-900"
-                            style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                            className="mt-4 text-2xl font-semibold text-slate-900 font-display"
                         >
                             Start From Scratch
                         </h2>
@@ -54,8 +51,7 @@ function CreateCase() {
                             Option 2
                         </p>
                         <h2
-                            className="mt-4 text-2xl font-semibold text-slate-900"
-                            style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                            className="mt-4 text-2xl font-semibold text-slate-900 font-display"
                         >
                             Use Existing Case As Template
                         </h2>

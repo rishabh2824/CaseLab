@@ -75,3 +75,25 @@ CREATE TABLE persona_files (
 CREATE UNIQUE INDEX idx_cases_access_code_upper
   ON cases (upper(access_code))
   WHERE access_code IS NOT NULL AND access_code != '';
+
+-- =============================================================================
+-- PENDING — NOT YET APPLIED to the live Turso database as of this commit.
+-- The admin-auth code in this branch (services/admin_repository.py,
+-- services/case_repository.py's owner_admin_id filtering) assumes these exist.
+-- Run by hand via the Turso SQL console, then delete this notice once applied
+-- and this file has been re-synced with `SELECT sql FROM sqlite_master ...`.
+-- =============================================================================
+
+-- 7. ADMINS
+CREATE TABLE admins (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  email TEXT NOT NULL UNIQUE,
+  name TEXT,
+  role INTEGER NOT NULL CHECK (role IN (1, 2))  -- 1 = super admin, 2 = admin
+);
+
+ALTER TABLE cases ADD COLUMN owner_admin_id TEXT REFERENCES admins(id) ON DELETE CASCADE;
+
+-- Seed the first super admin (replace the placeholder email). There is no
+-- in-app way to create/promote a super admin — this manual INSERT is it.
+INSERT INTO admins (email, name, role) VALUES ('REPLACE_WITH_REAL_EMAIL@wisc.edu', 'Super Admin', 1);

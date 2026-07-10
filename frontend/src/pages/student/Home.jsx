@@ -96,8 +96,7 @@ function Home() {
                 <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
                     <div>
                         <h1
-                            className="text-lg font-semibold tracking-wide"
-                            style={{ fontFamily: "'Space Grotesk', sans-serif" }}
+                            className="text-lg font-semibold tracking-wide font-display"
                         >
                             Wisconsin Case Lab
                         </h1>
