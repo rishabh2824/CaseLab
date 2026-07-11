@@ -1,15 +1,17 @@
 """Admin session JWTs, and the Google ID-token verification boundary.
 
-Two separate concerns live here, both auth-critical:
+Three separate concerns live here, both auth-critical:
 
 1. Our own session JWT (issued by ``POST /api/admin/login``, checked on every
    admin request by ``api.dependencies.get_current_admin``). Short-lived and
    signed with ``ADMIN_JWT_SECRET`` — see settings.py for why the expiry is
    just a cap (a deleted admin's token stops working immediately regardless,
    since the dependency re-fetches the admin row on every request).
-2. Verifying a Google ID token the frontend hands us after Google Sign-In,
-   including the Workspace-domain allowlist check (the ``hd`` claim) that is
-   defense-in-depth alongside the ``admins`` table lookup done by the caller.
+2. Exchanging the OAuth authorization code the frontend's popup flow
+   (``google.accounts.oauth2.initCodeClient``) hands us for an ID token.
+3. Verifying that Google ID token, including the Workspace-domain allowlist
+   check (the ``hd`` claim) that is defense-in-depth alongside the
+   ``admins`` table lookup done by the caller.
 
 ``verify_google_id_token`` calls out to Google over the network (to fetch/
 verify against Google's signing certs) via
@@ -24,6 +26,7 @@ import time
 from typing import NamedTuple, TypedDict
 
 import cachecontrol
+import httpx
 import jwt
 import requests
 from google.auth.transport import requests as google_requests
@@ -31,6 +34,8 @@ from google.oauth2 import id_token as google_id_token
 
 from models.admin import AdminRole
 from settings import ADMIN_JWT_ALGORITHM, ADMIN_JWT_EXPIRY_SECONDS, get_settings
+
+GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 
 # A module-level, cache-backed session so Google's signing certs are fetched
 # once and reused across logins instead of re-fetched on every call (they
@@ -61,8 +66,9 @@ class InvalidAdminToken(Exception):
 
 
 class GoogleTokenInvalid(Exception):
-    """Raised when a Google ID token fails verification, or the account's
-    Workspace domain doesn't match ``ADMIN_ALLOWED_DOMAIN``."""
+    """Raised when the OAuth code exchange fails, a Google ID token fails
+    verification, or the account's Workspace domain doesn't match
+    ``ADMIN_ALLOWED_DOMAIN``."""
 
 
 def create_admin_jwt(admin_id: str, role: AdminRole) -> str:
@@ -91,6 +97,36 @@ def decode_admin_jwt(token: str) -> AdminTokenPayload:
     if not admin_id or role not in (AdminRole.SUPER, AdminRole.ADMIN):
         raise InvalidAdminToken("Missing or invalid admin_id/role claim.")
     return {"admin_id": admin_id, "role": AdminRole(role)}
+
+
+async def exchange_google_auth_code(auth_code: str) -> str:
+    """Exchange the authorization code from the frontend's
+    ``initCodeClient({ux_mode: 'popup'})`` flow for a Google ID token.
+
+    ``redirect_uri="postmessage"`` is Google's documented literal value for
+    this popup flow (the code is delivered back to the page via postMessage,
+    not a real HTTP redirect) — it must match what the frontend's code
+    client used.
+    """
+    settings = get_settings()
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            GOOGLE_TOKEN_ENDPOINT,
+            data={
+                "code": auth_code,
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": "postmessage",
+                "grant_type": "authorization_code",
+            },
+        )
+    if response.status_code != 200:
+        raise GoogleTokenInvalid(f"Google code exchange failed: {response.text}")
+
+    id_token_str = response.json().get("id_token")
+    if not id_token_str:
+        raise GoogleTokenInvalid("Google code exchange did not return an ID token.")
+    return id_token_str
 
 
 def verify_google_id_token(id_token_str: str) -> dict:

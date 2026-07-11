@@ -56,6 +56,7 @@ Create `backend/.env` (git-ignored). See the keys below:
 | `LLM_KEY` | yes | Anthropic API key (`sk-ant-...`) |
 | `LLM_BASE_URL` | no | Defaults to `https://api.anthropic.com/v1/messages` |
 | `GOOGLE_CLIENT_ID` | yes | OAuth client ID for admin Google Sign-In; checked against the ID token's `aud` claim |
+| `GOOGLE_CLIENT_SECRET` | yes | Secret for the same OAuth client, used server-side to exchange the frontend popup flow's authorization code for an ID token |
 | `ADMIN_ALLOWED_DOMAIN` | yes | Google Workspace domain (e.g. `wisc.edu`) admins must belong to — checked against the ID token's `hd` claim, in addition to the `admins` table lookup |
 | `ADMIN_JWT_SECRET` | yes | Signing key for admin session JWTs. Use a long random value (32+ bytes) — PyJWT warns on short HMAC keys |
 

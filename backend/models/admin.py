@@ -13,7 +13,7 @@ class AdminRole(IntEnum):
 
 
 class GoogleLoginRequest(BaseModel):
-    google_id_token: str
+    google_auth_code: str
 
 
 class LoginResponse(BaseModel):

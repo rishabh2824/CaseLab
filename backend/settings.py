@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     frontend_urls_raw: str = Field(default="", validation_alias="FRONTEND_URLS")
 
     google_client_id: str
+    # Used server-side only, to exchange the OAuth authorization code the
+    # frontend's popup flow returns for an ID token (see admin_auth.py) —
+    # never exposed to the frontend the way google_client_id is.
+    google_client_secret: str
     admin_allowed_domain: str
     admin_jwt_secret: str = Field(min_length=32)  # enforce the README's advice
 

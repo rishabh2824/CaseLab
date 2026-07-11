@@ -3,7 +3,12 @@ from fastapi.concurrency import run_in_threadpool
 
 from models.admin import AddAdminRequest, AdminOut, AdminRole, GoogleLoginRequest, LoginResponse
 from services import admin_repository
-from services.admin_auth import GoogleTokenInvalid, create_admin_jwt, verify_google_id_token
+from services.admin_auth import (
+    GoogleTokenInvalid,
+    create_admin_jwt,
+    exchange_google_auth_code,
+    verify_google_id_token,
+)
 from services.db import get_db_client
 
 from .dependencies import require_super_admin
@@ -18,10 +23,11 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.post("/login", response_model=LoginResponse)
 async def login(payload: GoogleLoginRequest) -> LoginResponse:
     try:
+        id_token_str = await exchange_google_auth_code(payload.google_auth_code)
         # verify_google_id_token makes a synchronous network call to Google
         # (cert fetch on a cache miss); hop off the event loop so a login
         # never head-of-line-blocks in-flight student SSE streams.
-        claims = await run_in_threadpool(verify_google_id_token, payload.google_id_token)
+        claims = await run_in_threadpool(verify_google_id_token, id_token_str)
     except GoogleTokenInvalid as exc:
         raise HTTPException(status_code=401, detail="Google sign-in failed.") from exc
 
