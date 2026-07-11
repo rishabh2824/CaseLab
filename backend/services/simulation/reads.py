@@ -36,7 +36,7 @@ async def _get_case_snapshot(client, access_code: str | None = None, case_id: st
 
 
 async def _get_run_case_snapshot(run: dict, client):
-    """CaseForm snapshot for a run, cached on the run.
+    """Case snapshot for a run, cached on the run.
 
     The case is fixed for the life of a run, so re-querying it on every message
     is wasted work. The snapshot holds no presigned URLs, so caching it is safe

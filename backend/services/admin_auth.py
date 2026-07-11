@@ -23,14 +23,22 @@ from __future__ import annotations
 import time
 from typing import NamedTuple, TypedDict
 
+import cachecontrol
 import jwt
+import requests
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
+from models.admin import AdminRole
 from settings import ADMIN_JWT_ALGORITHM, ADMIN_JWT_EXPIRY_SECONDS, get_settings
 
-_VALID_ROLES = (1, 2)  # 1 = super admin, 2 = admin (matches the `admins.role` CHECK constraint)
-SUPER_ADMIN_ROLE = 1
+# A module-level, cache-backed session so Google's signing certs are fetched
+# once and reused across logins instead of re-fetched on every call (they
+# rotate infrequently; google-auth respects the response's Cache-Control
+# headers via `cachecontrol`). verify_google_id_token is still a synchronous,
+# network-making call — see api/admin.py, which runs it in a thread pool so
+# it never blocks the event loop shared with student SSE streams.
+_google_request = google_requests.Request(session=cachecontrol.CacheControl(requests.Session()))
 
 
 class CurrentAdmin(NamedTuple):
@@ -40,12 +48,12 @@ class CurrentAdmin(NamedTuple):
     services -> api layering violation."""
 
     id: str
-    role: int
+    role: AdminRole
 
 
 class AdminTokenPayload(TypedDict):
     admin_id: str
-    role: int
+    role: AdminRole
 
 
 class InvalidAdminToken(Exception):
@@ -57,7 +65,7 @@ class GoogleTokenInvalid(Exception):
     Workspace domain doesn't match ``ADMIN_ALLOWED_DOMAIN``."""
 
 
-def create_admin_jwt(admin_id: str, role: int) -> str:
+def create_admin_jwt(admin_id: str, role: AdminRole) -> str:
     settings = get_settings()
     now = int(time.time())
     payload = {
@@ -80,9 +88,9 @@ def decode_admin_jwt(token: str) -> AdminTokenPayload:
 
     admin_id = payload.get("admin_id")
     role = payload.get("role")
-    if not admin_id or role not in _VALID_ROLES:
+    if not admin_id or role not in (AdminRole.SUPER, AdminRole.ADMIN):
         raise InvalidAdminToken("Missing or invalid admin_id/role claim.")
-    return {"admin_id": admin_id, "role": role}
+    return {"admin_id": admin_id, "role": AdminRole(role)}
 
 
 def verify_google_id_token(id_token_str: str) -> dict:
@@ -92,7 +100,7 @@ def verify_google_id_token(id_token_str: str) -> dict:
     settings = get_settings()
     try:
         claims = google_id_token.verify_oauth2_token(
-            id_token_str, google_requests.Request(), settings.google_client_id
+            id_token_str, _google_request, settings.google_client_id
         )
     except ValueError as exc:
         raise GoogleTokenInvalid(str(exc)) from exc

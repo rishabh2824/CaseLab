@@ -1,13 +1,20 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
+import { ADMIN_ROLE } from '../../constants.js'
 import { useSessionStore } from '../../hooks/sessionStore.js'
 
 function Home() {
     const navigate = useNavigate()
+    const queryClient = useQueryClient()
     const adminEmail = useSessionStore((s) => s.adminEmail)
     const adminRole = useSessionStore((s) => s.adminRole)
     const clearAdmin = useSessionStore((s) => s.clearAdmin)
 
     const handleSignOut = () => {
+        // ['cases']/['admins'] aren't keyed by admin identity — without this,
+        // the next admin to sign in on this device/tab could flash the
+        // previous admin's case list before their own fetch completes.
+        queryClient.clear()
         clearAdmin()
         navigate({ to: '/admin/login' })
     }
@@ -17,10 +24,11 @@ function Home() {
             <div className="mx-auto flex min-h-[80vh] max-w-5xl flex-col justify-center">
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs text-slate-400">
-                        Signed in as <span className="font-medium text-slate-600">{adminEmail}</span>
+                        Signed in as{' '}
+                        <span className="font-medium text-slate-600">{adminEmail}</span>
                     </p>
                     <div className="flex items-center gap-4">
-                        {adminRole === 1 && (
+                        {adminRole === ADMIN_ROLE.SUPER && (
                             <button
                                 type="button"
                                 onClick={() => navigate({ to: '/admin/admins' })}
@@ -39,14 +47,10 @@ function Home() {
                     </div>
                 </div>
                 <div className="max-w-2xl">
-                    <p
-                        className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7] font-display"
-                    >
+                    <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7] font-display">
                         Admin Panel
                     </p>
-                    <h1
-                        className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl font-display"
-                    >
+                    <h1 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl font-display">
                         Choose what you want to work on
                     </h1>
                     <p className="mt-4 max-w-xl text-sm leading-6 text-slate-500">
@@ -64,9 +68,7 @@ function Home() {
                         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#5b5fc7]">
                             Option 1
                         </p>
-                        <h2
-                            className="mt-4 text-2xl font-semibold text-slate-900 font-display"
-                        >
+                        <h2 className="mt-4 text-2xl font-semibold text-slate-900 font-display">
                             Create New Case
                         </h2>
                         <p className="mt-3 text-sm leading-6 text-slate-500">
@@ -86,9 +88,7 @@ function Home() {
                         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
                             Option 2
                         </p>
-                        <h2
-                            className="mt-4 text-2xl font-semibold text-slate-900 font-display"
-                        >
+                        <h2 className="mt-4 text-2xl font-semibold text-slate-900 font-display">
                             Edit Existing Case
                         </h2>
                         <p className="mt-3 text-sm leading-6 text-slate-500">

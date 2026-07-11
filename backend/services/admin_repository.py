@@ -42,13 +42,6 @@ async def create(client, email: str, name: str | None, role: int) -> dict:
 
 
 async def delete(client, admin_id: str) -> None:
-    # `cases.owner_admin_id ... ON DELETE CASCADE` only fires if foreign keys
-    # are enforced for *this* statement. SQLite defaults FK enforcement off
-    # per-connection, and libsql_client's HTTP transport (services/db.py)
-    # opens a fresh implicit connection for every standalone `.execute()`
-    # call — so a `PRAGMA foreign_keys = ON` issued once elsewhere would not
-    # carry over here. Batching the PRAGMA with the DELETE runs both inside
-    # the same transaction, which is what actually makes the cascade happen.
     await client.batch(
         [
             ("PRAGMA foreign_keys = ON", ()),

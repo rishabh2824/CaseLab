@@ -1,4 +1,4 @@
-"""CaseForm domain logic.
+"""Case domain logic.
 
 Orchestrates the repository reads/writes and shapes responses. Acquires the db
 client so the router layer stays free of any data access. Holds no raw SQL.
@@ -12,10 +12,11 @@ from collections import defaultdict
 import libsql_client
 from fastapi import HTTPException
 
+from models.admin import AdminRole
 from services import case_repository as repo
-from services.admin_auth import SUPER_ADMIN_ROLE, CurrentAdmin
+from services.admin_auth import CurrentAdmin
 from services.db import get_db_client
-from services.persona_shapes import fetch_root_personas, photo_ref
+from services.persona_shapes import photo_ref
 
 logger = logging.getLogger("caselab.cases")
 
@@ -23,11 +24,7 @@ ACCESS_CODE_CONFLICT = "An access code with this value already exists on another
 
 
 def _authorize_case_access(owner_admin_id: str | None, admin: CurrentAdmin) -> None:
-    """A case is visible/writable to the admin who owns it, or to any super
-    admin. A ``NULL`` owner_admin_id (a legacy case predating per-admin
-    ownership) is nobody's — visible only to super admins, per the plan's
-    "no invented ownership" rule."""
-    if admin.role == SUPER_ADMIN_ROLE:
+    if admin.role == AdminRole.SUPER:
         return
     if owner_admin_id != admin.id:
         raise HTTPException(status_code=403, detail="You do not have access to this case.")
@@ -48,13 +45,7 @@ def _is_unique_violation(exc: Exception) -> bool:
 # --- persona assembly ------------------------------------------------------
 #
 # build_case_personas fetches every persona/file/referral belonging to a case
-# in 3 concurrent round-trips (not one recursive fetch per persona — a case
-# with 6 roots each referring 2 personas used to mean ~54 sequential Turso
-# round-trips), then _assemble_persona_tree walks root -> referral in memory
-# over the pre-fetched maps. _assemble_persona_tree is a pure, synchronous
-# function — it does no I/O — specifically so the recursive tree-walk stays as
-# readable as the old per-persona-fetch version despite the data now being
-# pre-fetched rather than queried on the way down.
+# in 3 concurrent round-trips
 
 
 def _assemble_persona_tree(
@@ -65,13 +56,21 @@ def _assemble_persona_tree(
 ) -> dict:
     persona = personas_by_id.get(persona_id)
     if persona is None:
-        raise HTTPException(status_code=404, detail="Persona not found.")
+        # A referral pointing at a persona_id absent from this case's own
+        # persona set is corrupted data (an FK-integrity failure, not a bad
+        # request) — a 404 here would incorrectly tell the client "fix your
+        # request", when there's nothing the client can do about it.
+        logger.error(
+            "Referral tree references missing persona_id=%s (not in this case's personas)",
+            persona_id,
+        )
+        raise HTTPException(status_code=500, detail="Failed to load case data.")
     profile_photo = photo_ref(persona, presign=False)
     files = [
         {
             "file": photo_ref(row, presign=False),
-            "shareConditions": row["share_conditions"],
-            "perceivedContents": row["perceived_contents"],
+            "share_conditions": row["share_conditions"],
+            "perceived_contents": row["perceived_contents"],
         }
         for row in files_by_persona.get(persona_id, [])
     ]
@@ -82,26 +81,32 @@ def _assemble_persona_tree(
         )
         referrals.append(
             {
+                # `name` mirrors the nested persona's own name (kept in sync by
+                # the admin form) — informational for populating the edit UI;
+                # not part of the create/update request contract.
                 "name": referred_persona["name"],
-                "triggerType": row["trigger_type"],
+                "trigger_type": row["trigger_type"],
                 "conditions": row["condition_trigger"],
-                "revealDelayMinutes": row["time_trigger"],
+                "reveal_delay_minutes": row["time_trigger"],
                 "persona": referred_persona,
             }
         )
     return {
         "name": persona["name"],
         "role": persona["role"],
-        "profilePhoto": profile_photo,
-        "knownFacts": persona["known_facts"],
-        "unknownFacts": persona["unknown_facts"],
-        "hiddenFacts": persona["hidden_facts"],
-        "personalityTraits": persona["personality_traits"],
-        "scheduledAfterMinutes": persona["scheduled_time"] or None,
-        "availabilityMinutes": persona["availability_duration"],
-        "fileCount": len(files),
+        "profile_photo": profile_photo,
+        "known_facts": persona["known_facts"],
+        "unknown_facts": persona["unknown_facts"],
+        "hidden_facts": persona["hidden_facts"],
+        "personality_traits": persona["personality_traits"],
+        "scheduled_after_minutes": persona["scheduled_time"] or None,
+        "availability_minutes": persona["availability_duration"],
+        # file_count/referral_out_count are informational (derived from the
+        # arrays below) for populating the edit UI's counters; not part of the
+        # create/update request contract.
+        "file_count": len(files),
         "files": files,
-        "referralOutCount": len(referrals),
+        "referral_out_count": len(referrals),
         "referrals": referrals,
     }
 
@@ -150,7 +155,7 @@ async def save_case_structure(client, case_id: str, payload, statements: list) -
 
 async def create_case(payload, admin: CurrentAdmin) -> dict:
     client = get_db_client()
-    if payload.accessCode and await repo.access_code_taken(client, payload.accessCode):
+    if payload.access_code and await repo.access_code_taken(client, payload.access_code):
         raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
     case_id = uuid.uuid4().hex
     try:
@@ -158,9 +163,6 @@ async def create_case(payload, admin: CurrentAdmin) -> dict:
         await save_case_structure(client, case_id, payload, statements)
         await client.batch(statements)
     except Exception as exc:
-        # The batch is one atomic transaction (BEGIN...COMMIT/ROLLBACK), so a
-        # failure here never leaves a partially-written case — no manual
-        # rollback needed.
         if _is_unique_violation(exc):
             raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT) from exc
         logger.exception("Failed to create case %s", case_id)
@@ -172,7 +174,7 @@ async def list_cases(admin: CurrentAdmin) -> dict:
     client = get_db_client()
     # None (no filter) only for a super admin, who also sees legacy
     # NULL-owner cases that a plain owner_admin_id = ? filter would miss.
-    owner_filter = None if admin.role == SUPER_ADMIN_ROLE else admin.id
+    owner_filter = None if admin.role == AdminRole.SUPER else admin.id
     rows = await repo.fetch_cases(client, owner_admin_id=owner_filter)
     return {
         "cases": [
@@ -182,50 +184,22 @@ async def list_cases(admin: CurrentAdmin) -> dict:
     }
 
 
-async def get_active_case() -> dict:
-    client = get_db_client()
-    case = await repo.fetch_first_case(client)
-    if case is None:
-        raise HTTPException(status_code=404, detail="No case found.")
-    persona_rows = await fetch_root_personas(client, case["id"])
-    personas = [
-        {
-            "id": row["id"],
-            "name": row["name"],
-            "role": row["role"],
-            "profile_photo": photo_ref(row, presign=False),
-            "scheduled_time": row["scheduled_time"],
-            "availability_duration": row["availability_duration"],
-        }
-        for row in persona_rows
-    ]
-    return {
-        "case": {
-            "id": case["id"],
-            "case_name": case["case_name"],
-            "initial_brief": case["initial_brief"],
-            "simulation_duration": case["simulation_duration"],
-        },
-        "personas": personas,
-    }
-
-
 async def get_case(case_id: str, admin: CurrentAdmin) -> dict:
     client = get_db_client()
     case = await repo.fetch_case(client, case_id)
     if case is None:
-        raise HTTPException(status_code=404, detail="CaseForm not found.")
+        raise HTTPException(status_code=404, detail="Case not found.")
     _authorize_case_access(case["owner_admin_id"], admin)
     personas = await build_case_personas(client, case["id"])
     return {
         "case": {
             "id": case["id"],
-            "caseName": case["case_name"],
-            "accessCode": case["access_code"],
-            "initialBrief": case["initial_brief"],
-            "commonInformation": case["common_information"],
-            "simulationDurationMinutes": case["simulation_duration"],
-            "totalNonReferredPersonas": case["non_referred"],
+            "case_name": case["case_name"],
+            "access_code": case["access_code"],
+            "initial_brief": case["initial_brief"],
+            "common_information": case["common_information"],
+            "simulation_duration": case["simulation_duration"],
+            "total_non_referred_personas": case["non_referred"],
             "personas": personas,
         }
     }
@@ -235,21 +209,25 @@ async def update_case(case_id: str, payload, admin: CurrentAdmin) -> dict:
     client = get_db_client()
     existing = await repo.fetch_case_owner(client, case_id)
     if existing is None:
-        raise HTTPException(status_code=404, detail="CaseForm not found.")
+        raise HTTPException(status_code=404, detail="Case not found.")
     _authorize_case_access(existing["owner_admin_id"], admin)
-    if payload.accessCode and await repo.access_code_taken(
-        client, payload.accessCode, exclude_case_id=case_id
+    if payload.access_code and await repo.access_code_taken(
+        client, payload.access_code, exclude_case_id=case_id
     ):
         raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
     try:
+        # PRAGMA first: delete_personas_for_case relies on ON DELETE CASCADE
+        # (personas -> persona_files/persona_referrals) to clean up, but
+        # SQLite defaults foreign-key enforcement OFF per-connection, and the
+        # libsql HTTP client opens a fresh implicit connection per batch — so
+        # the pragma has to ride in the same batch as the delete, same as
+        # admin_repository.delete does for the admins -> cases cascade.
         statements = [
+            ("PRAGMA foreign_keys = ON", ()),
             repo.update_case_fields(case_id, payload),
             repo.delete_personas_for_case(case_id),
         ]
         await save_case_structure(client, case_id, payload, statements)
-        # One atomic transaction: the field update, the wipe, and every new
-        # persona/file/referral insert either all commit or all roll back —
-        # the old personas can never be gone with the new ones half-written.
         await client.batch(statements)
     except Exception as exc:
         if _is_unique_violation(exc):
@@ -257,3 +235,13 @@ async def update_case(case_id: str, payload, admin: CurrentAdmin) -> dict:
         logger.exception("Failed to update case %s", case_id)
         raise HTTPException(status_code=500, detail="Failed to update case.") from exc
     return {"case_id": case_id}
+
+
+async def delete_case(case_id: str, admin: CurrentAdmin) -> dict:
+    client = get_db_client()
+    existing = await repo.fetch_case_owner(client, case_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    _authorize_case_access(existing["owner_admin_id"], admin)
+    await repo.delete_case(client, case_id)
+    return {"ok": True}

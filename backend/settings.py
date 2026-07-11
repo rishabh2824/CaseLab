@@ -1,61 +1,74 @@
-import os
-from pathlib import Path
-
-from dotenv import load_dotenv
 from functools import lru_cache
+from pathlib import Path
+from typing import ClassVar
 
-# Fixed in code (not env-configurable) so there's one place to change models.
-LLM_MODEL = "anthropic/claude-sonnet-5"  # frontier model for the persona reply
-LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-4.5"  # cheap model for YES/NO judges + intros
+from pydantic import Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Admin session JWTs are short-lived (see api/dependencies.py /
-# services/admin_auth.py): a deleted admin's token stops working the moment
-# their row is gone (we re-check the admins table on every request), so this
-# expiry is just a cap on how long a *still-valid* admin stays signed in.
 ADMIN_JWT_EXPIRY_SECONDS = 24 * 60 * 60  # 24h
 ADMIN_JWT_ALGORITHM = "HS256"
-
-# Upper bound on a case's configurable simulation_duration, enforced when a
-# case is created/updated (models/cases.py). services/simulation/state.py's
-# RUN_TTL_SECONDS is derived from this + a grace period, so the two clocks
-# can't disagree (a run's hard TTL can no longer expire before a case's own,
-# shorter-or-equal, configured duration is up).
 MAX_SIMULATION_DURATION_MINUTES = 120
 
 
-class Settings:
-    def __init__(self) -> None:
-        base_dir = Path(__file__).resolve().parent
-        load_dotenv(base_dir / ".env")
-        self.spaces_key = os.getenv("SPACES_KEY", "")
-        self.spaces_secret = os.getenv("SPACES_SECRET", "")
-        self.spaces_bucket = os.getenv("SPACES_BUCKET", "")
-        self.spaces_region = os.getenv("SPACES_REGION", "sfo3")
-        self.spaces_endpoint = os.getenv(
-            "SPACES_ENDPOINT",
-            f"https://{self.spaces_region}.digitaloceanspaces.com",
-        )
-        self.spaces_presign_expiry_seconds = int(
-            os.getenv("SPACES_PRESIGN_EXPIRY_SECONDS", "900"),
-        )
-        self.db_url = os.getenv("DB_URL", "")
-        self.db_token = os.getenv("DB_TOKEN", "")
-        raw_frontend_urls = os.getenv("FRONTEND_URLS", "")
-        self.frontend_urls = [
-            url.strip()
-            for url in raw_frontend_urls.split(",")
-            if url.strip()
-        ]
-        self.google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
-        self.admin_allowed_domain = os.getenv("ADMIN_ALLOWED_DOMAIN", "")
-        self.admin_jwt_secret = os.getenv("ADMIN_JWT_SECRET", "")
-        self.llm_key = os.getenv("LLM_KEY", "")
-        self.llm_model = LLM_MODEL
-        self.llm_classifier_model = LLM_CLASSIFIER_MODEL
-        self.llm_base_url = os.getenv(
-            "LLM_BASE_URL",
-            "https://openrouter.ai/api/v1/chat/completions",
-        )
+class Settings(BaseSettings):
+    """Typed env config, loaded once from backend/.env (see model_config)
+    plus real environment variables (the latter wins on conflict).
+
+    Required fields (no default) fail at import time — Settings() is built
+    the moment get_settings() is first called, which happens at module import
+    in main.py — instead of booting fine and 500ing on the first request that
+    happened to need the missing var.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parent / ".env",
+        extra="ignore",
+    )
+
+    # Fixed in code (not env-configurable) so there's one place to change
+    # models. ClassVar excludes these from env-var sourcing entirely — an
+    # LLM_MODEL env var would otherwise silently shadow this.
+    llm_model: ClassVar[str] = "anthropic/claude-sonnet-5"  # frontier model for the persona reply
+    llm_classifier_model: ClassVar[str] = "anthropic/claude-haiku-4.5"  # cheap YES/NO judges
+
+    spaces_key: str
+    spaces_secret: str
+    spaces_bucket: str
+    spaces_region: str = "sfo3"
+    # Derived from spaces_region if not set explicitly — see
+    # _default_spaces_endpoint below.
+    spaces_endpoint: str = ""
+    spaces_presign_expiry_seconds: int = 900
+
+    db_url: str
+    db_token: str
+
+    # Raw comma-separated string (not a `list[str]` field) so pydantic-
+    # settings doesn't try to JSON-decode it as a complex type — see the
+    # `frontend_urls` property below for the parsed form callers actually use.
+    frontend_urls_raw: str = Field(default="", validation_alias="FRONTEND_URLS")
+
+    google_client_id: str
+    admin_allowed_domain: str
+    admin_jwt_secret: str = Field(min_length=32)  # enforce the README's advice
+
+    llm_key: str
+    llm_base_url: str = "https://openrouter.ai/api/v1/chat/completions"
+
+    # Terminal tracing of the student-message LLM pipeline (services/debug_log.py)
+    # — off by default; no output/overhead unless explicitly enabled. Start the
+    # server with CASELAB_DEBUG=1 set to turn it on.
+    debug: bool = Field(default=False, validation_alias="CASELAB_DEBUG")
+
+    @model_validator(mode="after")
+    def _default_spaces_endpoint(self) -> "Settings":
+        if not self.spaces_endpoint:
+            self.spaces_endpoint = f"https://{self.spaces_region}.digitaloceanspaces.com"
+        return self
+
+    @property
+    def frontend_urls(self) -> list[str]:
+        return [url.strip() for url in self.frontend_urls_raw.split(",") if url.strip()]
 
 
 @lru_cache(maxsize=1)

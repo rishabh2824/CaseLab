@@ -5,18 +5,28 @@ import {
     Outlet,
     redirect,
 } from '@tanstack/react-router'
+import { lazy, Suspense } from 'react'
+import { ADMIN_ROLE } from './constants.js'
 import { useSessionStore } from './hooks/sessionStore.js'
-import Admins from './pages/admin/Admins.jsx'
-import CreateCase from './pages/admin/CreateCase.jsx'
-import CaseForm from './pages/admin/caseForm.jsx'
-import AdminHome from './pages/admin/Home.jsx'
-import Login from './pages/admin/Login.jsx'
-import TemplatePicker from './pages/admin/TemplatePicker.jsx'
 import LandingHome from './pages/Home.jsx'
 import Home from './pages/student/Home.jsx'
 
+// Lazy: the admin area (Mantine components, jsPDF's admin-side usages, the
+// Google OAuth login button) is dead weight for a student entering an access
+// code — this keeps it out of the student path's initial bundle entirely.
+const Admins = lazy(() => import('./pages/admin/Admins.jsx'))
+const CreateCase = lazy(() => import('./pages/admin/CreateCase.jsx'))
+const CaseForm = lazy(() => import('./pages/admin/caseForm.jsx'))
+const AdminHome = lazy(() => import('./pages/admin/Home.jsx'))
+const Login = lazy(() => import('./pages/admin/Login.jsx'))
+const TemplatePicker = lazy(() => import('./pages/admin/TemplatePicker.jsx'))
+
 const rootRoute = createRootRoute({
-    component: () => <Outlet />,
+    component: () => (
+        <Suspense fallback={null}>
+            <Outlet />
+        </Suspense>
+    ),
 })
 
 const indexRoute = createRoute({
@@ -78,7 +88,7 @@ const adminNewRoute = createRoute({
 const adminNewScratchRoute = createRoute({
     getParentRoute: () => adminGuardRoute,
     path: '/admin/new/scratch',
-    component: CaseForm,
+    component: () => <CaseForm />,
 })
 
 const adminNewTemplateRoute = createRoute({
@@ -87,13 +97,21 @@ const adminNewTemplateRoute = createRoute({
     component: TemplatePicker,
 })
 
+// component reads this route's own typed useSearch (rather than CaseForm
+// calling useSearch({ strict: false }) internally) — CaseForm is shared by
+// three routes with three different (or no) search schemas, so there's no
+// single route it could bind to directly. Each route resolves its own typed
+// search value and hands it down as a plain prop instead.
 const adminNewFormRoute = createRoute({
     getParentRoute: () => adminGuardRoute,
     path: '/admin/new/form',
     validateSearch: (search) => ({
         template: search.template ? String(search.template) : undefined,
     }),
-    component: CaseForm,
+    component: () => {
+        const { template } = adminNewFormRoute.useSearch()
+        return <CaseForm templateId={template} />
+    },
 })
 
 const adminEditRoute = createRoute({
@@ -108,7 +126,10 @@ const adminEditFormRoute = createRoute({
     validateSearch: (search) => ({
         caseId: search.caseId ? String(search.caseId) : undefined,
     }),
-    component: CaseForm,
+    component: () => {
+        const { caseId } = adminEditFormRoute.useSearch()
+        return <CaseForm editCaseId={caseId} />
+    },
 })
 
 // Super-admin only, on top of the base admin guard: redirect a plain admin
@@ -118,7 +139,7 @@ const adminAdminsRoute = createRoute({
     getParentRoute: () => adminGuardRoute,
     path: '/admin/admins',
     beforeLoad: () => {
-        if (useSessionStore.getState().adminRole !== 1) {
+        if (useSessionStore.getState().adminRole !== ADMIN_ROLE.SUPER) {
             throw redirect({ to: '/admin' })
         }
     },

@@ -7,14 +7,10 @@ function CreateCase() {
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100 px-6 py-10">
             <div className="mx-auto flex min-h-[80vh] max-w-5xl flex-col justify-center">
                 <div className="max-w-2xl">
-                    <p
-                        className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7] font-display"
-                    >
+                    <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#5b5fc7] font-display">
                         Create Case
                     </p>
-                    <h1
-                        className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl font-display"
-                    >
+                    <h1 className="mt-4 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl font-display">
                         How do you want to begin?
                     </h1>
                     <p className="mt-4 max-w-xl text-sm leading-6 text-slate-500">
@@ -32,9 +28,7 @@ function CreateCase() {
                         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#5b5fc7]">
                             Option 1
                         </p>
-                        <h2
-                            className="mt-4 text-2xl font-semibold text-slate-900 font-display"
-                        >
+                        <h2 className="mt-4 text-2xl font-semibold text-slate-900 font-display">
                             Start From Scratch
                         </h2>
                         <p className="mt-3 text-sm leading-6 text-slate-500">
@@ -50,9 +44,7 @@ function CreateCase() {
                         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">
                             Option 2
                         </p>
-                        <h2
-                            className="mt-4 text-2xl font-semibold text-slate-900 font-display"
-                        >
+                        <h2 className="mt-4 text-2xl font-semibold text-slate-900 font-display">
                             Use Existing Case As Template
                         </h2>
                         <p className="mt-3 text-sm leading-6 text-slate-500">

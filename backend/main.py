@@ -4,11 +4,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from api.router import api_router
 from services.db import close_db_client
 from services.llm import close_client, init_client
-from services.simulation.state import cleanup_expired_runs_forever
+from services.simulation.state import RunExpired, RunNotFound, cleanup_expired_runs_forever
 from settings import get_settings
 
 logging.basicConfig(
@@ -42,7 +43,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="caseLab API",
-              version="1.0.0",
+              version="0.1.0",  # keep in sync with pyproject.toml's [project].version
               lifespan=lifespan,
               docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -62,5 +63,20 @@ else:
         "FRONTEND_URLS is empty; CORS is disabled and browsers will block "
         "cross-origin requests from the frontend."
     )
+
+# Domain exceptions from the simulation run store (services.simulation.state)
+# are translated to HTTP here, at the app boundary, rather than the data layer
+# raising HTTPException itself — RunStore stays a plain, testable component
+# with no FastAPI dependency. Both map to 404 (matching the previous
+# behavior); the frontend only branches on status code, not the detail text.
+@app.exception_handler(RunNotFound)
+async def _run_not_found_handler(request, exc: RunNotFound):
+    return JSONResponse(status_code=404, content={"detail": "Simulation run not found."})
+
+
+@app.exception_handler(RunExpired)
+async def _run_expired_handler(request, exc: RunExpired):
+    return JSONResponse(status_code=404, content={"detail": "Simulation run expired."})
+
 
 app.include_router(api_router, prefix="/api")

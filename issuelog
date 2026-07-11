@@ -1,0 +1,10 @@
+The persona reply model is asked to return one JSON envelope: {"reply": "...", "introduce": [...], "send_files": [...]}. The prompt tells it "Your reply text and these arrays MUST agree" — but that's a soft instruction, not an enforced constraint.
+The backend only looks at the introduce array to decide what actually gets unlocked (_apply_reply_decisions). It never parses the reply text for language like "I'll connect you with...".
+complete_persona_reply runs at temperature=0.6 (not 0) — real sampling randomness on the exact call that has to nail this JSON-vs-text agreement every time.
+If the model's JSON fails to parse at all, _parse_reply_envelope returns None, and the code falls back to _fallback_reply_text, which explicitly sets unlock_handles, share_handles = [], [] — the fallback path's own docstring says "NEVER unlocks/shares anything on this path." So: any malformed JSON on a turn where the model's prose mentions an introduction → the user reads a promise, and literally nothing is unlocked, by design (fail-safe, but user-visible).
+Even with valid JSON, if the model writes a handle that doesn't match what was actually offered this turn (typo, hallucinated handle, stale handle from earlier context), _apply_reply_decisions just silently continues past it — no error, no retry, no signal to the student or admin that something didn't fire.
+Are there other bugs in the same family?
+Yes, a few, all rooted in the same pattern (trusting the LLM to keep free text and structured output in sync):
+
+Identical bug for file sharing. send_files has the exact same failure mode as introduce — a persona can claim to send a file and not actually share it, for all the same reasons above.
+The malformed-JSON fallback is the most likely trigger, not an edge case — any hiccup in the model's formatting (stray comment, trailing comma, an unescaped quote in dialogue) silently drops every unlock/share for that turn, even if the intent was otherwise clear.

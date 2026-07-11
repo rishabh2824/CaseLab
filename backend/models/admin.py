@@ -1,8 +1,15 @@
-from typing import Optional
+from enum import IntEnum
 
 from pydantic import BaseModel, field_validator
 
-_VALID_ROLES = (1, 2)  # 1 = super admin, 2 = admin
+
+class AdminRole(IntEnum):
+    """The single source of truth for admin role values — import this
+    everywhere a role is assigned or compared rather than writing 1/2
+    directly, so the two never drift apart."""
+
+    SUPER = 1
+    ADMIN = 2
 
 
 class GoogleLoginRequest(BaseModel):
@@ -12,15 +19,17 @@ class GoogleLoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     admin_jwt: str
     admin_id: str
-    role: int
+    role: AdminRole
     email: str
-    name: Optional[str] = None
+    name: str | None = None
 
 
 class AddAdminRequest(BaseModel):
     email: str
-    name: Optional[str] = None
-    role: int
+    name: str | None = None
+    # Typing this as AdminRole (not int) makes Pydantic itself reject an
+    # out-of-range role, so there's no separate validator to keep in sync.
+    role: AdminRole
 
     @field_validator("email")
     @classmethod
@@ -30,16 +39,9 @@ class AddAdminRequest(BaseModel):
             raise ValueError("email must be a valid email address.")
         return value
 
-    @field_validator("role")
-    @classmethod
-    def _valid_role(cls, value: int) -> int:
-        if value not in _VALID_ROLES:
-            raise ValueError("role must be 1 (super admin) or 2 (admin).")
-        return value
-
 
 class AdminOut(BaseModel):
     id: str
     email: str
-    name: Optional[str] = None
-    role: int
+    name: str | None = None
+    role: AdminRole

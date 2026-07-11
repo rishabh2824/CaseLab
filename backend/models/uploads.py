@@ -1,12 +1,10 @@
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
 class PresignUploadRequest(BaseModel):
     file_name: str = Field(..., min_length=1)
-    content_type: Optional[str] = None
-    prefix: Optional[str] = None
+    content_type: str | None = None
+    prefix: str | None = None
 
 
 class PresignUploadResponse(BaseModel):
@@ -14,5 +12,5 @@ class PresignUploadResponse(BaseModel):
     bucket: str
     object_key: str
     file_name: str
-    content_type: Optional[str] = None
+    content_type: str | None = None
     expires_in: int

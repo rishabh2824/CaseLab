@@ -36,7 +36,6 @@ export function useSimulationRun() {
     const clearRun = useSessionStore((s) => s.clearRun)
 
     const [activeContactId, setActiveContactId] = useState(null)
-    const [elapsedSeconds, setElapsedSeconds] = useState(0)
     // The in-flight turn: { personaId, messages } — the displayed history for
     // the persona being messaged, held locally while the reply streams so the
     // 15s poll can refresh the cache underneath without clobbering it. null
@@ -157,15 +156,6 @@ export function useSimulationRun() {
         seen.initialized = true
     }, [data])
 
-    // --- elapsed-time clock + auto-end -------------------------------------
-    useEffect(() => {
-        const intervalId = window.setInterval(() => {
-            const start = startTime ?? Date.now()
-            setElapsedSeconds(Math.max(0, Math.floor((Date.now() - start) / 1000)))
-        }, 1000)
-        return () => window.clearInterval(intervalId)
-    }, [startTime])
-
     const totalDurationSeconds = useMemo(() => {
         if (typeof caseData?.simulation_duration === 'number') {
             return caseData.simulation_duration * 60
@@ -173,12 +163,25 @@ export function useSimulationRun() {
         return null
     }, [caseData])
 
+    // Auto-end when the simulation's configured duration elapses. This checks
+    // the clock via a plain interval rather than reactive per-second state, so
+    // it doesn't re-render the whole student Home every second — the visible
+    // clock ticks independently in <SimulationClock startTime={startTime} />,
+    // which only re-renders itself.
     useEffect(() => {
-        if (typeof totalDurationSeconds === 'number' && elapsedSeconds >= totalDurationSeconds) {
-            clearRun()
-            navigate({ to: '/' })
+        if (typeof totalDurationSeconds !== 'number') return
+        const start = startTime ?? Date.now()
+        const checkExpiry = () => {
+            const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000))
+            if (elapsed >= totalDurationSeconds) {
+                clearRun()
+                navigate({ to: '/' })
+            }
         }
-    }, [elapsedSeconds, totalDurationSeconds, navigate, clearRun])
+        checkExpiry()
+        const intervalId = window.setInterval(checkExpiry, 1000)
+        return () => window.clearInterval(intervalId)
+    }, [startTime, totalDurationSeconds, navigate, clearRun])
 
     const handleEndSimulation = () => {
         clearRun()
@@ -366,7 +369,7 @@ export function useSimulationRun() {
         activeContactId,
         selectContact,
         runId,
-        elapsedSeconds,
+        startTime,
         totalDurationSeconds,
         activeContact,
         activePersonaAvailable,

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 
-from models.admin import AddAdminRequest, AdminOut, GoogleLoginRequest, LoginResponse
+from models.admin import AddAdminRequest, AdminOut, AdminRole, GoogleLoginRequest, LoginResponse
 from services import admin_repository
 from services.admin_auth import GoogleTokenInvalid, create_admin_jwt, verify_google_id_token
 from services.db import get_db_client
@@ -17,7 +18,10 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.post("/login", response_model=LoginResponse)
 async def login(payload: GoogleLoginRequest) -> LoginResponse:
     try:
-        claims = verify_google_id_token(payload.google_id_token)
+        # verify_google_id_token makes a synchronous network call to Google
+        # (cert fetch on a cache miss); hop off the event loop so a login
+        # never head-of-line-blocks in-flight student SSE streams.
+        claims = await run_in_threadpool(verify_google_id_token, payload.google_id_token)
     except GoogleTokenInvalid as exc:
         raise HTTPException(status_code=401, detail="Google sign-in failed.") from exc
 
@@ -29,11 +33,12 @@ async def login(payload: GoogleLoginRequest) -> LoginResponse:
             detail="Your account is not authorized. Ask a super admin to add you.",
         )
 
-    token = create_admin_jwt(admin["id"], admin["role"])
+    role = AdminRole(admin["role"])
+    token = create_admin_jwt(admin["id"], role)
     return LoginResponse(
         admin_jwt=token,
         admin_id=admin["id"],
-        role=admin["role"],
+        role=role,
         email=admin["email"],
         name=admin["name"],
     )
@@ -63,6 +68,12 @@ async def delete_admin(admin_id: str) -> dict:
     existing = await admin_repository.get_by_id(client, admin_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Admin not found.")
+    # Super admins are provisioned by a manual DB insert (see the plan) and
+    # can't be created/promoted through the API — symmetrically, they can't
+    # be deleted through it either. Demoting/removing one is a manual DB
+    # operation, same as creating one.
+    if existing["role"] == AdminRole.SUPER:
+        raise HTTPException(status_code=403, detail="Super admins cannot be deleted.")
     # Cascade: deleting the row removes their cases too (cases.owner_admin_id
     # ... ON DELETE CASCADE) — see admin_repository.delete for why the PRAGMA
     # has to be batched with the DELETE for that to actually take effect.

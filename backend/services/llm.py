@@ -5,6 +5,7 @@ import logging
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_incrementing
 
+from services import debug_log
 from settings import get_settings
 
 logger = logging.getLogger("caselab.llm")
@@ -100,6 +101,7 @@ async def complete_persona_reply(messages: list[dict]) -> str:
     caller must receive in full before it can apply unlocks/shares and emit
     anything. Retries retryable failures (timeouts, 429, 5xx) via ``_chat``.
     """
+    debug_log.persona_reply_input(messages)
     payload = {
         "model": get_settings().llm_model,
         "messages": messages,
@@ -113,7 +115,9 @@ async def complete_persona_reply(messages: list[dict]) -> str:
     usage = data.get("usage")
     if usage:
         logger.debug("persona reply usage: %s", usage)
-    return _message_content(data)
+    raw = _message_content(data)
+    debug_log.persona_reply_output(raw)
+    return raw
 
 
 def _format_transcript(conversation: list[dict]) -> tuple[str, int, int]:
@@ -137,10 +141,17 @@ def _format_transcript(conversation: list[dict]) -> tuple[str, int, int]:
     return transcript, user_count, assistant_count
 
 
-async def _yes_no_judge(system_prompt: str, user_prompt: str) -> bool:
+async def _yes_no_judge(
+    system_prompt: str, user_prompt: str, *, debug_label: str | None = None
+) -> bool:
     """Run a strict YES/NO classifier on the cheap model. Fails closed (False)
     on any error, since these gate unlocking content the user shouldn't get by
-    default."""
+    default.
+
+    ``debug_label`` opts into raw-output tracing (see debug_log.judge_output)
+    — only classify_referral passes one; classify_file_share doesn't, so its
+    output is never traced, per debug_log's module docstring.
+    """
     settings = get_settings()
     payload = {
         "model": settings.llm_classifier_model,
@@ -153,42 +164,63 @@ async def _yes_no_judge(system_prompt: str, user_prompt: str) -> bool:
     try:
         data = await _chat(payload, timeout=60, retries=3)
     except Exception:
+        if debug_label:
+            debug_log.judge_output(debug_label, "<request failed, treated as NO>", False)
         return False
-    return _message_content(data).strip().upper().startswith("YES")
+    raw = _message_content(data)
+    result = raw.strip().upper().startswith("YES")
+    if debug_label:
+        debug_log.judge_output(debug_label, raw, result)
+    return result
+
+
+# Referral-unlock and file-share are the same YES/NO judge shape — they only
+# differ in what action is being gated and how the condition is labeled.
+_CONDITION_KINDS = {
+    "referral": {
+        "action": "UNLOCK A NEW CONTACT (a referral)",
+        "condition_noun": "referral's unlock condition",
+        "condition_label": "Referral unlock condition",
+    },
+    "file_share": {
+        "action": "SHARE A FILE with the user",
+        "condition_noun": "file's sharing condition",
+        "condition_label": "File sharing condition",
+    },
+}
+
+
+async def _classify_condition(kind: str, condition: str, conversation: list[dict]) -> bool:
+    spec = _CONDITION_KINDS[kind]
+    transcript, user_count, assistant_count = _format_transcript(conversation)
+    system_prompt = (
+        f"You are a strict classifier deciding whether to {spec['action']} in a case "
+        f"simulation. Determine if the {spec['condition_noun']} is satisfied given the "
+        "conversation. Use common sense and the overall intent, not exact wording. "
+        "Reply with ONLY 'YES' or 'NO'."
+    )
+    user_prompt = (
+        f"{spec['condition_label']}:\n{condition}\n\n"
+        f"Conversation (most recent last):\n{transcript}\n\n"
+        f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
+    )
+    if kind == "file_share":
+        # Position-only marker — classify_file_share's own input/output is
+        # intentionally not traced (see debug_log's module docstring).
+        debug_log.marker("classify_file_share")
+        return await _yes_no_judge(system_prompt, user_prompt)
+    debug_log.judge_input("classify_referral", condition, transcript)
+    return await _yes_no_judge(system_prompt, user_prompt, debug_label="classify_referral")
 
 
 async def classify_referral(condition: str, conversation: list[dict]) -> bool:
     """Decide whether a referral's unlock condition is satisfied. Cheap model."""
-    transcript, user_count, assistant_count = _format_transcript(conversation)
-    system_prompt = (
-        "You are a strict classifier deciding whether to UNLOCK A NEW CONTACT (a "
-        "referral) in a case simulation. Determine if the referral's unlock condition "
-        "is satisfied given the conversation. Use common sense and the overall intent, "
-        "not exact wording. Reply with ONLY 'YES' or 'NO'."
-    )
-    user_prompt = (
-        f"Referral unlock condition:\n{condition}\n\n"
-        f"Conversation (most recent last):\n{transcript}\n\n"
-        f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
-    )
-    return await _yes_no_judge(system_prompt, user_prompt)
+    return await _classify_condition("referral", condition, conversation)
 
 
 async def classify_file_share(condition: str, conversation: list[dict]) -> bool:
     """Decide whether a file's sharing condition is satisfied. Cheap model."""
-    transcript, user_count, assistant_count = _format_transcript(conversation)
-    system_prompt = (
-        "You are a strict classifier deciding whether to SHARE A FILE with the user in "
-        "a case simulation. Determine if the file's sharing condition is satisfied given "
-        "the conversation. Use common sense and the overall intent, not exact wording. "
-        "Reply with ONLY 'YES' or 'NO'."
-    )
-    user_prompt = (
-        f"File sharing condition:\n{condition}\n\n"
-        f"Conversation (most recent last):\n{transcript}\n\n"
-        f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
-    )
-    return await _yes_no_judge(system_prompt, user_prompt)
+    return await _classify_condition("file_share", condition, conversation)
 
 
 def _looks_like_nonsense(message: str) -> bool:
@@ -209,12 +241,8 @@ def _looks_like_nonsense(message: str) -> bool:
 
 
 async def classify_message_safety(user_message: str, conversation: list[dict]) -> str:
-    """Safety label for the latest user message: "normal" or "nonsense".
-    "nonsense" is deliberately broad — it covers gibberish/spam as well as
-    rude, harassing, or abusive messages. There's no separate immediate-end
-    tier; repeated nonsense (of any kind) ends the chat via the warning-count
-    threshold in prepare_message, rather than some messages ending it
-    instantly and others only warning."""
+    """Safety label for the latest user message: "normal" or "nonsense"."""
+    debug_log.marker("classify_message_safety")
     if _looks_like_nonsense(user_message):
         return "nonsense"
 

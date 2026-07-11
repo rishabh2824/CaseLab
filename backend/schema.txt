@@ -1,4 +1,4 @@
--- CaseForm Lab Schema (SQLite)
+-- Case Lab Schema (SQLite)
 -- Reference snapshot of the live Turso schema. Schema changes are applied by
 -- hand via the Turso SQL console; update this file to match afterward so it
 -- stays an accurate mirror of the live database.
@@ -75,14 +75,6 @@ CREATE TABLE persona_files (
 CREATE UNIQUE INDEX idx_cases_access_code_upper
   ON cases (upper(access_code))
   WHERE access_code IS NOT NULL AND access_code != '';
-
--- =============================================================================
--- PENDING — NOT YET APPLIED to the live Turso database as of this commit.
--- The admin-auth code in this branch (services/admin_repository.py,
--- services/case_repository.py's owner_admin_id filtering) assumes these exist.
--- Run by hand via the Turso SQL console, then delete this notice once applied
--- and this file has been re-synced with `SELECT sql FROM sqlite_master ...`.
--- =============================================================================
 
 -- 7. ADMINS
 CREATE TABLE admins (

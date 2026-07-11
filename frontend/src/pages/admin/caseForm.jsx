@@ -10,14 +10,14 @@ import {
     TextInput,
     Title,
 } from '@mantine/core'
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { useSearch } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { produce } from 'immer'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../../client.js'
 import { useSessionStore } from '../../hooks/sessionStore.js'
-import { slugify } from '../student/Helpers.js'
+import { useCaseSubmit } from '../../hooks/useCaseSubmit.js'
 import {
+    collectReferredPersonas,
     createEmptyPersona,
     getPersonaLabel,
     normalizePersona,
@@ -30,9 +30,12 @@ import PersonaFields from './PersonaFields.jsx'
 // gets an inline error instead of a failed submit.
 const MAX_SIMULATION_DURATION_MINUTES = 120
 
-function CaseForm() {
-    const [submitError, setSubmitError] = useState('')
-    const [submitSuccess, setSubmitSuccess] = useState('')
+// templateId/editCaseId come in as props (set by each route's own typed
+// useSearch in router.jsx) rather than this component calling
+// useSearch({ strict: false }) itself — CaseForm is shared by three routes
+// with three different (or no) search schemas, so there's no single route
+// it could bind a typed useSearch to directly.
+function CaseForm({ templateId, editCaseId }) {
     const [caseName, setCaseName] = useState('')
     const [initialBrief, setInitialBrief] = useState('')
     const [commonInformation, setCommonInformation] = useState('')
@@ -40,27 +43,27 @@ function CaseForm() {
     const [accessCode, setAccessCode] = useState('')
     const [totalPersonas, setTotalPersonas] = useState(null)
     const [personas, setPersonas] = useState([])
-    const search = useSearch({ strict: false })
     // Admin endpoints require the JWT minted at Google sign-in (Login.jsx).
     const adminJwt = useSessionStore((s) => s.adminJwt)
-    const templateId = search.template
-    const editCaseId = search.caseId
     const isEditMode = Boolean(editCaseId)
     const showPersonas = typeof totalPersonas === 'number' && totalPersonas >= 1
     // `recipe` mutates an Immer draft of the target persona; Immer produces the
     // new immutable state. The target is normalized first so recipes can freely
-    // touch its files/referrals arrays.
-    const updatePersonaAt = (index, recipe) => {
+    // touch its files/referrals arrays. useCallback with empty deps: it only
+    // reads current state via setPersonas' updater-function form, so it never
+    // needs to change identity — which is what lets the per-index/path updater
+    // caches below hand out stable closures forever.
+    const updatePersonaAt = useCallback((index, recipe) => {
         setPersonas(
             produce((draft) => {
                 draft[index] = normalizePersona(draft[index])
                 recipe(draft[index])
             }),
         )
-    }
+    }, [])
     // path = [rootIndex, referralIndex, referralIndex, ...] — walk down the
     // referral tree (normalizing each hop) to the referred persona, then apply.
-    const updateReferredPersonaByPath = (path, recipe) => {
+    const updateReferredPersonaByPath = useCallback((path, recipe) => {
         setPersonas(
             produce((draft) => {
                 draft[path[0]] = normalizePersona(draft[path[0]])
@@ -75,6 +78,56 @@ function CaseForm() {
                 recipe(persona)
             }),
         )
+    }, [])
+
+    // PersonaFields is React.memo'd so editing one persona doesn't re-render
+    // every other persona's accordion panel. That only helps if its props are
+    // referentially stable across a keystroke elsewhere:
+    //
+    // - updater caches: updatePersonaAt/updateReferredPersonaByPath above are
+    //   stable (empty deps), so a per-index/per-path closure created once here
+    //   and reused forever is safe.
+    // - normalization caches: normalizePersona/normalizeReferral always build a
+    //   NEW object, even for unchanged input, which would bust React.memo on
+    //   its own. Immer's `produce` reuses object references for anything a
+    //   recipe didn't touch, so keying these caches on the raw (pre-
+    //   normalization) object reference means an untouched persona/referral
+    //   gets back the exact same normalized object as last render.
+    const rootUpdatersRef = useRef(new Map())
+    const referredUpdatersRef = useRef(new Map())
+    const normalizedPersonaCache = useRef(new WeakMap())
+    const normalizedReferralCache = useRef(new WeakMap())
+
+    const getRootUpdater = (index) => {
+        const cache = rootUpdatersRef.current
+        if (!cache.has(index)) {
+            cache.set(index, (recipe) => updatePersonaAt(index, recipe))
+        }
+        return cache.get(index)
+    }
+    const getReferredUpdater = (pathKey, path) => {
+        const cache = referredUpdatersRef.current
+        if (!cache.has(pathKey)) {
+            cache.set(pathKey, (recipe) => updateReferredPersonaByPath(path, recipe))
+        }
+        return cache.get(pathKey)
+    }
+    const getNormalizedPersona = (rawPersona) => {
+        if (!rawPersona || typeof rawPersona !== 'object') return normalizePersona(rawPersona)
+        const cache = normalizedPersonaCache.current
+        if (!cache.has(rawPersona)) {
+            cache.set(rawPersona, normalizePersona(rawPersona))
+        }
+        return cache.get(rawPersona)
+    }
+    const getNormalizedReferral = (rawReferral) => {
+        if (!rawReferral || typeof rawReferral !== 'object') return normalizeReferral(rawReferral)
+        const cache = normalizedReferralCache.current
+        if (!cache.has(rawReferral)) {
+            const base = normalizeReferral(rawReferral)
+            cache.set(rawReferral, { ...base, persona: getNormalizedPersona(rawReferral.persona) })
+        }
+        return cache.get(rawReferral)
     }
     const totalPersonasError =
         typeof totalPersonas === 'number' && totalPersonas < 1
@@ -87,7 +140,7 @@ function CaseForm() {
             : null
     const hasUnscheduledRootPersona = personas.some((persona) => {
         const normalized = normalizePersona(persona)
-        return typeof normalized.scheduledAfterMinutes !== 'number'
+        return typeof normalized.scheduled_after_minutes !== 'number'
     })
     const sourceCaseId = editCaseId || templateId
 
@@ -101,21 +154,30 @@ function CaseForm() {
         enabled: Boolean(sourceCaseId),
     })
 
+    const { submitError, submitSuccess, submitCase } = useCaseSubmit({
+        adminJwt,
+        isEditMode,
+        editCaseId,
+    })
+    // The hook's submitError is submission-flow-only; a failed template/case
+    // load surfaces through the same banner via this effect instead.
+    const [loadErrorMessage, setLoadErrorMessage] = useState('')
+
     useEffect(() => {
         if (!loadedCase?.case) return
         const templateCase = loadedCase.case
-        setCaseName(templateCase.caseName ?? '')
-        setInitialBrief(templateCase.initialBrief ?? '')
-        setCommonInformation(templateCase.commonInformation ?? '')
-        setSimulationDurationMinutes(templateCase.simulationDurationMinutes ?? null)
-        setAccessCode(templateCase.accessCode ?? '')
-        setTotalPersonas(templateCase.totalNonReferredPersonas ?? null)
+        setCaseName(templateCase.case_name ?? '')
+        setInitialBrief(templateCase.initial_brief ?? '')
+        setCommonInformation(templateCase.common_information ?? '')
+        setSimulationDurationMinutes(templateCase.simulation_duration ?? null)
+        setAccessCode(templateCase.access_code ?? '')
+        setTotalPersonas(templateCase.total_non_referred_personas ?? null)
         setPersonas((templateCase.personas ?? []).map((persona) => normalizePersona(persona)))
     }, [loadedCase])
 
     useEffect(() => {
         if (loadError) {
-            setSubmitError(
+            setLoadErrorMessage(
                 loadError.message ||
                     (isEditMode
                         ? 'Failed to load case for editing.'
@@ -124,143 +186,31 @@ function CaseForm() {
         }
     }, [loadError, isEditMode])
 
-    const saveMutation = useMutation({
-        mutationFn: (payload) =>
-            apiFetch(isEditMode ? `/api/cases/${editCaseId}` : '/api/cases', {
-                method: isEditMode ? 'PUT' : 'POST',
-                adminJwt,
-                body: payload,
-            }),
-        onSuccess: () =>
-            setSubmitSuccess(
-                isEditMode ? 'Case updated successfully.' : 'Case saved successfully.',
-            ),
-        onError: (error) => {
-            setSubmitError(error.message || 'Upload failed.')
-            setSubmitSuccess('')
-        },
-    })
-
-    const handleSubmit = async (event) => {
+    const handleSubmit = (event) => {
         event.preventDefault()
-        if (typeof totalPersonas !== 'number' || totalPersonas < 1) {
-            setSubmitError('Enter the number of AI personas that are not referred (at least 1).')
-            setSubmitSuccess('')
-            return
-        }
-        if (!hasUnscheduledRootPersona) {
-            setSubmitError('At least one non-referred persona must not be scheduled.')
-            setSubmitSuccess('')
-            return
-        }
-        if (simulationDurationError) {
-            setSubmitError(simulationDurationError)
-            setSubmitSuccess('')
-            return
-        }
-        setSubmitError('')
-        setSubmitSuccess('')
-
-        const buildPrefix = () => {
-            const slug = slugify(caseName)
-            return slug ? `cases/${slug}` : 'cases'
-        }
-
-        const uploadFile = async (file, prefix) => {
-            const presign = await apiFetch('/api/uploads/presign', {
-                method: 'POST',
-                adminJwt,
-                body: {
-                    file_name: file.name,
-                    content_type: file.type || null,
-                    prefix,
-                },
-            })
-            const putResponse = await fetch(presign.upload_url, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': presign.content_type || 'application/octet-stream',
-                },
-                body: file,
-            })
-            if (!putResponse.ok) {
-                throw new Error('Failed to upload file to Spaces.')
-            }
-            return {
-                bucket: presign.bucket,
-                object_key: presign.object_key,
-                file_name: presign.file_name,
-                content_type: presign.content_type,
-            }
-        }
-
-        const normalizeFileEntry = async (entry, prefix) => {
-            if (!entry?.file) {
-                return { ...entry, file: null }
-            }
-            if (entry.file instanceof File) {
-                const uploaded = await uploadFile(entry.file, prefix)
-                return { ...entry, file: uploaded }
-            }
-            return { ...entry }
-        }
-
-        const normalizeProfilePhoto = async (profilePhoto, prefix) => {
-            if (!profilePhoto) {
-                return null
-            }
-            if (profilePhoto instanceof File) {
-                return await uploadFile(profilePhoto, prefix)
-            }
-            return profilePhoto
-        }
-
-        const buildPersonaPayload = async (persona, prefix) => {
-            const normalized = normalizePersona(persona)
-            const profilePhoto = await normalizeProfilePhoto(normalized.profilePhoto, prefix)
-            const files = await Promise.all(
-                (normalized.files ?? []).map((entry) => normalizeFileEntry(entry, prefix)),
-            )
-            const referrals = await Promise.all(
-                (normalized.referrals ?? []).map(async (referral) => {
-                    const normalizedReferral = normalizeReferral(referral)
-                    return {
-                        name: normalizedReferral.name,
-                        triggerType: normalizedReferral.triggerType,
-                        conditions: normalizedReferral.conditions,
-                        revealDelayMinutes: normalizedReferral.revealDelayMinutes,
-                        persona: await buildPersonaPayload(normalizedReferral.persona, prefix),
-                    }
-                }),
-            )
-            return {
-                ...normalized,
-                profilePhoto,
-                files,
-                referrals,
-            }
-        }
-
-        try {
-            const prefix = buildPrefix()
-            const personasPayload = await Promise.all(
-                personas.map((persona) => buildPersonaPayload(persona, prefix)),
-            )
-            const payload = {
-                caseName: caseName.trim(),
-                initialBrief: initialBrief.trim(),
-                commonInformation: commonInformation.trim(),
-                simulationDurationMinutes,
-                accessCode: accessCode.trim(),
-                totalNonReferredPersonas: totalPersonas,
-                personas: personasPayload,
-            }
-            saveMutation.mutate(payload)
-        } catch (error) {
-            setSubmitError(error.message || 'Upload failed.')
-            setSubmitSuccess('')
-        }
+        // Matches the pre-extraction behavior of sharing one error banner:
+        // attempting a submit clears any stale "failed to load" message too.
+        setLoadErrorMessage('')
+        submitCase({
+            caseName,
+            initialBrief,
+            commonInformation,
+            simulationDurationMinutes,
+            accessCode,
+            totalPersonas,
+            personas,
+            hasUnscheduledRootPersona,
+            simulationDurationError,
+        })
     }
+
+    const referredPersonas = collectReferredPersonas(personas, {
+        getNormalizedPersona,
+        getNormalizedReferral,
+        getPersonaLabel,
+    })
+    const displayedError = submitError || loadErrorMessage
+
     return (
         <Container size="2xl" py="xl">
             <Paper radius="md" p="lg" withBorder>
@@ -372,9 +322,10 @@ function CaseForm() {
                                         <Accordion variant="separated">
                                             {Array.from({ length: totalPersonas }, (_, index) => {
                                                 const personaNumber = index + 1
-                                                const persona = normalizePersona(personas[index])
-                                                const updatePersona = (updater) =>
-                                                    updatePersonaAt(index, updater)
+                                                const persona = getNormalizedPersona(
+                                                    personas[index],
+                                                )
+                                                const updatePersona = getRootUpdater(index)
                                                 const personaLabel = getPersonaLabel(
                                                     persona,
                                                     `Persona ${personaNumber}`,
@@ -396,90 +347,37 @@ function CaseForm() {
                                                     </Accordion.Item>
                                                 )
                                             })}
-                                            {personas.flatMap((persona, index) => {
-                                                const basePersona = normalizePersona(persona)
-                                                const referredItems = []
-                                                const collectReferred = (
-                                                    currentPersona,
-                                                    path,
-                                                    parentLabel,
-                                                ) => {
-                                                    const normalized =
-                                                        normalizePersona(currentPersona)
-                                                    normalized.referrals.forEach(
-                                                        (referral, referralIndex) => {
-                                                            const normalizedReferral =
-                                                                normalizeReferral(referral)
-                                                            const childPath = [
-                                                                ...path,
-                                                                referralIndex,
-                                                            ]
-                                                            const referralLabel = getPersonaLabel(
-                                                                { name: normalizedReferral.name },
-                                                                'Referred Persona',
-                                                            )
-                                                            referredItems.push({
-                                                                path: childPath,
-                                                                persona: normalizePersona(
-                                                                    normalizedReferral.persona,
-                                                                ),
-                                                                label: referralLabel,
-                                                                parentLabel,
-                                                            })
-                                                            const childLabel = getPersonaLabel(
-                                                                normalizedReferral.persona,
-                                                                'Referred Persona',
-                                                            )
-                                                            collectReferred(
-                                                                normalizePersona(
-                                                                    normalizedReferral.persona,
-                                                                ),
-                                                                childPath,
-                                                                childLabel,
-                                                            )
-                                                        },
-                                                    )
-                                                }
-                                                const baseLabel = getPersonaLabel(
-                                                    basePersona,
-                                                    `Persona ${index + 1}`,
+                                            {referredPersonas.map((item) => {
+                                                const pathKey = item.path.join('-')
+                                                const updatePersona = getReferredUpdater(
+                                                    pathKey,
+                                                    item.path,
                                                 )
-                                                collectReferred(basePersona, [index], baseLabel)
-                                                return referredItems.map((item) => {
-                                                    const updatePersona = (updater) =>
-                                                        updateReferredPersonaByPath(
-                                                            item.path,
-                                                            updater,
-                                                        )
-                                                    const pathKey = item.path.join('-')
-                                                    return (
-                                                        <Accordion.Item
-                                                            key={`referred-${pathKey}`}
-                                                            value={`referred-${pathKey}`}
-                                                        >
-                                                            <Accordion.Control>
-                                                                {`${item.label} <- ${item.parentLabel}`}
-                                                            </Accordion.Control>
-                                                            <Accordion.Panel>
-                                                                <PersonaFields
-                                                                    persona={normalizePersona(
-                                                                        item.persona,
-                                                                    )}
-                                                                    updatePersona={updatePersona}
-                                                                />
-                                                            </Accordion.Panel>
-                                                        </Accordion.Item>
-                                                    )
-                                                })
+                                                return (
+                                                    <Accordion.Item
+                                                        key={`referred-${pathKey}`}
+                                                        value={`referred-${pathKey}`}
+                                                    >
+                                                        <Accordion.Control>
+                                                            {`${item.label} <- ${item.parentLabel}`}
+                                                        </Accordion.Control>
+                                                        <Accordion.Panel>
+                                                            <PersonaFields
+                                                                persona={item.persona}
+                                                                updatePersona={updatePersona}
+                                                            />
+                                                        </Accordion.Panel>
+                                                    </Accordion.Item>
+                                                )
                                             })}
                                         </Accordion>
                                     )}
                                 </Accordion.Panel>
                             </Accordion.Item>
                         </Accordion>
-                        {submitError && (
+                        {displayedError && (
                             <Text c="red" size="sm">
-                                {submitError}
+                                {displayedError}
                             </Text>
                         )}
                         {submitSuccess && (

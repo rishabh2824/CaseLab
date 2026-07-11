@@ -95,7 +95,7 @@ def _build_system_prompt(
     stable = (
         "You are a persona in a case simulation. Stay in character.\n"
         "Respond naturally and conversationally in 1-3 concise sentences.\n"
-        f"CaseForm summary: {case_snapshot['initial_brief']}\n"
+        f"Case summary: {case_snapshot['initial_brief']}\n"
         f"Common information: {case_snapshot.get('common_information') or 'None'}\n"
         f"Persona name: {persona_details['name']}\n"
         f"Role/title: {persona_details['role']}\n"
@@ -111,17 +111,6 @@ def _build_system_prompt(
         "promise, imply, or offer any referral or file you are not enacting this turn."
     )
     return stable, turn
-
-
-def _extract_min_message_threshold(condition: str) -> int | None:
-    match = re.search(r"after\s+at\s+least\s+(\d+)\s+messages?", condition, re.IGNORECASE)
-    if match:
-        return int(match.group(1))
-    return None
-
-
-def _count_user_messages(history: list[dict]) -> int:
-    return sum(1 for msg in history if msg.get("role") == "user")
 
 
 def _sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict]:
@@ -231,18 +220,15 @@ async def _resolve_referral_unlock(
     elapsed_minutes: int,
 ) -> bool:
     """Whether this referral's trigger is satisfied right now. The only case
-    that hits the network is an unconditioned "conditions" trigger; time
-    triggers and message-count thresholds resolve locally.
+    that hits the network is a "conditions" trigger; time triggers resolve
+    locally.
 
-    ``decision_history`` is the conversation including the current user message
-    (so message-count thresholds count this turn)."""
+    ``decision_history`` is the conversation including the current user
+    message (so the LLM judge sees this turn too)."""
     if referral["trigger_type"] == "conditions":
         condition = referral["condition_trigger"].strip()
         if not condition:
             return False
-        min_messages = _extract_min_message_threshold(condition)
-        if min_messages is not None:
-            return _count_user_messages(decision_history) >= min_messages
         return await classify_referral(condition, decision_history)
     if referral["trigger_type"] == "time":
         return bool(referral["time_trigger"] and elapsed_minutes >= referral["time_trigger"])

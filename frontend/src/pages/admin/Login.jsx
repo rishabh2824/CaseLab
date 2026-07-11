@@ -1,5 +1,5 @@
 import { GoogleLogin } from '@react-oauth/google'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { apiFetch } from '../../client.js'
@@ -12,6 +12,7 @@ import { useSessionStore } from '../../hooks/sessionStore.js'
 function Login() {
     const [error, setError] = useState('')
     const navigate = useNavigate()
+    const queryClient = useQueryClient()
     const setAdmin = useSessionStore((s) => s.setAdmin)
 
     const { mutate: login, isPending } = useMutation({
@@ -22,6 +23,11 @@ function Login() {
             }),
         onSuccess: (data) => {
             setError('')
+            // Covers signing in without an explicit prior sign-out too (e.g. a
+            // stale tab, or a different admin authenticating on this device) —
+            // ['cases']/['admins'] aren't keyed by admin identity, so a leftover
+            // cache entry from a previous session could otherwise flash here.
+            queryClient.clear()
             setAdmin({
                 adminJwt: data.admin_jwt,
                 adminRole: data.role,
@@ -30,10 +36,7 @@ function Login() {
             navigate({ to: '/admin' })
         },
         onError: (err) => {
-            setError(
-                err.message ||
-                    'Your account is not authorized. Ask a super admin to add you.',
-            )
+            setError(err.message || 'Your account is not authorized. Ask a super admin to add you.')
         },
     })
 
@@ -50,9 +53,8 @@ function Login() {
                         Sign in with Google
                     </h1>
                     <p className="text-sm leading-relaxed text-[#57534b]">
-                        Use your Wisconsin School of Business Google account. If you
-                        haven't been added as an admin yet, ask a super admin to add
-                        your email first.
+                        Use your Wisconsin School of Business Google account. If you haven't been
+                        added as an admin yet, ask a super admin to add your email first.
                     </p>
                     <div className="flex justify-center pt-2">
                         <GoogleLogin
@@ -66,12 +68,8 @@ function Login() {
                             onError={() => setError('Google sign-in failed.')}
                         />
                     </div>
-                    {isPending && (
-                        <p className="text-sm text-[#57534b]">Signing in…</p>
-                    )}
-                    {error && (
-                        <p className="text-sm font-medium text-[#c5050c]">{error}</p>
-                    )}
+                    {isPending && <p className="text-sm text-[#57534b]">Signing in…</p>}
+                    {error && <p className="text-sm font-medium text-[#c5050c]">{error}</p>}
                 </div>
             </div>
         </div>

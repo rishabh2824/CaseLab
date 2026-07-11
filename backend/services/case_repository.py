@@ -56,12 +56,12 @@ def insert_case(case_id: str, payload, owner_admin_id: str | None) -> tuple[str,
         """,
         (
             case_id,
-            payload.caseName,
-            _normalize_access_code(payload.accessCode),
-            payload.initialBrief,
-            payload.commonInformation,
-            payload.simulationDurationMinutes,
-            payload.totalNonReferredPersonas,
+            payload.case_name,
+            _normalize_access_code(payload.access_code),
+            payload.initial_brief,
+            payload.common_information,
+            payload.simulation_duration,
+            payload.total_non_referred_personas,
             owner_admin_id,
         ),
     )
@@ -80,12 +80,12 @@ def update_case_fields(case_id: str, payload) -> tuple[str, tuple]:
         where id = ?
         """,
         (
-            payload.caseName,
-            _normalize_access_code(payload.accessCode),
-            payload.initialBrief,
-            payload.commonInformation,
-            payload.simulationDurationMinutes,
-            payload.totalNonReferredPersonas,
+            payload.case_name,
+            _normalize_access_code(payload.access_code),
+            payload.initial_brief,
+            payload.common_information,
+            payload.simulation_duration,
+            payload.total_non_referred_personas,
             case_id,
         ),
     )
@@ -93,6 +93,19 @@ def update_case_fields(case_id: str, payload) -> tuple[str, tuple]:
 
 def delete_personas_for_case(case_id: str) -> tuple[str, tuple]:
     return ("delete from personas where case_id = ?", (case_id,))
+
+
+async def delete_case(client, case_id: str) -> None:
+    # ON DELETE CASCADE (cases -> personas -> persona_files/persona_referrals)
+    # only fires if foreign keys are enforced for *this* statement — same
+    # PRAGMA-batched-with-the-DELETE requirement as admin_repository.delete
+    # and update_case's persona wipe (see schema.txt for the FK chain).
+    await client.batch(
+        [
+            ("PRAGMA foreign_keys = ON", ()),
+            ("delete from cases where id = ?", (case_id,)),
+        ]
+    )
 
 
 # --- cases: reads ----------------------------------------------------------
@@ -167,15 +180,6 @@ async def fetch_case(client, case_id: str) -> dict | None:
     return row_to_dict(result.rows[0]) if result.rows else None
 
 
-async def fetch_first_case(client) -> dict | None:
-    result = await client.execute(
-        """
-        select id, case_name, initial_brief, simulation_duration
-        from cases
-        limit 1
-        """
-    )
-    return row_to_dict(result.rows[0]) if result.rows else None
 
 
 async def fetch_personas_for_case(client, case_id: str) -> list[dict]:
@@ -243,11 +247,15 @@ async def fetch_referrals_for_case(client, case_id: str) -> list[dict]:
 
 
 async def insert_file(client, file_ref) -> str:
+    # upload_status has never varied in practice (there's no upload pipeline
+    # that leaves it anything but 'uploaded') — leave the column for now
+    # (YAGNI to drop it), but let its DB DEFAULT fill it in rather than
+    # passing "uploaded" as a bound parameter as if this insert chooses it.
     file_id = uuid.uuid4().hex
     await client.execute(
         """
-        insert into files (id, bucket, object_key, file_name, content_type, upload_status)
-        values (?, ?, ?, ?, ?, ?)
+        insert into files (id, bucket, object_key, file_name, content_type)
+        values (?, ?, ?, ?, ?)
         """,
         (
             file_id,
@@ -255,7 +263,6 @@ async def insert_file(client, file_ref) -> str:
             file_ref.object_key,
             file_ref.file_name,
             file_ref.content_type,
-            "uploaded",
         ),
     )
     return file_id
@@ -291,8 +298,8 @@ async def insert_persona_files(
                     uuid.uuid4().hex,
                     persona_id,
                     file_id,
-                    entry.shareConditions,
-                    entry.perceivedContents,
+                    entry.share_conditions,
+                    entry.perceived_contents,
                 ),
             )
         )
@@ -307,10 +314,10 @@ async def insert_persona(
     here, in Python, rather than left to the table's default, precisely so it
     can be referenced before the insert actually runs."""
     persona_id = uuid.uuid4().hex
-    scheduled_time = persona.scheduledAfterMinutes or 0
+    scheduled_time = persona.scheduled_after_minutes or 0
     profile_photo_file_id = None
-    if persona.profilePhoto:
-        profile_photo_file_id = await get_or_create_file_id(client, persona.profilePhoto)
+    if persona.profile_photo:
+        profile_photo_file_id = await get_or_create_file_id(client, persona.profile_photo)
     statements.append(
         (
             """
@@ -335,12 +342,12 @@ async def insert_persona(
                 persona.name,
                 persona.role,
                 profile_photo_file_id,
-                persona.knownFacts,
-                persona.unknownFacts,
-                persona.hiddenFacts,
-                persona.personalityTraits,
+                persona.known_facts,
+                persona.unknown_facts,
+                persona.hidden_facts,
+                persona.personality_traits,
                 scheduled_time,
-                persona.availabilityMinutes,
+                persona.availability_minutes,
             ),
         )
     )
@@ -358,9 +365,9 @@ async def insert_referrals(
     for referral in referrals:
         referred_persona_id = await insert_persona(client, case_id, referral.persona, statements)
         condition_trigger = (
-            referral.conditions if referral.triggerType == "conditions" else None
+            referral.conditions if referral.trigger_type == "conditions" else None
         )
-        time_trigger = referral.revealDelayMinutes if referral.triggerType == "time" else None
+        time_trigger = referral.reveal_delay_minutes if referral.trigger_type == "time" else None
         statements.append(
             (
                 """
@@ -380,7 +387,7 @@ async def insert_referrals(
                     case_id,
                     parent_persona_id,
                     referred_persona_id,
-                    referral.triggerType,
+                    referral.trigger_type,
                     condition_trigger,
                     time_trigger,
                 ),

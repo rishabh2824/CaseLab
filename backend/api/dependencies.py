@@ -1,5 +1,6 @@
 from fastapi import Depends, Header, HTTPException
 
+from models.admin import AdminRole
 from services import admin_repository
 from services.admin_auth import CurrentAdmin, InvalidAdminToken, decode_admin_jwt
 from services.db import get_db_client
@@ -37,12 +38,12 @@ async def get_current_admin(
     admin = await admin_repository.get_by_id(client, payload["admin_id"])
     if admin is None:
         raise HTTPException(status_code=401, detail="Admin account no longer exists.")
-    return CurrentAdmin(id=admin["id"], role=admin["role"])
+    return CurrentAdmin(id=admin["id"], role=AdminRole(admin["role"]))
 
 
 async def require_super_admin(
     admin: CurrentAdmin = Depends(get_current_admin),
 ) -> CurrentAdmin:
-    if admin.role != 1:
+    if admin.role != AdminRole.SUPER:
         raise HTTPException(status_code=403, detail="Super admin access required.")
     return admin

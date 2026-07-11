@@ -65,10 +65,7 @@ const TIMEOUT_ERROR_MESSAGE = 'Connection timed out. Please check your network a
  * @param {number}   [opts.idleTimeoutMs=30000] reset on each chunk; fires if
  *   no bytes (including pings) arrive for this long
  */
-export async function streamChat(
-    path,
-    { body, adminJwt, onEvent, idleTimeoutMs = 30000 } = {},
-) {
+export async function streamChat(path, { body, adminJwt, onEvent, idleTimeoutMs = 30000 } = {}) {
     const headers = { 'Content-Type': 'application/json' }
     if (adminJwt) headers.Authorization = `Bearer ${adminJwt}`
 
@@ -77,11 +74,14 @@ export async function streamChat(
     const armIdleTimer = () => {
         clearTimeout(idleTimer)
         idleTimer = setTimeout(() => {
-            controller.abort(new DOMException('Idle timeout waiting for server activity.', 'TimeoutError'))
+            controller.abort(
+                new DOMException('Idle timeout waiting for server activity.', 'TimeoutError'),
+            )
         }, idleTimeoutMs)
     }
     const isTimeoutAbort = (error) =>
-        error?.name === 'TimeoutError' || (error?.name === 'AbortError' && controller.signal.aborted)
+        error?.name === 'TimeoutError' ||
+        (error?.name === 'AbortError' && controller.signal.aborted)
 
     armIdleTimer() // guards the connect phase too — a server that never responds is also a stall
 

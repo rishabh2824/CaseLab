@@ -10,6 +10,7 @@ import uuid
 from fastapi import HTTPException
 
 from models.simulations import SendMessagePayload, StartSimulationPayload
+from services import debug_log
 from services.db import get_db_client
 from services.llm import classify_message_safety, complete_persona_reply
 from services.simulation import repository as repo
@@ -47,11 +48,49 @@ from services.spaces import create_presigned_get_url
 
 logger = logging.getLogger("caselab.simulations")
 
+# Cap on how much of a persona's history rides along as conversation context
+# for the frontier reply model (see _prepare_reply's `recent_history`). The
+# unlock/share judges still see the FULL `decision_history` (message-count
+# thresholds and condition checks need it) — only the frontier call's context
+# is capped.
+RECENT_HISTORY_MESSAGE_LIMIT = 6
+
 
 def _sse(event: str, data: dict) -> dict:
     """One Server-Sent Event as an sse-starlette dict; the response class
     handles the wire framing (and keep-alive pings / disconnect detection)."""
     return {"event": event, "data": json.dumps(data)}
+
+
+def _build_contact(run, persona, available_at_minutes, elapsed_minutes, *, is_referred):
+    """One contact-list entry: persona fields + computed availability + chat
+    state. Shared by start_simulation (root only) and get_simulation_state
+    (root + unlocked referred), which previously duplicated this inline."""
+    availability = _persona_availability(persona, available_at_minutes, elapsed_minutes)
+    return {
+        **persona,
+        **availability,
+        "is_referred": is_referred,
+        **_chat_state_payload(run, persona["id"]),
+    }
+
+
+def _build_contacts(run, root_personas, elapsed_minutes, referred_rows=None):
+    """Full contacts list for an API response: every root persona, plus (if
+    given) every unlocked referred persona — each shaped identically."""
+    contacts = [
+        _build_contact(
+            run, persona, persona.get("scheduled_time") or 0, elapsed_minutes, is_referred=False
+        )
+        for persona in root_personas
+    ]
+    for row in referred_rows or []:
+        persona = _format_persona_row(row)
+        available_at = run["unlocked_at"].get(persona["id"], elapsed_minutes)
+        contacts.append(
+            _build_contact(run, persona, available_at, elapsed_minutes, is_referred=True)
+        )
+    return contacts
 
 
 async def start_simulation(payload: StartSimulationPayload):
@@ -63,17 +102,20 @@ async def start_simulation(payload: StartSimulationPayload):
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     if not root_personas:
         raise HTTPException(status_code=400, detail="No root personas found.")
-    available = [p for p in root_personas if (p["scheduled_time"] or 0) == 0]
-    initial_persona = available[0] if available else root_personas[0]
     run_id = uuid.uuid4().hex
     # Build the run fully (including the resolved active persona) before handing
     # it to the store, so creation is a single put() rather than an insert
-    # followed by nested mutations.
+    # followed by nested mutations. active_persona_id starts as a naive
+    # placeholder (the first root persona) — the contacts pass below always
+    # corrects it to the first AVAILABLE persona when one exists. It only
+    # survives when none are, which (at elapsed_minutes ~0, right after
+    # start_time is set) means every persona has scheduled_time > 0 — the
+    # same "nobody's up yet" case this placeholder already covers.
     run = {
         "case_id": case_snapshot["id"],
         "case_snapshot": case_snapshot,  # cached for the life of the run
         "start_time": time.time(),
-        "active_persona_id": initial_persona["id"],
+        "active_persona_id": root_personas[0]["id"],
         "unlocked_referred_ids": set(),
         "unlocked_at": {},
         "shared_files": {},
@@ -81,21 +123,7 @@ async def start_simulation(payload: StartSimulationPayload):
         "persona_chat_state": {},
     }
     elapsed_minutes = _elapsed_minutes(run)
-    contacts = []
-    for persona in root_personas:
-        availability = _persona_availability(
-            persona,
-            persona.get("scheduled_time") or 0,
-            elapsed_minutes,
-        )
-        contacts.append(
-            {
-                **persona,
-                **availability,
-                "is_referred": False,
-                **_chat_state_payload(run, persona["id"]),
-            }
-        )
+    contacts = _build_contacts(run, root_personas, elapsed_minutes)
     active_candidates = [c for c in contacts if c["available"]]
     if active_candidates:
         run["active_persona_id"] = active_candidates[0]["id"]
@@ -122,41 +150,8 @@ async def get_simulation_state(run_id: str):
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     unlocked_ids = run["unlocked_referred_ids"]
     elapsed_minutes = _elapsed_minutes(run)
-    contacts = []
-    for persona in root_personas:
-        availability = _persona_availability(
-            persona,
-            persona.get("scheduled_time") or 0,
-            elapsed_minutes,
-        )
-        contacts.append(
-            {
-                **persona,
-                **availability,
-                "is_referred": False,
-                **_chat_state_payload(run, persona["id"]),
-            }
-        )
-    referred = []
-    if unlocked_ids:
-        rows = await repo.fetch_personas_by_ids(client, unlocked_ids)
-        for row in rows:
-            persona = _format_persona_row(row)
-            available_at = run["unlocked_at"].get(persona["id"], elapsed_minutes)
-            availability = _persona_availability(
-                persona,
-                available_at,
-                elapsed_minutes,
-            )
-            referred.append(
-                {
-                    **persona,
-                    **availability,
-                    "is_referred": True,
-                    **_chat_state_payload(run, persona["id"]),
-                }
-            )
-    contacts = contacts + referred
+    referred_rows = await repo.fetch_personas_by_ids(client, unlocked_ids) if unlocked_ids else []
+    contacts = _build_contacts(run, root_personas, elapsed_minutes, referred_rows)
     visible_persona_ids = {persona["id"] for persona in contacts}
     return {
         "run_id": run_id,
@@ -323,6 +318,8 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     # judges and (sanitized) as the reply context.
     decision_history = [msg for msg in history if msg.get("role") != "system"]
 
+    debug_log.user_message(persona_id, user_message)
+
     # Safety only needs the in-memory conversation, so run it CONCURRENTLY with
     # fetching persona data + resolving the unlock/share decisions. On the common
     # (non-abusive) path this hides the safety round-trip entirely. Decisions are
@@ -425,9 +422,13 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     )
     reply_instruction = _build_reply_instruction()
 
-    # Sanitize prior assistant turns against names that remain forbidden; these
-    # messages are the reply context.
+    # Sanitize prior assistant turns against names that remain forbidden, then
+    # keep only the most recent turns as the model's conversation context —
+    # older turns are dropped rather than sent (and billed) in full every
+    # message. decision_history (unsliced) is still what the unlock/share
+    # judges saw above, so eligibility decisions aren't affected by this cap.
     sanitized_history = _sanitize_history(decision_history, forbidden_referral_names)
+    recent_history = sanitized_history[-RECENT_HISTORY_MESSAGE_LIMIT:]
     # Prompt caching: the reply-format instruction + the persona's stable facts
     # (case brief, common info, known facts) go in ONE content block marked
     # cache_control=ephemeral, ttl=1h. Anthropic (via OpenRouter) caches that
@@ -440,7 +441,10 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     # referral/file guidance is a SEPARATE, uncached block after it — it
     # changes turn to turn (eligibility/unlock/share), so folding it into the
     # cached block would bust the cache on every such change. The conversation
-    # history follows, uncached.
+    # history (now capped to RECENT_HISTORY_MESSAGE_LIMIT turns) follows,
+    # uncached — it was already uncached before the cap, and the cache
+    # breakpoint above only ever covered the system block, so trimming history
+    # doesn't touch cache hit rate either way.
     cached_prompt = f"{reply_instruction}\n\n---\n\n{stable_prompt}"
     messages = [
         {
@@ -454,7 +458,7 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
                 {"type": "text", "text": turn_prompt},
             ],
         },
-        *sanitized_history,
+        *recent_history,
     ]
 
     return {
@@ -586,9 +590,31 @@ async def stream_message(prepared: dict):
         unlock_handles = _coerce_handles(envelope.get("introduce"))
         share_handles = _coerce_handles(envelope.get("send_files"))
 
+    debug_log.persona_reply_cleaned(reply, unlock_handles, share_handles)
+
     new_contacts, shared_files = _apply_reply_decisions(
         run_id, prepared, unlock_handles, share_handles
     )
+
+    if debug_log.enabled():
+        referral_handles = prepared["referral_handles"]
+        file_handles = prepared["file_handles"]
+        claimed_contact_names = [
+            referral_handles[h]["persona"]["name"]
+            for h in dict.fromkeys(unlock_handles)
+            if h in referral_handles
+        ]
+        claimed_file_names = [
+            file_handles[h].get("file_name") or "file"
+            for h in dict.fromkeys(share_handles)
+            if h in file_handles
+        ]
+        debug_log.applied_outcome(
+            claimed_contact_names,
+            [c["name"] for c in new_contacts],
+            claimed_file_names,
+            [f["file_name"] for f in shared_files],
+        )
 
     yield _sse(
         "meta",

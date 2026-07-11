@@ -1,9 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../client.js'
+import { ADMIN_ROLE } from '../../constants.js'
 import { useSessionStore } from '../../hooks/sessionStore.js'
 
-const ROLE_LABELS = { 1: 'Super Admin', 2: 'Admin' }
+const ROLE_LABELS = { [ADMIN_ROLE.SUPER]: 'Super Admin', [ADMIN_ROLE.ADMIN]: 'Admin' }
 
 // Super-admin-only admin-management page: list, add ("invite" is just adding
 // their email — there's no email/token flow, see backend plan), and delete
@@ -14,7 +15,7 @@ function Admins() {
 
     const [email, setEmail] = useState('')
     const [name, setName] = useState('')
-    const [role, setRole] = useState(2)
+    const [role, setRole] = useState(ADMIN_ROLE.ADMIN)
     const [formError, setFormError] = useState('')
 
     const {
@@ -35,7 +36,7 @@ function Admins() {
             setFormError('')
             setEmail('')
             setName('')
-            setRole(2)
+            setRole(ADMIN_ROLE.ADMIN)
             queryClient.invalidateQueries({ queryKey: ['admins'] })
         },
         onError: (err) => setFormError(err.message || 'Failed to add admin.'),
@@ -74,10 +75,9 @@ function Admins() {
                     Manage admins
                 </h1>
                 <p className="mt-4 max-w-xl text-sm leading-6 text-slate-500">
-                    Add an admin by email — their Google account being on the
-                    allowed Workspace domain plus a row here is their entire
-                    access grant. Deleting an admin also deletes every case
-                    they own.
+                    Add an admin by email — their Google account being on the allowed Workspace
+                    domain plus a row here is their entire access grant. Deleting an admin also
+                    deletes every case they own.
                 </p>
 
                 <form
@@ -121,8 +121,8 @@ function Admins() {
                             onChange={(e) => setRole(Number(e.currentTarget.value))}
                             className="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-[#5b5fc7] focus:outline-none focus:ring-2 focus:ring-[#5b5fc7]/20"
                         >
-                            <option value={2}>Admin</option>
-                            <option value={1}>Super Admin</option>
+                            <option value={ADMIN_ROLE.ADMIN}>Admin</option>
+                            <option value={ADMIN_ROLE.SUPER}>Super Admin</option>
                         </select>
                     </div>
                     <button
@@ -138,9 +138,7 @@ function Admins() {
                 </form>
 
                 <div className="mt-8 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-                    {isLoading && (
-                        <p className="p-5 text-sm text-slate-500">Loading admins…</p>
-                    )}
+                    {isLoading && <p className="p-5 text-sm text-slate-500">Loading admins…</p>}
                     {listError && (
                         <p className="p-5 text-sm text-red-600">
                             {listError.message || 'Failed to load admins.'}
@@ -163,19 +161,27 @@ function Admins() {
                                 {admins.map((admin) => (
                                     <tr key={admin.id}>
                                         <td className="px-5 py-3 text-slate-900">{admin.email}</td>
-                                        <td className="px-5 py-3 text-slate-500">{admin.name || '—'}</td>
+                                        <td className="px-5 py-3 text-slate-500">
+                                            {admin.name || '—'}
+                                        </td>
                                         <td className="px-5 py-3 text-slate-500">
                                             {ROLE_LABELS[admin.role] || admin.role}
                                         </td>
                                         <td className="px-5 py-3 text-right">
-                                            <button
-                                                type="button"
-                                                onClick={() => handleDelete(admin)}
-                                                disabled={deleteMutation.isPending}
-                                                className="text-sm font-semibold text-red-600 transition hover:text-red-700 disabled:opacity-60"
-                                            >
-                                                Delete
-                                            </button>
+                                            {admin.role === ADMIN_ROLE.SUPER ? (
+                                                <span className="text-sm text-slate-400">
+                                                    Super admins can't be deleted
+                                                </span>
+                                            ) : (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDelete(admin)}
+                                                    disabled={deleteMutation.isPending}
+                                                    className="text-sm font-semibold text-red-600 transition hover:text-red-700 disabled:opacity-60"
+                                                >
+                                                    Delete
+                                                </button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}

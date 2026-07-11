@@ -11,20 +11,22 @@ from services.db import row_to_dict, rows_to_dicts
 async def fetch_case_snapshot(
     client, access_code: str | None = None, case_id: str | None = None
 ) -> dict | None:
-    query = """
+    """Look up a case by exactly one of ``case_id`` or ``access_code`` — every
+    caller supplies one of the two (see services.simulation.reads)."""
+    if case_id:
+        where, params = "where id = ?", (case_id,)
+    elif access_code:
+        where, params = "where upper(access_code) = upper(?)", (access_code,)
+    else:
+        raise ValueError("fetch_case_snapshot requires case_id or access_code.")
+    result = await client.execute(
+        f"""
         select id, case_name, initial_brief, simulation_duration, common_information, access_code
         from cases
-    """
-    params = ()
-    if case_id:
-        query += " where id = ?"
-        params = (case_id,)
-    elif access_code:
-        query += " where upper(access_code) = upper(?)"
-        params = (access_code,)
-    else:
-        query += " limit 1"
-    result = await client.execute(query, params)
+        {where}
+        """,
+        params,
+    )
     return row_to_dict(result.rows[0]) if result.rows else None
 
 

@@ -16,11 +16,27 @@ import asyncio
 import logging
 import time
 
-from fastapi import HTTPException
-
 from settings import MAX_SIMULATION_DURATION_MINUTES
 
 logger = logging.getLogger("caselab.simulations")
+
+
+class SimulationRunError(Exception):
+    """Base for domain errors raised by RunStore.
+
+    These are plain exceptions, not HTTPException — RunStore has no business
+    knowing it's being used from a web request, so it stays usable/testable
+    outside a request context. main.py registers FastAPI exception handlers
+    that translate these to HTTP responses at the app boundary.
+    """
+
+
+class RunNotFound(SimulationRunError):
+    """No run exists for this id (never existed, or already purged)."""
+
+
+class RunExpired(SimulationRunError):
+    """The run existed but had passed its TTL and was purged just now."""
 
 # Grace period past the longest a case's own simulation_duration is allowed to
 # be (MAX_SIMULATION_DURATION_MINUTES, enforced at case creation), so a run
@@ -56,13 +72,18 @@ class RunStore:
         self._runs[run_id] = run
 
     def get(self, run_id: str) -> dict:
-        """Return the run, lazily purging (and 404ing) if it has expired."""
+        """Return the run, lazily purging if it has expired.
+
+        Raises RunNotFound / RunExpired (see main.py for the HTTP translation)
+        rather than HTTPException — a missing/expired run is a normal, expected
+        condition here, not a FastAPI-specific concern.
+        """
         run = self._runs.get(run_id)
         if not run:
-            raise HTTPException(status_code=404, detail="Simulation run not found.")
+            raise RunNotFound(run_id)
         if time.time() - run["start_time"] > RUN_TTL_SECONDS:
             del self._runs[run_id]
-            raise HTTPException(status_code=404, detail="Simulation run expired.")
+            raise RunExpired(run_id)
         return run
 
     def mutate(self, run_id: str, fn):

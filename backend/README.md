@@ -1,6 +1,6 @@
 # caseLab API
 
-FastAPI backend for the Wisconsin CaseForm Lab simulation platform.
+FastAPI backend for the Wisconsin Case Lab simulation platform.
 
 ## Layout
 

@@ -18,11 +18,6 @@ async def list_cases(admin: CurrentAdmin = Depends(get_current_admin)):
     return await cases.list_cases(admin)
 
 
-@router.get("/active")
-async def get_active_case():
-    return await cases.get_active_case()
-
-
 @router.get("/{case_id}")
 async def get_case(case_id: str, admin: CurrentAdmin = Depends(get_current_admin)):
     return await cases.get_case(case_id, admin)
@@ -33,3 +28,8 @@ async def update_case(
     case_id: str, payload: CasePayload, admin: CurrentAdmin = Depends(get_current_admin)
 ):
     return await cases.update_case(case_id, payload, admin)
+
+
+@router.delete("/{case_id}")
+async def delete_case(case_id: str, admin: CurrentAdmin = Depends(get_current_admin)):
+    return await cases.delete_case(case_id, admin)

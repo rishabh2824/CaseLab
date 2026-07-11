@@ -8,12 +8,19 @@ import {
     Textarea,
     TextInput,
 } from '@mantine/core'
+import { memo } from 'react'
 import { createEmptyReferral, getPersonaLabel, normalizeReferral } from './Helpers.js'
 
 // `updatePersona(recipe)` applies an Immer recipe to this persona's draft —
 // see updatePersonaAt/updateReferredPersonaByPath in caseForm.jsx. Shared by
 // both root personas and referred personas, so it must only ever touch
 // `persona`/`updatePersona`, never reach outside its own props.
+//
+// memo'd so editing one persona doesn't re-render every other persona's panel
+// (this component + its nested file/referral accordions is the expensive
+// part). That only pays off because caseForm.jsx hands it referentially
+// stable `persona`/`updatePersona` props across renders that don't touch this
+// particular persona — see the caches there.
 function PersonaFields({ persona, updatePersona }) {
     return (
         <Stack gap="xs">
@@ -45,17 +52,17 @@ function PersonaFields({ persona, updatePersona }) {
                 label="Profile photo"
                 placeholder="Upload a profile photo"
                 accept="image/*"
-                value={persona.profilePhoto instanceof File ? persona.profilePhoto : null}
+                value={persona.profile_photo instanceof File ? persona.profile_photo : null}
                 onChange={(value) => {
                     updatePersona((d) => {
-                        d.profilePhoto = value
+                        d.profile_photo = value
                     })
                 }}
                 clearable
             />
-            {persona.profilePhoto && !(persona.profilePhoto instanceof File) && (
+            {persona.profile_photo && !(persona.profile_photo instanceof File) && (
                 <Text size="xs" c="dimmed">
-                    Existing photo: {persona.profilePhoto.file_name}
+                    Existing photo: {persona.profile_photo.file_name}
                 </Text>
             )}
             <Textarea
@@ -63,11 +70,11 @@ function PersonaFields({ persona, updatePersona }) {
                 placeholder="- Fact 1\n- Fact 2"
                 minRows={3}
                 autosize
-                value={persona.knownFacts}
+                value={persona.known_facts}
                 onChange={(event) => {
                     const value = event.currentTarget.value
                     updatePersona((d) => {
-                        d.knownFacts = value
+                        d.known_facts = value
                     })
                 }}
             />
@@ -76,11 +83,11 @@ function PersonaFields({ persona, updatePersona }) {
                 placeholder="- Fact 1\n- Fact 2"
                 minRows={3}
                 autosize
-                value={persona.unknownFacts}
+                value={persona.unknown_facts}
                 onChange={(event) => {
                     const value = event.currentTarget.value
                     updatePersona((d) => {
-                        d.unknownFacts = value
+                        d.unknown_facts = value
                     })
                 }}
             />
@@ -89,11 +96,11 @@ function PersonaFields({ persona, updatePersona }) {
                 placeholder="- Fact 1\n- Fact 2"
                 minRows={3}
                 autosize
-                value={persona.hiddenFacts}
+                value={persona.hidden_facts}
                 onChange={(event) => {
                     const value = event.currentTarget.value
                     updatePersona((d) => {
-                        d.hiddenFacts = value
+                        d.hidden_facts = value
                     })
                 }}
             />
@@ -102,11 +109,11 @@ function PersonaFields({ persona, updatePersona }) {
                 placeholder="Describe personality traits"
                 minRows={3}
                 autosize
-                value={persona.personalityTraits}
+                value={persona.personality_traits}
                 onChange={(event) => {
                     const value = event.currentTarget.value
                     updatePersona((d) => {
-                        d.personalityTraits = value
+                        d.personality_traits = value
                     })
                 }}
             />
@@ -116,10 +123,10 @@ function PersonaFields({ persona, updatePersona }) {
                 min={1}
                 allowDecimal={false}
                 hideControls
-                value={persona.scheduledAfterMinutes}
+                value={persona.scheduled_after_minutes}
                 onChange={(value) => {
                     updatePersona((d) => {
-                        d.scheduledAfterMinutes = value
+                        d.scheduled_after_minutes = value
                     })
                 }}
             />
@@ -129,10 +136,10 @@ function PersonaFields({ persona, updatePersona }) {
                 min={1}
                 allowDecimal={false}
                 hideControls
-                value={persona.availabilityMinutes}
+                value={persona.availability_minutes}
                 onChange={(value) => {
                     updatePersona((d) => {
-                        d.availabilityMinutes = value
+                        d.availability_minutes = value
                     })
                 }}
             />
@@ -142,11 +149,11 @@ function PersonaFields({ persona, updatePersona }) {
                 min={0}
                 allowDecimal={false}
                 hideControls
-                value={persona.fileCount}
+                value={persona.file_count}
                 onChange={(value) => {
                     updatePersona((d) => {
                         const count = typeof value === 'number' && value >= 0 ? value : null
-                        d.fileCount = count
+                        d.file_count = count
                         if (typeof count === 'number') {
                             if (d.files.length > count) {
                                 d.files.length = count
@@ -154,8 +161,8 @@ function PersonaFields({ persona, updatePersona }) {
                                 while (d.files.length < count) {
                                     d.files.push({
                                         file: null,
-                                        shareConditions: '',
-                                        perceivedContents: '',
+                                        share_conditions: '',
+                                        perceived_contents: '',
                                     })
                                 }
                             }
@@ -163,14 +170,14 @@ function PersonaFields({ persona, updatePersona }) {
                     })
                 }}
             />
-            {typeof persona.fileCount === 'number' && persona.fileCount > 0 && (
+            {typeof persona.file_count === 'number' && persona.file_count > 0 && (
                 <Accordion variant="separated">
-                    {Array.from({ length: persona.fileCount }, (_, fileIndex) => {
+                    {Array.from({ length: persona.file_count }, (_, fileIndex) => {
                         const fileNumber = fileIndex + 1
                         const fileEntry = persona.files[fileIndex] ?? {
                             file: null,
-                            shareConditions: '',
-                            perceivedContents: '',
+                            share_conditions: '',
+                            perceived_contents: '',
                         }
                         return (
                             <Accordion.Item
@@ -204,11 +211,11 @@ function PersonaFields({ persona, updatePersona }) {
                                             placeholder="Describe the conditions"
                                             minRows={2}
                                             autosize
-                                            value={fileEntry.shareConditions ?? ''}
+                                            value={fileEntry.share_conditions ?? ''}
                                             onChange={(event) => {
                                                 const value = event.currentTarget.value
                                                 updatePersona((d) => {
-                                                    d.files[fileIndex].shareConditions = value
+                                                    d.files[fileIndex].share_conditions = value
                                                 })
                                             }}
                                         />
@@ -217,11 +224,11 @@ function PersonaFields({ persona, updatePersona }) {
                                             placeholder="Describe perceived contents"
                                             minRows={2}
                                             autosize
-                                            value={fileEntry.perceivedContents ?? ''}
+                                            value={fileEntry.perceived_contents ?? ''}
                                             onChange={(event) => {
                                                 const value = event.currentTarget.value
                                                 updatePersona((d) => {
-                                                    d.files[fileIndex].perceivedContents = value
+                                                    d.files[fileIndex].perceived_contents = value
                                                 })
                                             }}
                                         />
@@ -238,11 +245,11 @@ function PersonaFields({ persona, updatePersona }) {
                 min={0}
                 allowDecimal={false}
                 hideControls
-                value={persona.referralOutCount}
+                value={persona.referral_out_count}
                 onChange={(value) => {
                     updatePersona((d) => {
                         const count = typeof value === 'number' && value >= 0 ? value : null
-                        d.referralOutCount = count
+                        d.referral_out_count = count
                         if (typeof count !== 'number') {
                             d.referrals = []
                         } else if (d.referrals.length > count) {
@@ -255,9 +262,9 @@ function PersonaFields({ persona, updatePersona }) {
                     })
                 }}
             />
-            {typeof persona.referralOutCount === 'number' && persona.referralOutCount > 0 && (
+            {typeof persona.referral_out_count === 'number' && persona.referral_out_count > 0 && (
                 <Accordion variant="separated">
-                    {Array.from({ length: persona.referralOutCount }, (_, referralIndex) => {
+                    {Array.from({ length: persona.referral_out_count }, (_, referralIndex) => {
                         const referral = normalizeReferral(persona.referrals[referralIndex])
                         return (
                             <Accordion.Item
@@ -294,18 +301,18 @@ function PersonaFields({ persona, updatePersona }) {
                                                 },
                                                 { value: 'time', label: 'After N time' },
                                             ]}
-                                            value={referral.triggerType}
+                                            value={referral.trigger_type}
                                             onChange={(value) => {
                                                 updatePersona((d) => {
                                                     d.referrals[referralIndex] = normalizeReferral(
                                                         d.referrals[referralIndex],
                                                     )
-                                                    d.referrals[referralIndex].triggerType = value
+                                                    d.referrals[referralIndex].trigger_type = value
                                                 })
                                             }}
                                             clearable
                                         />
-                                        {referral.triggerType === 'conditions' && (
+                                        {referral.trigger_type === 'conditions' && (
                                             <Textarea
                                                 label="Describe the conditions"
                                                 placeholder="Describe the conditions"
@@ -325,14 +332,14 @@ function PersonaFields({ persona, updatePersona }) {
                                                 }}
                                             />
                                         )}
-                                        {referral.triggerType === 'time' && (
+                                        {referral.trigger_type === 'time' && (
                                             <NumberInput
                                                 label="Enter the duration after which the persona is revealed"
                                                 placeholder="Enter duration"
                                                 min={1}
                                                 allowDecimal={false}
                                                 hideControls
-                                                value={referral.revealDelayMinutes}
+                                                value={referral.reveal_delay_minutes}
                                                 onChange={(value) => {
                                                     updatePersona((d) => {
                                                         d.referrals[referralIndex] =
@@ -341,7 +348,7 @@ function PersonaFields({ persona, updatePersona }) {
                                                             )
                                                         d.referrals[
                                                             referralIndex
-                                                        ].revealDelayMinutes = value
+                                                        ].reveal_delay_minutes = value
                                                     })
                                                 }}
                                             />
@@ -357,4 +364,4 @@ function PersonaFields({ persona, updatePersona }) {
     )
 }
 
-export default PersonaFields
+export default memo(PersonaFields)

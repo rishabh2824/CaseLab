@@ -59,7 +59,7 @@ function Home() {
             style={{ backgroundImage: `url(${bgImage})` }}
         >
             {/*Red horizontal bar*/}
-            <div className="absolute inset-x-0 top-0 h-1 bg-[#c5050c]" aria-hidden="true"/>
+            <div className="absolute inset-x-0 top-0 h-1 bg-[#c5050c]" aria-hidden="true" />
 
             {/* Brand geometry — faint WSB graphic elements framing the card */}
             <img
@@ -75,7 +75,11 @@ function Home() {
                 className="pointer-events-none absolute top-1/2 -left-28 z-0 w-72 max-w-none -translate-y-1/2 rotate-90 select-none opacity-[0.22]"
             />
 
-            <img src={wsbLogo} alt="Wisconsin School of Business" className="absolute left-6 top-6 z-10 h-12 w-auto sm:h-20" />
+            <img
+                src={wsbLogo}
+                alt="Wisconsin School of Business"
+                className="absolute left-6 top-6 z-10 h-12 w-auto sm:h-20"
+            />
 
             <button
                 type="button"
@@ -87,7 +91,6 @@ function Home() {
 
             {/* Centered dossier */}
             <div className="relative z-10 w-full max-w-lg text-center">
-
                 <div className="mt-8 flex items-center justify-center gap-3">
                     <span className="h-px w-8 bg-[#d6d0c4]" />
                     <span className="font-mono text-[11px] uppercase tracking-[0.28em] text-[#c5050c]">
@@ -96,9 +99,7 @@ function Home() {
                     <span className="h-px w-8 bg-[#d6d0c4]" />
                 </div>
 
-                <h1
-                    className="mt-4 text-4xl font-bold leading-[1.02] tracking-tight text-[#1a1a1a] sm:text-5xl font-display"
-                >
+                <h1 className="mt-4 text-4xl font-bold leading-[1.02] tracking-tight text-[#1a1a1a] sm:text-5xl font-display">
                     Wisconsin Case Lab
                 </h1>
                 <p className="mx-auto mt-4 max-w-md text-[15px] leading-relaxed text-[#57534b]">

@@ -45,7 +45,7 @@ export const mapContact = (persona) => {
         initials: getPersonaInitials(persona.name),
         name: persona.name || 'Unnamed',
         title: persona.role || 'Role',
-        profilePhotoUrl: persona.profile_photo?.url || persona.profilePhoto?.url || null,
+        profilePhotoUrl: persona.profile_photo?.url || null,
         status,
         availability,
         isReferred: persona.is_referred ?? false,

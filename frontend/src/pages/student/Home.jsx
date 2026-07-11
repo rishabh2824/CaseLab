@@ -3,7 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../client.js'
 import { useSimulationRun } from '../../hooks/useSimulationRun.js'
-import { buildChatPdfBlob, slugifyFileName } from './pdf.js'
+import SimulationClock from './SimulationClock.jsx'
 
 const notify = (message) => notifications.show({ message, autoClose: 4000 })
 
@@ -16,7 +16,7 @@ function Home() {
         activeContactId,
         selectContact,
         runId,
-        elapsedSeconds,
+        startTime,
         totalDurationSeconds,
         activeContact,
         activePersonaAvailable,
@@ -32,7 +32,10 @@ function Home() {
 
     const exportMutation = useMutation({
         mutationFn: () => apiFetch(`/api/simulations/${runId}/export`),
-        onSuccess: (data) => {
+        onSuccess: async (data) => {
+            // jsPDF is only needed by the (rarely-clicked) export button — load
+            // it on demand rather than in every student's initial bundle.
+            const { buildChatPdfBlob, slugifyFileName } = await import('./pdf.js')
             const blob = buildChatPdfBlob(data.personas ?? [], notes)
             const url = window.URL.createObjectURL(blob)
             const link = document.createElement('a')
@@ -59,12 +62,6 @@ function Home() {
     // sendMessage clears nothing itself; clear the input only when it accepted.
     const handleSend = () => {
         if (sendMessage(inputValue)) setInputValue('')
-    }
-
-    const formatTime = (totalSeconds) => {
-        const minutes = Math.floor(totalSeconds / 60)
-        const seconds = totalSeconds % 60
-        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
     }
 
     const renderContactAvatar = (contact) => {
@@ -95,9 +92,7 @@ function Home() {
             <header className="bg-[#5b5fc7] text-white">
                 <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
                     <div>
-                        <h1
-                            className="text-lg font-semibold tracking-wide font-display"
-                        >
+                        <h1 className="text-lg font-semibold tracking-wide font-display">
                             Wisconsin Case Lab
                         </h1>
                         <p className="text-xs text-white/80">
@@ -316,31 +311,10 @@ function Home() {
                         </p>
                     </div>
 
-                    <div className="rounded-2xl bg-white p-4 shadow-sm">
-                        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                            Simulation Time
-                        </h3>
-                        <p className="mt-2 text-2xl font-semibold text-slate-900">
-                            {formatTime(elapsedSeconds)} /{' '}
-                            {typeof totalDurationSeconds === 'number'
-                                ? formatTime(totalDurationSeconds)
-                                : '--:--'}
-                        </p>
-                        <div className="mt-3 h-2 rounded-full bg-slate-100">
-                            <div
-                                className="h-2 rounded-full bg-emerald-500"
-                                style={{
-                                    width:
-                                        typeof totalDurationSeconds === 'number'
-                                            ? `${Math.min(
-                                                  100,
-                                                  (elapsedSeconds / totalDurationSeconds) * 100,
-                                              )}%`
-                                            : '0%',
-                                }}
-                            />
-                        </div>
-                    </div>
+                    <SimulationClock
+                        startTime={startTime}
+                        totalDurationSeconds={totalDurationSeconds}
+                    />
 
                     <div className="rounded-2xl bg-white p-4 shadow-sm">
                         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
