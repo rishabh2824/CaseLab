@@ -53,14 +53,15 @@ Create `backend/.env` (git-ignored). See the keys below:
 | `SPACES_PRESIGN_EXPIRY_SECONDS` | no | Defaults to `900` |
 | `DB_URL` / `DB_TOKEN` | yes | Turso / libSQL connection |
 | `FRONTEND_URLS` | yes | Comma-separated allowed origins for CORS |
-| `LLM_KEY` / `LLM_BASE_URL` | yes | OpenRouter-compatible chat completions |
+| `LLM_KEY` | yes | Anthropic API key (`sk-ant-...`) |
+| `LLM_BASE_URL` | no | Defaults to `https://api.anthropic.com/v1/messages` |
 | `GOOGLE_CLIENT_ID` | yes | OAuth client ID for admin Google Sign-In; checked against the ID token's `aud` claim |
 | `ADMIN_ALLOWED_DOMAIN` | yes | Google Workspace domain (e.g. `wisc.edu`) admins must belong to — checked against the ID token's `hd` claim, in addition to the `admins` table lookup |
 | `ADMIN_JWT_SECRET` | yes | Signing key for admin session JWTs. Use a long random value (32+ bytes) — PyJWT warns on short HMAC keys |
 
 The chat models are **not** env-configurable — they're fixed constants at the
-top of [`settings.py`](settings.py): `LLM_MODEL` (frontier, used for the
-persona reply) and `LLM_CLASSIFIER_MODEL` (cheap, used for the YES/NO judges
+top of [`settings.py`](settings.py): `llm_model` (frontier, used for the
+persona reply) and `llm_classifier_model` (cheap, used for the YES/NO judges
 and intro sentences). Change them there if you need different values.
 
 Admin identity is Google Workspace SSO, not a shared secret: an admin's row in

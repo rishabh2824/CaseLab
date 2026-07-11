@@ -53,6 +53,14 @@ def judge_output(label: str, raw_output: str, result: bool) -> None:
     print(f"     {label}: output\n       raw: {raw_output!r}\n       parsed result: {result}")
 
 
+# Texts of cached system blocks already printed in full this process. The cached
+# block (persona facts + reply-format instructions) is identical across a
+# persona's turns, so printing it every message buries the parts that actually
+# change. We print it once, then abbreviate — keyed by the block text so a
+# different persona's (different) system prompt still prints once on its own.
+_printed_system_texts: set[str] = set()
+
+
 def _format_messages(messages: list[dict]) -> str:
     lines = []
     for msg in messages:
@@ -61,8 +69,19 @@ def _format_messages(messages: list[dict]) -> str:
         if isinstance(content, list):
             lines.append(f"  [{role}]")
             for block in content:
-                cached = " (cached)" if block.get("cache_control") else ""
-                lines.append(f"    -{cached} {block.get('text', '')}")
+                text = block.get("text", "")
+                if block.get("cache_control"):
+                    if text in _printed_system_texts:
+                        lines.append(
+                            "    - (cached) [system prompt unchanged - printed above]"
+                        )
+                    else:
+                        _printed_system_texts.add(text)
+                        lines.append(f"    - (cached) {text}")
+                else:
+                    # The uncached turn block (referral/file eligibility) changes
+                    # every turn, so always print it in full.
+                    lines.append(f"    - {text}")
         else:
             lines.append(f"  [{role}] {content}")
     return "\n".join(lines)

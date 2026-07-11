@@ -198,22 +198,6 @@ def _coerce_handles(value) -> list[str]:
     return handles
 
 
-def _fallback_reply_text(raw: str) -> str:
-    """Recover a human-facing reply when the envelope didn't parse. Tries to pull
-    the "reply" field out of malformed JSON, else the cleaned raw text, else a
-    safe generic line. NEVER unlocks/shares anything on this path."""
-    match = re.search(r'"reply"\s*:\s*"((?:[^"\\]|\\.)*)"', raw or "")
-    if match:
-        try:
-            return _clean_reply(json.loads(f'"{match.group(1)}"'))
-        except json.JSONDecodeError:
-            pass
-    cleaned = _clean_reply(raw)
-    if not cleaned or cleaned.startswith("{"):
-        return "Sorry, I didn't quite catch that — could you rephrase?"
-    return cleaned
-
-
 async def _resolve_referral_unlock(
     referral: dict,
     decision_history: list[dict],

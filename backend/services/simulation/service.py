@@ -19,7 +19,6 @@ from services.simulation.prompt import (
     _build_system_prompt,
     _clean_reply,
     _coerce_handles,
-    _fallback_reply_text,
     _parse_reply_envelope,
     _resolve_file_share,
     _resolve_referral_unlock,
@@ -324,12 +323,23 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     # fetching persona data + resolving the unlock/share decisions. On the common
     # (non-abusive) path this hides the safety round-trip entirely. Decisions are
     # computed eagerly but only APPLIED below if the message passes safety.
-    message_label, decisions = await asyncio.gather(
-        classify_message_safety(user_message, decision_history),
-        _resolve_turn_decisions(
-            client, case_snapshot["id"], persona_id, decision_history, run, elapsed_minutes
-        ),
-    )
+    #
+    # _resolve_turn_decisions can raise (the referral/file judges no longer fail
+    # closed on an outage -- see _yes_no_judge), so this whole turn is aborted
+    # with a clear error rather than silently treating an outage as "nothing is
+    # eligible this turn".
+    try:
+        message_label, decisions = await asyncio.gather(
+            classify_message_safety(user_message, decision_history),
+            _resolve_turn_decisions(
+                client, case_snapshot["id"], persona_id, decision_history, run, elapsed_minutes
+            ),
+        )
+    except Exception:
+        logger.exception("Failed to resolve turn decisions for persona %s", persona_id)
+        raise HTTPException(
+            status_code=502, detail="Could not process your message. Please try again."
+        )
     persona_details = decisions["persona_details"]
 
     if message_label != "normal":
@@ -580,15 +590,16 @@ async def stream_message(prepared: dict):
         return
 
     envelope = _parse_reply_envelope(raw)
-    if envelope is None:
-        reply = _fallback_reply_text(raw)
-        unlock_handles, share_handles = [], []
-    else:
-        reply = _clean_reply(str(envelope.get("reply") or ""))
-        if not reply:
-            reply = _fallback_reply_text(raw)
-        unlock_handles = _coerce_handles(envelope.get("introduce"))
-        share_handles = _coerce_handles(envelope.get("send_files"))
+    reply = _clean_reply(str(envelope.get("reply") or "")) if envelope else ""
+    if not reply:
+        logger.error("Reply envelope did not parse for persona %s: %r", persona_id, raw)
+        yield _sse(
+            "error",
+            {"detail": "The reply could not be generated. Please try again."},
+        )
+        return
+    unlock_handles = _coerce_handles(envelope.get("introduce"))
+    share_handles = _coerce_handles(envelope.get("send_files"))
 
     debug_log.persona_reply_cleaned(reply, unlock_handles, share_handles)
 

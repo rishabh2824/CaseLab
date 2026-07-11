@@ -18,7 +18,6 @@ const Admins = lazy(() => import('./pages/admin/Admins.jsx'))
 const CreateCase = lazy(() => import('./pages/admin/CreateCase.jsx'))
 const CaseForm = lazy(() => import('./pages/admin/caseForm.jsx'))
 const AdminHome = lazy(() => import('./pages/admin/Home.jsx'))
-const Login = lazy(() => import('./pages/admin/Login.jsx'))
 const TemplatePicker = lazy(() => import('./pages/admin/TemplatePicker.jsx'))
 
 const rootRoute = createRootRoute({
@@ -50,25 +49,19 @@ const newCaseRedirectRoute = createRoute({
     },
 })
 
-// Public: Google Sign-In. Not behind adminGuardRoute — signing in is how you
-// get an adminJwt in the first place.
-const adminLoginRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/admin/login',
-    component: Login,
-})
-
 // Pathless layout gating the admin area behind the admin session JWT. This is
 // UX polish only — the API is the real gate (admin endpoints return 401
 // without a valid, non-expired JWT for an admin that still exists). Checked
-// at navigation time; the JWT is set by Login.jsx and lives in the session
-// store.
+// at navigation time; the JWT is set by AdminGoogleSignInButton and lives in
+// the session store. There's no dedicated admin-login route — signing in
+// happens directly from the "Admin Login" button on the landing page, so an
+// unauthenticated admin is sent back there.
 const adminGuardRoute = createRoute({
     getParentRoute: () => rootRoute,
     id: 'adminGuard',
     beforeLoad: () => {
         if (!useSessionStore.getState().adminJwt) {
-            throw redirect({ to: '/admin/login' })
+            throw redirect({ to: '/' })
         }
     },
 })
@@ -150,7 +143,6 @@ const routeTree = rootRoute.addChildren([
     indexRoute,
     studentRoute,
     newCaseRedirectRoute,
-    adminLoginRoute,
     adminGuardRoute.addChildren([
         adminHomeRoute,
         adminNewRoute,

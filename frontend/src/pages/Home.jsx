@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { apiFetch } from '../client.js'
+import AdminGoogleSignInButton from '../components/AdminGoogleSignInButton.jsx'
 import { useSessionStore } from '../hooks/sessionStore.js'
 import halfCircle from '../assets/GraphicElements-Red-Digital-HalfCircle.png'
 import chevron from '../assets/Modified-Chevron-Layered-Grey.png'
@@ -16,8 +17,8 @@ function Home() {
     const queryClient = useQueryClient()
     const startRun = useSessionStore((s) => s.startRun)
 
-    // Students only now — admins go through /admin/login (Google SSO) via the
-    // "Admin Login" button below, not through this same form.
+    // Students only now — admins sign in via the "Admin Login" button below
+    // (Google SSO, triggered directly from that button), not through this form.
     const { mutate: submit, isPending: isSubmitting } = useMutation({
         mutationFn: async (code) => {
             const normalized = code.toUpperCase()
@@ -81,13 +82,11 @@ function Home() {
                 className="absolute left-6 top-6 z-10 h-12 w-auto sm:h-20"
             />
 
-            <button
-                type="button"
-                onClick={() => navigate({ to: '/admin/login' })}
-                className="absolute bottom-6 right-6 z-10 rounded-full border-2 border-[#c5050c] bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-[#57534b] shadow-sm backdrop-blur transition hover:bg-[#c5050c] hover:text-[#1a1a1a] sm:bottom-auto sm:top-12 sm:right-20"
-            >
-                Admin Login
-            </button>
+            <div className="absolute bottom-6 right-6 z-10 sm:bottom-auto sm:top-12 sm:right-20">
+                <AdminGoogleSignInButton className="rounded-full border-2 border-[#c5050c] bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-[#57534b] shadow-sm backdrop-blur transition hover:bg-[#c5050c] hover:text-[#1a1a1a]">
+                    Admin Login
+                </AdminGoogleSignInButton>
+            </div>
 
             {/* Centered dossier */}
             <div className="relative z-10 w-full max-w-lg text-center">

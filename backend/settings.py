@@ -28,8 +28,8 @@ class Settings(BaseSettings):
     # Fixed in code (not env-configurable) so there's one place to change
     # models. ClassVar excludes these from env-var sourcing entirely — an
     # LLM_MODEL env var would otherwise silently shadow this.
-    llm_model: ClassVar[str] = "anthropic/claude-sonnet-5"  # frontier model for the persona reply
-    llm_classifier_model: ClassVar[str] = "anthropic/claude-haiku-4.5"  # cheap YES/NO judges
+    llm_model: ClassVar[str] = "claude-sonnet-5"  # frontier model for the persona reply
+    llm_classifier_model: ClassVar[str] = "claude-haiku-4-5"  # cheap YES/NO judges
 
     spaces_key: str
     spaces_secret: str
@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     admin_jwt_secret: str = Field(min_length=32)  # enforce the README's advice
 
     llm_key: str
-    llm_base_url: str = "https://openrouter.ai/api/v1/chat/completions"
+    llm_base_url: str = "https://api.anthropic.com/v1/messages"
 
     # Terminal tracing of the student-message LLM pipeline (services/debug_log.py)
     # — off by default; no output/overhead unless explicitly enabled. Start the

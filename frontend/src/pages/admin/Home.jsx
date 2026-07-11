@@ -16,7 +16,7 @@ function Home() {
         // previous admin's case list before their own fetch completes.
         queryClient.clear()
         clearAdmin()
-        navigate({ to: '/admin/login' })
+        navigate({ to: '/' })
     }
 
     return (

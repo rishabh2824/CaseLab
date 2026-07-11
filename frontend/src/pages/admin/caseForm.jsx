@@ -43,7 +43,7 @@ function CaseForm({ templateId, editCaseId }) {
     const [accessCode, setAccessCode] = useState('')
     const [totalPersonas, setTotalPersonas] = useState(null)
     const [personas, setPersonas] = useState([])
-    // Admin endpoints require the JWT minted at Google sign-in (Login.jsx).
+    // Admin endpoints require the JWT minted at Google sign-in.
     const adminJwt = useSessionStore((s) => s.adminJwt)
     const isEditMode = Boolean(editCaseId)
     const showPersonas = typeof totalPersonas === 'number' && totalPersonas >= 1

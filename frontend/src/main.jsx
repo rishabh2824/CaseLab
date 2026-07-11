@@ -17,7 +17,8 @@ const queryClient = new QueryClient({
 })
 
 // Same Google OAuth client id the backend checks the ID token's `aud` claim
-// against (GOOGLE_CLIENT_ID in backend/settings.py) — see admin/Login.jsx.
+// against (GOOGLE_CLIENT_ID in backend/settings.py) — see
+// components/AdminGoogleSignInButton.jsx.
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 
 createRoot(document.getElementById('root')).render(

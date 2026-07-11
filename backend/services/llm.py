@@ -13,11 +13,30 @@ logger = logging.getLogger("caselab.llm")
 
 def _headers(settings) -> dict:
     return {
-        "Authorization": f"Bearer {settings.llm_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://caselab.local",
-        "X-Title": "caseLab",
+        "x-api-key": settings.llm_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
     }
+
+
+def _split_system(messages: list[dict]) -> tuple[str | list[dict] | None, list[dict]]:
+    """Anthropic's native Messages API takes the system prompt as a separate
+    top-level `system` param rather than a `role: "system"` message. Pull the
+    first system message's content out of an OpenAI-shaped messages list and
+    return it alongside the remaining user/assistant turns. `content` is
+    passed through as-is, so the persona-reply system message's block-list
+    shape (with its `cache_control` breakpoint) carries over unchanged --
+    Anthropic's `system` field accepts either a plain string or that same
+    block-list shape.
+    """
+    system = None
+    rest = []
+    for message in messages:
+        if message.get("role") == "system" and system is None:
+            system = message.get("content")
+            continue
+        rest.append(message)
+    return system, rest
 
 
 # Shared client so the 4-6 LLM calls a single student message can fan out to
@@ -59,7 +78,14 @@ def _is_retryable(exc: Exception) -> bool:
 
 
 async def _chat(payload: dict, *, timeout: float, retries: int) -> dict:
-    """POST a chat-completions payload and return the parsed JSON response body.
+    """POST an OpenAI-shaped chat payload (model/messages/temperature/
+    max_tokens, with the system prompt as a `role: "system"` message) to
+    Anthropic's Messages API and return the parsed JSON response body.
+
+    Callers keep building payloads in the OpenAI-ish shape they always have;
+    this function restructures them into Anthropic's native request (system
+    prompt hoisted into a top-level `system` param) before sending, so call
+    sites didn't need to change when the provider did.
 
     Retries retryable errors (timeouts, 429, 5xx) with linear backoff (1s, 2s,
     ...) via tenacity; other errors (e.g. a 400 for an unsupported parameter)
@@ -72,6 +98,26 @@ async def _chat(payload: dict, *, timeout: float, retries: int) -> dict:
     headers = _headers(settings)
     client = _get_client()
 
+    system, messages = _split_system(payload["messages"])
+    anthropic_payload = {
+        "model": payload["model"],
+        "messages": messages,
+        "max_tokens": payload["max_tokens"],
+    }
+    if system is not None:
+        anthropic_payload["system"] = system
+    if "temperature" in payload:
+        anthropic_payload["temperature"] = payload["temperature"]
+    # Structured outputs: when a caller supplies output_config, the API
+    # constrains the response to that JSON schema. Used by the persona reply to
+    # GUARANTEE the {reply, introduce, send_files} envelope shape (see
+    # complete_persona_reply) — without it the model drifts out of JSON after a
+    # few turns (its own prose replies in the conversation history are a
+    # stronger signal than the system-prompt instruction), and the drifted
+    # plain-text turns silently lose every referral/file decision.
+    if "output_config" in payload:
+        anthropic_payload["output_config"] = payload["output_config"]
+
     @retry(
         stop=stop_after_attempt(retries),
         wait=wait_incrementing(start=1, increment=1),
@@ -80,7 +126,7 @@ async def _chat(payload: dict, *, timeout: float, retries: int) -> dict:
     )
     async def _send() -> dict:
         response = await client.post(
-            settings.llm_base_url, json=payload, headers=headers, timeout=timeout
+            settings.llm_base_url, json=anthropic_payload, headers=headers, timeout=timeout
         )
         response.raise_for_status()
         return response.json()
@@ -89,7 +135,50 @@ async def _chat(payload: dict, *, timeout: float, retries: int) -> dict:
 
 
 def _message_content(data: dict) -> str:
-    return data["choices"][0]["message"]["content"]
+    for block in data.get("content", []):
+        if block.get("type") == "text":
+            return block.get("text", "")
+    return ""
+
+
+# Schema the persona reply is CONSTRAINED to (structured outputs) so the model
+# can't drop back to plain prose and silently zero out its referral/file
+# decisions. Property descriptions restate the reply<->handle correlation the
+# system prompt asks for, reinforcing it at the point the model fills each key.
+_PERSONA_REPLY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reply": {
+            "type": "string",
+            "description": (
+                "Your in-character reply as plain text, 1-3 concise sentences, "
+                "with no speaker-name prefix and no surrounding quotes."
+            ),
+        },
+        "introduce": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                'Contact handles (e.g. "R1") you are introducing in this reply. '
+                "If your reply text introduces or connects the user to a contact, "
+                "that contact's handle MUST appear here; otherwise []. Only use "
+                "handles listed as available to you this turn."
+            ),
+        },
+        "send_files": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                'File handles (e.g. "F1") you are sending with this reply, or []. '
+                "If your reply text says you are sending/attaching a file, that "
+                "file's handle MUST appear here. Only use handles listed as "
+                "available to you this turn."
+            ),
+        },
+    },
+    "required": ["reply", "introduce", "send_files"],
+    "additionalProperties": False,
+}
 
 
 async def complete_persona_reply(messages: list[dict]) -> str:
@@ -105,13 +194,21 @@ async def complete_persona_reply(messages: list[dict]) -> str:
     payload = {
         "model": get_settings().llm_model,
         "messages": messages,
-        "temperature": 0.6,
+        # No temperature: claude-sonnet-5 rejects non-default sampling
+        # params (400 invalid_request_error) -- omit rather than send a
+        # value it won't accept.
         "max_tokens": 600,
+        # Force the {reply, introduce, send_files} envelope at the API level so
+        # the model can't drift back to plain prose (which silently drops every
+        # unlock/share decision — see _chat / _PERSONA_REPLY_SCHEMA).
+        "output_config": {
+            "format": {"type": "json_schema", "schema": _PERSONA_REPLY_SCHEMA}
+        },
     }
     data = await _chat(payload, timeout=90, retries=3)
-    # Usage carries the prompt-cache breakdown (cache_creation vs cache_read
-    # input tokens, or OpenRouter's prompt_tokens_details.cached_tokens); logged
-    # at DEBUG so cache hit rates can be checked without production noise.
+    # Usage carries the prompt-cache breakdown (cache_creation_input_tokens /
+    # cache_read_input_tokens); logged at DEBUG so cache hit rates can be
+    # checked without production noise.
     usage = data.get("usage")
     if usage:
         logger.debug("persona reply usage: %s", usage)
@@ -144,9 +241,12 @@ def _format_transcript(conversation: list[dict]) -> tuple[str, int, int]:
 async def _yes_no_judge(
     system_prompt: str, user_prompt: str, *, debug_label: str | None = None
 ) -> bool:
-    """Run a strict YES/NO classifier on the cheap model. Fails closed (False)
-    on any error, since these gate unlocking content the user shouldn't get by
-    default.
+    """Run a strict YES/NO classifier on the cheap model.
+
+    Raises on request failure instead of failing closed -- a broken judge call
+    now aborts the turn with a user-facing error (see prepare_message's
+    try/except around _resolve_turn_decisions) rather than silently deciding
+    "no unlock/share" and letting the turn proceed as if nothing were wrong.
 
     ``debug_label`` opts into raw-output tracing (see debug_log.judge_output)
     — only classify_referral passes one; classify_file_share doesn't, so its
@@ -160,13 +260,9 @@ async def _yes_no_judge(
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0,
+        "max_tokens": 10,
     }
-    try:
-        data = await _chat(payload, timeout=60, retries=3)
-    except Exception:
-        if debug_label:
-            debug_log.judge_output(debug_label, "<request failed, treated as NO>", False)
-        return False
+    data = await _chat(payload, timeout=60, retries=3)
     raw = _message_content(data)
     result = raw.strip().upper().startswith("YES")
     if debug_label:

@@ -5,10 +5,11 @@ import { createJSONStorage, persist } from 'zustand/middleware'
 export const useSessionStore = create(
     persist(
         (set) => ({
-            // Admin session: set by Login.jsx after POST /api/admin/login
-            // succeeds. adminJwt is sent as `Authorization: Bearer <adminJwt>`
-            // on admin/write requests (see client.js). adminRole is 1 (super
-            // admin) or 2 (admin), matching the `admins.role` CHECK constraint.
+            // Admin session: set by AdminGoogleSignInButton after
+            // POST /api/admin/login succeeds. adminJwt is sent as
+            // `Authorization: Bearer <adminJwt>` on admin/write requests (see
+            // client.js). adminRole is 1 (super admin) or 2 (admin), matching
+            // the `admins.role` CHECK constraint.
             adminJwt: '',
             adminRole: null,
             adminEmail: '',
