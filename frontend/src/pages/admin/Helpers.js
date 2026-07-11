@@ -1,11 +1,4 @@
 // Pure data-shaping helpers for the case form — no closure over component
-// state, so they're stable references usable outside any hook dependency list.
-
-// Shape mirrors the API 1:1 (snake_case) except `file_count`/
-// `referral_out_count` here and `name` in createEmptyReferral below — those
-// three are client-form-only (UI counters / the referral's own display
-// label); caseForm.jsx strips them before building the submit payload, since
-// the backend ignores/recomputes them.
 export const createEmptyPersona = (overrides = {}) => ({
     name: '',
     role: '',

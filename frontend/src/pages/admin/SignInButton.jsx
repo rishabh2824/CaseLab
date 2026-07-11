@@ -1,25 +1,12 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useRef, useState } from 'react'
-import { apiFetch } from '../client.js'
-import { useSessionStore } from '../hooks/sessionStore.js'
+import { apiFetch } from '../../client.js'
+import { useSessionStore } from '../../hooks/sessionStore.js'
 
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 
-// Clicking `children` (rendered with the caller's own `className`, so it
-// looks like an ordinary button) opens Google's real account-picker popup
-// directly — via the OAuth2 authorization-code "popup" flow
-// (`google.accounts.oauth2.initCodeClient`), not the One Tap `prompt()`
-// flow. One Tap is silently suppressed in a lot of real-world conditions
-// (third-party cookies blocked, no FedCM support, prior dismissal cooldown)
-// and there is no way to detect that *before* the click, which used to force
-// a second click on a fallback button. The popup code flow is triggered
-// directly from a real user gesture, so the browser always shows the popup.
-//
-// The code client only hands back an authorization `code`, not an ID token —
-// the backend exchanges it for one (see backend/services/admin_auth.py)
-// before doing the usual ID-token verification.
-function AdminGoogleSignInButton({ className, children }) {
+function SignInButton({ className, children }) {
     const [error, setError] = useState('')
     const codeClientRef = useRef(null)
     const navigate = useNavigate()
@@ -102,4 +89,4 @@ function AdminGoogleSignInButton({ className, children }) {
     )
 }
 
-export default AdminGoogleSignInButton
+export default SignInButton

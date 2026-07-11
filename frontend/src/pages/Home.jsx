@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useRef, useState } from 'react'
 import { apiFetch } from '../client.js'
-import AdminGoogleSignInButton from '../components/AdminGoogleSignInButton.jsx'
+import SignInButton from './admin/SignInButton.jsx'
 import { useSessionStore } from '../hooks/sessionStore.js'
 import halfCircle from '../assets/GraphicElements-Red-Digital-HalfCircle.png'
 import chevron from '../assets/Modified-Chevron-Layered-Grey.png'
@@ -83,9 +83,9 @@ function Home() {
             />
 
             <div className="absolute bottom-6 right-6 z-10 sm:bottom-auto sm:top-12 sm:right-20">
-                <AdminGoogleSignInButton className="rounded-full border-2 border-[#c5050c] bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-[#57534b] shadow-sm backdrop-blur transition hover:bg-[#c5050c] hover:text-[#1a1a1a]">
+                <SignInButton className="rounded-full border-2 border-[#c5050c] bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-[#57534b] shadow-sm backdrop-blur transition hover:bg-[#c5050c] hover:text-[#1a1a1a]">
                     Admin Login
-                </AdminGoogleSignInButton>
+                </SignInButton>
             </div>
 
             {/* Centered dossier */}

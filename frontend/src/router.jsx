@@ -52,7 +52,7 @@ const newCaseRedirectRoute = createRoute({
 // Pathless layout gating the admin area behind the admin session JWT. This is
 // UX polish only — the API is the real gate (admin endpoints return 401
 // without a valid, non-expired JWT for an admin that still exists). Checked
-// at navigation time; the JWT is set by AdminGoogleSignInButton and lives in
+// at navigation time; the JWT is set by SignInButton and lives in
 // the session store. There's no dedicated admin-login route — signing in
 // happens directly from the "Admin Login" button on the landing page, so an
 // unauthenticated admin is sent back there.

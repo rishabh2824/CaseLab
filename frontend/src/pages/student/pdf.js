@@ -1,9 +1,4 @@
 // PDF export of a student's chat transcript, built with jsPDF.
-//
-// jsPDF's core fonts (Helvetica) use WinAnsi encoding, which natively supports
-// smart quotes/en-dashes/ellipses and handles PDF string escaping internally —
-// so unlike a hand-rolled writer, no manual character-range stripping or
-// paren/backslash escaping is needed here.
 
 import jsPDF from 'jspdf'
 import { slugify } from './Helpers.js'
