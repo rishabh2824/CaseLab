@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
-from models.simulations import SendMessagePayload, StartSimulationPayload
+from models.simulations import NotesPayload, SendMessagePayload, StartSimulationPayload
 from services.simulation import service as sim
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
@@ -20,6 +20,11 @@ async def get_simulation_state(run_id: str):
 @router.get("/{run_id}/export")
 async def export_simulation_history(run_id: str):
     return await sim.export_simulation_history(run_id)
+
+
+@router.put("/{run_id}/notes")
+async def update_notes(run_id: str, payload: NotesPayload):
+    return await sim.update_notes(run_id, payload)
 
 
 @router.post("/{run_id}/message")

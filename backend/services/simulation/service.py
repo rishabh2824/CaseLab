@@ -9,7 +9,7 @@ import uuid
 
 from fastapi import HTTPException
 
-from models.simulations import SendMessagePayload, StartSimulationPayload
+from models.simulations import NotesPayload, SendMessagePayload, StartSimulationPayload
 from services import debug_log
 from services.db import get_db_client
 from services.llm import classify_message_safety, complete_persona_reply
@@ -67,6 +67,11 @@ DECISION_JUDGE_HISTORY_LIMIT = 8
 # concise (this is a chat-style simulation, not a document-drafting tool) and
 # bounds worst-case prompt size/cost per turn.
 MAX_USER_MESSAGE_WORDS = 50
+
+# Cap on the student's saved notes, enforced in update_notes. Generous (this
+# is free-form scratch space, not a chat message) but bounded so a run's
+# `data` JSON blob can't grow unboundedly.
+MAX_NOTES_CHARS = 20000
 
 
 def _sse(event: str, data: dict) -> dict:
@@ -134,6 +139,7 @@ async def start_simulation(payload: StartSimulationPayload):
         "shared_files": {},
         "history": {},
         "persona_chat_state": {},
+        "notes": "",
     }
     elapsed_minutes = _elapsed_minutes(run)
     contacts = _build_contacts(run, root_personas, elapsed_minutes)
@@ -153,6 +159,7 @@ async def start_simulation(payload: StartSimulationPayload):
         "active_persona_id": run["active_persona_id"],
         "shared_files": [],
         "histories": {},
+        "notes": run["notes"],
     }
 
 
@@ -178,7 +185,27 @@ async def get_simulation_state(run_id: str):
         "active_persona_id": run["active_persona_id"],
         "shared_files": [_shared_file_payload(info) for info in run["shared_files"].values()],
         "histories": _format_run_histories(run, visible_persona_ids),
+        # .get(...) with a default: runs already in flight from before this
+        # field existed won't have a "notes" key in their stored JSON blob.
+        "notes": run.get("notes", ""),
     }
+
+
+async def update_notes(run_id: str, payload: NotesPayload) -> dict:
+    """Persist the student's scratch notes for this run so they survive a
+    reload. Called by the frontend on a debounce (typing shouldn't fire a
+    write per keystroke) — see useSimulationRun.js."""
+    if len(payload.notes) > MAX_NOTES_CHARS:
+        raise HTTPException(
+            status_code=400, detail=f"Notes are too long ({MAX_NOTES_CHARS} characters max)."
+        )
+
+    def _set_notes(run):
+        run["notes"] = payload.notes
+        return run["notes"]
+
+    notes = await run_store.mutate(run_id, _set_notes)
+    return {"notes": notes}
 
 
 async def export_simulation_history(run_id: str):

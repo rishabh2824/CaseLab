@@ -31,10 +31,12 @@ function Home() {
         handleEndSimulation,
         chatInputRef,
         messagesEndRef,
+        notes,
+        setNotes,
+        flushNotes,
     } = useSimulationRun()
 
     const [inputValue, setInputValue] = useState('')
-    const [notes, setNotes] = useState('')
 
     const wordCount = useMemo(() => countWords(inputValue), [inputValue])
     const overWordLimit = wordCount > MAX_MESSAGE_WORDS
@@ -372,6 +374,7 @@ function Home() {
                             placeholder="Write your notes here..."
                             value={notes}
                             onChange={(event) => setNotes(event.currentTarget.value)}
+                            onBlur={flushNotes}
                         />
                     </div>
                 </aside>

@@ -8,3 +8,7 @@ class StartSimulationPayload(BaseModel):
 class SendMessagePayload(BaseModel):
     persona_id: str
     message: str
+
+
+class NotesPayload(BaseModel):
+    notes: str

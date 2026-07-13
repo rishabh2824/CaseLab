@@ -10,6 +10,11 @@ const notify = (message) => notifications.show({ message, autoClose: 4000 })
 
 const SIMULATION_KEY = (runId) => ['simulation', runId]
 
+// How long to wait after the last keystroke before persisting notes, so
+// typing doesn't fire a write per character. A blur or unmount flushes any
+// pending save immediately regardless of this window — see flushNotes below.
+const NOTES_SAVE_DEBOUNCE_MS = 800
+
 /**
  * Owns the simulation-run lifecycle for the student view. The polling
  * `useQuery` is the single source of truth for server state — contacts,
@@ -41,6 +46,11 @@ export function useSimulationRun() {
     // 15s poll can refresh the cache underneath without clobbering it. null
     // when nothing is streaming.
     const [streamingTurn, setStreamingTurn] = useState(null)
+    // Local, editable copy of the server-persisted notes. Seeded once from
+    // `data.notes` on first load (notesInitializedRef below), then locally
+    // authoritative — later polls never overwrite it, only a save round-trips
+    // back through the server.
+    const [notes, setNotesState] = useState('')
 
     const chatInputRef = useRef(null)
     const messagesEndRef = useRef(null)
@@ -48,6 +58,13 @@ export function useSimulationRun() {
     // Ids already surfaced to the user, so the notification diff below only
     // fires for genuinely new unlocks/shares (and never for the initial roster).
     const seenRef = useRef({ contacts: new Set(), files: new Set(), initialized: false })
+    const notesInitializedRef = useRef(false)
+    // Mirrors `notes` / `runId` synchronously (state/props are stale inside a
+    // setTimeout closure or an unmount cleanup) so the debounce timer and the
+    // unmount flush always save the latest value against the right run.
+    const notesRef = useRef('')
+    const runIdRef = useRef(runId)
+    const notesSaveTimerRef = useRef(null)
 
     const focusChatInput = useCallback(() => {
         window.requestAnimationFrame(() => {
@@ -75,6 +92,76 @@ export function useSimulationRun() {
         // other (transient) failures once.
         retry: (count, err) => err?.status !== 404 && count < 1,
     })
+
+    useEffect(() => {
+        runIdRef.current = runId
+    }, [runId])
+
+    // Seed local notes from the server exactly once (the first time `data`
+    // carries them — e.g. on initial load or a reload). Not keyed to `runId`
+    // alone: `data` itself may still be undefined for a tick after `runId` is
+    // set, so this waits for the real value rather than racing it.
+    useEffect(() => {
+        if (notesInitializedRef.current) return
+        if (data?.notes === undefined) return
+        setNotesState(data.notes)
+        notesRef.current = data.notes
+        notesInitializedRef.current = true
+    }, [data])
+
+    // Fire-and-forget PUT; errors are surfaced but not retried automatically
+    // (the next edit's debounce, or a manual retry via another edit, will
+    // naturally try again).
+    const saveNotesNow = useCallback(async (value, id) => {
+        if (!id) return
+        try {
+            await apiFetch(`/api/simulations/${id}/notes`, {
+                method: 'PUT',
+                body: { notes: value },
+            })
+        } catch (err) {
+            console.error(err)
+            notify('Could not save your notes. Please try again.')
+        }
+    }, [])
+
+    // Debounced setter for the notes textarea: updates local state
+    // immediately (so typing feels instant) and schedules a save after
+    // NOTES_SAVE_DEBOUNCE_MS of no further edits.
+    const setNotes = useCallback(
+        (value) => {
+            setNotesState(value)
+            notesRef.current = value
+            if (notesSaveTimerRef.current) clearTimeout(notesSaveTimerRef.current)
+            notesSaveTimerRef.current = setTimeout(() => {
+                notesSaveTimerRef.current = null
+                saveNotesNow(notesRef.current, runIdRef.current)
+            }, NOTES_SAVE_DEBOUNCE_MS)
+        },
+        [saveNotesNow],
+    )
+
+    // Save immediately, skipping the debounce — call on blur so a click away
+    // from the textarea doesn't leave up to NOTES_SAVE_DEBOUNCE_MS of an edit
+    // unsaved.
+    const flushNotes = useCallback(() => {
+        if (notesSaveTimerRef.current) {
+            clearTimeout(notesSaveTimerRef.current)
+            notesSaveTimerRef.current = null
+        }
+        saveNotesNow(notesRef.current, runIdRef.current)
+    }, [saveNotesNow])
+
+    // Flush any still-pending debounced save when the view unmounts (e.g.
+    // navigating away right after typing), so it isn't silently dropped.
+    useEffect(() => {
+        return () => {
+            if (notesSaveTimerRef.current) {
+                clearTimeout(notesSaveTimerRef.current)
+                saveNotesNow(notesRef.current, runIdRef.current)
+            }
+        }
+    }, [saveNotesNow])
 
     // Start a fresh run from an access code, seeding the cache so the view
     // renders without waiting for the first GET.
@@ -174,6 +261,9 @@ export function useSimulationRun() {
         const checkExpiry = () => {
             const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000))
             if (elapsed >= totalDurationSeconds) {
+                // Same ordering concern as handleEndSimulation: flush before
+                // clearRun() clears the runId this save needs.
+                flushNotes()
                 clearRun()
                 navigate({ to: '/' })
             }
@@ -181,9 +271,12 @@ export function useSimulationRun() {
         checkExpiry()
         const intervalId = window.setInterval(checkExpiry, 1000)
         return () => window.clearInterval(intervalId)
-    }, [startTime, totalDurationSeconds, navigate, clearRun])
+    }, [startTime, totalDurationSeconds, navigate, clearRun, flushNotes])
 
     const handleEndSimulation = () => {
+        // Flush BEFORE clearRun(): once runId is cleared, runIdRef (and the
+        // unmount-flush fallback below) would have nothing to save against.
+        flushNotes()
         clearRun()
         navigate({ to: '/' })
     }
@@ -378,5 +471,8 @@ export function useSimulationRun() {
         handleEndSimulation,
         chatInputRef,
         messagesEndRef,
+        notes,
+        setNotes,
+        flushNotes,
     }
 }
