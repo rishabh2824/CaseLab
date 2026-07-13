@@ -6,6 +6,7 @@ Presigned-URL generation and response shaping happen in ``services.simulation.re
 """
 
 from services.db import row_to_dict, rows_to_dicts
+from services.persona_shapes import PERSONA_ROW_COLUMNS, PHOTO_COLUMNS
 
 
 async def fetch_case_snapshot(
@@ -32,16 +33,11 @@ async def fetch_case_snapshot(
 
 async def fetch_persona_core(client, persona_id: str) -> dict | None:
     result = await client.execute(
-        """
+        f"""
         select p.name,
                p.role,
-               photo.bucket,
-               photo.object_key,
-               photo.file_name,
-               photo.content_type,
+               {PHOTO_COLUMNS},
                p.known_facts,
-               p.unknown_facts,
-               p.hidden_facts,
                p.personality_traits
         from personas p
         left join files photo on photo.id = p.profile_photo_file_id
@@ -69,10 +65,10 @@ async def fetch_persona_file_entries(client, persona_id: str) -> list[dict]:
 async def fetch_referrals_for_parent(client, case_id: str, parent_persona_id: str) -> list[dict]:
     result = await client.execute(
         """
-        select pr.referred_persona_id, pr.trigger_type, pr.condition_trigger, pr.time_trigger,
+        select pr.referred_persona_id, pr.condition_trigger,
                p.name, p.role,
                photo.bucket, photo.object_key, photo.file_name, photo.content_type,
-               p.scheduled_time, p.availability_duration
+               p.availability_duration
         from persona_referrals pr
         join personas p on p.id = pr.referred_persona_id
         left join files photo on photo.id = p.profile_photo_file_id
@@ -84,23 +80,14 @@ async def fetch_referrals_for_parent(client, case_id: str, parent_persona_id: st
 
 
 async def fetch_personas_by_ids(client, ids) -> list[dict]:
+    placeholders = ",".join(["?"] * len(ids))
     result = await client.execute(
-        """
-        select p.id,
-               p.name,
-               p.role,
-               photo.bucket,
-               photo.object_key,
-               photo.file_name,
-               photo.content_type,
-               p.scheduled_time,
-               p.availability_duration
+        f"""
+        select {PERSONA_ROW_COLUMNS}
         from personas p
         left join files photo on photo.id = p.profile_photo_file_id
-        where p.id in ({})
-        """.format(
-            ",".join(["?"] * len(ids))
-        ),
+        where p.id in ({placeholders})
+        """,
         tuple(ids),
     )
     return rows_to_dicts(result.rows)
@@ -108,16 +95,8 @@ async def fetch_personas_by_ids(client, ids) -> list[dict]:
 
 async def fetch_persona_row(client, persona_id: str) -> dict | None:
     result = await client.execute(
-        """
-        select p.id,
-               p.name,
-               p.role,
-               photo.bucket,
-               photo.object_key,
-               photo.file_name,
-               photo.content_type,
-               p.scheduled_time,
-               p.availability_duration
+        f"""
+        select {PERSONA_ROW_COLUMNS}
         from personas p
         left join files photo on photo.id = p.profile_photo_file_id
         where p.id = ?

@@ -85,9 +85,7 @@ def _assemble_persona_tree(
                 # the admin form) — informational for populating the edit UI;
                 # not part of the create/update request contract.
                 "name": referred_persona["name"],
-                "trigger_type": row["trigger_type"],
                 "conditions": row["condition_trigger"],
-                "reveal_delay_minutes": row["time_trigger"],
                 "persona": referred_persona,
             }
         )
@@ -96,10 +94,7 @@ def _assemble_persona_tree(
         "role": persona["role"],
         "profile_photo": profile_photo,
         "known_facts": persona["known_facts"],
-        "unknown_facts": persona["unknown_facts"],
-        "hidden_facts": persona["hidden_facts"],
         "personality_traits": persona["personality_traits"],
-        "scheduled_after_minutes": persona["scheduled_time"] or None,
         "availability_minutes": persona["availability_duration"],
         # file_count/referral_out_count are informational (derived from the
         # arrays below) for populating the edit UI's counters; not part of the

@@ -17,6 +17,17 @@ that orchestrates domain logic:
 from services.db import rows_to_dicts
 from services.spaces import create_presigned_get_url
 
+# Joined profile-photo columns, aliased from a `left join files photo on
+# photo.id = p.profile_photo_file_id` — shared by every query below whose
+# rows get shaped by photo_ref().
+PHOTO_COLUMNS = "photo.bucket, photo.object_key, photo.file_name, photo.content_type"
+
+# The persona-row shape common to fetch_root_personas (below),
+# fetch_personas_by_ids, and fetch_persona_row (services/simulation/repository.py):
+# identity + display fields + availability, no persona "facts" (fetch_persona_core
+# in repository.py is a narrower, separate shape that needs those instead).
+PERSONA_ROW_COLUMNS = f"p.id, p.name, p.role, {PHOTO_COLUMNS}, p.availability_duration"
+
 
 def photo_ref(row: dict, *, presign: bool) -> dict | None:
     """`presign=True` adds a live download `url` (the simulation domain,
@@ -37,16 +48,8 @@ def photo_ref(row: dict, *, presign: bool) -> dict | None:
 
 async def fetch_root_personas(client, case_id: str) -> list[dict]:
     result = await client.execute(
-        """
-        select p.id,
-               p.name,
-               p.role,
-               photo.bucket,
-               photo.object_key,
-               photo.file_name,
-               photo.content_type,
-               p.scheduled_time,
-               p.availability_duration
+        f"""
+        select {PERSONA_ROW_COLUMNS}
         from personas p
         left join files photo on photo.id = p.profile_photo_file_id
         where p.case_id = ?

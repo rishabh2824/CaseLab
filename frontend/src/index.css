@@ -17,18 +17,43 @@
        stays centralized here rather than ad-hoc per component. */
     --font-body: "IBM Plex Sans", sans-serif;
     --font-display: "Space Grotesk", sans-serif;
+
+    /* Wisconsin School of Business brand palette — the single source of
+       truth for app-wide color, so pages stay coherent with the landing
+       page (warm stone + ink, with Wisconsin red used sparingly as an
+       accent). Exposed as `bg-*` / `text-*` / `border-*` / `ring-*`
+       utilities (e.g. `text-brand`, `bg-cream`, `border-line`). */
+    --color-brand: #c5050c; /* Wisconsin red — primary accent */
+    --color-brand-dark: #9c0409; /* red, hover/pressed */
+    --color-brand-tint: #fdecec; /* faint red wash surface */
+    --color-ink: #1a1a1a; /* near-black — headings */
+    --color-ink-soft: #2c2926; /* softened ink — strong body text */
+    --color-stone: #57534b; /* warm muted — secondary text */
+    --color-stone-soft: #8c857a; /* lighter warm — tertiary/meta text */
+    --color-line: #e4dfd5; /* warm border */
+    --color-line-soft: #efeae0; /* warm subtle divider */
+    --color-cream: #faf8f4; /* warm surface */
+    --color-parchment: #f4f1ea; /* warm page background */
+    --color-success: #2f8f5b; /* refined green — availability status only */
+
+    /* Layered, low-spread shadows matching the landing page's dossier card —
+       `shadow-premium` for hero cards, `shadow-soft` for lighter surfaces. */
+    --shadow-premium:
+        0 1px 2px rgba(18, 18, 18, 0.04), 0 24px 48px -28px rgba(18, 18, 18, 0.3);
+    --shadow-soft:
+        0 1px 2px rgba(18, 18, 18, 0.04), 0 14px 30px -22px rgba(18, 18, 18, 0.28);
 }
 
 :root {
     font-family: var(--font-body);
-    color: #0f172a;
-    background-color: #f8fafc;
+    color: #1a1a1a;
+    background-color: #f4f1ea;
 }
 
 body {
     margin: 0;
     min-height: 100vh;
-    background-color: #f8fafc;
+    background-color: #f4f1ea;
 }
 
 .typing-dots {

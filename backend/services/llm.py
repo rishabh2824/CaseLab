@@ -1,4 +1,3 @@
-import re
 import json
 import logging
 
@@ -20,15 +19,6 @@ def _headers(settings) -> dict:
 
 
 def _split_system(messages: list[dict]) -> tuple[str | list[dict] | None, list[dict]]:
-    """Anthropic's native Messages API takes the system prompt as a separate
-    top-level `system` param rather than a `role: "system"` message. Pull the
-    first system message's content out of an OpenAI-shaped messages list and
-    return it alongside the remaining user/assistant turns. `content` is
-    passed through as-is, so the persona-reply system message's block-list
-    shape (with its `cache_control` breakpoint) carries over unchanged --
-    Anthropic's `system` field accepts either a plain string or that same
-    block-list shape.
-    """
     system = None
     rest = []
     for message in messages:
@@ -319,29 +309,9 @@ async def classify_file_share(condition: str, conversation: list[dict]) -> bool:
     return await _classify_condition("file_share", condition, conversation)
 
 
-def _looks_like_nonsense(message: str) -> bool:
-    cleaned = (message or "").strip()
-    if not cleaned:
-        return True
-    normalized = re.sub(r"\s+", " ", cleaned.lower())
-    tokens = [token for token in re.split(r"\s+", normalized) if token]
-    alnum_chars = [char for char in normalized if char.isalnum()]
-
-    if len(normalized) >= 12 and len(alnum_chars) / max(len(normalized), 1) < 0.35:
-        return True
-    if re.fullmatch(r"(.)\1{7,}", normalized):
-        return True
-    if len(tokens) >= 4 and len(set(tokens)) == 1:
-        return True
-    return False
-
-
 async def classify_message_safety(user_message: str, conversation: list[dict]) -> str:
     """Safety label for the latest user message: "normal" or "nonsense"."""
     debug_log.marker("classify_message_safety")
-    if _looks_like_nonsense(user_message):
-        return "nonsense"
-
     settings = get_settings()
     transcript = "\n".join(
         f"{msg.get('role')}: {msg.get('content', '')}"

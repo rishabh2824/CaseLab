@@ -1,53 +1,44 @@
 -- Case Lab Schema (SQLite)
--- Reference snapshot of the live Turso schema. Schema changes are applied by
--- hand via the Turso SQL console; update this file to match afterward so it
--- stays an accurate mirror of the live database.
+
 
 -- 1. CASES
--- access_code was added later via ALTER TABLE, so it's the last column here
--- (matching the live DB) rather than logically grouped near case_name.
 CREATE TABLE cases (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_name TEXT NOT NULL,
   initial_brief TEXT NOT NULL,
   common_information TEXT,
   simulation_duration INTEGER,
-  non_referred INTEGER NOT NULL CHECK (non_referred >= 1)
-, access_code TEXT);
+  non_referred INTEGER NOT NULL CHECK (non_referred >= 1),
+  access_code TEXT,
+  owner_admin_id TEXT REFERENCES admins(id));
+
 
 -- 2. PERSONAS
--- profile_photo_file_id was added later via ALTER TABLE (inline REFERENCES,
--- rather than a table-level FOREIGN KEY clause), so it's the last column here,
--- matching the live DB.
 CREATE TABLE personas (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_id TEXT NOT NULL,
   name TEXT NOT NULL DEFAULT '',
   role TEXT NOT NULL DEFAULT '',
   known_facts TEXT,
-  unknown_facts TEXT,
-  hidden_facts TEXT,
   personality_traits TEXT,
-  scheduled_time INTEGER NOT NULL DEFAULT 0,
   availability_duration INTEGER, profile_photo_file_id TEXT
 REFERENCES files(id) ON DELETE SET NULL,
   FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE
 );
 
+
 -- 3. REFERRAL RELATIONSHIP
--- Replaces 'enum' with a CHECK constraint
 CREATE TABLE persona_referrals (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   case_id TEXT NOT NULL,
   parent_persona_id TEXT NOT NULL,
   referred_persona_id TEXT NOT NULL,
-  trigger_type TEXT CHECK(trigger_type IN ('conditions', 'time')),
   condition_trigger TEXT,
-  time_trigger INTEGER,
   FOREIGN KEY (case_id) REFERENCES cases(id) ON DELETE CASCADE,
   FOREIGN KEY (parent_persona_id) REFERENCES personas(id) ON DELETE CASCADE,
   FOREIGN KEY (referred_persona_id) REFERENCES personas(id) ON DELETE CASCADE
 );
+
 
 -- 4. FILES (Metadata for your DO Spaces)
 CREATE TABLE files (
@@ -60,6 +51,7 @@ CREATE TABLE files (
   UNIQUE(bucket, object_key)
 );
 
+
 -- 5. PERSONA FILES
 CREATE TABLE persona_files (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -71,10 +63,12 @@ CREATE TABLE persona_files (
   FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE SET NULL
 );
 
+
 -- 6. INDEXES
 CREATE UNIQUE INDEX idx_cases_access_code_upper
   ON cases (upper(access_code))
   WHERE access_code IS NOT NULL AND access_code != '';
+
 
 -- 7. ADMINS
 CREATE TABLE admins (
@@ -84,4 +78,20 @@ CREATE TABLE admins (
   role INTEGER NOT NULL CHECK (role IN (1, 2))  -- 1 = super admin, 2 = admin
 );
 
-ALTER TABLE cases ADD COLUMN owner_admin_id TEXT REFERENCES admins(id) ON DELETE CASCADE;
+
+-- 8. SIMULATION RUNS
+CREATE TABLE simulation_runs (
+  run_id TEXT PRIMARY KEY,
+  expires_at REAL NOT NULL,
+  data TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0);
+
+
+CREATE INDEX idx_simulation_runs_expires_at ON simulation_runs (expires_at);
+
+-- 9. RATE LIMITS
+CREATE TABLE rate_limits (
+  key TEXT PRIMARY KEY,
+  window_start REAL NOT NULL,
+  count INTEGER NOT NULL
+);

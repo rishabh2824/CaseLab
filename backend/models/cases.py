@@ -22,9 +22,9 @@ class ReferralPayload(BaseModel):
     # No `name` field: it's a client-form display label for the referral's
     # accordion item (kept in sync with `persona.name` in the UI) that the
     # backend never reads — the persona's own `name` below is what's stored.
-    trigger_type: str | None = None
+    # No `trigger_type`: the "After N time" option is no longer offered, and
+    # the column itself is gone — every referral is condition-based.
     conditions: str | None = None
-    reveal_delay_minutes: int | None = None
     persona: PersonaPayload
 
 
@@ -33,10 +33,7 @@ class PersonaPayload(BaseModel):
     role: str = ""
     profile_photo: FileRef | None = None
     known_facts: str | None = None
-    unknown_facts: str | None = None
-    hidden_facts: str | None = None
     personality_traits: str | None = None
-    scheduled_after_minutes: int | None = None
     availability_minutes: int | None = None
     # No `file_count`/`referral_out_count`: client-only UI counters for how
     # many file/referral sub-forms to render — the backend only cares about

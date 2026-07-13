@@ -22,13 +22,26 @@ backend/
 ├── models/         # Pydantic request/response models (validate the data shape)
 │   ├── admin.py
 │   ├── cases.py
+│   ├── simulations.py
 │   └── uploads.py
 └── services/       # Talk to the DB and external systems; hold the actual logic
-    ├── db.py       #   libSQL / Turso client + row-to-dict helpers
-    ├── admin_auth.py       #   admin session JWTs + Google ID-token verification
-    ├── admin_repository.py #   CRUD for the `admins` table
-    ├── spaces.py   #   DigitalOcean Spaces (object storage)
-    └── llm.py      #   model calls
+    ├── db.py                #   libSQL / Turso client + row-to-dict helpers
+    ├── admin_auth.py        #   admin session JWTs + Google ID-token verification
+    ├── admin_repository.py  #   CRUD for the `admins` table
+    ├── case_repository.py   #   SQL for cases/personas/files/referrals
+    ├── case_service.py      #   case domain logic, orchestrates case_repository
+    ├── persona_shapes.py    #   persona-row query/shaping helpers shared by
+    │                        #   the case editor and the simulation domain
+    ├── spaces.py            #   DigitalOcean Spaces (object storage)
+    ├── debug_log.py         #   gated tracing for the student-message pipeline
+    ├── rate_limit.py        #   fixed-window rate limiting for POST /message
+    ├── llm.py               #   model calls
+    └── simulation/          #   the live student-simulation engine
+        ├── repository.py    #     raw SQL for the simulations domain
+        ├── reads.py         #     repository reads shaped for the API/prompts
+        ├── prompt.py        #     system-prompt construction, reply envelope
+        ├── state.py         #     DB-backed run store, TTL/cleanup
+        └── service.py       #     orchestration: what api/simulations.py calls
 ```
 
 Database schema changes are applied by hand via the Turso SQL console;
@@ -59,6 +72,7 @@ Create `backend/.env` (git-ignored). See the keys below:
 | `GOOGLE_CLIENT_SECRET` | yes | Secret for the same OAuth client, used server-side to exchange the frontend popup flow's authorization code for an ID token |
 | `ADMIN_ALLOWED_DOMAIN` | yes | Google Workspace domain (e.g. `wisc.edu`) admins must belong to — checked against the ID token's `hd` claim, in addition to the `admins` table lookup |
 | `ADMIN_JWT_SECRET` | yes | Signing key for admin session JWTs. Use a long random value (32+ bytes) — PyJWT warns on short HMAC keys |
+| `CASELAB_DEBUG` | no | Set to `1` to enable terminal tracing of the student-message LLM pipeline (`services/debug_log.py`). Off (no output/overhead) by default |
 
 The chat models are **not** env-configurable — they're fixed constants at the
 top of [`settings.py`](settings.py): `llm_model` (frontier, used for the
@@ -91,19 +105,6 @@ uv run uvicorn main:app --reload --port 8000
 > to `backend` and the **Run Command** to
 > `uvicorn main:app --host 0.0.0.0 --port 8080`. (The old root `app.py` shim has
 > been removed.)
-
-## Tests
-
-```bash
-cd backend
-uv run pytest
-```
-
-Auth-critical logic (JWT issuance/verification, the Google ID-token
-verification + domain/allowlist check, case-ownership authorization) is
-covered under `tests/`. Google's network call
-(`google.oauth2.id_token.verify_oauth2_token`) and the DB layer are mocked;
-everything else runs for real.
 
 ## One-time: configure Spaces CORS (required for uploads)
 

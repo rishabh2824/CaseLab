@@ -11,12 +11,13 @@ React + Vite SPA for Wisconsin Case Lab.
 
 ```bash
 pnpm install
-cp .env.example .env   # set VITE_API_BASE
 ```
+
+Create `frontend/.env` (git-ignored) — see Environment below for the keys.
 
 ## Scripts
 
-- `pnpm dev` — start the dev server (proxies `/api` to `http://127.0.0.1:8000`)
+- `pnpm dev` — start the dev server (calls the backend directly at `VITE_API_BASE`; no dev proxy)
 - `pnpm build` — production build to `dist/`
 - `pnpm preview` — preview the production build
 - `pnpm lint` — Biome lint + checks
@@ -24,8 +25,8 @@ cp .env.example .env   # set VITE_API_BASE
 
 ## Environment
 
-- `VITE_API_BASE` — base URL of the backend. No trailing slash. See `.env.example`.
+- `VITE_API_BASE` — base URL of the backend. No trailing slash.
 - `VITE_GOOGLE_CLIENT_ID` — Google OAuth client id for admin Google Sign-In
-  (`frontend/src/pages/admin/Login.jsx`). Must be the same client id the
+  (`frontend/src/pages/admin/SignInButton.jsx`). Must be the same client id the
   backend's `GOOGLE_CLIENT_ID` checks the ID token's `aud` claim against
   (`backend/settings.py`).

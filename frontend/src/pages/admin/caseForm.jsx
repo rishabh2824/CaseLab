@@ -12,7 +12,7 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { produce } from 'immer'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { apiFetch } from '../../client.js'
 import { useSessionStore } from '../../hooks/sessionStore.js'
 import { useCaseSubmit } from '../../hooks/useCaseSubmit.js'
@@ -49,10 +49,7 @@ function CaseForm({ templateId, editCaseId }) {
     const showPersonas = typeof totalPersonas === 'number' && totalPersonas >= 1
     // `recipe` mutates an Immer draft of the target persona; Immer produces the
     // new immutable state. The target is normalized first so recipes can freely
-    // touch its files/referrals arrays. useCallback with empty deps: it only
-    // reads current state via setPersonas' updater-function form, so it never
-    // needs to change identity — which is what lets the per-index/path updater
-    // caches below hand out stable closures forever.
+    // touch its files/referrals arrays.
     const updatePersonaAt = useCallback((index, recipe) => {
         setPersonas(
             produce((draft) => {
@@ -80,55 +77,6 @@ function CaseForm({ templateId, editCaseId }) {
         )
     }, [])
 
-    // PersonaFields is React.memo'd so editing one persona doesn't re-render
-    // every other persona's accordion panel. That only helps if its props are
-    // referentially stable across a keystroke elsewhere:
-    //
-    // - updater caches: updatePersonaAt/updateReferredPersonaByPath above are
-    //   stable (empty deps), so a per-index/per-path closure created once here
-    //   and reused forever is safe.
-    // - normalization caches: normalizePersona/normalizeReferral always build a
-    //   NEW object, even for unchanged input, which would bust React.memo on
-    //   its own. Immer's `produce` reuses object references for anything a
-    //   recipe didn't touch, so keying these caches on the raw (pre-
-    //   normalization) object reference means an untouched persona/referral
-    //   gets back the exact same normalized object as last render.
-    const rootUpdatersRef = useRef(new Map())
-    const referredUpdatersRef = useRef(new Map())
-    const normalizedPersonaCache = useRef(new WeakMap())
-    const normalizedReferralCache = useRef(new WeakMap())
-
-    const getRootUpdater = (index) => {
-        const cache = rootUpdatersRef.current
-        if (!cache.has(index)) {
-            cache.set(index, (recipe) => updatePersonaAt(index, recipe))
-        }
-        return cache.get(index)
-    }
-    const getReferredUpdater = (pathKey, path) => {
-        const cache = referredUpdatersRef.current
-        if (!cache.has(pathKey)) {
-            cache.set(pathKey, (recipe) => updateReferredPersonaByPath(path, recipe))
-        }
-        return cache.get(pathKey)
-    }
-    const getNormalizedPersona = (rawPersona) => {
-        if (!rawPersona || typeof rawPersona !== 'object') return normalizePersona(rawPersona)
-        const cache = normalizedPersonaCache.current
-        if (!cache.has(rawPersona)) {
-            cache.set(rawPersona, normalizePersona(rawPersona))
-        }
-        return cache.get(rawPersona)
-    }
-    const getNormalizedReferral = (rawReferral) => {
-        if (!rawReferral || typeof rawReferral !== 'object') return normalizeReferral(rawReferral)
-        const cache = normalizedReferralCache.current
-        if (!cache.has(rawReferral)) {
-            const base = normalizeReferral(rawReferral)
-            cache.set(rawReferral, { ...base, persona: getNormalizedPersona(rawReferral.persona) })
-        }
-        return cache.get(rawReferral)
-    }
     const totalPersonasError =
         typeof totalPersonas === 'number' && totalPersonas < 1
             ? 'At least 1 persona is required'
@@ -138,10 +86,6 @@ function CaseForm({ templateId, editCaseId }) {
         simulationDurationMinutes > MAX_SIMULATION_DURATION_MINUTES
             ? `Simulation duration cannot exceed ${MAX_SIMULATION_DURATION_MINUTES} minutes (2 hours).`
             : null
-    const hasUnscheduledRootPersona = personas.some((persona) => {
-        const normalized = normalizePersona(persona)
-        return typeof normalized.scheduled_after_minutes !== 'number'
-    })
     const sourceCaseId = editCaseId || templateId
 
     const {
@@ -199,26 +143,28 @@ function CaseForm({ templateId, editCaseId }) {
             accessCode,
             totalPersonas,
             personas,
-            hasUnscheduledRootPersona,
             simulationDurationError,
         })
     }
 
-    const referredPersonas = collectReferredPersonas(personas, {
-        getNormalizedPersona,
-        getNormalizedReferral,
-        getPersonaLabel,
-    })
+    const referredPersonas = collectReferredPersonas(personas)
     const displayedError = submitError || loadErrorMessage
 
     return (
-        <Container size="2xl" py="xl">
-            <Paper radius="md" p="lg" withBorder>
-                <form onSubmit={handleSubmit}>
-                    <Stack gap="lg">
-                        <Title order={1} ta="center">
-                            {isEditMode ? 'Edit Case Study' : 'New Case Study'}
-                        </Title>
+        <div className="relative min-h-screen bg-parchment">
+            <div className="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true" />
+            <Container size="2xl" py="xl">
+                <Paper radius="lg" p="xl" withBorder shadow="sm" style={{ borderColor: '#e4dfd5' }}>
+                    <form onSubmit={handleSubmit}>
+                        <Stack gap="lg">
+                            <div className="text-center">
+                                <p className="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
+                                    Case Builder
+                                </p>
+                                <Title order={1} ta="center" mt={6}>
+                                    {isEditMode ? 'Edit Case Study' : 'New Case Study'}
+                                </Title>
+                            </div>
                         {isLoadingTemplate && (
                             <Text c="dimmed" size="sm" ta="center">
                                 {isEditMode ? 'Loading case...' : 'Loading case template...'}
@@ -254,7 +200,7 @@ function CaseForm({ templateId, editCaseId }) {
                                             }}
                                         />
                                         <Textarea
-                                            label="Enter common information for all personas"
+                                            label="Enter Case Background"
                                             placeholder="Describe the common information"
                                             minRows={3}
                                             autosize
@@ -322,10 +268,7 @@ function CaseForm({ templateId, editCaseId }) {
                                         <Accordion variant="separated">
                                             {Array.from({ length: totalPersonas }, (_, index) => {
                                                 const personaNumber = index + 1
-                                                const persona = getNormalizedPersona(
-                                                    personas[index],
-                                                )
-                                                const updatePersona = getRootUpdater(index)
+                                                const persona = normalizePersona(personas[index])
                                                 const personaLabel = getPersonaLabel(
                                                     persona,
                                                     `Persona ${personaNumber}`,
@@ -341,7 +284,9 @@ function CaseForm({ templateId, editCaseId }) {
                                                         <Accordion.Panel>
                                                             <PersonaFields
                                                                 persona={persona}
-                                                                updatePersona={updatePersona}
+                                                                updatePersona={(recipe) =>
+                                                                    updatePersonaAt(index, recipe)
+                                                                }
                                                             />
                                                         </Accordion.Panel>
                                                     </Accordion.Item>
@@ -349,10 +294,6 @@ function CaseForm({ templateId, editCaseId }) {
                                             })}
                                             {referredPersonas.map((item) => {
                                                 const pathKey = item.path.join('-')
-                                                const updatePersona = getReferredUpdater(
-                                                    pathKey,
-                                                    item.path,
-                                                )
                                                 return (
                                                     <Accordion.Item
                                                         key={`referred-${pathKey}`}
@@ -364,7 +305,12 @@ function CaseForm({ templateId, editCaseId }) {
                                                         <Accordion.Panel>
                                                             <PersonaFields
                                                                 persona={item.persona}
-                                                                updatePersona={updatePersona}
+                                                                updatePersona={(recipe) =>
+                                                                    updateReferredPersonaByPath(
+                                                                        item.path,
+                                                                        recipe,
+                                                                    )
+                                                                }
                                                             />
                                                         </Accordion.Panel>
                                                     </Accordion.Item>
@@ -391,7 +337,8 @@ function CaseForm({ templateId, editCaseId }) {
                     </Stack>
                 </form>
             </Paper>
-        </Container>
+            </Container>
+        </div>
     )
 }
 

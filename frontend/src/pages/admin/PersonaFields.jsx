@@ -2,25 +2,17 @@ import {
     Accordion,
     FileInput,
     NumberInput,
-    Select,
     Stack,
     Text,
     Textarea,
     TextInput,
 } from '@mantine/core'
-import { memo } from 'react'
 import { createEmptyReferral, getPersonaLabel, normalizeReferral } from './Helpers.js'
 
 // `updatePersona(recipe)` applies an Immer recipe to this persona's draft —
 // see updatePersonaAt/updateReferredPersonaByPath in caseForm.jsx. Shared by
 // both root personas and referred personas, so it must only ever touch
 // `persona`/`updatePersona`, never reach outside its own props.
-//
-// memo'd so editing one persona doesn't re-render every other persona's panel
-// (this component + its nested file/referral accordions is the expensive
-// part). That only pays off because caseForm.jsx hands it referentially
-// stable `persona`/`updatePersona` props across renders that don't touch this
-// particular persona — see the caches there.
 function PersonaFields({ persona, updatePersona }) {
     return (
         <Stack gap="xs">
@@ -66,8 +58,8 @@ function PersonaFields({ persona, updatePersona }) {
                 </Text>
             )}
             <Textarea
-                label="Information they know"
-                placeholder="- Fact 1\n- Fact 2"
+                label="Enter Persona Related Information"
+                placeholder="Describe the persona's background, facts, and any other relevant information"
                 minRows={3}
                 autosize
                 value={persona.known_facts}
@@ -75,32 +67,6 @@ function PersonaFields({ persona, updatePersona }) {
                     const value = event.currentTarget.value
                     updatePersona((d) => {
                         d.known_facts = value
-                    })
-                }}
-            />
-            <Textarea
-                label="Information they should not know"
-                placeholder="- Fact 1\n- Fact 2"
-                minRows={3}
-                autosize
-                value={persona.unknown_facts}
-                onChange={(event) => {
-                    const value = event.currentTarget.value
-                    updatePersona((d) => {
-                        d.unknown_facts = value
-                    })
-                }}
-            />
-            <Textarea
-                label="Information they know but are reluctant to share"
-                placeholder="- Fact 1\n- Fact 2"
-                minRows={3}
-                autosize
-                value={persona.hidden_facts}
-                onChange={(event) => {
-                    const value = event.currentTarget.value
-                    updatePersona((d) => {
-                        d.hidden_facts = value
                     })
                 }}
             />
@@ -114,19 +80,6 @@ function PersonaFields({ persona, updatePersona }) {
                     const value = event.currentTarget.value
                     updatePersona((d) => {
                         d.personality_traits = value
-                    })
-                }}
-            />
-            <NumberInput
-                label="After how long is the persona scheduled for?"
-                placeholder="Leave empty for not scheduled"
-                min={1}
-                allowDecimal={false}
-                hideControls
-                value={persona.scheduled_after_minutes}
-                onChange={(value) => {
-                    updatePersona((d) => {
-                        d.scheduled_after_minutes = value
                     })
                 }}
             />
@@ -291,68 +244,22 @@ function PersonaFields({ persona, updatePersona }) {
                                                 })
                                             }}
                                         />
-                                        <Select
-                                            label="How is this persona referred out?"
-                                            placeholder="Select an option"
-                                            data={[
-                                                {
-                                                    value: 'conditions',
-                                                    label: 'After N conditions',
-                                                },
-                                                { value: 'time', label: 'After N time' },
-                                            ]}
-                                            value={referral.trigger_type}
-                                            onChange={(value) => {
+                                        <Textarea
+                                            label="Describe the referral conditions"
+                                            placeholder="Describe the referral conditions"
+                                            minRows={2}
+                                            autosize
+                                            value={referral.conditions}
+                                            onChange={(event) => {
+                                                const value = event.currentTarget.value
                                                 updatePersona((d) => {
                                                     d.referrals[referralIndex] = normalizeReferral(
                                                         d.referrals[referralIndex],
                                                     )
-                                                    d.referrals[referralIndex].trigger_type = value
+                                                    d.referrals[referralIndex].conditions = value
                                                 })
                                             }}
-                                            clearable
                                         />
-                                        {referral.trigger_type === 'conditions' && (
-                                            <Textarea
-                                                label="Describe the conditions"
-                                                placeholder="Describe the conditions"
-                                                minRows={2}
-                                                autosize
-                                                value={referral.conditions}
-                                                onChange={(event) => {
-                                                    const value = event.currentTarget.value
-                                                    updatePersona((d) => {
-                                                        d.referrals[referralIndex] =
-                                                            normalizeReferral(
-                                                                d.referrals[referralIndex],
-                                                            )
-                                                        d.referrals[referralIndex].conditions =
-                                                            value
-                                                    })
-                                                }}
-                                            />
-                                        )}
-                                        {referral.trigger_type === 'time' && (
-                                            <NumberInput
-                                                label="Enter the duration after which the persona is revealed"
-                                                placeholder="Enter duration"
-                                                min={1}
-                                                allowDecimal={false}
-                                                hideControls
-                                                value={referral.reveal_delay_minutes}
-                                                onChange={(value) => {
-                                                    updatePersona((d) => {
-                                                        d.referrals[referralIndex] =
-                                                            normalizeReferral(
-                                                                d.referrals[referralIndex],
-                                                            )
-                                                        d.referrals[
-                                                            referralIndex
-                                                        ].reveal_delay_minutes = value
-                                                    })
-                                                }}
-                                            />
-                                        )}
                                     </Stack>
                                 </Accordion.Panel>
                             </Accordion.Item>
@@ -364,4 +271,4 @@ function PersonaFields({ persona, updatePersona }) {
     )
 }
 
-export default memo(PersonaFields)
+export default PersonaFields

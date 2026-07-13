@@ -16,7 +16,6 @@ def _format_persona_row(row: dict) -> dict:
         "name": row["name"],
         "role": row["role"],
         "profile_photo": photo_ref(row, presign=True),
-        "scheduled_time": row["scheduled_time"],
         "availability_duration": row["availability_duration"],
     }
 
@@ -80,8 +79,6 @@ async def _get_persona_details(client, persona_id):
         "role": persona["role"],
         "profile_photo": photo_ref(persona, presign=True),
         "known_facts": persona["known_facts"],
-        "unknown_facts": persona["unknown_facts"],
-        "hidden_facts": persona["hidden_facts"],
         "personality_traits": persona["personality_traits"],
         "files": file_entries,
     }
@@ -95,15 +92,12 @@ async def _get_referrals_for_parent(client, case_id, parent_persona_id):
         referrals.append(
             {
                 "referred_persona_id": referred_persona_id,
-                "trigger_type": row["trigger_type"],
                 "condition_trigger": row["condition_trigger"] or "",
-                "time_trigger": row["time_trigger"],
                 "persona": {
                     "id": referred_persona_id,
                     "name": row["name"],
                     "role": row["role"],
                     "profile_photo": photo_ref(row, presign=True),
-                    "scheduled_time": row["scheduled_time"],
                     "availability_duration": row["availability_duration"],
                     "is_referred": True,
                 },

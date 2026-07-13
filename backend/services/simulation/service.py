@@ -13,6 +13,7 @@ from models.simulations import SendMessagePayload, StartSimulationPayload
 from services import debug_log
 from services.db import get_db_client
 from services.llm import classify_message_safety, complete_persona_reply
+from services.rate_limit import enforce_message_rate_limit
 from services.simulation import repository as repo
 from services.simulation.prompt import (
     _build_reply_instruction,
@@ -36,6 +37,7 @@ from services.simulation.state import (
     NONSENSE_END_THRESHOLD,
     _build_boundary_reply,
     _chat_state_payload,
+    _chat_state_payload_from_state,
     _elapsed_minutes,
     _format_run_histories,
     _get_persona_chat_state,
@@ -48,11 +50,23 @@ from services.spaces import create_presigned_get_url
 logger = logging.getLogger("caselab.simulations")
 
 # Cap on how much of a persona's history rides along as conversation context
-# for the frontier reply model (see _prepare_reply's `recent_history`). The
-# unlock/share judges still see the FULL `decision_history` (message-count
-# thresholds and condition checks need it) — only the frontier call's context
-# is capped.
+# for the frontier reply model (see _prepare_reply's `recent_history`).
 RECENT_HISTORY_MESSAGE_LIMIT = 6
+
+# Cap on how much conversation history is sent to the referral/file unlock
+# judges each turn (see _resolve_turn_decisions). Slightly more generous than
+# RECENT_HISTORY_MESSAGE_LIMIT since a judge is checking whether a trigger
+# condition was ever satisfied, not just carrying conversational flavor —
+# but still bounded, so cost per turn no longer scales with the full,
+# unbounded conversation length. Same scoping as before: only the currently
+# active persona's own pending referrals/files are checked, using only that
+# persona's own history — this cap does not change that.
+DECISION_JUDGE_HISTORY_LIMIT = 8
+
+# Cap on a single student message, enforced in prepare_message. Keeps turns
+# concise (this is a chat-style simulation, not a document-drafting tool) and
+# bounds worst-case prompt size/cost per turn.
+MAX_USER_MESSAGE_WORDS = 50
 
 
 def _sse(event: str, data: dict) -> dict:
@@ -78,9 +92,9 @@ def _build_contacts(run, root_personas, elapsed_minutes, referred_rows=None):
     """Full contacts list for an API response: every root persona, plus (if
     given) every unlocked referred persona — each shaped identically."""
     contacts = [
-        _build_contact(
-            run, persona, persona.get("scheduled_time") or 0, elapsed_minutes, is_referred=False
-        )
+        # Root personas have no scheduling concept — always available from
+        # minute 0 of the run.
+        _build_contact(run, persona, 0, elapsed_minutes, is_referred=False)
         for persona in root_personas
     ]
     for row in referred_rows or []:
@@ -106,10 +120,10 @@ async def start_simulation(payload: StartSimulationPayload):
     # it to the store, so creation is a single put() rather than an insert
     # followed by nested mutations. active_persona_id starts as a naive
     # placeholder (the first root persona) — the contacts pass below always
-    # corrects it to the first AVAILABLE persona when one exists. It only
-    # survives when none are, which (at elapsed_minutes ~0, right after
-    # start_time is set) means every persona has scheduled_time > 0 — the
-    # same "nobody's up yet" case this placeholder already covers.
+    # corrects it to the first AVAILABLE persona when one exists. Root
+    # personas are always available from minute 0 (no scheduling concept), so
+    # this placeholder only survives in the degenerate case of every root
+    # persona already having expired via availability_duration.
     run = {
         "case_id": case_snapshot["id"],
         "case_snapshot": case_snapshot,  # cached for the life of the run
@@ -126,7 +140,7 @@ async def start_simulation(payload: StartSimulationPayload):
     active_candidates = [c for c in contacts if c["available"]]
     if active_candidates:
         run["active_persona_id"] = active_candidates[0]["id"]
-    run_store.put(run_id, run)
+    await run_store.put(run_id, run)
     return {
         "run_id": run_id,
         "case": {
@@ -143,7 +157,7 @@ async def start_simulation(payload: StartSimulationPayload):
 
 
 async def get_simulation_state(run_id: str):
-    run = run_store.get(run_id)
+    run = await run_store.get(run_id)
     client = get_db_client()
     case_snapshot = await _get_run_case_snapshot(run, client)
     root_personas = await _get_root_personas(client, case_snapshot["id"])
@@ -168,7 +182,7 @@ async def get_simulation_state(run_id: str):
 
 
 async def export_simulation_history(run_id: str):
-    run = run_store.get(run_id)
+    run = await run_store.get(run_id)
     client = get_db_client()
     case_snapshot = await _get_run_case_snapshot(run, client)
     root_personas = await _get_root_personas(client, case_snapshot["id"])
@@ -210,9 +224,7 @@ async def export_simulation_history(run_id: str):
     }
 
 
-async def _resolve_turn_decisions(
-    client, case_id, persona_id, decision_history, run, elapsed_minutes
-) -> dict:
+async def _resolve_turn_decisions(client, case_id, persona_id, decision_history, run) -> dict:
     """Fetch the persona's referrals + details and resolve every unlock/share
     eligibility for this turn. Reads run state but does NOT mutate it — the
     caller applies the results only if the message passes the safety check.
@@ -234,15 +246,19 @@ async def _resolve_turn_decisions(
         for file_entry in persona_details["files"]
         if file_entry.get("file_id") and file_entry["file_id"] not in run["shared_files"]
     ]
+    # Capped view for the judges only — decision_history itself stays
+    # unbounded for callers that need it (e.g. the safety classifier does its
+    # own, separate slicing).
+    judge_history = decision_history[-DECISION_JUDGE_HISTORY_LIMIT:]
     referral_results, file_results = await asyncio.gather(
         asyncio.gather(
             *(
-                _resolve_referral_unlock(referral, decision_history, elapsed_minutes)
+                _resolve_referral_unlock(referral, judge_history)
                 for referral in pending_referrals
             )
         ),
         asyncio.gather(
-            *(_resolve_file_share(file_entry, decision_history) for file_entry in pending_files)
+            *(_resolve_file_share(file_entry, judge_history) for file_entry in pending_files)
         ),
     )
     return {
@@ -266,11 +282,22 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     for any client error, which must happen HERE (before streaming starts) so
     the client gets a normal error status rather than a half-open stream.
     """
-    run = run_store.get(run_id)
+    run = await run_store.get(run_id)
+    # Runs before any payload validation or LLM call: run_store.get above is
+    # what proves run_id is real (raises RunNotFound for garbage ids) — checking
+    # this first would let random/incrementing run_ids create unbounded
+    # rate_limits rows. Placed before validation/LLM work so a rate-limited
+    # request costs one DB round trip and nothing else (no LLM billing).
+    await enforce_message_rate_limit(run_id)
     persona_id = payload.persona_id
     user_message = payload.message.strip()
     if not persona_id or not user_message:
         raise HTTPException(status_code=400, detail="persona_id and message are required.")
+    if len(user_message.split()) > MAX_USER_MESSAGE_WORDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Message is too long ({MAX_USER_MESSAGE_WORDS} words max). Please shorten it and try again.",
+        )
     elapsed_minutes = _elapsed_minutes(run)
     client = get_db_client()
     case_snapshot = await _get_run_case_snapshot(run, client)
@@ -286,11 +313,9 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     root_personas = await _get_root_personas(client, case_snapshot["id"])
     root_map = {p["id"]: p for p in root_personas}
     if persona_id in root_map:
-        availability = _persona_availability(
-            root_map[persona_id],
-            root_map[persona_id].get("scheduled_time") or 0,
-            elapsed_minutes,
-        )
+        # Root personas have no scheduling concept — always available from
+        # minute 0 of the run.
+        availability = _persona_availability(root_map[persona_id], 0, elapsed_minutes)
     elif persona_id in run["unlocked_referred_ids"]:
         persona_row = await repo.fetch_persona_row(client, persona_id)
         if persona_row is None:
@@ -302,25 +327,32 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
         raise HTTPException(status_code=400, detail="Persona is not available yet.")
     if not availability["available"]:
         raise HTTPException(status_code=400, detail="Persona is not available yet.")
-    run_store.mutate(run_id, lambda r: r.update({"active_persona_id": persona_id}))
-    if _get_persona_chat_state(run, persona_id)["ended"]:
-        raise HTTPException(status_code=400, detail="This conversation has ended.")
-
-    # Record the user's turn once (kept by both the safety and normal paths).
-    def _record_user_turn(r):
+    # Set active persona + record the user's turn (kept by both the safety and
+    # normal paths) in ONE mutation — both happen back to back with no
+    # intervening async work, so combining them is free and also makes them
+    # atomic (previously a crash between the two writes could leave
+    # active_persona_id updated but the turn unrecorded, or vice versa). The
+    # "chat already ended" check moves inside this callback, against the
+    # freshly-loaded run mutate() fetches, rather than the stale `run`
+    # snapshot from the top of this function — so a chat flagged-ended by a
+    # concurrent request is caught here instead of racing past it.
+    def _start_turn(r):
+        if _get_persona_chat_state(r, persona_id)["ended"]:
+            raise HTTPException(status_code=400, detail="This conversation has ended.")
+        r["active_persona_id"] = persona_id
         turns = r["history"].setdefault(persona_id, [])
         turns.append({"role": "user", "content": user_message})
         return turns
 
-    history = run_store.mutate(run_id, _record_user_turn)
+    history = await run_store.mutate(run_id, _start_turn)
     # Full conversation incl. this message; used by the safety + unlock/share
     # judges and (sanitized) as the reply context.
     decision_history = [msg for msg in history if msg.get("role") != "system"]
 
     debug_log.user_message(persona_id, user_message)
 
-    # Safety only needs the in-memory conversation, so run it CONCURRENTLY with
-    # fetching persona data + resolving the unlock/share decisions. On the common
+    # Safety only needs the already-loaded conversation, so run it CONCURRENTLY
+    # with fetching persona data + resolving the unlock/share decisions. On the common
     # (non-abusive) path this hides the safety round-trip entirely. Decisions are
     # computed eagerly but only APPLIED below if the message passes safety.
     #
@@ -331,9 +363,7 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     try:
         message_label, decisions = await asyncio.gather(
             classify_message_safety(user_message, decision_history),
-            _resolve_turn_decisions(
-                client, case_snapshot["id"], persona_id, decision_history, run, elapsed_minutes
-            ),
+            _resolve_turn_decisions(client, case_snapshot["id"], persona_id, decision_history, run),
         )
     except Exception:
         logger.exception("Failed to resolve turn decisions for persona %s", persona_id)
@@ -343,35 +373,38 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     persona_details = decisions["persona_details"]
 
     if message_label != "normal":
-        # Update the persona's safety state as one mutation, returning the new
-        # state so we can decide whether this turn also ends the conversation.
+        # Flag the persona's safety state, build the boundary reply (a canned
+        # string that only depends on state["ended"], known by the end of this
+        # same callback), and append it to history — all as ONE mutation.
         # message_label is always "nonsense" here (the only non-normal label);
         # the chat ends once it's been sent NONSENSE_END_THRESHOLD times.
-        def _flag_persona(r):
+        # Folding the history-append in here (rather than a separate mutate in
+        # stream_message) means stream_message's boundary branch needs zero DB
+        # calls — everything it emits is already computed and returned below.
+        def _flag_and_append(r):
             state = _persona_chat_state_ref(r, persona_id)
             state["last_flag_type"] = message_label
             state["warning_count"] += 1
             if state["warning_count"] >= NONSENSE_END_THRESHOLD:
                 state["ended"] = True
                 state["end_reason"] = message_label
-            return state
+            reply = _build_boundary_reply(persona_details["name"], state["ended"])
+            history = _append_assistant_turn(r, persona_id, reply)
+            return state, reply, history
 
-        chat_state = run_store.mutate(run_id, _flag_persona)
-        assistant_reply = _build_boundary_reply(
-            persona_details["name"],
-            chat_state["ended"],
+        chat_state, assistant_reply, boundary_history = await run_store.mutate(
+            run_id, _flag_and_append
         )
-        # The boundary reply is a canned string; stream_message appends it to
-        # history and emits it as a single delta.
         return {
             "kind": "boundary",
             "run_id": run_id,
             "persona_id": persona_id,
             "reply": assistant_reply,
+            "history": boundary_history,
             "meta": {
                 "new_contacts": [],
                 "shared_files": [],
-                **_chat_state_payload(run, persona_id),
+                **_chat_state_payload_from_state(chat_state),
             },
         }
 
@@ -495,16 +528,24 @@ def _shared_file_payload(info: dict) -> dict:
     }
 
 
-def _apply_reply_decisions(run_id, prepared, unlock_handles, share_handles):
+async def _apply_reply_decisions(run_id, prepared, unlock_handles, share_handles, persona_id, reply):
     """Enact only the referral/file decisions the persona actually made AND was
     permitted to make: a handle is honored only if it's in the eligible map built
     for this turn (so the model can never unlock a persona whose condition wasn't
-    met, or one that isn't even configured). The whole apply is one atomic
-    run-state mutation; returns the (new_contacts, shared_files) to announce."""
+    met, or one that isn't even configured). Also appends the assistant's reply
+    to history and reads back the chat-state payload for the "meta" SSE event —
+    all as ONE atomic run-state mutation. complete_persona_reply is buffered
+    (not real token streaming), so by the time this runs the reply and
+    unlock/share decisions are already fully known; there's no reason these
+    three used to be two separate mutates plus a standalone get(). The
+    chat-state read stays INSIDE this mutate (fetched fresh, right after the
+    LLM call, same as before) rather than earlier in prepare_message — a
+    concurrent flag landing during the LLM call must still show up here.
+    Returns (new_contacts, shared_files, history, chat_state_payload)."""
     referral_handles = prepared["referral_handles"]
     file_handles = prepared["file_handles"]
 
-    def _apply(run):
+    def _apply_and_append(run):
         elapsed_minutes = _elapsed_minutes(run)
         new_contacts = []
         for handle in dict.fromkeys(unlock_handles):  # de-dupe, preserve order
@@ -537,9 +578,11 @@ def _apply_reply_decisions(run_id, prepared, unlock_handles, share_handles):
             run["shared_files"][file_id] = shared_info
             shared_files.append(_shared_file_payload(shared_info))
 
-        return new_contacts, shared_files
+        history = _append_assistant_turn(run, persona_id, reply)
+        chat_state_payload = _chat_state_payload(run, persona_id)
+        return new_contacts, shared_files, history, chat_state_payload
 
-    return run_store.mutate(run_id, _apply)
+    return await run_store.mutate(run_id, _apply_and_append)
 
 
 def _append_assistant_turn(run, persona_id, reply):
@@ -568,14 +611,14 @@ async def stream_message(prepared: dict):
     persona_id = prepared["persona_id"]
 
     if prepared["kind"] == "boundary":
+        # reply/history are already fully computed and persisted in
+        # prepare_message's _flag_and_append mutate — nothing left to write
+        # here, just yield the already-known values.
         yield _sse("meta", prepared["meta"])
         reply = prepared["reply"]
         if reply:
             yield _sse("delta", {"text": reply})
-        history = run_store.mutate(
-            run_id, lambda r: _append_assistant_turn(r, persona_id, reply)
-        )
-        yield _sse("done", {"reply": reply, "history": history})
+        yield _sse("done", {"reply": reply, "history": prepared["history"]})
         return
 
     # --- normal: generate the whole envelope, parse it, then apply + announce ---
@@ -603,9 +646,17 @@ async def stream_message(prepared: dict):
 
     debug_log.persona_reply_cleaned(reply, unlock_handles, share_handles)
 
-    new_contacts, shared_files = _apply_reply_decisions(
-        run_id, prepared, unlock_handles, share_handles
-    )
+    try:
+        new_contacts, shared_files, history, chat_state_payload = await _apply_reply_decisions(
+            run_id, prepared, unlock_handles, share_handles, persona_id, reply
+        )
+    except Exception:
+        logger.exception("Failed to apply reply decisions for persona %s", persona_id)
+        yield _sse(
+            "error",
+            {"detail": "The reply could not be saved. Please try again."},
+        )
+        return
 
     if debug_log.enabled():
         referral_handles = prepared["referral_handles"]
@@ -632,11 +683,8 @@ async def stream_message(prepared: dict):
         {
             "new_contacts": new_contacts,
             "shared_files": shared_files,
-            **_chat_state_payload(run_store.get(run_id), persona_id),
+            **chat_state_payload,
         },
     )
     yield _sse("delta", {"text": reply})
-    history = run_store.mutate(
-        run_id, lambda r: _append_assistant_turn(r, persona_id, reply)
-    )
     yield _sse("done", {"reply": reply, "history": history})

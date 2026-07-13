@@ -8,6 +8,14 @@ export const slugify = (value) =>
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
 
+// Mirrors the backend's `user_message.split()` word count (prepare_message,
+// MAX_USER_MESSAGE_WORDS) — split on runs of whitespace, ignore empty parts.
+export const countWords = (value) =>
+    String(value ?? '')
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean).length
+
 export const normalizeMessages = (messages = []) =>
     (messages ?? []).filter(
         (message) =>
@@ -34,19 +42,13 @@ const getPersonaInitials = (name) =>
         : 'NA'
 
 export const mapContact = (persona) => {
-    const scheduled = typeof persona.scheduled_time === 'number' ? persona.scheduled_time : 0
     const availability = persona.availability_duration
-    let status = 'Available'
-    if (scheduled && scheduled > 0) {
-        status = `Available in ${scheduled} min`
-    }
     return {
         id: persona.id,
         initials: getPersonaInitials(persona.name),
         name: persona.name || 'Unnamed',
         title: persona.role || 'Role',
         profilePhotoUrl: persona.profile_photo?.url || null,
-        status,
         availability,
         isReferred: persona.is_referred ?? false,
         available: persona.available ?? false,

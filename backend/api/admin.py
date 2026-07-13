@@ -29,7 +29,7 @@ async def login(payload: GoogleLoginRequest) -> LoginResponse:
         # never head-of-line-blocks in-flight student SSE streams.
         claims = await run_in_threadpool(verify_google_id_token, id_token_str)
     except GoogleTokenInvalid as exc:
-        raise HTTPException(status_code=401, detail="Google sign-in failed.") from exc
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     client = get_db_client()
     admin = await admin_repository.get_by_email(client, claims["email"])

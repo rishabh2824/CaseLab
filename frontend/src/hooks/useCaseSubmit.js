@@ -38,16 +38,10 @@ export function useCaseSubmit({ adminJwt, isEditMode, editCaseId }) {
         accessCode,
         totalPersonas,
         personas,
-        hasUnscheduledRootPersona,
         simulationDurationError,
     }) => {
         if (typeof totalPersonas !== 'number' || totalPersonas < 1) {
             setSubmitError('Enter the number of AI personas that are not referred (at least 1).')
-            setSubmitSuccess('')
-            return
-        }
-        if (!hasUnscheduledRootPersona) {
-            setSubmitError('At least one non-referred persona must not be scheduled.')
             setSubmitSuccess('')
             return
         }
@@ -129,9 +123,7 @@ export function useCaseSubmit({ adminJwt, isEditMode, editCaseId }) {
                 (normalized.referrals ?? []).map(async (referral) => {
                     const normalizedReferral = normalizeReferral(referral)
                     return {
-                        trigger_type: normalizedReferral.trigger_type,
                         conditions: normalizedReferral.conditions,
-                        reveal_delay_minutes: normalizedReferral.reveal_delay_minutes,
                         persona: await buildPersonaPayload(normalizedReferral.persona, prefix),
                     }
                 }),
@@ -141,10 +133,7 @@ export function useCaseSubmit({ adminJwt, isEditMode, editCaseId }) {
                 role: normalized.role,
                 profile_photo,
                 known_facts: normalized.known_facts,
-                unknown_facts: normalized.unknown_facts,
-                hidden_facts: normalized.hidden_facts,
                 personality_traits: normalized.personality_traits,
-                scheduled_after_minutes: normalized.scheduled_after_minutes,
                 availability_minutes: normalized.availability_minutes,
                 files,
                 referrals,

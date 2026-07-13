@@ -100,7 +100,7 @@ def _build_system_prompt(
         f"Persona name: {persona_details['name']}\n"
         f"Role/title: {persona_details['role']}\n"
         f"Personality traits: {persona_details.get('personality_traits') or 'None'}\n"
-        f"Information you know: {known_facts}\n"
+        f"Persona information: {known_facts}\n"
         "Never fabricate details outside your known facts. If asked about unknown facts, say you do not know.\n"
     )
     turn = (
@@ -198,25 +198,16 @@ def _coerce_handles(value) -> list[str]:
     return handles
 
 
-async def _resolve_referral_unlock(
-    referral: dict,
-    decision_history: list[dict],
-    elapsed_minutes: int,
-) -> bool:
-    """Whether this referral's trigger is satisfied right now. The only case
-    that hits the network is a "conditions" trigger; time triggers resolve
-    locally.
+async def _resolve_referral_unlock(referral: dict, decision_history: list[dict]) -> bool:
+    """Whether this referral's unlock condition is satisfied right now.
 
-    ``decision_history`` is the conversation including the current user
+    ``decision_history`` is the tail of the conversation (capped by the
+    caller to DECISION_JUDGE_HISTORY_LIMIT), including the current user
     message (so the LLM judge sees this turn too)."""
-    if referral["trigger_type"] == "conditions":
-        condition = referral["condition_trigger"].strip()
-        if not condition:
-            return False
-        return await classify_referral(condition, decision_history)
-    if referral["trigger_type"] == "time":
-        return bool(referral["time_trigger"] and elapsed_minutes >= referral["time_trigger"])
-    return False
+    condition = referral["condition_trigger"].strip()
+    if not condition:
+        return False
+    return await classify_referral(condition, decision_history)
 
 
 async def _resolve_file_share(file_entry: dict, decision_history: list[dict]) -> bool:

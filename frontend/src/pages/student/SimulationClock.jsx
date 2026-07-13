@@ -26,18 +26,23 @@ function SimulationClock({ startTime, totalDurationSeconds }) {
         ? Math.min(100, (elapsedSeconds / totalDurationSeconds) * 100)
         : 0
 
+    // Warn as time runs low: the bar shifts to Wisconsin red past 80% elapsed.
+    const isRunningLow = progressPercent >= 80
+
     return (
-        <div className="rounded-2xl bg-white p-4 shadow-sm">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <div className="rounded-2xl border border-line bg-white p-4 shadow-soft">
+            <h3 className="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">
                 Simulation Time
             </h3>
-            <p className="mt-2 text-2xl font-semibold text-slate-900">
+            <p className="mt-2 font-display text-2xl font-semibold tracking-tight text-ink tabular-nums">
                 {formatTime(elapsedSeconds)} /{' '}
                 {hasTotal ? formatTime(totalDurationSeconds) : '--:--'}
             </p>
-            <div className="mt-3 h-2 rounded-full bg-slate-100">
+            <div className="mt-3 h-2 rounded-full bg-line-soft">
                 <div
-                    className="h-2 rounded-full bg-emerald-500"
+                    className={`h-2 rounded-full transition-all duration-500 ${
+                        isRunningLow ? 'bg-brand' : 'bg-success'
+                    }`}
                     style={{ width: `${progressPercent}%` }}
                 />
             </div>

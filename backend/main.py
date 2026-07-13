@@ -9,7 +9,13 @@ from fastapi.responses import JSONResponse
 from api.router import api_router
 from services.db import close_db_client
 from services.llm import close_client, init_client
-from services.simulation.state import RunExpired, RunNotFound, cleanup_expired_runs_forever
+from services.rate_limit import cleanup_stale_rate_limits_forever
+from services.simulation.state import (
+    RunExpired,
+    RunNotFound,
+    RunWriteConflict,
+    cleanup_expired_runs_forever,
+)
 from settings import get_settings
 
 logging.basicConfig(
@@ -27,17 +33,24 @@ async def lifespan(app: FastAPI):
     # student message fans out to reuse pooled/keep-alive connections instead
     # of a fresh TLS handshake each time.
     init_client()
-    # Background sweeper that removes simulation runs 2 hours after they start
-    # (see services.simulation.state.RUN_TTL_SECONDS).
+    # Background sweeper that deletes simulation_runs rows past their expires_at
+    # (see services.simulation.state.purge_expired / _compute_expires_at).
     cleanup_task = asyncio.create_task(cleanup_expired_runs_forever())
+    # Independent sweeper for stale rate_limits rows (see services.rate_limit).
+    # Kept as its own task rather than folded into cleanup_task's loop, so
+    # services.simulation.state and services.rate_limit stay mutually unaware
+    # of each other's key formats.
+    rate_limit_cleanup_task = asyncio.create_task(cleanup_stale_rate_limits_forever())
     try:
         yield
     finally:
         cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            pass
+        rate_limit_cleanup_task.cancel()
+        for task in (cleanup_task, rate_limit_cleanup_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await close_client()
         await close_db_client()
 
@@ -77,6 +90,17 @@ async def _run_not_found_handler(request, exc: RunNotFound):
 @app.exception_handler(RunExpired)
 async def _run_expired_handler(request, exc: RunExpired):
     return JSONResponse(status_code=404, content={"detail": "Simulation run expired."})
+
+
+# RunStore.mutate() exhausted its optimistic-lock retries against concurrent
+# writers for this run — see RunWriteConflict's docstring. 409 (not 500)
+# signals a genuinely retryable conflict rather than a server error.
+@app.exception_handler(RunWriteConflict)
+async def _run_write_conflict_handler(request, exc: RunWriteConflict):
+    return JSONResponse(
+        status_code=409,
+        content={"detail": "This session is busy — please try again."},
+    )
 
 
 app.include_router(api_router, prefix="/api")

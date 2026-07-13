@@ -1,7 +1,8 @@
 """Simulation engine, split by responsibility:
 
-- ``state``      — the in-memory run store, TTL/cleanup, availability windows,
-                    and per-persona chat (safety) state.
+- ``state``      — the DB-backed run store (the ``simulation_runs`` table),
+                    TTL/cleanup, availability windows, and per-persona chat
+                    (safety) state.
 - ``reads``       — repository reads shaped into the dicts the rest of the
                     engine and the API responses expect.
 - ``prompt``      — system-prompt construction, trigger resolution (referral/

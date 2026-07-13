@@ -4,11 +4,8 @@ export const createEmptyPersona = (overrides = {}) => ({
     role: '',
     profile_photo: null,
     known_facts: '',
-    unknown_facts: '',
-    hidden_facts: '',
     personality_traits: '',
     availability_minutes: null,
-    scheduled_after_minutes: null,
     file_count: null,
     files: [],
     referral_out_count: null,
@@ -18,9 +15,7 @@ export const createEmptyPersona = (overrides = {}) => ({
 
 export const createEmptyReferral = (overrides = {}) => ({
     name: '',
-    trigger_type: null,
     conditions: '',
-    reveal_delay_minutes: null,
     persona: createEmptyPersona(),
     ...overrides,
 })
@@ -45,39 +40,31 @@ export const getPersonaLabel = (persona, fallback) => {
 
 // Flattens every referred persona (at any depth) across all root `personas`
 // into a single list of { path, persona, label, parentLabel } entries, for
-// rendering one accordion item each. Walks the RAW referral tree (not a
-// normalized copy) so each step's persona/referral objects are the actual
-// state references — required for `getNormalizedPersona`/
-// `getNormalizedReferral`'s caches (see caseForm.jsx) to hit for anything
-// Immer didn't touch this render. Takes those normalize functions as
-// parameters rather than importing normalizePersona/normalizeReferral
-// directly so it stays swappable and testable in isolation.
-export const collectReferredPersonas = (
-    personas,
-    { getNormalizedPersona, getNormalizedReferral, getPersonaLabel: labelFor },
-) => {
+// rendering one accordion item each.
+export const collectReferredPersonas = (personas) => {
     const referredItems = []
 
-    const walk = (currentPersonaRaw, path, parentLabel) => {
-        const rawReferrals = currentPersonaRaw?.referrals ?? []
-        rawReferrals.forEach((referralRaw, referralIndex) => {
-            const normalizedReferral = getNormalizedReferral(referralRaw)
+    const walk = (currentPersona, path, parentLabel) => {
+        const referrals = currentPersona?.referrals ?? []
+        referrals.forEach((referralRaw, referralIndex) => {
+            const referral = normalizeReferral(referralRaw)
             const childPath = [...path, referralIndex]
-            const referralLabel = labelFor({ name: normalizedReferral.name }, 'Referred Persona')
+            const referralLabel = getPersonaLabel({ name: referral.name }, 'Referred Persona')
             referredItems.push({
                 path: childPath,
-                persona: normalizedReferral.persona,
+                persona: referral.persona,
                 label: referralLabel,
                 parentLabel,
             })
-            const childLabel = labelFor(normalizedReferral.persona, 'Referred Persona')
-            walk(referralRaw?.persona, childPath, childLabel)
+            const childLabel = getPersonaLabel(referral.persona, 'Referred Persona')
+            walk(referral.persona, childPath, childLabel)
         })
     }
 
     personas.forEach((persona, index) => {
-        const baseLabel = labelFor(getNormalizedPersona(persona), `Persona ${index + 1}`)
-        walk(persona, [index], baseLabel)
+        const normalized = normalizePersona(persona)
+        const baseLabel = getPersonaLabel(normalized, `Persona ${index + 1}`)
+        walk(normalized, [index], baseLabel)
     })
 
     return referredItems

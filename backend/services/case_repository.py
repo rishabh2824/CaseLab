@@ -196,10 +196,7 @@ async def fetch_personas_for_case(client, case_id: str) -> list[dict]:
                photo.file_name,
                photo.content_type,
                p.known_facts,
-               p.unknown_facts,
-               p.hidden_facts,
                p.personality_traits,
-               p.scheduled_time,
                p.availability_duration
         from personas p
         left join files photo on photo.id = p.profile_photo_file_id
@@ -234,7 +231,7 @@ async def fetch_referrals_for_case(client, case_id: str) -> list[dict]:
     ``referred_persona_id``)."""
     result = await client.execute(
         """
-        select parent_persona_id, referred_persona_id, trigger_type, condition_trigger, time_trigger
+        select parent_persona_id, referred_persona_id, condition_trigger
         from persona_referrals
         where case_id = ?
         """,
@@ -314,7 +311,6 @@ async def insert_persona(
     here, in Python, rather than left to the table's default, precisely so it
     can be referenced before the insert actually runs."""
     persona_id = uuid.uuid4().hex
-    scheduled_time = persona.scheduled_after_minutes or 0
     profile_photo_file_id = None
     if persona.profile_photo:
         profile_photo_file_id = await get_or_create_file_id(client, persona.profile_photo)
@@ -328,13 +324,10 @@ async def insert_persona(
                 role,
                 profile_photo_file_id,
                 known_facts,
-                unknown_facts,
-                hidden_facts,
                 personality_traits,
-                scheduled_time,
                 availability_duration
             )
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            values (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 persona_id,
@@ -343,10 +336,7 @@ async def insert_persona(
                 persona.role,
                 profile_photo_file_id,
                 persona.known_facts,
-                persona.unknown_facts,
-                persona.hidden_facts,
                 persona.personality_traits,
-                scheduled_time,
                 persona.availability_minutes,
             ),
         )
@@ -364,10 +354,6 @@ async def insert_referrals(
 ) -> None:
     for referral in referrals:
         referred_persona_id = await insert_persona(client, case_id, referral.persona, statements)
-        condition_trigger = (
-            referral.conditions if referral.trigger_type == "conditions" else None
-        )
-        time_trigger = referral.reveal_delay_minutes if referral.trigger_type == "time" else None
         statements.append(
             (
                 """
@@ -376,20 +362,16 @@ async def insert_referrals(
                     case_id,
                     parent_persona_id,
                     referred_persona_id,
-                    trigger_type,
-                    condition_trigger,
-                    time_trigger
+                    condition_trigger
                 )
-                values (?, ?, ?, ?, ?, ?, ?)
+                values (?, ?, ?, ?, ?)
                 """,
                 (
                     uuid.uuid4().hex,
                     case_id,
                     parent_persona_id,
                     referred_persona_id,
-                    referral.trigger_type,
-                    condition_trigger,
-                    time_trigger,
+                    referral.conditions,
                 ),
             )
         )
