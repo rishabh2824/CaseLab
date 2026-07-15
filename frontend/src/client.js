@@ -39,6 +39,54 @@ const TIMEOUT_ERROR_MESSAGE = 'Connection timed out. Please check your network a
 
 
 /**
+ * Open a push-only WebSocket that receives simulation state updates as the server's
+ * poll loop notices changes (see backend api/simulations.py simulationLive).
+ * Reconnects on any unexpected close with exponential backoff; a clean unmount
+ * (the returned close function) skips reconnecting. Returns a function to close it.
+ */
+export function openSimulationSocket(path, { onState, onExpired }) {
+    const wsBase = API_BASE.replace(/^http/, 'ws')
+    let socket = null
+    let closedByCaller = false
+    let expired = false
+    let retryDelayMs = 1000
+    let retryTimer = null
+
+    const connect = () => {
+        socket = new WebSocket(`${wsBase}${path}`)
+        socket.onopen = () => {
+            retryDelayMs = 1000
+        }
+        socket.onmessage = (event) => {
+            let message
+            try {
+                message = JSON.parse(event.data)
+            } catch {
+                return
+            }
+            if (message.type === 'state') onState(message.data)
+            else if (message.type === 'expired') {
+                expired = true
+                onExpired()
+            }
+        }
+        socket.onclose = () => {
+            if (closedByCaller || expired) return
+            retryTimer = setTimeout(connect, retryDelayMs)
+            retryDelayMs = Math.min(retryDelayMs * 2, 15000)
+        }
+    }
+    connect()
+
+    return () => {
+        closedByCaller = true
+        clearTimeout(retryTimer)
+        socket?.close()
+    }
+}
+
+
+/**
  * POST to a Server-Sent-Events endpoint and invoke `onEvent({type, data})` for each frame as it streams in.
  * Pre-stream errors throw like apiFetch,so the caller can distinguish a rejected request from a mid-stream failure.
  * Guards against a stalled connection with an IDLE timeout: it resets on every chunk received

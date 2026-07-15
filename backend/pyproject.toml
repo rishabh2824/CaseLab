@@ -15,5 +15,16 @@ dependencies = [
     "pyjwt>=2.13.0",
     "sse-starlette>=3.4.5",
     "tenacity>=9.1.4",
-    "uvicorn>=0.50.0",
+    "uvicorn[standard]>=0.50.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error::DeprecationWarning"]

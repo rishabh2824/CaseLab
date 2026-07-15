@@ -2,7 +2,7 @@ import { notifications } from '@mantine/notifications'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { apiFetch, streamChat } from '../client.js'
+import { apiFetch, openSimulationSocket, streamChat } from '../client.js'
 import { mapContact, normalizeHistories } from '../pages/student/Helpers.js'
 import { useSessionStore } from './sessionStore.js'
 
@@ -77,16 +77,18 @@ export function useSimulationRun() {
         })
     }, [])
 
-    // --- server state: one query owns it, polling keeps it fresh -----------
+    // --- server state: one query owns it, a live socket keeps it fresh -----
+    // The WS connection below (see openSimulationSocket) pushes updates as the
+    // server notices them, so this query only needs to cover the initial load
+    // and act as a safety net if the socket ever silently stops reconnecting.
     const { data, error } = useQuery({
         queryKey: SIMULATION_KEY(runId),
         queryFn: () => apiFetch(`/api/simulations/${runId}`),
         enabled: Boolean(runId),
-        refetchInterval: 15000,
+        refetchInterval: 60000,
         refetchOnWindowFocus: false,
-        // Home (and the fallback below) seed the cache with the /start payload,
-        // so a short stale window avoids an immediate redundant GET on mount;
-        // the 15s poll still refreshes.
+        // Home seeds the cache with the /start payload, so a short stale
+        // window avoids an immediate redundant GET on mount.
         staleTime: 10000,
         // A 404 means the run expired — don't retry it (handled below); retry
         // other (transient) failures once.
@@ -194,16 +196,34 @@ export function useSimulationRun() {
         else navigate({ to: '/' })
     }, [])
 
-    // Run expired mid-session: drop it, clear the stale selection, and restart
-    // (or bail home).
-    // biome-ignore lint/correctness/useExhaustiveDependencies: reacts to the query error only
-    useEffect(() => {
-        if (error?.status !== 404) return
+    // Run expired: drop it, clear the stale selection, and restart (or bail
+    // home). Shared by the 404 poll-fallback path below and the live socket's
+    // 'expired' message.
+    const handleRunExpired = useCallback(() => {
         setStoreRunId('')
         setActiveContactId(null)
         if (accessCode) startSession(accessCode)
         else navigate({ to: '/' })
+    }, [accessCode, startSession, navigate, setStoreRunId])
+
+    // biome-ignore lint/correctness/useExhaustiveDependencies: reacts to the query error only
+    useEffect(() => {
+        if (error?.status !== 404) return
+        handleRunExpired()
     }, [error])
+
+    // Live state: a push-only WebSocket that mirrors server state into the
+    // query cache as the server notices changes (see backend's simulationLive
+    // poll loop). The query above still covers the initial load and acts as a
+    // fallback if this socket ever stops reconnecting.
+    useEffect(() => {
+        if (!runId) return
+        const close = openSimulationSocket(`/api/simulations/${runId}/live`, {
+            onState: (state) => queryClient.setQueryData(SIMULATION_KEY(runId), state),
+            onExpired: handleRunExpired,
+        })
+        return close
+    }, [runId, queryClient, handleRunExpired])
 
     // --- derive the view from server state (+ the streaming overlay) -------
     const caseData = data?.case ?? null

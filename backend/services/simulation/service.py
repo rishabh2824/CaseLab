@@ -282,8 +282,12 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
             resolve_turn_decisions(client, persona_id, decision_history, run),
         )
     except Exception:
+        # No fallback here (unlike classifyHarassment's silent "normal" default) —
+        # a referral/file-eligibility judge failing after retries means we can't
+        # safely decide what the persona is allowed to reveal this turn, so the
+        # whole message fails rather than guessing.
         raise HTTPException(
-            status_code=502, detail="Could not process your message. Please try again."
+            status_code=502, detail="Something went wrong. Please resend your message."
         )
     persona_details = decisions["persona_details"]
 
@@ -459,6 +463,55 @@ def append_assistant_turn(run, persona_id, reply):
     return _format_run_histories(run, {persona_id}).get(persona_id, [])
 
 
+# Strong references to in-flight generations, keyed by nothing in particular —
+# just a set so asyncio doesn't garbage-collect a task mid-flight (a bare
+# create_task() result with no other referent is only weakly held by the loop).
+# Entries remove themselves via add_done_callback once finished.
+_in_flight_generations: set[asyncio.Task] = set()
+
+
+async def _generate_and_persist_reply(prepared: dict) -> dict:
+    """The actual LLM call + persistence for a 'normal' reply turn, run as a
+    detached, shielded task (see stream_message) so that a client disconnecting
+    mid-generation — e.g. reloading the page while waiting for a reply — can
+    no longer cancel the generation or lose the reply. It always runs to
+    completion and is saved to the run; a client that reconnects picks it up
+    through the next GET /{run_id} poll or the live WebSocket push.
+    """
+    run_id = prepared["run_id"]
+    persona_id = prepared["persona_id"]
+
+    # No fallback here (unlike classifyHarassment's silent "normal" default) —
+    # a reply that fails to generate after retries has nothing safe to fall
+    # back to, so the message fails and the user is asked to resend it.
+    try:
+        raw = await personaReply(prepared["system"], prepared["messages"])
+    except Exception:
+        return {"kind": "error", "detail": "The reply could not be generated. Please resend your message."}
+
+    envelope = parse_reply(raw)
+    reply = clean_reply(str(envelope.get("reply") or "")) if envelope else ""
+    if not reply:
+        return {"kind": "error", "detail": "The reply could not be generated. Please resend your message."}
+
+    unlock_handles = coerce_handles(envelope.get("introduce"))
+    share_handles = coerce_handles(envelope.get("send_files"))
+
+    try:
+        new_contacts, shared_files, history, chat_state_payload = await apply_reply_decisions(
+            run_id, prepared, unlock_handles, share_handles, persona_id, reply
+        )
+    except Exception:
+        return {"kind": "error", "detail": "The reply could not be saved. Please try again."}
+
+    return {
+        "kind": "ok",
+        "reply": reply,
+        "history": history,
+        "meta": {"new_contacts": new_contacts, "shared_files": shared_files, **chat_state_payload},
+    }
+
+
 async def stream_message(prepared: dict):
     """Async generator of Server-Sent Events for one message turn.
 
@@ -472,9 +525,6 @@ async def stream_message(prepared: dict):
     single ``error`` event if generation fails, in which case nothing is unlocked
     or shared.
     """
-    run_id = prepared["run_id"]
-    persona_id = prepared["persona_id"]
-
     if prepared["kind"] == "boundary":
         # reply/history are already fully computed and persisted in
         # prepare_message's _flag_and_append mutate — nothing left to write
@@ -486,45 +536,24 @@ async def stream_message(prepared: dict):
         yield sse("done", {"reply": reply, "history": prepared["history"]})
         return
 
-    # --- normal: generate the whole envelope, parse it, then apply + announce ---
-    try:
-        raw = await personaReply(prepared["system"], prepared["messages"])
-    except Exception:
-        yield sse(
-            "error",
-            {"detail": "The reply could not be generated. Please try again."},
-        )
-        return
-
-    envelope = parse_reply(raw)
-    reply = clean_reply(str(envelope.get("reply") or "")) if envelope else ""
-    if not reply:
-        yield sse(
-            "error",
-            {"detail": "The reply could not be generated. Please try again."},
-        )
-        return
-    unlock_handles = coerce_handles(envelope.get("introduce"))
-    share_handles = coerce_handles(envelope.get("send_files"))
+    # --- normal: run generation+persistence in a task this generator does not
+    # own. sse-starlette cancels this generator's whole task group the instant
+    # the client disconnects (e.g. a page reload); asyncio.shield stops that
+    # cancellation from reaching `task`, so it keeps running and persists the
+    # reply regardless of whether anyone is still listening.
+    task = asyncio.create_task(_generate_and_persist_reply(prepared))
+    _in_flight_generations.add(task)
+    task.add_done_callback(_in_flight_generations.discard)
 
     try:
-        new_contacts, shared_files, history, chat_state_payload = await apply_reply_decisions(
-            run_id, prepared, unlock_handles, share_handles, persona_id, reply
-        )
-    except Exception:
-        yield sse(
-            "error",
-            {"detail": "The reply could not be saved. Please try again."},
-        )
+        result = await asyncio.shield(task)
+    except asyncio.CancelledError:
+        return  # client disconnected — task is unaffected and persists in the background
+
+    if result["kind"] == "error":
+        yield sse("error", {"detail": result["detail"]})
         return
 
-    yield sse(
-        "meta",
-        {
-            "new_contacts": new_contacts,
-            "shared_files": shared_files,
-            **chat_state_payload,
-        },
-    )
-    yield sse("delta", {"text": reply})
-    yield sse("done", {"reply": reply, "history": history})
+    yield sse("meta", result["meta"])
+    yield sse("delta", {"text": result["reply"]})
+    yield sse("done", {"reply": result["reply"], "history": result["history"]})

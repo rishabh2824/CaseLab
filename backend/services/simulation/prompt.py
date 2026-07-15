@@ -17,6 +17,11 @@ def build_system_prompt(
     # reveal yet.
     if forbidden_referral_names and known_facts != "None":
         for name in forbidden_referral_names:
+            # An empty/whitespace name would make the pattern collapse to \b\b —
+            # a zero-width match at every word boundary — which injects the
+            # replacement between every word and corrupts the facts. Skip it.
+            if not name.strip():
+                continue
             known_facts = re.sub(rf"\b{re.escape(name)}\b","[undisclosed contact]", known_facts)
 
     # --- referral guidance ---
@@ -94,6 +99,9 @@ def build_system_prompt(
 
 
 def sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict]:
+    # Drop empty/whitespace names: their \b{}\b pattern collapses to \b\b, a
+    # zero-width match at every word boundary that would rewrite the whole message.
+    locked_names = [name for name in locked_names if name and name.strip()]
     if not locked_names:
         return history
     sanitized = []

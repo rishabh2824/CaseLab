@@ -121,7 +121,7 @@ async def personaReply(system: str | list[dict], messages: list[dict]) -> str:
         "max_tokens": 600,
         "output_config": {"format": {"type": "json_schema", "schema": PERSONA_REPLY_SCHEMA}}
     }
-    data = await chat(payload, timeout=90, retries=3)
+    data = await chat(payload, timeout=30, retries=2)
     raw = messageContent(data)
     return raw
 
@@ -151,7 +151,7 @@ async def yesNoJudge(system_prompt: str, user_prompt: str) -> bool:
         "temperature": 0,
         "max_tokens": 10,
     }
-    data = await chat(payload, timeout=60, retries=3)
+    data = await chat(payload, timeout=20, retries=2)
     raw = messageContent(data)
     result = raw.strip().upper().startswith("YES")
     return result
