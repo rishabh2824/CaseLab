@@ -9,11 +9,8 @@ import {
 } from '@mantine/core'
 import { createEmptyReferral, getPersonaLabel, normalizeReferral } from './Helpers.js'
 
-// `updatePersona(recipe)` applies an Immer recipe to this persona's draft —
-// see updatePersonaAt/updateReferredPersonaByPath in caseForm.jsx. Shared by
-// both root personas and referred personas, so it must only ever touch
-// `persona`/`updatePersona`, never reach outside its own props.
-function PersonaFields({ persona, updatePersona }) {
+
+function PersonaFields({ persona, updatePersona, errors = {} }) {
     return (
         <Stack gap="xs">
             <TextInput
@@ -21,6 +18,7 @@ function PersonaFields({ persona, updatePersona }) {
                 placeholder="Enter persona name"
                 required
                 value={persona.name}
+                error={errors.name}
                 onChange={(event) => {
                     const value = event.currentTarget.value
                     updatePersona((d) => {
@@ -33,6 +31,7 @@ function PersonaFields({ persona, updatePersona }) {
                 placeholder="Enter title or role"
                 required
                 value={persona.role}
+                error={errors.role}
                 onChange={(event) => {
                     const value = event.currentTarget.value
                     updatePersona((d) => {
@@ -90,6 +89,7 @@ function PersonaFields({ persona, updatePersona }) {
                 allowDecimal={false}
                 hideControls
                 value={persona.availability_minutes}
+                error={errors.availability}
                 onChange={(value) => {
                     updatePersona((d) => {
                         d.availability_minutes = value
@@ -103,6 +103,7 @@ function PersonaFields({ persona, updatePersona }) {
                 allowDecimal={false}
                 hideControls
                 value={persona.file_count}
+                error={errors.fileCount}
                 onChange={(value) => {
                     updatePersona((d) => {
                         const count = typeof value === 'number' && value >= 0 ? value : null
@@ -199,6 +200,7 @@ function PersonaFields({ persona, updatePersona }) {
                 allowDecimal={false}
                 hideControls
                 value={persona.referral_out_count}
+                error={errors.referralOutCount}
                 onChange={(value) => {
                     updatePersona((d) => {
                         const count = typeof value === 'number' && value >= 0 ? value : null

@@ -1,3 +1,4 @@
+import { scan } from 'react-scan' // must be the first import: patches in before React loads
 import { createTheme, MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { GoogleOAuthProvider } from '@react-oauth/google'
@@ -10,17 +11,14 @@ import '@mantine/notifications/styles.css'
 import './index.css'
 import { router } from './router.jsx'
 
+if (import.meta.env.DEV) scan({ enabled: true })
+
+// React Query Cache Manager
 const queryClient = new QueryClient({
-    defaultOptions: {
-        queries: { retry: 1, refetchOnWindowFocus: false },
-    },
+    defaultOptions: {queries: { retry: 1, refetchOnWindowFocus: false }}
 })
 
-// Brand the Mantine-based admin case builder so it matches the rest of the
-// app (which is Tailwind, styled from index.css): Wisconsin red as the
-// primary color, the same self-hosted brand fonts, and a slightly rounder
-// default radius. Without this, Mantine's default blue/Inter look makes the
-// case form feel like a different product from the landing/admin pages.
+// Override Mantine UI's default theme with custom theme
 const mantineTheme = createTheme({
     fontFamily: '"IBM Plex Sans", sans-serif',
     headings: { fontFamily: '"Space Grotesk", sans-serif' },
@@ -28,8 +26,7 @@ const mantineTheme = createTheme({
     primaryShade: 6,
     defaultRadius: 'md',
     colors: {
-        // 10-shade scale required by Mantine; shade 6 is the WSB red used on
-        // the landing page (#c5050c), darker shades for hover/active.
+        // 10-shade scale required by Mantine
         wisconsin: [
             '#fdecec',
             '#f8d3d3',
@@ -45,11 +42,8 @@ const mantineTheme = createTheme({
     },
 })
 
-// Same Google OAuth client id the backend checks the ID token's `aud` claim
-// against (GOOGLE_CLIENT_ID in backend/settings.py) — see
-// components/SignInButton.jsx.
+// Checks the ID token's `aud` claim against (GOOGLE_CLIENT_ID in backend/infra/settings.py)
 const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
-
 createRoot(document.getElementById('root')).render(
     <StrictMode>
         <GoogleOAuthProvider clientId={googleClientId}>

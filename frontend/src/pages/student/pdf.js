@@ -11,8 +11,7 @@ const TITLE_GAP = LINE_HEIGHT * 1.5
 
 export const slugifyFileName = (value) => slugify(value) || 'case-lab-chat-export'
 
-// Writes a titled section starting at the current page, adding real page
-// breaks (fixed US Letter height) whenever content overflows.
+// Writes a titled section starting at the current page, adding real page breaks whenever content overflows.
 const writeSection = (doc, title, bodyLines) => {
     const pageWidth = doc.internal.pageSize.getWidth()
     const pageHeight = doc.internal.pageSize.getHeight()
@@ -58,10 +57,6 @@ export const buildChatPdfBlob = (personas, notes = '') => {
                 ? ['No chat history.']
                 : messages.flatMap((message) => {
                       const label = message.role === 'user' ? 'You' : speakerName
-                      // Label only prefixes the message's first physical line
-                      // (matching a normal chat-transcript convention); any
-                      // embedded newlines in the content become their own
-                      // (unlabeled) lines, each still subject to width-wrapping.
                       const messageLines = `${label}: ${message.content ?? ''}`.split(/\r?\n/)
                       return [...messageLines, '']
                   })

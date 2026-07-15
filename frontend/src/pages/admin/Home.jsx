@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
+import { apiFetch } from '../../client.js'
 import { ADMIN_ROLE } from '../../constants.js'
 import { useSessionStore } from '../../hooks/sessionStore.js'
 import chevron from '../../assets/Modified-Chevron-Layered-Grey.png'
@@ -10,18 +11,19 @@ function Home() {
     const adminRole = useSessionStore((s) => s.adminRole)
     const clearAdmin = useSessionStore((s) => s.clearAdmin)
 
-    const handleSignOut = () => {
-        // ['cases']/['admins'] aren't keyed by admin identity — without this,
-        // the next admin to sign in on this device/tab could flash the
-        // previous admin's case list before their own fetch completes.
+    const handleSignOut = async () => {
         queryClient.clear()
         clearAdmin()
         navigate({ to: '/' })
+        try {
+            await apiFetch('/api/admin/logout', { method: 'POST' })
+        } catch {
+            // best-effort — the cookie will simply expire on its own otherwise
+        }
     }
 
     return (
         <div className="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
-            {/* Thin red rule + faint brand geometry, matching the landing page. */}
             <div className="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true" />
             <img
                 src={chevron}

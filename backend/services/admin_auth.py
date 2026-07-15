@@ -1,57 +1,25 @@
-"""Admin session JWTs, and the Google ID-token verification boundary.
-
-Three separate concerns live here, both auth-critical:
-
-1. Our own session JWT (issued by ``POST /api/admin/login``, checked on every
-   admin request by ``api.dependencies.get_current_admin``). Short-lived and
-   signed with ``ADMIN_JWT_SECRET`` — see settings.py for why the expiry is
-   just a cap (a deleted admin's token stops working immediately regardless,
-   since the dependency re-fetches the admin row on every request).
-2. Exchanging the OAuth authorization code the frontend's popup flow
-   (``google.accounts.oauth2.initCodeClient``) hands us for an ID token.
-3. Verifying that Google ID token, including the Workspace-domain allowlist
-   check (the ``hd`` claim) that is defense-in-depth alongside the
-   ``admins`` table lookup done by the caller.
-
-``verify_google_id_token`` calls out to Google over the network (to fetch/
-verify against Google's signing certs) via
-``google.oauth2.id_token.verify_oauth2_token`` — that single call is the
-boundary tests mock; the domain/verified-email checks around it are real
-logic and are tested as such.
-"""
-
 from __future__ import annotations
-
 import time
-from typing import NamedTuple, TypedDict
-
+from typing import NamedTuple, TypedDict, Any, Mapping
 import cachecontrol
 import httpx
 import jwt
 import requests
+from fastapi import Response
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
-
 from models.admin import AdminRole
-from settings import ADMIN_JWT_ALGORITHM, ADMIN_JWT_EXPIRY_SECONDS, get_settings
+from infra.settings import JWT_ALGORITHM, JWT_EXPIRY, get_settings
+
 
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+ADMIN_COOKIE_NAME = "admin_session"
 
-# A module-level, cache-backed session so Google's signing certs are fetched
-# once and reused across logins instead of re-fetched on every call (they
-# rotate infrequently; google-auth respects the response's Cache-Control
-# headers via `cachecontrol`). verify_google_id_token is still a synchronous,
-# network-making call — see api/admin.py, which runs it in a thread pool so
-# it never blocks the event loop shared with student SSE streams.
+# A cache-backed session so Google's signing certs are fetched once and reused across logins
 _google_request = google_requests.Request(session=cachecontrol.CacheControl(requests.Session()))
 
 
 class CurrentAdmin(NamedTuple):
-    """The authenticated admin for a request: their row's id and role. Lives
-    here (not in api/dependencies.py, where it's re-exported for routers)
-    specifically so services/case_service.py can depend on it without a
-    services -> api layering violation."""
-
     id: str
     role: AdminRole
 
@@ -61,34 +29,50 @@ class AdminTokenPayload(TypedDict):
     role: AdminRole
 
 
+# Raised for any invalid admin session JWT
 class InvalidAdminToken(Exception):
-    """Raised for any invalid, expired, tampered, or malformed admin session JWT."""
+    """."""
 
 
+# Raised when the OAuth code exchange fails, a Google ID token fails verification
 class GoogleTokenInvalid(Exception):
-    """Raised when the OAuth code exchange fails, a Google ID token fails
-    verification, or the account's Workspace domain doesn't match
-    ``ADMIN_ALLOWED_DOMAIN``."""
+    """."""
 
 
-def create_admin_jwt(admin_id: str, role: AdminRole) -> str:
+def create_jwt(admin_id: str, role: AdminRole) -> str:
     settings = get_settings()
     now = int(time.time())
-    payload = {
-        "admin_id": admin_id,
-        "role": role,
-        "iat": now,
-        "exp": now + ADMIN_JWT_EXPIRY_SECONDS,
-    }
-    return jwt.encode(payload, settings.admin_jwt_secret, algorithm=ADMIN_JWT_ALGORITHM)
+    payload = {"admin_id": admin_id, "role": role, "iat": now, "exp": now + JWT_EXPIRY}
+    return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
 
 
-def decode_admin_jwt(token: str) -> AdminTokenPayload:
+def set_admin_cookie(response: Response, token: str) -> None:
+    settings = get_settings()
+    response.set_cookie(
+        key=ADMIN_COOKIE_NAME,
+        value=token,
+        max_age=JWT_EXPIRY,
+        httponly=True,
+        secure=settings.admin_cookie_secure,
+        samesite=settings.adminCookie,
+        path="/",
+    )
+
+
+def clear_admin_cookie(response: Response) -> None:
+    settings = get_settings()
+    response.delete_cookie(
+        key=ADMIN_COOKIE_NAME,
+        path="/",
+        secure=settings.admin_cookie_secure,
+        samesite=settings.adminCookie,
+    )
+
+
+def decode_jwt(token: str) -> AdminTokenPayload:
     settings = get_settings()
     try:
-        payload = jwt.decode(
-            token, settings.admin_jwt_secret, algorithms=[ADMIN_JWT_ALGORITHM]
-        )
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError as exc:
         raise InvalidAdminToken(str(exc)) from exc
 
@@ -99,15 +83,8 @@ def decode_admin_jwt(token: str) -> AdminTokenPayload:
     return {"admin_id": admin_id, "role": AdminRole(role)}
 
 
-async def exchange_google_auth_code(auth_code: str) -> str:
-    """Exchange the authorization code from the frontend's
-    ``initCodeClient({ux_mode: 'popup'})`` flow for a Google ID token.
-
-    ``redirect_uri="postmessage"`` is Google's documented literal value for
-    this popup flow (the code is delivered back to the page via postMessage,
-    not a real HTTP redirect) — it must match what the frontend's code
-    client used.
-    """
+# Exchange the authorization code from the frontend's ``initCodeClient({ux_mode: 'popup'})`` flow for a Google ID token.
+async def exchange_auth_code(auth_code: str) -> str:
     settings = get_settings()
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -129,23 +106,16 @@ async def exchange_google_auth_code(auth_code: str) -> str:
     return id_token_str
 
 
-def verify_google_id_token(id_token_str: str) -> dict:
-    """Verify signature + audience via Google, then check the `hd` (hosted
-    domain) claim against ``ADMIN_ALLOWED_DOMAIN``. Returns the decoded claims
-    (at least ``email``, ``hd``, ``email_verified``) on success."""
+def verify_google_id_token(id_token_str: str) -> Mapping[str, Any]:
     settings = get_settings()
     try:
         claims = google_id_token.verify_oauth2_token(
-            id_token_str, _google_request, settings.google_client_id
+            id_token_str, _google_request, settings.google_client_id # type: ignore
         )
     except ValueError as exc:
         raise GoogleTokenInvalid(str(exc)) from exc
 
     if not claims.get("email_verified"):
         raise GoogleTokenInvalid("Google account email is not verified.")
-
-    hd = claims.get("hd")
-    if not settings.admin_allowed_domain or hd != settings.admin_allowed_domain:
-        raise GoogleTokenInvalid("Google account is not on the allowed Workspace domain.")
 
     return claims

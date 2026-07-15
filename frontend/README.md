@@ -29,4 +29,4 @@ Create `frontend/.env` (git-ignored) — see Environment below for the keys.
 - `VITE_GOOGLE_CLIENT_ID` — Google OAuth client id for admin Google Sign-In
   (`frontend/src/pages/admin/SignInButton.jsx`). Must be the same client id the
   backend's `GOOGLE_CLIENT_ID` checks the ID token's `aud` claim against
-  (`backend/settings.py`).
+  (`backend/infra/settings.py`).

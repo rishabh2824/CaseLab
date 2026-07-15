@@ -6,9 +6,6 @@ import { MAX_MESSAGE_WORDS } from '../../constants.js'
 import { useSimulationRun } from '../../hooks/useSimulationRun.js'
 import { countWords } from './Helpers.js'
 import SimulationClock from './SimulationClock.jsx'
-// Cropped to just the crest + wordmark (no "University of Wisconsin-Madison"
-// tagline) so the logo reads bigger in this compact header bar. Other
-// screens keep the full WSBLogo.png.
 import wsbLogo from '../../assets/WSBLogo-NoTagline.png'
 
 const notify = (message) => notifications.show({ message, autoClose: 4000 })
@@ -102,9 +99,6 @@ function Home() {
     return (
         <div className="min-h-screen bg-parchment">
             <header className="relative border-b border-line bg-white">
-                {/* Thin red rule echoing the landing page's top accent, so the
-                    Wisconsin red reads as a deliberate accent rather than a
-                    full-bleed header. */}
                 <div className="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true" />
                 <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-2 py-3.5">
                     <div className="flex items-center gap-4">

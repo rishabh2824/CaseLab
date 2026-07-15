@@ -1,4 +1,4 @@
-// Pure data-shaping helpers for the case form — no closure over component
+// Pure data-shaping helpers for the case form
 export const createEmptyPersona = (overrides = {}) => ({
     name: '',
     role: '',
@@ -38,9 +38,27 @@ export const getPersonaLabel = (persona, fallback) => {
     return trimmed.length > 0 ? trimmed : fallback
 }
 
-// Flattens every referred persona (at any depth) across all root `personas`
-// into a single list of { path, persona, label, parentLabel } entries, for
-// rendering one accordion item each.
+// Field-level validation for one persona
+export const getPersonaFieldErrors = (persona) => {
+    const errors = {}
+    if (!persona.name?.trim()) errors.name = 'Name is required.'
+    if (!persona.role?.trim()) errors.role = 'Role is required.'
+    if (typeof persona.availability_minutes === 'number' && persona.availability_minutes < 1) {
+        errors.availability = 'Must be at least 1 minute.'
+    }
+    if (typeof persona.file_count === 'number' && persona.file_count < 0) {
+        errors.fileCount = 'Cannot be negative.'
+    }
+    if (typeof persona.referral_out_count === 'number' && persona.referral_out_count < 0) {
+        errors.referralOutCount = 'Cannot be negative.'
+    }
+    return errors
+}
+
+export const hasFieldErrors = (errors) => Object.values(errors).some(Boolean)
+
+// Flattens every referred persona across all root `personas` into a single list of
+// { path, persona, label, parentLabel } entries, for rendering one accordion item each.
 export const collectReferredPersonas = (personas) => {
     const referredItems = []
 

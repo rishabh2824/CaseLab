@@ -1,45 +1,16 @@
-"""Data access for the cases domain.
-
-All SQL for cases / personas / files / referrals lives here. Reads execute
-immediately and take the db client as their first argument, returning plain
-dicts keyed by column name (via ``row.asdict()``), not positional tuples, so
-callers aren't coupled to select-column order.
-
-Writes to ``cases``/``personas``/``persona_files``/``persona_referrals`` are
-BUILDERS, not executors: they return (or append to a caller-supplied list) the
-``(sql, params)`` statement tuple(s) without touching the DB. The caller
-(``case_service``) collects every statement for a create/update into one list
-and runs it through ``client.batch(...)``, which the libsql HTTP client wraps
-in a real BEGIN/COMMIT/ROLLBACK — so a whole case write is one atomic
-transaction instead of a sequence of independently-committed statements that
-can leave a case half-written if a later step fails.
-
-``files`` rows are the one exception: ``get_or_create_file_id``/``insert_file``
-still execute immediately, since a file's id must be known before it can be
-embedded in a persona/persona_files statement. A failure after that point
-rolls back the persona/case writes but leaves the file metadata row in place;
-that's a harmless orphan (the file already exists in Spaces either way), not
-data loss, so it doesn't need the same atomicity treatment.
-
-Response shaping and domain logic live in the service/router layers.
-"""
+#Data access for the cases domain.
 
 import uuid
-
 from models.cases import FileEntry, PersonaPayload, ReferralPayload
-from services.db import row_to_dict, rows_to_dicts
+from infra.db import rowToDict, rowsToDicts
+
 
 # --- cases: writes ---------------------------------------------------------
-
-
-def _normalize_access_code(access_code: str | None) -> str | None:
-    """Treat a blank access code the same as "no code" (the frontend sends ''
-    for an unset field, not null), so it doesn't collide with the partial
-    UNIQUE index on upper(access_code) (see schema.txt)."""
+def normalize_access_code(access_code: str | None) -> str | None:
     return access_code.strip() if access_code and access_code.strip() else None
 
 
-def insert_case(case_id: str, payload, owner_admin_id: str | None) -> tuple[str, tuple]:
+def insertCase(case_id: str, payload, owner_admin_id: str) -> tuple[str, tuple]:
     return (
         """
         insert into cases (
@@ -57,7 +28,7 @@ def insert_case(case_id: str, payload, owner_admin_id: str | None) -> tuple[str,
         (
             case_id,
             payload.case_name,
-            _normalize_access_code(payload.access_code),
+            normalize_access_code(payload.access_code),
             payload.initial_brief,
             payload.common_information,
             payload.simulation_duration,
@@ -67,7 +38,7 @@ def insert_case(case_id: str, payload, owner_admin_id: str | None) -> tuple[str,
     )
 
 
-def update_case_fields(case_id: str, payload) -> tuple[str, tuple]:
+def updateCase(case_id: str, payload) -> tuple[str, tuple]:
     return (
         """
         update cases
@@ -81,7 +52,7 @@ def update_case_fields(case_id: str, payload) -> tuple[str, tuple]:
         """,
         (
             payload.case_name,
-            _normalize_access_code(payload.access_code),
+            normalize_access_code(payload.access_code),
             payload.initial_brief,
             payload.common_information,
             payload.simulation_duration,
@@ -91,15 +62,11 @@ def update_case_fields(case_id: str, payload) -> tuple[str, tuple]:
     )
 
 
-def delete_personas_for_case(case_id: str) -> tuple[str, tuple]:
-    return ("delete from personas where case_id = ?", (case_id,))
+def deletePersona(case_id: str) -> tuple[str, tuple]:
+    return "delete from personas where case_id = ?", (case_id,)
 
 
-async def delete_case(client, case_id: str) -> None:
-    # ON DELETE CASCADE (cases -> personas -> persona_files/persona_referrals)
-    # only fires if foreign keys are enforced for *this* statement — same
-    # PRAGMA-batched-with-the-DELETE requirement as admin_repository.delete
-    # and update_case's persona wipe (see schema.txt for the FK chain).
+async def deleteCase(client, case_id: str) -> None:
     await client.batch(
         [
             ("PRAGMA foreign_keys = ON", ()),
@@ -109,26 +76,13 @@ async def delete_case(client, case_id: str) -> None:
 
 
 # --- cases: reads ----------------------------------------------------------
+async def fetchCaseOwner(client, case_id: str) -> dict | None:
+    result = await client.execute("select id, owner_admin_id from cases where id = ?", (case_id,),)
+    return rowToDict(result.rows[0]) if result.rows else None
 
 
-async def fetch_case_owner(client, case_id: str) -> dict | None:
-    """Cheap lookup for authorization checks (create/update) that don't need
-    the full case row — just whether it exists and who owns it."""
-    result = await client.execute(
-        "select id, owner_admin_id from cases where id = ?",
-        (case_id,),
-    )
-    return row_to_dict(result.rows[0]) if result.rows else None
-
-
-async def access_code_taken(client, access_code: str, exclude_case_id: str | None = None) -> bool:
-    """Whether another case already has this access code (case-insensitive).
-
-    A quick pre-check for a friendly 409; the partial UNIQUE index
-    (idx_cases_access_code_upper, see schema.txt) is the actual guarantee
-    against a race between this check and the write.
-    """
-    normalized = _normalize_access_code(access_code)
+async def accessCodeTaken(client, access_code: str, exclude_case_id: str | None = None) -> bool:
+    normalized = normalize_access_code(access_code)
     if normalized is None:
         return False
     result = await client.execute(
@@ -142,10 +96,7 @@ async def access_code_taken(client, access_code: str, exclude_case_id: str | Non
     return bool(result.rows)
 
 
-async def fetch_cases(client, owner_admin_id: str | None = None) -> list[dict]:
-    """List cases, optionally scoped to one owner. ``owner_admin_id=None``
-    means "no filter" — the caller (case_service) only passes ``None`` for a
-    super admin, who sees every case including legacy ``NULL``-owner ones."""
+async def fetchCases(client, owner_admin_id: str | None = None) -> list[dict]:
     if owner_admin_id is None:
         result = await client.execute(
             """
@@ -164,10 +115,10 @@ async def fetch_cases(client, owner_admin_id: str | None = None) -> list[dict]:
             """,
             (owner_admin_id,),
         )
-    return rows_to_dicts(result.rows)
+    return rowsToDicts(result.rows)
 
 
-async def fetch_case(client, case_id: str) -> dict | None:
+async def fetchCase(client, case_id: str) -> dict | None:
     result = await client.execute(
         """
         select id, case_name, access_code, initial_brief, common_information,
@@ -177,15 +128,10 @@ async def fetch_case(client, case_id: str) -> dict | None:
         """,
         (case_id,),
     )
-    return row_to_dict(result.rows[0]) if result.rows else None
+    return rowToDict(result.rows[0]) if result.rows else None
 
 
-
-
-async def fetch_personas_for_case(client, case_id: str) -> list[dict]:
-    """Every persona (root + referred) belonging to a case, in one round-trip.
-    Callers index this by ``id`` to assemble the persona tree in memory instead
-    of fetching one persona at a time."""
+async def fetchPersonas(client, case_id: str) -> list[dict]:
     result = await client.execute(
         """
         select p.id,
@@ -204,12 +150,10 @@ async def fetch_personas_for_case(client, case_id: str) -> list[dict]:
         """,
         (case_id,),
     )
-    return rows_to_dicts(result.rows)
+    return rowsToDicts(result.rows)
 
 
-async def fetch_persona_files_for_case(client, case_id: str) -> list[dict]:
-    """Every persona_files row for every persona in the case, in one
-    round-trip. Callers index this by ``persona_id``."""
+async def fetch_persona_files(client, case_id: str) -> list[dict]:
     result = await client.execute(
         """
         select pf.persona_id,
@@ -222,13 +166,10 @@ async def fetch_persona_files_for_case(client, case_id: str) -> list[dict]:
         """,
         (case_id,),
     )
-    return rows_to_dicts(result.rows)
+    return rowsToDicts(result.rows)
 
 
-async def fetch_referrals_for_case(client, case_id: str) -> list[dict]:
-    """Every referral in the case, in one round-trip. Callers index this by
-    ``parent_persona_id`` (and, to find root personas, collect every
-    ``referred_persona_id``)."""
+async def fetch_referrals(client, case_id: str) -> list[dict]:
     result = await client.execute(
         """
         select parent_persona_id, referred_persona_id, condition_trigger
@@ -237,17 +178,11 @@ async def fetch_referrals_for_case(client, case_id: str) -> list[dict]:
         """,
         (case_id,),
     )
-    return rows_to_dicts(result.rows)
+    return rowsToDicts(result.rows)
 
 
 # --- files / personas / referrals: writes ----------------------------------
-
-
 async def insert_file(client, file_ref) -> str:
-    # upload_status has never varied in practice (there's no upload pipeline
-    # that leaves it anything but 'uploaded') — leave the column for now
-    # (YAGNI to drop it), but let its DB DEFAULT fill it in rather than
-    # passing "uploaded" as a bound parameter as if this insert chooses it.
     file_id = uuid.uuid4().hex
     await client.execute(
         """
@@ -265,26 +200,23 @@ async def insert_file(client, file_ref) -> str:
     return file_id
 
 
-async def get_or_create_file_id(client, file_ref) -> str:
+async def get_file_id(client, file_ref) -> str:
     result = await client.execute(
         "select id from files where bucket = ? and object_key = ?",
         (file_ref.bucket, file_ref.object_key),
     )
     if result.rows:
-        return row_to_dict(result.rows[0])["id"]
+        row_dict = rowToDict(result.rows[0])
+        if row_dict: return row_dict["id"]
+
     return await insert_file(client, file_ref)
 
 
-async def insert_persona_files(
-    client, persona_id: str, files: list[FileEntry], statements: list
-) -> None:
-    """Resolve each file's id (a live read/insert against ``files`` — see the
-    module docstring) and append its persona_files insert statement to
-    ``statements`` rather than executing it."""
+async def insert_persona_files(client, persona_id: str, files: list[FileEntry], statements: list) -> None:
     for entry in files:
         if not entry.file:
             continue
-        file_id = await get_or_create_file_id(client, entry.file)
+        file_id = await get_file_id(client, entry.file)
         statements.append(
             (
                 """
@@ -303,17 +235,11 @@ async def insert_persona_files(
 
 
 async def insert_persona(
-    client, case_id: str, persona: PersonaPayload, statements: list
-) -> str:
-    """Append this persona's insert statement (and its files' insert
-    statements) to ``statements``; returns the persona_id the caller (e.g.
-    ``insert_referrals``) needs to link a referral to it. The id is generated
-    here, in Python, rather than left to the table's default, precisely so it
-    can be referenced before the insert actually runs."""
+    client, case_id: str, persona: PersonaPayload, statements: list) -> str:
     persona_id = uuid.uuid4().hex
     profile_photo_file_id = None
     if persona.profile_photo:
-        profile_photo_file_id = await get_or_create_file_id(client, persona.profile_photo)
+        profile_photo_file_id = await get_file_id(client, persona.profile_photo)
     statements.append(
         (
             """

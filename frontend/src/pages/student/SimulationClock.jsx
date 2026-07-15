@@ -6,10 +6,8 @@ const formatTime = (totalSeconds) => {
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
-// Ticks its own local state every second, isolated from the rest of student
-// Home (message list, contacts, notes) so only this small widget re-renders
-// as the simulation clock advances. The auto-end-on-expiry side effect lives
-// in useSimulationRun, not here — this component is display-only.
+// Ticks its own local state every second, isolated from the rest of student Home so only this small widget re-renders
+// The auto-end-on-expiry side effect lives in useSimulationRun
 function SimulationClock({ startTime, totalDurationSeconds }) {
     const [elapsedSeconds, setElapsedSeconds] = useState(0)
 

@@ -10,7 +10,7 @@ CREATE TABLE cases (
   simulation_duration INTEGER,
   non_referred INTEGER NOT NULL CHECK (non_referred >= 1),
   access_code TEXT,
-  owner_admin_id TEXT REFERENCES admins(id));
+  owner_admin_id TEXT NOT NULL REFERENCES admins(id) ON DELETE CASCADE);
 
 
 -- 2. PERSONAS
@@ -47,7 +47,6 @@ CREATE TABLE files (
   object_key TEXT NOT NULL,
   file_name TEXT NOT NULL,
   content_type TEXT,
-  upload_status TEXT NOT NULL DEFAULT 'uploaded',
   UNIQUE(bucket, object_key)
 );
 
@@ -71,6 +70,8 @@ CREATE UNIQUE INDEX idx_cases_access_code_upper
 
 
 -- 7. ADMINS
+-- Deleting an admin cascades to their cases (owner_admin_id ON DELETE CASCADE),
+-- which in turn cascades to personas, persona_referrals, and persona_files.
 CREATE TABLE admins (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   email TEXT NOT NULL UNIQUE,

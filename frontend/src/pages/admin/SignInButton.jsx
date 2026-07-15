@@ -21,12 +21,8 @@ function SignInButton({ className, children }) {
             }),
         onSuccess: (data) => {
             setError('')
-            // ['cases']/['admins'] aren't keyed by admin identity — without
-            // this, a leftover cache entry from a previous admin's session on
-            // this device/tab could flash here before the new fetch resolves.
             queryClient.clear()
             setAdmin({
-                adminJwt: data.admin_jwt,
                 adminRole: data.role,
                 adminEmail: data.email,
             })

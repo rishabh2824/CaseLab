@@ -1,23 +1,9 @@
-"""System-prompt construction, trigger resolution, and the persona reply
-envelope (parsing/sanitizing the model's JSON output).
-
-Referral/file *eligibility* is resolved here via the cheap YES/NO judges
-(``_resolve_referral_unlock`` / ``_resolve_file_share``), gating what the
-persona is even allowed to offer this turn. The decision to actually introduce
-a contact or send a file is made by the persona itself, in the same generation
-that writes the reply — see ``_build_reply_instruction`` for the JSON envelope
-it must return. That couples the words to the action: the persona cannot
-promise a referral/file it does not also enact, and cannot enact one it was not
-permitted to offer.
-"""
-
 import json
 import re
+from infra.llm import classifyFileShare, classifyReferral
 
-from services.llm import classify_file_share, classify_referral
 
-
-def _build_system_prompt(
+def build_system_prompt(
     case_snapshot,
     persona_details,
     *,
@@ -26,25 +12,12 @@ def _build_system_prompt(
     eligible_files,
     withheld_file_names,
 ):
-    """Build the persona's system prompt, split into (stable, turn).
-
-    ``stable`` is the persona's case/facts context — unchanged across a
-    conversation except when an unlock un-redacts a name — so the caller marks
-    it as a prompt-cache breakpoint. ``turn`` is this turn's referral/file
-    guidance, which moves with eligibility/unlock/share state; keeping it out of
-    the cached block lets the large stable block cache-hit even on turns where
-    only the guidance changed.
-    """
     known_facts = persona_details.get("known_facts") or "None"
-    # Redact still-forbidden contacts from the facts the model sees, so it can't
-    # surface a name it isn't allowed to reveal yet.
+    # Redact still-forbidden contacts from the facts the model sees, so it can't surface a name it isn't allowed to
+    # reveal yet.
     if forbidden_referral_names and known_facts != "None":
         for name in forbidden_referral_names:
-            known_facts = re.sub(
-                rf"\b{re.escape(name)}\b",
-                "[undisclosed contact]",
-                known_facts,
-            )
+            known_facts = re.sub(rf"\b{re.escape(name)}\b","[undisclosed contact]", known_facts)
 
     # --- referral guidance ---
     referral_lines = []
@@ -74,11 +47,18 @@ def _build_system_prompt(
     # --- file guidance ---
     file_lines = []
     if eligible_files:
-        options = "; ".join(f"{f['handle']}: {f['name']}" for f in eligible_files)
+        def describe_file(f):
+            perceived = (f.get("perceived_contents") or "").strip()
+            if not perceived:
+                return f"{f['handle']}: {f['name']}"
+            return f"{f['handle']}: {f['name']} (what you believe it contains: {perceived})"
+
+        options = "; ".join(describe_file(f) for f in eligible_files)
         file_lines.append(
             "You MAY send the following file(s) this turn if appropriate: "
             f"{options}. If (and only if) you send one in your reply, list its handle "
-            'in "send_files".'
+            'in "send_files". If you describe a file\'s contents, describe only what '
+            "you believe it contains, as given above — never invent details beyond that."
         )
     else:
         file_lines.append(
@@ -113,7 +93,7 @@ def _build_system_prompt(
     return stable, turn
 
 
-def _sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict]:
+def sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict]:
     if not locked_names:
         return history
     sanitized = []
@@ -128,7 +108,7 @@ def _sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict
     return sanitized
 
 
-def _build_reply_instruction() -> str:
+def reply_instructions() -> str:
     return (
         "Return ONLY a single JSON object (no code fences, no prose around it) with "
         "exactly these keys:\n"
@@ -144,15 +124,14 @@ def _build_reply_instruction() -> str:
     )
 
 
-def _clean_reply(text: str) -> str:
+# Strip a leading bracketed speaker tag like "[Mary, CFO ...]"
+def clean_reply(text: str) -> str:
     reply = (text or "").strip()
-    # Strip a leading bracketed speaker tag like "[Mary, CFO ...]" if the model
-    # emits one despite the instruction.
     reply = re.sub(r"^\s*\[[^\]]+\]\s*", "", reply).strip()
     return reply
 
 
-def _first_json_object(text: str) -> str | None:
+def first_json_object(text: str) -> str | None:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -160,58 +139,37 @@ def _first_json_object(text: str) -> str | None:
     return text[start : end + 1]
 
 
-def _parse_reply_envelope(raw: str) -> dict | None:
-    """Best-effort parse of the persona model's JSON envelope. Returns the dict,
-    or None if nothing parseable was produced (caller then fails closed —
-    unlocking/sharing nothing)."""
+def parse_reply(raw: str) -> dict | None:
     text = (raw or "").strip()
-    if not text:
-        return None
+    if not text: return None
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    if fence:
-        text = fence.group(1).strip()
-    for candidate in (text, _first_json_object(text)):
-        if not candidate:
-            continue
-        try:
-            data = json.loads(candidate)
-        except (json.JSONDecodeError, TypeError):
-            continue
-        if isinstance(data, dict):
-            return data
+    if fence: text = fence.group(1).strip()
+    for candidate in (text, first_json_object(text)):
+        if not candidate: continue
+        try: data = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError): continue
+        if isinstance(data, dict): return data
     return None
 
 
-def _coerce_handles(value) -> list[str]:
-    """Normalize a model-supplied handle list to upper-cased strings. Tolerates a
-    bare string (wrapped) and drops anything that isn't a str/int."""
-    if isinstance(value, str):
-        value = [value]
-    if not isinstance(value, list):
-        return []
+def coerce_handles(value) -> list[str]:
+    if isinstance(value, str): value = [value]
+    if not isinstance(value, list): return []
     handles = []
     for item in value:
         if isinstance(item, (str, int)):
             handle = str(item).strip().upper()
-            if handle:
-                handles.append(handle)
+            if handle: handles.append(handle)
     return handles
 
 
-async def _resolve_referral_unlock(referral: dict, decision_history: list[dict]) -> bool:
-    """Whether this referral's unlock condition is satisfied right now.
-
-    ``decision_history`` is the tail of the conversation (capped by the
-    caller to DECISION_JUDGE_HISTORY_LIMIT), including the current user
-    message (so the LLM judge sees this turn too)."""
+async def resolve_referral_unlock(referral: dict, decision_history: list[dict]) -> bool:
     condition = referral["condition_trigger"].strip()
-    if not condition:
-        return False
-    return await classify_referral(condition, decision_history)
+    if not condition: return False
+    return await classifyReferral(condition, decision_history)
 
 
-async def _resolve_file_share(file_entry: dict, decision_history: list[dict]) -> bool:
+async def resolve_file_share(file_entry: dict, decision_history: list[dict]) -> bool:
     condition = (file_entry.get("share_conditions") or "").strip()
-    if not condition:
-        return False
-    return await classify_file_share(condition, decision_history)
+    if not condition: return False
+    return await classifyFileShare(condition, decision_history)

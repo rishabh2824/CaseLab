@@ -2,17 +2,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiFetch } from '../../client.js'
 import { ADMIN_ROLE } from '../../constants.js'
-import { useSessionStore } from '../../hooks/sessionStore.js'
 
 const ROLE_LABELS = { [ADMIN_ROLE.SUPER]: 'Super Admin', [ADMIN_ROLE.ADMIN]: 'Admin' }
 
-// Super-admin-only admin-management page: list, add ("invite" is just adding
-// their email — there's no email/token flow, see backend plan), and delete
-// (which cascades to delete that admin's cases — confirmed before sending).
+// Super-admin-only
 function Admins() {
-    const adminJwt = useSessionStore((s) => s.adminJwt)
     const queryClient = useQueryClient()
-
     const [email, setEmail] = useState('')
     const [name, setName] = useState('')
     const [role, setRole] = useState(ADMIN_ROLE.ADMIN)
@@ -22,16 +17,12 @@ function Admins() {
         data,
         isLoading,
         error: listError,
-    } = useQuery({
-        queryKey: ['admins'],
-        queryFn: () => apiFetch('/api/admin/admins', { adminJwt }),
-    })
+    } = useQuery({queryKey: ['admins'], queryFn: () => apiFetch('/api/admin/admins')})
 
     const admins = data ?? []
 
     const addMutation = useMutation({
-        mutationFn: (payload) =>
-            apiFetch('/api/admin/admins', { method: 'POST', adminJwt, body: payload }),
+        mutationFn: (payload) => apiFetch('/api/admin/admins', { method: 'POST', body: payload }),
         onSuccess: () => {
             setFormError('')
             setEmail('')
@@ -43,16 +34,14 @@ function Admins() {
     })
 
     const deleteMutation = useMutation({
-        mutationFn: (adminId) =>
-            apiFetch(`/api/admin/admins/${adminId}`, { method: 'DELETE', adminJwt }),
+        mutationFn: (adminId) => apiFetch(`/api/admin/admins/${adminId}`, { method: 'DELETE' }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admins'] }),
     })
 
     const handleAdd = (event) => {
         event.preventDefault()
         const trimmedEmail = email.trim()
-        if (!trimmedEmail) {
-            setFormError('Email is required.')
+        if (!trimmedEmail) {setFormError('Email is required.')
             return
         }
         addMutation.mutate({ email: trimmedEmail, name: name.trim() || null, role })
@@ -79,9 +68,7 @@ function Admins() {
                     Manage admins
                 </h1>
                 <p className="mt-4 max-w-xl text-sm leading-6 text-stone">
-                    Add an admin by email — their Google account being on the allowed Workspace
-                    domain plus a row here is their entire access grant. Deleting an admin also
-                    deletes every case they own.
+                    Add an admin by email. Deleting an admin also deletes every case they own.
                 </p>
 
                 <form
@@ -89,12 +76,7 @@ function Admins() {
                     className="mt-10 flex flex-wrap items-end gap-4 rounded-2xl border border-line bg-white p-6 shadow-soft"
                 >
                     <div className="flex min-w-[220px] flex-1 flex-col gap-1.5">
-                        <label
-                            htmlFor="admin-email"
-                            className="text-xs font-medium text-stone-soft"
-                        >
-                            Email
-                        </label>
+                        <label htmlFor="admin-email" className="text-xs font-medium text-stone-soft">Email</label>
                         <input
                             id="admin-email"
                             type="email"
@@ -119,9 +101,7 @@ function Admins() {
                         />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                        <label htmlFor="admin-role" className="text-xs font-medium text-stone-soft">
-                            Role
-                        </label>
+                        <label htmlFor="admin-role" className="text-xs font-medium text-stone-soft">Role</label>
                         <select
                             id="admin-role"
                             value={role}
@@ -139,17 +119,13 @@ function Admins() {
                     >
                         {addMutation.isPending ? 'Adding…' : 'Add admin'}
                     </button>
-                    {formError && (
-                        <p className="w-full text-sm font-medium text-brand">{formError}</p>
-                    )}
+                    {formError && (<p className="w-full text-sm font-medium text-brand">{formError}</p>)}
                 </form>
 
                 <div className="mt-8 overflow-hidden rounded-2xl border border-line bg-white shadow-soft">
                     {isLoading && <p className="p-5 text-sm text-stone">Loading admins…</p>}
                     {listError && (
-                        <p className="p-5 text-sm text-brand">
-                            {listError.message || 'Failed to load admins.'}
-                        </p>
+                        <p className="p-5 text-sm text-brand">{listError.message || 'Failed to load admins.'}</p>
                     )}
                     {!isLoading && !listError && admins.length === 0 && (
                         <p className="p-5 text-sm text-stone">No admins yet.</p>
@@ -167,15 +143,9 @@ function Admins() {
                             <tbody className="divide-y divide-line-soft">
                                 {admins.map((admin) => (
                                     <tr key={admin.id} className="transition hover:bg-cream/60">
-                                        <td className="px-5 py-3 font-medium text-ink">
-                                            {admin.email}
-                                        </td>
-                                        <td className="px-5 py-3 text-stone">
-                                            {admin.name || '—'}
-                                        </td>
-                                        <td className="px-5 py-3 text-stone">
-                                            {ROLE_LABELS[admin.role] || admin.role}
-                                        </td>
+                                        <td className="px-5 py-3 font-medium text-ink">{admin.email}</td>
+                                        <td className="px-5 py-3 text-stone">{admin.name || '—'}</td>
+                                        <td className="px-5 py-3 text-stone">{ROLE_LABELS[admin.role] || admin.role}</td>
                                         <td className="px-5 py-3 text-right">
                                             {admin.role === ADMIN_ROLE.SUPER ? (
                                                 <span className="text-sm text-stone-soft">
@@ -186,7 +156,8 @@ function Admins() {
                                                     type="button"
                                                     onClick={() => handleDelete(admin)}
                                                     disabled={deleteMutation.isPending}
-                                                    className="text-sm font-semibold text-brand transition hover:text-brand-dark disabled:opacity-60"
+                                                    className="text-sm font-semibold text-brand transition
+                                                        hover:text-brand-dark disabled:opacity-60"
                                                 >
                                                     Delete
                                                 </button>

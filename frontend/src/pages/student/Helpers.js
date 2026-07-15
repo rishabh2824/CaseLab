@@ -1,4 +1,4 @@
-// Pure data-shaping helpers — no component state, no React.
+// Pure data-shaping helpers
 
 // Lowercase, replace runs of non-alphanumerics with a single '-', trim '-'.
 export const slugify = (value) =>
@@ -8,13 +8,8 @@ export const slugify = (value) =>
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
 
-// Mirrors the backend's `user_message.split()` word count (prepare_message,
-// MAX_USER_MESSAGE_WORDS) — split on runs of whitespace, ignore empty parts.
 export const countWords = (value) =>
-    String(value ?? '')
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean).length
+    String(value ?? '').trim().split(/\s+/).filter(Boolean).length
 
 export const normalizeMessages = (messages = []) =>
     (messages ?? []).filter(
@@ -32,14 +27,7 @@ export const normalizeHistories = (histories = {}) =>
     )
 
 const getPersonaInitials = (name) =>
-    name
-        ? name
-              .split(' ')
-              .filter(Boolean)
-              .slice(0, 2)
-              .map((part) => part[0].toUpperCase())
-              .join('')
-        : 'NA'
+    name ? name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') : 'NA'
 
 export const mapContact = (persona) => {
     const availability = persona.availability_duration

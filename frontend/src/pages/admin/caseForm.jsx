@@ -1,7 +1,9 @@
 import {
     Accordion,
+    Alert,
     Button,
     Container,
+    Group,
     NumberInput,
     Paper,
     Stack,
@@ -12,29 +14,24 @@ import {
 } from '@mantine/core'
 import { useQuery } from '@tanstack/react-query'
 import { produce } from 'immer'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../../client.js'
-import { useSessionStore } from '../../hooks/sessionStore.js'
 import { useCaseSubmit } from '../../hooks/useCaseSubmit.js'
+import { buildHTMLDoc, downloadForm } from './exportCase.js'
 import {
     collectReferredPersonas,
     createEmptyPersona,
+    getPersonaFieldErrors,
     getPersonaLabel,
+    hasFieldErrors,
     normalizePersona,
     normalizeReferral,
 } from './Helpers.js'
+import { CaseImportError, parseCaseHtmlDocument } from './importCase.js'
 import PersonaFields from './PersonaFields.jsx'
 
-// The backend enforces this same cap when a case is created/updated
-// (settings.MAX_SIMULATION_DURATION_MINUTES) — this is UX only, so an admin
-// gets an inline error instead of a failed submit.
-const MAX_SIMULATION_DURATION_MINUTES = 120
+const MAX_SIMULATION_DURATION = 120
 
-// templateId/editCaseId come in as props (set by each route's own typed
-// useSearch in router.jsx) rather than this component calling
-// useSearch({ strict: false }) itself — CaseForm is shared by three routes
-// with three different (or no) search schemas, so there's no single route
-// it could bind a typed useSearch to directly.
 function CaseForm({ templateId, editCaseId }) {
     const [caseName, setCaseName] = useState('')
     const [initialBrief, setInitialBrief] = useState('')
@@ -43,50 +40,69 @@ function CaseForm({ templateId, editCaseId }) {
     const [accessCode, setAccessCode] = useState('')
     const [totalPersonas, setTotalPersonas] = useState(null)
     const [personas, setPersonas] = useState([])
-    // Admin endpoints require the JWT minted at Google sign-in.
-    const adminJwt = useSessionStore((s) => s.adminJwt)
     const isEditMode = Boolean(editCaseId)
     const showPersonas = typeof totalPersonas === 'number' && totalPersonas >= 1
-    // `recipe` mutates an Immer draft of the target persona; Immer produces the
-    // new immutable state. The target is normalized first so recipes can freely
-    // touch its files/referrals arrays.
-    const updatePersonaAt = useCallback((index, recipe) => {
-        setPersonas(
-            produce((draft) => {
-                draft[index] = normalizePersona(draft[index])
-                recipe(draft[index])
-            }),
-        )
-    }, [])
-    // path = [rootIndex, referralIndex, referralIndex, ...] — walk down the
-    // referral tree (normalizing each hop) to the referred persona, then apply.
-    const updateReferredPersonaByPath = useCallback((path, recipe) => {
-        setPersonas(
-            produce((draft) => {
-                draft[path[0]] = normalizePersona(draft[path[0]])
-                let persona = draft[path[0]]
-                for (let depth = 1; depth < path.length; depth++) {
-                    const referralIndex = path[depth]
-                    persona.referrals[referralIndex] = normalizeReferral(
-                        persona.referrals[referralIndex],
-                    )
-                    persona = persona.referrals[referralIndex].persona
-                }
-                recipe(persona)
-            }),
-        )
-    }, [])
+    const sourceCaseId = editCaseId || templateId
+
+    // Import is only offered on the blank "from scratch" new-case route
+    const canImport = !sourceCaseId
+
+    const [showFieldErrors, setShowFieldErrors] = useState(false)
+    const revealErrors = useCallback(() => setShowFieldErrors(true), [])
+    const [importWarnings, setImportWarnings] = useState([])
+    const [importError, setImportError] = useState('')
+    const fileInputRef = useRef(null)
+
+    // `recipe` mutates an Immer draft of the target persona; Immer produces the new immutable state.
+    // The target is normalized first so recipes can freely touch its files/referrals arrays.
+    const updatePersonaAt = useCallback(
+        (index, recipe) => {
+            revealErrors()
+            setPersonas(
+                produce((draft) => {
+                    draft[index] = normalizePersona(draft[index])
+                    recipe(draft[index])
+                }),
+            )
+        },
+        [revealErrors],
+    )
+
+    // path — walk down the referral tree to the referred persona.
+    const updateReferredPersona = useCallback(
+        (path, recipe) => {
+            revealErrors()
+            setPersonas(
+                produce((draft) => {
+                    draft[path[0]] = normalizePersona(draft[path[0]])
+                    let persona = draft[path[0]]
+                    for (let depth = 1; depth < path.length; depth++) {
+                        const referralIndex = path[depth]
+                        persona.referrals[referralIndex] = normalizeReferral(persona.referrals[referralIndex])
+                        persona = persona.referrals[referralIndex].persona
+                    }
+                    recipe(persona)
+                }),
+            )
+        },
+        [revealErrors],
+    )
+
+    const caseNameError = !caseName.trim() ? 'Case name is required.' : null
+    const initialBriefError = !initialBrief.trim() ? 'Initial brief is required.' : null
+    const accessCodeError = !accessCode.trim() ? 'Access code is required.' : null
 
     const totalPersonasError =
-        typeof totalPersonas === 'number' && totalPersonas < 1
+        typeof totalPersonas !== 'number' || totalPersonas < 1
             ? 'At least 1 persona is required'
             : null
+
     const simulationDurationError =
         typeof simulationDurationMinutes === 'number' &&
-        simulationDurationMinutes > MAX_SIMULATION_DURATION_MINUTES
-            ? `Simulation duration cannot exceed ${MAX_SIMULATION_DURATION_MINUTES} minutes (2 hours).`
+        (simulationDurationMinutes > MAX_SIMULATION_DURATION ||
+            simulationDurationMinutes < 1)
+            ? `Simulation duration must be between 1 and ${MAX_SIMULATION_DURATION} minutes (2 hours).`
             : null
-    const sourceCaseId = editCaseId || templateId
 
     const {
         data: loadedCase,
@@ -94,17 +110,14 @@ function CaseForm({ templateId, editCaseId }) {
         error: loadError,
     } = useQuery({
         queryKey: ['case', sourceCaseId],
-        queryFn: () => apiFetch(`/api/cases/${sourceCaseId}`, { adminJwt }),
+        queryFn: () => apiFetch(`/api/cases/${sourceCaseId}`),
         enabled: Boolean(sourceCaseId),
     })
 
     const { submitError, submitSuccess, submitCase } = useCaseSubmit({
-        adminJwt,
-        isEditMode,
-        editCaseId,
+        isEditMode, editCaseId
     })
-    // The hook's submitError is submission-flow-only; a failed template/case
-    // load surfaces through the same banner via this effect instead.
+
     const [loadErrorMessage, setLoadErrorMessage] = useState('')
 
     useEffect(() => {
@@ -117,23 +130,19 @@ function CaseForm({ templateId, editCaseId }) {
         setAccessCode(templateCase.access_code ?? '')
         setTotalPersonas(templateCase.total_non_referred_personas ?? null)
         setPersonas((templateCase.personas ?? []).map((persona) => normalizePersona(persona)))
-    }, [loadedCase])
+        revealErrors()
+    }, [loadedCase, revealErrors])
 
     useEffect(() => {
         if (loadError) {
             setLoadErrorMessage(
                 loadError.message ||
-                    (isEditMode
-                        ? 'Failed to load case for editing.'
-                        : 'Failed to load case template.'),
-            )
+                    (isEditMode ? 'Failed to load case for editing.' : 'Failed to load case template.'))
         }
     }, [loadError, isEditMode])
 
     const handleSubmit = (event) => {
         event.preventDefault()
-        // Matches the pre-extraction behavior of sharing one error banner:
-        // attempting a submit clears any stale "failed to load" message too.
         setLoadErrorMessage('')
         submitCase({
             caseName,
@@ -143,12 +152,75 @@ function CaseForm({ templateId, editCaseId }) {
             accessCode,
             totalPersonas,
             personas,
-            simulationDurationError,
         })
+    }
+
+    // Builds a .html form from whatever's currently in this form
+    const handleExportTemplate = () => {
+        const html = buildHTMLDoc({
+            caseName,
+            accessCode,
+            simulationDurationMinutes,
+            initialBrief,
+            commonInformation,
+            personas,
+        })
+        downloadForm(html, caseName)
+    }
+
+    const handleImportClick = () => fileInputRef.current?.click()
+
+    // Parses a filled-in export back into form state
+    const handleImportFile = async (event) => {
+        const file = event.target.files?.[0]
+        event.target.value = ''
+        if (!file) return
+
+        const hasExistingData =
+            caseName.trim() || initialBrief.trim() || accessCode.trim() || personas.length > 0
+        if (hasExistingData && !window.confirm('Import will replace everything currently in this form. Continue?')) {
+            return
+        }
+
+        setImportError('')
+        setImportWarnings([])
+        try {
+            const text = await file.text()
+            const { data, warnings } = parseCaseHtmlDocument(text)
+            setCaseName(data.caseName)
+            setAccessCode(data.accessCode)
+            setInitialBrief(data.initialBrief)
+            setCommonInformation(data.commonInformation)
+            setSimulationDurationMinutes(data.simulationDurationMinutes)
+            setTotalPersonas(data.totalPersonas)
+            setPersonas(data.personas)
+            setImportWarnings(warnings)
+            revealErrors()
+        } catch (error) {
+            setImportError(
+                error instanceof CaseImportError
+                    ? error.message
+                    : 'Failed to read that file. Make sure it’s an unmodified export from this app.',
+            )
+        }
     }
 
     const referredPersonas = collectReferredPersonas(personas)
     const displayedError = submitError || loadErrorMessage
+
+    const rootPersonaErrors = Array.from({ length: showPersonas ? totalPersonas : 0 }, (_, index) =>
+        getPersonaFieldErrors(normalizePersona(personas[index])),
+    )
+    const referredPersonaErrors = referredPersonas.map((item) => getPersonaFieldErrors(item.persona))
+    const hasAnyPersonaError =
+        rootPersonaErrors.some(hasFieldErrors) || referredPersonaErrors.some(hasFieldErrors)
+    const hasValidationErrors =
+        Boolean(caseNameError) ||
+        Boolean(initialBriefError) ||
+        Boolean(accessCodeError) ||
+        Boolean(totalPersonasError) ||
+        Boolean(simulationDurationError) ||
+        hasAnyPersonaError
 
     return (
         <div className="relative min-h-screen bg-parchment">
@@ -157,18 +229,73 @@ function CaseForm({ templateId, editCaseId }) {
                 <Paper radius="lg" p="xl" withBorder shadow="sm" style={{ borderColor: '#e4dfd5' }}>
                     <form onSubmit={handleSubmit}>
                         <Stack gap="lg">
-                            <div className="text-center">
-                                <p className="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
-                                    Case Builder
-                                </p>
-                                <Title order={1} ta="center" mt={6}>
-                                    {isEditMode ? 'Edit Case Study' : 'New Case Study'}
-                                </Title>
+                            <div className="relative">
+                                <div className="text-center">
+                                    <p className="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
+                                        Case Builder
+                                    </p>
+                                    <Title order={1} ta="center" mt={6}>
+                                        {isEditMode ? 'Edit Case Study' : 'New Case Study'}
+                                    </Title>
+                                </div>
+                                <div className="absolute right-0 top-0">
+                                    <Group gap="xs">
+                                        {canImport && (
+                                            <>
+                                                <input
+                                                    ref={fileInputRef}
+                                                    type="file"
+                                                    accept=".html,.htm,text/html"
+                                                    className="hidden"
+                                                    onChange={handleImportFile}
+                                                />
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="xs"
+                                                    onClick={handleImportClick}
+                                                >
+                                                    Import template
+                                                </Button>
+                                            </>
+                                        )}
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="xs"
+                                            onClick={handleExportTemplate}
+                                        >
+                                            Export template
+                                        </Button>
+                                    </Group>
+                                </div>
                             </div>
                         {isLoadingTemplate && (
                             <Text c="dimmed" size="sm" ta="center">
                                 {isEditMode ? 'Loading case...' : 'Loading case template...'}
                             </Text>
+                        )}
+                        {importError && (
+                            <Alert color="red" variant="light" withCloseButton onClose={() => setImportError('')}>
+                                {importError}
+                            </Alert>
+                        )}
+                        {importWarnings.length > 0 && (
+                            <Alert
+                                color="yellow"
+                                variant="light"
+                                title={`Imported with ${importWarnings.length} issue${importWarnings.length === 1 ? '' : 's'} to review`}
+                                withCloseButton
+                                onClose={() => setImportWarnings([])}
+                            >
+                                <Stack gap={4}>
+                                    {importWarnings.map((warning) => (
+                                        <Text key={warning} size="sm">
+                                            {warning}
+                                        </Text>
+                                    ))}
+                                </Stack>
+                            </Alert>
                         )}
 
                         <Accordion defaultValue="case-info" variant="separated">
@@ -184,7 +311,9 @@ function CaseForm({ templateId, editCaseId }) {
                                             placeholder="Enter case name"
                                             required
                                             value={caseName}
+                                            error={showFieldErrors ? caseNameError : null}
                                             onChange={(event) => {
+                                                revealErrors()
                                                 setCaseName(event.currentTarget.value)
                                             }}
                                         />
@@ -195,7 +324,9 @@ function CaseForm({ templateId, editCaseId }) {
                                             autosize
                                             required
                                             value={initialBrief}
+                                            error={showFieldErrors ? initialBriefError : null}
                                             onChange={(event) => {
+                                                revealErrors()
                                                 setInitialBrief(event.currentTarget.value)
                                             }}
                                         />
@@ -213,19 +344,24 @@ function CaseForm({ templateId, editCaseId }) {
                                             label="Simulation duration (Minutes)"
                                             placeholder="Leave empty for unlimited"
                                             min={1}
-                                            max={MAX_SIMULATION_DURATION_MINUTES}
+                                            max={MAX_SIMULATION_DURATION}
                                             allowDecimal={false}
                                             hideControls
                                             value={simulationDurationMinutes}
                                             error={simulationDurationError}
-                                            onChange={setSimulationDurationMinutes}
+                                            onChange={(value) => {
+                                                revealErrors()
+                                                setSimulationDurationMinutes(value)
+                                            }}
                                         />
                                         <TextInput
                                             label="Access code"
                                             placeholder="Enter access code"
                                             required
                                             value={accessCode}
+                                            error={showFieldErrors ? accessCodeError : null}
                                             onChange={(event) => {
+                                                revealErrors()
                                                 setAccessCode(event.currentTarget.value)
                                             }}
                                         />
@@ -237,8 +373,9 @@ function CaseForm({ templateId, editCaseId }) {
                                             required
                                             hideControls
                                             value={totalPersonas}
-                                            error={totalPersonasError}
+                                            error={showFieldErrors ? totalPersonasError : null}
                                             onChange={(value) => {
+                                                revealErrors()
                                                 setTotalPersonas(value)
                                                 if (typeof value === 'number' && value >= 1) {
                                                     setPersonas((prev) => {
@@ -287,12 +424,17 @@ function CaseForm({ templateId, editCaseId }) {
                                                                 updatePersona={(recipe) =>
                                                                     updatePersonaAt(index, recipe)
                                                                 }
+                                                                errors={
+                                                                    showFieldErrors
+                                                                        ? rootPersonaErrors[index]
+                                                                        : {}
+                                                                }
                                                             />
                                                         </Accordion.Panel>
                                                     </Accordion.Item>
                                                 )
                                             })}
-                                            {referredPersonas.map((item) => {
+                                            {referredPersonas.map((item, referredIndex) => {
                                                 const pathKey = item.path.join('-')
                                                 return (
                                                     <Accordion.Item
@@ -306,10 +448,17 @@ function CaseForm({ templateId, editCaseId }) {
                                                             <PersonaFields
                                                                 persona={item.persona}
                                                                 updatePersona={(recipe) =>
-                                                                    updateReferredPersonaByPath(
+                                                                    updateReferredPersona(
                                                                         item.path,
                                                                         recipe,
                                                                     )
+                                                                }
+                                                                errors={
+                                                                    showFieldErrors
+                                                                        ? referredPersonaErrors[
+                                                                              referredIndex
+                                                                          ]
+                                                                        : {}
                                                                 }
                                                             />
                                                         </Accordion.Panel>
@@ -331,7 +480,15 @@ function CaseForm({ templateId, editCaseId }) {
                                 {submitSuccess}
                             </Text>
                         )}
-                        <Button type="submit" disabled={isLoadingTemplate}>
+                        {showFieldErrors && hasValidationErrors && (
+                            <Text c="red" size="sm">
+                                Resolve the highlighted fields above before submitting.
+                            </Text>
+                        )}
+                        <Button
+                            type="submit"
+                            disabled={isLoadingTemplate || hasValidationErrors}
+                        >
                             Submit
                         </Button>
                     </Stack>

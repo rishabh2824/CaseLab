@@ -1,12 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { apiFetch } from '../../client.js'
-import { useSessionStore } from '../../hooks/sessionStore.js'
 
 function TemplatePicker({ mode = 'template' }) {
     const navigate = useNavigate()
     const queryClient = useQueryClient()
-    const adminJwt = useSessionStore((s) => s.adminJwt)
 
     const {
         data,
@@ -14,17 +12,14 @@ function TemplatePicker({ mode = 'template' }) {
         error: queryError,
     } = useQuery({
         queryKey: ['cases'],
-        queryFn: () => apiFetch('/api/cases', { adminJwt }),
+        queryFn: () => apiFetch('/api/cases'),
     })
 
     const cases = data?.cases ?? []
     const error = queryError ? queryError.message || 'Failed to load cases.' : ''
 
-    // Delete is only offered in edit mode (managing existing cases) — the
-    // backend is the real gate: an admin may delete their own cases, a super
-    // admin any case (see case_service._authorize_case_access).
     const deleteMutation = useMutation({
-        mutationFn: (caseId) => apiFetch(`/api/cases/${caseId}`, { method: 'DELETE', adminJwt }),
+        mutationFn: (caseId) => apiFetch(`/api/cases/${caseId}`, { method: 'DELETE' }),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['cases'] }),
     })
 
