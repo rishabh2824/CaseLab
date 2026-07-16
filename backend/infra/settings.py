@@ -35,10 +35,6 @@ class Settings(BaseSettings):
     def frontendUrls(self) -> list[str]:
         return [url.strip() for url in self.frontend_urls_raw.split(",") if url.strip()]
 
-    @property
-    def adminCookie(self) -> str:
-        return "none" if self.admin_cookie_secure else "lax"
-
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings: return Settings()

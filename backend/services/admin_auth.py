@@ -54,7 +54,11 @@ def set_admin_cookie(response: Response, token: str) -> None:
         max_age=JWT_EXPIRY,
         httponly=True,
         secure=settings.admin_cookie_secure,
-        samesite=settings.adminCookie,
+        # Frontend and backend are routed under one domain (see DO App
+        # Platform component routing), so this cookie is first-party — no
+        # need for SameSite=None, which existed only to support the old
+        # cross-site (separate-domain) deployment.
+        samesite="lax",
         path="/",
     )
 
@@ -65,7 +69,7 @@ def clear_admin_cookie(response: Response) -> None:
         key=ADMIN_COOKIE_NAME,
         path="/",
         secure=settings.admin_cookie_secure,
-        samesite=settings.adminCookie,
+        samesite="lax",
     )
 
 

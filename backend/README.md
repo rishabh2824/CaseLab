@@ -83,7 +83,7 @@ Create `backend/.env` (git-ignored). See the keys below:
 | `GOOGLE_CLIENT_ID` | yes | OAuth client ID for admin Google Sign-In; checked against the ID token's `aud` claim |
 | `GOOGLE_CLIENT_SECRET` | yes | Secret for the same OAuth client, used server-side to exchange the frontend popup flow's authorization code for an ID token |
 | `ADMIN_JWT_SECRET` | yes | Signing key for admin session JWTs. Use a long random value (32+ bytes) — PyJWT warns on short HMAC keys |
-| `ADMIN_COOKIE_SECURE` | no | Defaults to `true`. The admin session cookie is `Secure` + `SameSite=None` (frontend and backend are on different domains in production). Set to `false` for local dev, where the frontend calls the backend over plain http — the cookie then falls back to `SameSite=Lax`, which still works since both sides are `localhost` |
+| `ADMIN_COOKIE_SECURE` | no | Defaults to `true`. Controls the admin session cookie's `Secure` flag (requires https). Set to `false` for local dev, where the frontend calls the backend over plain http. `SameSite` is always `Lax` — frontend and backend are routed under one domain in production (DO App Platform component routing: `/` → frontend, `/api` → backend), so the cookie is first-party |
 
 The chat models are **not** env-configurable — they're fixed constants at the
 top of [`infra/settings.py`](infra/settings.py): `llm_model` (frontier, used
