@@ -4,10 +4,9 @@ import { useRef, useState } from 'react'
 import { apiFetch } from '../client.js'
 import SignInButton from './admin/SignInButton.jsx'
 import { useSessionStore } from '../hooks/sessionStore.js'
-import halfCircle from '../assets/GraphicElements-Red-Digital-HalfCircle.png'
-import chevron from '../assets/Modified-Chevron-Layered-Grey.png'
-import bgImage from '../assets/Bg.jpg'
-import wsbLogo from '../assets/WSBLogo.png'
+import halfCircle from '../assets/HalfCircle.webp'
+import chevron from '../assets/Chevron.webp'
+import wsbLogo from '../assets/WSBLogo.webp'
 
 function Home() {
     const [accessCode, setAccessCode] = useState('')
@@ -56,8 +55,7 @@ function Home() {
 
     return (
         <div
-            className="relative flex flex-col h-screen w-full items-center justify-center overflow-hidden bg-cover bg-center px-6 font-body"
-            style={{ backgroundImage: `url(${bgImage})` }}
+            className="landing-bg relative flex flex-col h-screen w-full items-center justify-center overflow-hidden bg-cover bg-center px-6 font-body"
         >
             {/*Red horizontal bar*/}
             <div className="absolute inset-x-0 top-0 h-1 bg-[#c5050c]" aria-hidden="true" />

@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { apiFetch } from '../../client.js'
 import { ADMIN_ROLE } from '../../constants.js'
 import { useSessionStore } from '../../hooks/sessionStore.js'
-import chevron from '../../assets/Modified-Chevron-Layered-Grey.png'
+import chevron from '../../assets/Chevron.webp'
 
 function Home() {
     const navigate = useNavigate()

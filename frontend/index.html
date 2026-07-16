@@ -5,6 +5,13 @@
     <link rel="icon" type="image/svg+xml" href="/src/assets/uwlogo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Wisconsin Case Lab</title>
+    <!-- LCP element on the landing page (see .landing-bg in index.css) — preloaded
+         with high priority since it's a CSS background-image and would otherwise
+         be discovered late by the browser's preload scanner. -->
+    <link rel="preload" as="image" href="/src/assets/Bg.webp" type="image/webp" fetchpriority="high" />
+    <!-- Only cross-origin the landing page contacts: Google's GSI script, loaded
+         by GoogleOAuthProvider for the Admin Login button. -->
+    <link rel="preconnect" href="https://accounts.google.com" crossorigin />
   </head>
   <body>
     <div id="root"></div>

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     llm_key: str
     llm_base_url: str = "https://api.anthropic.com/v1/messages"
     admin_cookie_secure: bool = Field(default=True, validation_alias="ADMIN_COOKIE_SECURE")
+    # Optional. Empty disables pub/sub entirely — the live WebSocket falls back to
+    # polling the DB on its own, at STATE_POLL_INTERVAL_SECONDS in api/simulations.py.
+    redis_url: str = Field(default="", validation_alias="REDIS_URL")
 
     @property
     def frontendUrls(self) -> list[str]:

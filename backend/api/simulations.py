@@ -2,6 +2,7 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sse_starlette.sse import EventSourceResponse
 from Queries.simulation.runs import RunExpired, RunNotFound
+from infra.pubsub import subscribe_run_updates
 from infra.settings import get_settings
 from models.simulations import NotesPayload, SendMessagePayload, StartSimulationPayload
 from services.simulation import service as sim
@@ -9,10 +10,12 @@ from services.simulation import service as sim
 
 router = APIRouter(prefix="/simulations", tags=["simulations"])
 
-# How often each connected socket re-reads its run's state from the DB. Correctness
-# under autoscaling comes from every instance independently re-checking the same
-# shared Turso row, not from instances coordinating with each other — so this works
-# unmodified regardless of how many backend instances are running.
+# Ceiling on how long a connected socket waits before re-reading its run's state from
+# the DB. When REDIS_URL is set, a RunStore write publishes instantly and this only
+# acts as a backstop against a missed/dropped publish; unconfigured, it's the sole
+# poll interval, same as before Redis was introduced. Either way, correctness under
+# autoscaling comes from every instance independently re-checking the same shared
+# Turso row, not from instances coordinating with each other.
 STATE_POLL_INTERVAL_SECONDS = 2.0
 
 
@@ -62,20 +65,36 @@ async def simulationLive(websocket: WebSocket, run_id: str):
     disconnect_task = asyncio.create_task(_wait_for_disconnect(websocket))
     last_state = None
     try:
-        while True:
-            try:
-                state = await sim.get_simulation_state(run_id)
-            except (RunNotFound, RunExpired):
-                await websocket.send_json({"type": "expired"})
-                break
-            if state != last_state:
-                await websocket.send_json({"type": "state", "data": state})
-                last_state = state
-            done, _pending = await asyncio.wait(
-                {disconnect_task}, timeout=STATE_POLL_INTERVAL_SECONDS
-            )
-            if disconnect_task in done:
-                break
+        async with subscribe_run_updates(run_id) as pubsub:
+            while True:
+                try:
+                    state = await sim.get_simulation_state(run_id)
+                except (RunNotFound, RunExpired):
+                    await websocket.send_json({"type": "expired"})
+                    break
+                if state != last_state:
+                    await websocket.send_json({"type": "state", "data": state})
+                    last_state = state
+
+                if pubsub is not None:
+                    # Blocks up to STATE_POLL_INTERVAL_SECONDS for a publish on this
+                    # run's channel, returning early the instant one arrives — same
+                    # backstop cadence as the plain-poll branch below if none does.
+                    wait_task = asyncio.create_task(
+                        pubsub.get_message(
+                            ignore_subscribe_messages=True,
+                            timeout=STATE_POLL_INTERVAL_SECONDS,
+                        )
+                    )
+                else:
+                    wait_task = asyncio.create_task(asyncio.sleep(STATE_POLL_INTERVAL_SECONDS))
+
+                done, _pending = await asyncio.wait(
+                    {disconnect_task, wait_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if disconnect_task in done:
+                    wait_task.cancel()
+                    break
     except WebSocketDisconnect:
         pass
     finally:

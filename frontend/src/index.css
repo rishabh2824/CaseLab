@@ -36,6 +36,17 @@
     background-color: #f4f1ea;
 }
 
+/* Landing page full-bleed background. WebP first (image-set picks the first
+   supported format); the JPEG is the fallback for the ~3% of browsers without
+   WebP support. */
+.landing-bg {
+    background-image: url('./assets/Bg.jpg');
+    background-image: image-set(
+        url('./assets/Bg.webp') type('image/webp'),
+        url('./assets/Bg.jpg') type('image/jpeg')
+    );
+}
+
 body {
     margin: 0;
     min-height: 100vh;

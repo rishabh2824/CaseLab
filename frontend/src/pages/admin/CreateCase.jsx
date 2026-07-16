@@ -1,5 +1,5 @@
 import { useNavigate } from '@tanstack/react-router'
-import chevron from '../../assets/Modified-Chevron-Layered-Grey.png'
+import chevron from '../../assets/Chevron.webp'
 
 function CreateCase() {
     const navigate = useNavigate()

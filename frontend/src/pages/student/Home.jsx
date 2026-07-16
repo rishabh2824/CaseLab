@@ -6,7 +6,7 @@ import { MAX_MESSAGE_WORDS } from '../../constants.js'
 import { useSimulationRun } from '../../hooks/useSimulationRun.js'
 import { countWords } from './Helpers.js'
 import SimulationClock from './SimulationClock.jsx'
-import wsbLogo from '../../assets/WSBLogo-NoTagline.png'
+import wsbLogo from '../../assets/ModifiedWSB.webp'
 
 const notify = (message) => notifications.show({ message, autoClose: 4000 })
 

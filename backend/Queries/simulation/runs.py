@@ -2,6 +2,7 @@ import asyncio
 import json
 import time
 from infra.db import getDb, rowToDict
+from infra.pubsub import publish_run_update
 from infra.settings import MAX_SIMULATION_DURATION
 
 
@@ -99,7 +100,9 @@ class RunStore:
                 "where run_id = ? and version = ?",
                 (serialize_run(run), run_id, version),
             )
-            if update_result.rows_affected: return result
+            if update_result.rows_affected:
+                await publish_run_update(run_id)
+                return result
         raise RunWriteConflict(run_id)
 
 

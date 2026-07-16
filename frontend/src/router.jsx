@@ -3,7 +3,6 @@ import { lazy, Suspense } from 'react'
 import { ADMIN_ROLE } from './constants.js'
 import { useSessionStore } from './hooks/sessionStore.js'
 import LandingHome from './pages/Home.jsx'
-import Home from './pages/student/Home.jsx'
 
 // Keep the admin flow out of simulation workflow loads
 const Admins = lazy(() => import('./pages/admin/Admins.jsx'))
@@ -11,6 +10,12 @@ const CreateCase = lazy(() => import('./pages/admin/CreateCase.jsx'))
 const CaseForm = lazy(() => import('./pages/admin/caseForm.jsx'))
 const AdminHome = lazy(() => import('./pages/admin/Home.jsx'))
 const TemplatePicker = lazy(() => import('./pages/admin/TemplatePicker.jsx'))
+// Lazy so the landing bundle never pulls in @mantine/notifications' store
+// module (Home calls notifications.show(), which requires MantineProvider —
+// see mantineLayoutRoute below).
+const Home = lazy(() => import('./pages/student/Home.jsx'))
+// Only student + admin need Mantine — lazy so landing's bundle never loads it.
+const MantineLayout = lazy(() => import('./MantineLayout.jsx'))
 
 const rootRoute = createRootRoute({
     component: () => (<Suspense fallback={null}><Outlet /></Suspense>)})
@@ -21,14 +26,29 @@ const indexRoute = createRoute({
     component: LandingHome,
 })
 
-const studentRoute = createRoute({
+// Pathless layout route: wraps student + admin in Mantine (theme +
+// Notifications) without adding a path segment. Landing stays a sibling of
+// this route, outside the Mantine tree entirely.
+const mantineLayoutRoute = createRoute({
     getParentRoute: () => rootRoute,
+    id: 'mantineLayout',
+    component: () => (
+        <Suspense fallback={null}>
+            <MantineLayout>
+                <Outlet />
+            </MantineLayout>
+        </Suspense>
+    ),
+})
+
+const studentRoute = createRoute({
+    getParentRoute: () => mantineLayoutRoute,
     path: '/student',
     component: Home,
 })
 
 const adminGuardRoute = createRoute({
-    getParentRoute: () => rootRoute,
+    getParentRoute: () => mantineLayoutRoute,
     id: 'adminGuard',
     beforeLoad: () => {if (useSessionStore.getState().adminRole == null) {throw redirect({ to: '/' })}}
 })
@@ -100,16 +120,18 @@ const adminAdminsRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
     indexRoute,
-    studentRoute,
-    adminGuardRoute.addChildren([
-        adminHomeRoute,
-        adminNewRoute,
-        adminNewScratchRoute,
-        adminNewTemplateRoute,
-        adminNewFormRoute,
-        adminEditRoute,
-        adminEditFormRoute,
-        adminAdminsRoute,
+    mantineLayoutRoute.addChildren([
+        studentRoute,
+        adminGuardRoute.addChildren([
+            adminHomeRoute,
+            adminNewRoute,
+            adminNewScratchRoute,
+            adminNewTemplateRoute,
+            adminNewFormRoute,
+            adminEditRoute,
+            adminEditFormRoute,
+            adminAdminsRoute,
+        ]),
     ]),
 ])
 
