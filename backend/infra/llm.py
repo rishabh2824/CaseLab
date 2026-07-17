@@ -1,3 +1,5 @@
+import asyncio
+import json
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_incrementing
 from infra.settings import get_settings
@@ -68,6 +70,81 @@ async def chat(payload: dict, *, timeout: float, retries: int) -> dict:
     return await send()
 
 
+class LLMStreamError(RuntimeError):
+    """An `error` event arrived inside an otherwise-OK Anthropic SSE stream."""
+
+
+# Parse an async iterator of raw SSE lines into decoded event dicts. Anthropic frames each
+# event as one or more `data:` lines terminated by a blank line; `event:` lines duplicate the
+# type carried in the JSON body, and `:` lines are keep-alive comments — both are ignored.
+async def parseSseLines(lines):
+    data_parts: list[str] = []
+    async for raw_line in lines:
+        line = raw_line.rstrip("\r\n")
+        if not line:
+            if data_parts:
+                payload = "\n".join(data_parts)
+                data_parts = []
+                try:
+                    yield json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            data_parts.append(line[5:].lstrip(" "))
+
+
+# Stream Anthropic's Messages API, yielding decoded SSE event dicts. Mirrors chat()'s field
+# mapping plus "stream": True. Retries (via isRetryable) fire ONLY before the first event is
+# yielded — once bytes have reached the caller, a mid-stream failure propagates, because we
+# can't cleanly rewind an already-started reply. read=30 is per-chunk (idle) timeout on a
+# stream, which is exactly the "stalled generation" signal we want to bound.
+async def streamChat(payload: dict, *, retries: int):
+    settings = get_settings()
+    header = headers(settings)
+    client = getClient()
+    if client is None:
+        raise RuntimeError("HTTP client failed to initialize.")
+
+    anthropic_payload = {
+        "model": payload["model"], "messages": payload["messages"],
+        "max_tokens": payload["max_tokens"], "stream": True,
+    }
+    if "system" in payload: anthropic_payload["system"] = payload["system"]
+    if "temperature" in payload: anthropic_payload["temperature"] = payload["temperature"]
+    if "output_config" in payload: anthropic_payload["output_config"] = payload["output_config"]
+
+    timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+
+    attempt = 0
+    while True:
+        attempt += 1
+        yielded_any = False
+        try:
+            async with client.stream(
+                "POST", settings.llm_base_url, json=anthropic_payload, headers=header, timeout=timeout
+            ) as response:
+                if response.status_code >= 400:
+                    # Body must be drained before raise_for_status() on a streaming response,
+                    # otherwise httpx raises ResponseNotRead instead of the real status error.
+                    await response.aread()
+                    response.raise_for_status()
+                async for event in parseSseLines(response.aiter_lines()):
+                    if event.get("type") == "error":
+                        detail = (event.get("error") or {}).get("message", "stream error")
+                        raise LLMStreamError(detail)
+                    yielded_any = True
+                    yield event
+            return
+        except Exception as exc:
+            if not yielded_any and attempt < retries and isRetryable(exc):
+                await asyncio.sleep(attempt)  # 1s, then 2s — mirrors wait_incrementing
+                continue
+            raise
+
+
 # Extracts the raw message from API Response
 def messageContent(data: dict) -> str:
     for block in data.get("content", []):
@@ -124,6 +201,27 @@ async def personaReply(system: str | list[dict], messages: list[dict]) -> str:
     data = await chat(payload, timeout=30, retries=2)
     raw = messageContent(data)
     return raw
+
+
+# Streaming twin of personaReply: same constrained-JSON payload, but yields the reply's raw
+# text fragments as they arrive (structured outputs stream as ordinary text_delta events).
+# The caller reassembles the full JSON and extracts the "reply" field incrementally.
+async def personaReplyStream(system: str | list[dict], messages: list[dict]):
+    payload = {
+        "model": get_settings().llm_model,
+        "system": system,
+        "messages": messages,
+        "max_tokens": 600,
+        "output_config": {"format": {"type": "json_schema", "schema": PERSONA_REPLY_SCHEMA}},
+    }
+    async for event in streamChat(payload, retries=2):
+        if event.get("type") != "content_block_delta":
+            continue
+        delta = event.get("delta") or {}
+        if delta.get("type") == "text_delta":
+            text = delta.get("text")
+            if text:
+                yield text
 
 
 # Formats the message transcript

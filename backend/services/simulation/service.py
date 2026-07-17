@@ -5,7 +5,7 @@ import uuid
 from fastapi import HTTPException
 from models.simulations import NotesPayload, SendMessagePayload, StartSimulationPayload
 from infra.db import getDb
-from infra.llm import classifyHarassment, personaReply
+from infra.llm import classifyHarassment, personaReplyStream
 from infra.rate_limit import messageLimit, simulationLimit
 from Queries.simulation.runs import run_store
 from services.simulation.prompt import (
@@ -18,6 +18,7 @@ from services.simulation.prompt import (
     resolve_referral_unlock,
     sanitize_history,
 )
+from services.simulation.reply_stream import ReplyExtractor
 from services.simulation.reads import (
     build_persona_graph,
     get_case,
@@ -469,61 +470,94 @@ def append_assistant_turn(run, persona_id, reply):
 # Entries remove themselves via add_done_callback once finished.
 _in_flight_generations: set[asyncio.Task] = set()
 
+# Wall-clock cap on a single reply stream. read= in streamChat only bounds the
+# gap between chunks; this bounds the whole generation so a slow-but-never-idle
+# stream can't run unbounded.
+GENERATION_TOTAL_TIMEOUT = 120
 
-async def _generate_and_persist_reply(prepared: dict) -> dict:
-    """The actual LLM call + persistence for a 'normal' reply turn, run as a
-    detached, shielded task (see stream_message) so that a client disconnecting
-    mid-generation — e.g. reloading the page while waiting for a reply — can
-    no longer cancel the generation or lose the reply. It always runs to
-    completion and is saved to the run; a client that reconnects picks it up
-    through the next GET /{run_id} poll or the live WebSocket push.
+
+async def _generate_and_persist_reply(prepared: dict, queue: asyncio.Queue) -> None:
+    """Producer for a 'normal' reply turn: stream the persona reply from the LLM,
+    push SSE frames onto ``queue`` for stream_message to forward, then persist.
+
+    Runs as a detached task (see stream_message), so a client disconnecting
+    mid-generation — e.g. reloading the page while waiting — can no longer cancel
+    generation or lose the reply. It always runs to completion and is saved to the
+    run; a reconnecting client picks it up via the next GET /{run_id} poll or the
+    live WebSocket push. The queue is unbounded and written with put_nowait, so a
+    gone consumer never blocks or backpressures generation (bounded in practice by
+    max_tokens on the reply).
+
+    Frame order for a successful turn is ``delta* -> meta -> done``: the persona's
+    reply text streams first, but the referral/file decisions it enacts are only
+    known once the full reply is parsed, so ``meta`` necessarily trails the text.
+    A single ``error`` frame (and nothing persisted) replaces the rest on failure.
     """
     run_id = prepared["run_id"]
     persona_id = prepared["persona_id"]
+    extractor = ReplyExtractor()
+    raw_parts: list[str] = []
 
-    # No fallback here (unlike classifyHarassment's silent "normal" default) —
-    # a reply that fails to generate after retries has nothing safe to fall
-    # back to, so the message fails and the user is asked to resend it.
-    try:
-        raw = await personaReply(prepared["system"], prepared["messages"])
-    except Exception:
-        return {"kind": "error", "detail": "The reply could not be generated. Please resend your message."}
-
-    envelope = parse_reply(raw)
-    reply = clean_reply(str(envelope.get("reply") or "")) if envelope else ""
-    if not reply:
-        return {"kind": "error", "detail": "The reply could not be generated. Please resend your message."}
-
-    unlock_handles = coerce_handles(envelope.get("introduce"))
-    share_handles = coerce_handles(envelope.get("send_files"))
+    def emit(event: str, data: dict) -> None:
+        queue.put_nowait(sse(event, data))
 
     try:
-        new_contacts, shared_files, history, chat_state_payload = await apply_reply_decisions(
-            run_id, prepared, unlock_handles, share_handles, persona_id, reply
-        )
-    except Exception:
-        return {"kind": "error", "detail": "The reply could not be saved. Please try again."}
+        # No fallback here (unlike classifyHarassment's silent "normal" default) —
+        # a reply that fails to generate/stream has nothing safe to fall back to,
+        # so the message fails and the user is asked to resend it.
+        try:
+            async with asyncio.timeout(GENERATION_TOTAL_TIMEOUT):
+                async for text in personaReplyStream(prepared["system"], prepared["messages"]):
+                    raw_parts.append(text)
+                    delta = extractor.feed(text)
+                    if delta:
+                        emit("delta", {"text": delta})
+        except Exception:
+            emit("error", {"detail": "The reply could not be generated. Please resend your message."})
+            return
 
-    return {
-        "kind": "ok",
-        "reply": reply,
-        "history": history,
-        "meta": {"new_contacts": new_contacts, "shared_files": shared_files, **chat_state_payload},
-    }
+        # Authoritative parse of the full raw text — the streamed deltas are a
+        # best-effort preview; this is the reply of record for persistence + done.
+        envelope = parse_reply("".join(raw_parts))
+        reply = clean_reply(str(envelope.get("reply") or "")) if envelope else ""
+        if not reply:
+            emit("error", {"detail": "The reply could not be generated. Please resend your message."})
+            return
+
+        unlock_handles = coerce_handles(envelope.get("introduce"))
+        share_handles = coerce_handles(envelope.get("send_files"))
+
+        try:
+            new_contacts, shared_files, history, chat_state_payload = await apply_reply_decisions(
+                run_id, prepared, unlock_handles, share_handles, persona_id, reply
+            )
+        except Exception:
+            emit("error", {"detail": "The reply could not be saved. Please try again."})
+            return
+
+        if not extractor.found_reply:
+            # The incremental lexer never surfaced the reply text (an unparseable
+            # stream, or `reply` absent from the streamed view) — emit it once now,
+            # matching the old single-delta behavior. A lexer bug can degrade the
+            # live preview but never lose the reply, which is the authoritative
+            # value parsed above.
+            emit("delta", {"text": reply})
+
+        emit("meta", {"new_contacts": new_contacts, "shared_files": shared_files, **chat_state_payload})
+        emit("done", {"reply": reply, "history": history})
+    finally:
+        queue.put_nowait(None)  # sentinel: tell the consumer the stream is complete
 
 
 async def stream_message(prepared: dict):
     """Async generator of Server-Sent Events for one message turn.
 
-    A boundary reply is canned, so its meta + text are known up front. A normal
-    reply is generated first (buffered), because the persona's own output carries
-    the referral/file decisions — only after parsing it do we know what to unlock,
-    share, and announce.
-
-    Emits, in order: ``meta`` (new_contacts / shared_files / chat-state), then
-    ``delta`` (the reply text), then ``done`` (final reply + history) — or a
-    single ``error`` event if generation fails, in which case nothing is unlocked
-    or shared.
+    A boundary reply is canned, so its meta + text are known up front and emitted
+    ``meta -> delta -> done``. A normal reply is produced by a detached task that
+    streams the persona's text token-by-token, so the event order is
+    ``delta* -> meta -> done`` — the referral/file decisions carried in the reply
+    are only known once it finishes. A single ``error`` event replaces the rest if
+    generation fails, in which case nothing is unlocked or shared.
     """
     if prepared["kind"] == "boundary":
         # reply/history are already fully computed and persisted in
@@ -536,24 +570,22 @@ async def stream_message(prepared: dict):
         yield sse("done", {"reply": reply, "history": prepared["history"]})
         return
 
-    # --- normal: run generation+persistence in a task this generator does not
-    # own. sse-starlette cancels this generator's whole task group the instant
-    # the client disconnects (e.g. a page reload); asyncio.shield stops that
-    # cancellation from reaching `task`, so it keeps running and persists the
-    # reply regardless of whether anyone is still listening.
-    task = asyncio.create_task(_generate_and_persist_reply(prepared))
+    # --- normal: the producer runs as a task this generator does not own, and
+    # streams SSE frames through `queue`. sse-starlette cancels this generator's
+    # whole task group the instant the client disconnects (e.g. a page reload);
+    # because the producer is a separate, referenced task, that cancellation
+    # reaches only our `queue.get()` here — the producer keeps running and
+    # persists the reply regardless of whether anyone is still listening.
+    queue: asyncio.Queue = asyncio.Queue()
+    task = asyncio.create_task(_generate_and_persist_reply(prepared, queue))
     _in_flight_generations.add(task)
     task.add_done_callback(_in_flight_generations.discard)
 
-    try:
-        result = await asyncio.shield(task)
-    except asyncio.CancelledError:
-        return  # client disconnected — task is unaffected and persists in the background
-
-    if result["kind"] == "error":
-        yield sse("error", {"detail": result["detail"]})
-        return
-
-    yield sse("meta", result["meta"])
-    yield sse("delta", {"text": result["reply"]})
-    yield sse("done", {"reply": result["reply"], "history": result["history"]})
+    while True:
+        try:
+            item = await queue.get()
+        except asyncio.CancelledError:
+            return  # client disconnected — producer is unaffected and persists in the background
+        if item is None:
+            return  # producer signalled completion
+        yield item

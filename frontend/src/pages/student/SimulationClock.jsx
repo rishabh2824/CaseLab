@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 
 const formatTime = (totalSeconds) => {
     const minutes = Math.floor(totalSeconds / 60)
@@ -48,4 +48,4 @@ function SimulationClock({ startTime, totalDurationSeconds }) {
     )
 }
 
-export default SimulationClock
+export default memo(SimulationClock)

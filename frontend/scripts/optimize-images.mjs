@@ -9,9 +9,8 @@ const ASSETS = new URL('../src/assets/', import.meta.url)
 const OUT_DIR = new URL('../scripts/output/', import.meta.url)
 mkdirSync(OUT_DIR, { recursive: true })
 
-// { file, maxWidth (resize cap, preserves aspect), webpQuality, alsoJpeg (fallback for the CSS image-set background) }
+// { file, maxWidth (resize cap, preserves aspect), webpQuality, alsoJpeg (also emit a JPEG fallback) }
 const jobs = [
-    { file: 'Bg.jpg', maxWidth: 2560, webpQuality: 82, alsoJpeg: true, jpegQuality: 80 },
     { file: 'Modified-Chevron-Layered-Grey.png', maxWidth: 1000, webpQuality: 82 },
     { file: 'GraphicElements-Red-Digital-HalfCircle.png', maxWidth: 800, webpQuality: 82 },
     { file: 'WSBLogo.png', maxWidth: 500, webpQuality: 90 },

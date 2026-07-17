@@ -34,20 +34,27 @@ const runState = (overrides = {}) => ({
     ...overrides,
 })
 
-// One message turn as an SSE body (meta -> delta -> done), matching stream_message.
-const messageSse = (reply) =>
-    [
-        'event: meta',
-        `data: ${JSON.stringify({ new_contacts: [], shared_files: [], chat_ended: false, chat_end_reason: null, warning_count: 0 })}`,
+// One message turn as an SSE body, matching stream_message's streamed order
+// (delta* -> meta -> done). The reply text is split across two delta frames to
+// exercise the incremental renderer the way real token streaming does.
+const messageSse = (reply) => {
+    const split = Math.ceil(reply.length / 2)
+    return [
+        'event: delta',
+        `data: ${JSON.stringify({ text: reply.slice(0, split) })}`,
         '',
         'event: delta',
-        `data: ${JSON.stringify({ text: reply })}`,
+        `data: ${JSON.stringify({ text: reply.slice(split) })}`,
+        '',
+        'event: meta',
+        `data: ${JSON.stringify({ new_contacts: [], shared_files: [], chat_ended: false, chat_end_reason: null, warning_count: 0 })}`,
         '',
         'event: done',
         `data: ${JSON.stringify({ reply, history: [{ role: 'user', content: 'What vendor do we use?' }, { role: 'assistant', content: reply }] })}`,
         '',
         '',
     ].join('\n')
+}
 
 // Wire up every backend endpoint the student flow touches, deterministically.
 async function mockBackend(page, { reply }) {

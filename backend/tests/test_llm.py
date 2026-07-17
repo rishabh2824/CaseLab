@@ -2,6 +2,7 @@
 fallback behavior (the one intentional exception to "no default on failure").
 """
 
+import httpx
 import pytest
 
 from infra import llm
@@ -66,3 +67,154 @@ class TestClassifyHarassmentFallback:
 
         monkeypatch.setattr(llm, "chat", fake_chat)
         assert await llm.classifyHarassment("asdkjhasd", []) == "nonsense"
+
+
+async def _aiter(items):
+    for item in items:
+        yield item
+
+
+class TestParseSseLines:
+    async def test_accumulates_data_lines_and_ignores_event_and_comment_lines(self):
+        lines = [
+            "event: message_start",
+            'data: {"type": "message_start"}',
+            "",
+            ": this is a keep-alive comment",
+            "event: content_block_delta",
+            'data: {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}}',
+            "",
+        ]
+        events = [event async for event in llm.parseSseLines(_aiter(lines))]
+        assert [e["type"] for e in events] == ["message_start", "content_block_delta"]
+        assert events[1]["delta"]["text"] == "hi"
+
+    async def test_skips_undecodable_data_payloads(self):
+        lines = ["data: not json", "", 'data: {"type": "ok"}', ""]
+        events = [event async for event in llm.parseSseLines(_aiter(lines))]
+        assert [e["type"] for e in events] == ["ok"]
+
+
+class _FakeStreamResponse:
+    def __init__(self, status_code, lines):
+        self.status_code = status_code
+        self._lines = lines
+
+    async def aread(self):
+        return b""
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://api.test/v1/messages")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError("error", request=request, response=response)
+
+    async def aiter_lines(self):
+        for line in self._lines:
+            if isinstance(line, Exception):
+                raise line
+            yield line
+
+
+class _FakeStreamCtx:
+    """Async context manager standing in for httpx's client.stream(...)."""
+
+    def __init__(self, *, response=None, enter_exc=None):
+        self._response = response
+        self._enter_exc = enter_exc
+
+    async def __aenter__(self):
+        if self._enter_exc is not None:
+            raise self._enter_exc
+        return self._response
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeClient:
+    def __init__(self, behaviors):
+        self._behaviors = list(behaviors)
+        self.calls = 0
+
+    def stream(self, method, url, **kwargs):
+        ctx = self._behaviors[self.calls]
+        self.calls += 1
+        return ctx
+
+
+def _text_event(text):
+    return (
+        'data: {"type": "content_block_delta", "delta": '
+        f'{{"type": "text_delta", "text": "{text}"}}}}'
+    )
+
+
+class _StreamSettings:
+    llm_key = "k"
+    llm_base_url = "https://api.test/v1/messages"
+
+
+async def _noop_sleep(_seconds):
+    return None
+
+
+def _patch_stream(monkeypatch, behaviors):
+    client = _FakeClient(behaviors)
+    monkeypatch.setattr(llm, "get_settings", lambda: _StreamSettings())
+    monkeypatch.setattr(llm, "getClient", lambda: client)
+    monkeypatch.setattr(llm.asyncio, "sleep", _noop_sleep)  # keep retry backoff instant in tests
+    return client
+
+
+_PAYLOAD = {"model": "m", "messages": [{"role": "user", "content": "hi"}], "max_tokens": 10}
+
+
+class TestStreamChatRetries:
+    """Retries fire only BEFORE the first event reaches the caller; once bytes
+    have streamed, a mid-stream failure propagates rather than restarting."""
+
+    async def test_connect_error_is_retried_then_succeeds(self, monkeypatch):
+        ok = _FakeStreamResponse(200, [_text_event("hi"), ""])
+        client = _patch_stream(monkeypatch, [
+            _FakeStreamCtx(enter_exc=httpx.ConnectTimeout("no route")),
+            _FakeStreamCtx(response=ok),
+        ])
+        events = [e async for e in llm.streamChat(_PAYLOAD, retries=2)]
+        assert client.calls == 2
+        assert events[0]["delta"]["text"] == "hi"
+
+    async def test_429_before_stream_is_retried(self, monkeypatch):
+        ok = _FakeStreamResponse(200, [_text_event("yo"), ""])
+        client = _patch_stream(monkeypatch, [
+            _FakeStreamCtx(response=_FakeStreamResponse(429, [])),
+            _FakeStreamCtx(response=ok),
+        ])
+        events = [e async for e in llm.streamChat(_PAYLOAD, retries=2)]
+        assert client.calls == 2
+        assert events[0]["delta"]["text"] == "yo"
+
+    async def test_400_is_not_retried(self, monkeypatch):
+        client = _patch_stream(monkeypatch, [
+            _FakeStreamCtx(response=_FakeStreamResponse(400, [])),
+        ])
+        with pytest.raises(httpx.HTTPStatusError):
+            [e async for e in llm.streamChat(_PAYLOAD, retries=2)]
+        assert client.calls == 1
+
+    async def test_failure_after_first_event_does_not_retry(self, monkeypatch):
+        response = _FakeStreamResponse(200, [_text_event("a"), "", httpx.ReadError("dropped")])
+        client = _patch_stream(monkeypatch, [_FakeStreamCtx(response=response)])
+        events = []
+        with pytest.raises(httpx.ReadError):
+            async for e in llm.streamChat(_PAYLOAD, retries=2):
+                events.append(e)
+        assert len(events) == 1
+        assert client.calls == 1
+
+    async def test_in_stream_error_event_raises(self, monkeypatch):
+        lines = ['data: {"type": "error", "error": {"message": "overloaded"}}', ""]
+        client = _patch_stream(monkeypatch, [_FakeStreamCtx(response=_FakeStreamResponse(200, lines))])
+        with pytest.raises(llm.LLMStreamError):
+            [e async for e in llm.streamChat(_PAYLOAD, retries=2)]
+        assert client.calls == 1
