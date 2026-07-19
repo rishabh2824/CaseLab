@@ -75,7 +75,7 @@ class TestNormalReplyHappyPath:
             service, "personaReplyStream",
             stream_of(f'{{"reply": "{reply}", "introduce": [], "send_files": []}}'),
         )
-        monkeypatch.setattr(service, "apply_reply_decisions", fake_apply({}))
+        monkeypatch.setattr(service, "applyDecisions", fake_apply({}))
 
         raw_events = [event async for event in service.streamMessage(prepared())]
         assert events(raw_events) == ["delta", "meta", "done"]
@@ -88,7 +88,7 @@ class TestNormalReplyHappyPath:
             stream_of('{"reply": "Hello ', "there, ", 'friend", "introduce": [], "send_files": []}'),
         )
         persisted = {}
-        monkeypatch.setattr(service, "apply_reply_decisions", fake_apply(persisted))
+        monkeypatch.setattr(service, "applyDecisions", fake_apply(persisted))
 
         raw_events = [event async for event in service.streamMessage(prepared())]
         deltas = [e for e in raw_events if e["event"] == "delta"]
@@ -113,7 +113,7 @@ class TestNormalReplyHappyPath:
             service, "personaReplyStream",
             stream_of('{"reply": "Recovered", "introduce": [], "send_files": []}'),
         )
-        monkeypatch.setattr(service, "apply_reply_decisions", fake_apply({}))
+        monkeypatch.setattr(service, "applyDecisions", fake_apply({}))
 
         raw_events = [event async for event in service.streamMessage(prepared())]
         assert events(raw_events) == ["delta", "meta", "done"]
@@ -140,7 +140,7 @@ class TestNormalReplyHappyPath:
             raise RuntimeError("connection dropped")
 
         monkeypatch.setattr(service, "personaReplyStream", dies_midway)
-        monkeypatch.setattr(service, "apply_reply_decisions", fake_apply(persisted))
+        monkeypatch.setattr(service, "applyDecisions", fake_apply(persisted))
 
         raw_events = [event async for event in service.streamMessage(prepared())]
         assert events(raw_events) == ["delta", "error"]
@@ -149,7 +149,7 @@ class TestNormalReplyHappyPath:
     async def test_unparseable_reply_yields_error_and_does_not_persist(self, monkeypatch):
         persisted = {}
         monkeypatch.setattr(service, "personaReplyStream", stream_of("not json at all"))
-        monkeypatch.setattr(service, "apply_reply_decisions", fake_apply(persisted))
+        monkeypatch.setattr(service, "applyDecisions", fake_apply(persisted))
 
         raw_events = [event async for event in service.streamMessage(prepared())]
         assert events(raw_events) == ["error"]
@@ -169,7 +169,7 @@ class TestSurvivesClientDisconnect:
             yield '{"reply": "Hello!", "introduce": [], "send_files": []}'
 
         monkeypatch.setattr(service, "personaReplyStream", slow_stream)
-        monkeypatch.setattr(service, "apply_reply_decisions", fake_apply(persisted))
+        monkeypatch.setattr(service, "applyDecisions", fake_apply(persisted))
 
         agen = service.streamMessage(prepared())
         # Mirrors how EventSourceResponse actually drives the generator: as a
@@ -203,7 +203,7 @@ class TestSurvivesClientDisconnect:
             service, "personaReplyStream",
             stream_of('{"reply": "Still here", "introduce": [], "send_files": []}'),
         )
-        monkeypatch.setattr(service, "apply_reply_decisions", fake_apply(persisted))
+        monkeypatch.setattr(service, "applyDecisions", fake_apply(persisted))
 
         agen = service.streamMessage(prepared())
         consumer = asyncio.create_task(agen.__anext__())

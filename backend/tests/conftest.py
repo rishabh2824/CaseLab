@@ -17,23 +17,28 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 import api.admin as admin_api_module
-import api.dependencies as dependencies_module
+import infra.db as db_module
 import infra.rate_limit as rate_limit_module
-import services.cases as cases_service_module
 import services.simulation.run_store as run_store_module
 import services.simulation.service as service_module
 from infra.db import asyncpgUrl
 from infra.settings import get_settings
 
 # Every module that imports `get_session` directly (plain data-access functions take
-# a session as a parameter instead, so they don't need patching here).
+# a session as a parameter instead, so they don't need patching here). db_module
+# covers everything routed through the getRequestSession FastAPI dependency
+# (api.dependencies, api.cases, and admin.py's admin-management routes all call
+# it rather than importing get_session themselves) — patching it here is enough
+# since getRequestSession's own `get_session()` call resolves against infra.db's
+# (now-patched) module globals at call time. admin_api_module still needs its own
+# patch for the login route, which calls get_session directly (no other
+# dependency needs a session there, so there's nothing to share it with).
 SESSION_OWNING_MODULES = (
     service_module,
     run_store_module,
     rate_limit_module,
-    dependencies_module,
     admin_api_module,
-    cases_service_module,
+    db_module,
 )
 
 

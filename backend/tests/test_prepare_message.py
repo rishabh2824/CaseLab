@@ -66,7 +66,7 @@ class TestClassifierFailureHasNoFallback:
             raise RuntimeError("classifier timed out")
 
         monkeypatch.setattr(service, "classifyHarassment", ok_harassment)
-        monkeypatch.setattr(service, "resolve_turn_decisions", failing_resolve_turn_decisions)
+        monkeypatch.setattr(service, "resolveDecisions", failing_resolve_turn_decisions)
 
         with pytest.raises(HTTPException) as exc_info:
             await service.message(rid, SendMessagePayload(persona_id="p1", message="Hello there"))
@@ -85,7 +85,7 @@ class TestClassifierFailureHasNoFallback:
             raise RuntimeError("boom")
 
         monkeypatch.setattr(service, "classifyHarassment", lambda *a, **kw: returns("normal"))
-        monkeypatch.setattr(service, "resolve_turn_decisions", failing_resolve_turn_decisions)
+        monkeypatch.setattr(service, "resolveDecisions", failing_resolve_turn_decisions)
 
         with pytest.raises(HTTPException):
             await service.message(rid, SendMessagePayload(persona_id="p1", message="Hello there"))

@@ -5,7 +5,6 @@ from sqlmodel import select
 from models.admin import AdminRole
 from models.cases import CasePayload, FileRef, PersonaPayload
 from services.auth import CurrentAdmin
-from infra.db import get_session
 from infra.db_models import Case, File
 
 
@@ -153,36 +152,34 @@ async def fetchCases(session, owner_admin_id: int | None = None) -> list[Case]:
     return (await session.exec(stmt)).all()
 
 
-async def createCase(payload, admin: CurrentAdmin) -> dict:
-    async with get_session() as session:
-        normalized_code = normalizeAccessCode(payload.access_code)
-        if normalized_code and await accessCodeTaken(session, normalized_code):
-            raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
-        case = Case(
-            name=payload.case_name,
-            access_code=normalized_code,
-            brief=payload.initial_brief,
-            common_information=payload.common_information,
-            duration=payload.simulation_duration,
-            root_personas=payload.total_non_referred_personas,
-            admin=admin.id,
-            structure=await build_structure(session, payload),
-        )
-        session.add(case)
-        try:
-            await session.commit()
-        except Exception as exc:
-            await session.rollback()
-            if violation(exc):
-                raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT) from exc
-            raise HTTPException(status_code=500, detail="Failed to create case.") from exc
-        return {"case_id": case.id}
+async def createCase(session, payload, admin: CurrentAdmin) -> dict:
+    normalized_code = normalizeAccessCode(payload.access_code)
+    if normalized_code and await accessCodeTaken(session, normalized_code):
+        raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
+    case = Case(
+        name=payload.case_name,
+        access_code=normalized_code,
+        brief=payload.initial_brief,
+        common_information=payload.common_information,
+        duration=payload.simulation_duration,
+        root_personas=payload.total_non_referred_personas,
+        admin=admin.id,
+        structure=await build_structure(session, payload),
+    )
+    session.add(case)
+    try:
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        if violation(exc):
+            raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT) from exc
+        raise HTTPException(status_code=500, detail="Failed to create case.") from exc
+    return {"case_id": case.id}
 
 
-async def listCases(admin: CurrentAdmin) -> dict:
-    async with get_session() as session:
-        owner_filter = None if admin.role == AdminRole.SUPER else admin.id
-        cases = await fetchCases(session, owner_admin_id=owner_filter)
+async def listCases(session, admin: CurrentAdmin) -> dict:
+    owner_filter = None if admin.role == AdminRole.SUPER else admin.id
+    cases = await fetchCases(session, owner_admin_id=owner_filter)
     return {
         "cases": [
             {"id": case.id, "case_name": case.name, "access_code": case.access_code} for case in cases
@@ -190,9 +187,8 @@ async def listCases(admin: CurrentAdmin) -> dict:
     }
 
 
-async def getCase(case_id: int, admin: CurrentAdmin) -> dict:
-    async with get_session() as session:
-        case = await session.get(Case, case_id)
+async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
+    case = await session.get(Case, case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found.")
     caseAccess(case.admin, admin)
@@ -211,41 +207,39 @@ async def getCase(case_id: int, admin: CurrentAdmin) -> dict:
     }
 
 
-async def updateCase(case_id: int, payload, admin: CurrentAdmin) -> dict:
-    async with get_session() as session:
-        case = await session.get(Case, case_id)
-        if case is None:
-            raise HTTPException(status_code=404, detail="Case not found.")
-        caseAccess(case.admin, admin)
-        normalized_code = normalizeAccessCode(payload.access_code)
-        if normalized_code and await accessCodeTaken(session, normalized_code, exclude_case_id=case_id):
-            raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
-        case.name = payload.case_name
-        case.access_code = normalized_code
-        case.brief = payload.initial_brief
-        case.common_information = payload.common_information
-        case.duration = payload.simulation_duration
-        case.root_personas = payload.total_non_referred_personas
-        # Always a full reassignment (never an in-place mutation of case.structure) so
-        # SQLAlchemy's ORM change tracking picks it up — see infra/db_models.py.
-        case.structure = await build_structure(session, payload)
-        session.add(case)
-        try:
-            await session.commit()
-        except Exception as exc:
-            await session.rollback()
-            if violation(exc):
-                raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT) from exc
-            raise HTTPException(status_code=500, detail="Failed to update case.") from exc
+async def updateCase(session, case_id: int, payload, admin: CurrentAdmin) -> dict:
+    case = await session.get(Case, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    caseAccess(case.admin, admin)
+    normalized_code = normalizeAccessCode(payload.access_code)
+    if normalized_code and await accessCodeTaken(session, normalized_code, exclude_case_id=case_id):
+        raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
+    case.name = payload.case_name
+    case.access_code = normalized_code
+    case.brief = payload.initial_brief
+    case.common_information = payload.common_information
+    case.duration = payload.simulation_duration
+    case.root_personas = payload.total_non_referred_personas
+    # Always a full reassignment (never an in-place mutation of case.structure) so
+    # SQLAlchemy's ORM change tracking picks it up — see infra/db_models.py.
+    case.structure = await build_structure(session, payload)
+    session.add(case)
+    try:
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        if violation(exc):
+            raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT) from exc
+        raise HTTPException(status_code=500, detail="Failed to update case.") from exc
     return {"case_id": case_id}
 
 
-async def deleteCase(case_id: int, admin: CurrentAdmin) -> dict:
-    async with get_session() as session:
-        case = await session.get(Case, case_id)
-        if case is None:
-            raise HTTPException(status_code=404, detail="Case not found.")
-        caseAccess(case.admin, admin)
-        await session.delete(case)
-        await session.commit()
+async def deleteCase(session, case_id: int, admin: CurrentAdmin) -> dict:
+    case = await session.get(Case, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    caseAccess(case.admin, admin)
+    await session.delete(case)
+    await session.commit()
     return {"ok": True}

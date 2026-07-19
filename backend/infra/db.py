@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -34,6 +35,14 @@ def getSessionFactory() -> async_sessionmaker[AsyncSession]:
 
 def get_session() -> AsyncSession:
     return getSessionFactory()()
+
+
+# FastAPI dependency: one session per request, shared across every Depends() that
+# asks for it (FastAPI caches a dependency's result per request), instead of each
+# auth check and each endpoint handler opening its own separate connection.
+async def getRequestSession() -> AsyncIterator[AsyncSession]:
+    async with get_session() as session:
+        yield session
 
 
 async def closeDb() -> None:
