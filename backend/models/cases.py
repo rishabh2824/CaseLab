@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pydantic import BaseModel, Field
-from infra.settings import MAX_SIMULATION_DURATION
+from infra.settings import SIMULATION_DURATION
 
 
 class FileRef(BaseModel):
@@ -39,7 +39,7 @@ class CasePayload(BaseModel):
     case_name: str
     initial_brief: str
     common_information: str | None = None
-    simulation_duration: int | None = Field(default=None, ge=1, le=MAX_SIMULATION_DURATION)
+    simulation_duration: int | None = Field(default=None, ge=1, le=SIMULATION_DURATION)
     access_code: str | None = None
     total_non_referred_personas: int
     personas: list[PersonaPayload] = Field(default_factory=list)

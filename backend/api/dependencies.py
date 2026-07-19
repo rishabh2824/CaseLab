@@ -1,23 +1,24 @@
 from fastapi import Cookie, Depends, HTTPException
 from models.admin import AdminRole
-from Queries import admin as admin_repository
-from services.admin_auth import ADMIN_COOKIE_NAME, CurrentAdmin, InvalidAdminToken, decode_jwt
-from infra.db import getDb
+from services import admin as admin_repository
+from services.auth import COOKIE_NAME, CurrentAdmin, decodeJwt
+from infra.db import get_session
 
 
+# Separate from admin.py because it is also used by cases.py
 # Controls from api.dependencies import * — only these three names would come through.
 __all__ = ["CurrentAdmin", "getCurrentAdmin", "requireSuperAdmin"]
 
 
 async def getCurrentAdmin(
-    admin_session: str | None = Cookie(default=None, alias=ADMIN_COOKIE_NAME),
+    admin_session: str | None = Cookie(default=None, alias=COOKIE_NAME),
 ) -> CurrentAdmin:
     if not admin_session: raise HTTPException(status_code=401, detail="Missing admin credentials.")
-    try: payload = decode_jwt(admin_session)
-    except InvalidAdminToken as exc: raise HTTPException(status_code=401, detail="Invalid admin session.") from exc
+    try: payload = decodeJwt(admin_session)
+    except ValueError as exc: raise HTTPException(status_code=401, detail="Invalid admin session.") from exc
 
-    client = getDb()
-    admin = await admin_repository.getById(client, payload["admin_id"])
+    async with get_session() as session:
+        admin = await admin_repository.getById(session, payload["admin_id"])
     if admin is None: raise HTTPException(status_code=401, detail="Admin account no longer exists.")
     return CurrentAdmin(id=admin["id"], role=AdminRole(admin["role"]))
 

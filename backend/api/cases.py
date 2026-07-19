@@ -9,24 +9,24 @@ router = APIRouter(prefix="/cases", tags=["cases"])
 
 @router.post("")
 async def createCase(payload: CasePayload, admin: CurrentAdmin = Depends(getCurrentAdmin)):
-    return await cases.create_case(payload, admin)
+    return await cases.createCase(payload, admin)
 
 
 @router.get("")
 async def listCases(admin: CurrentAdmin = Depends(getCurrentAdmin)):
-    return await cases.list_cases(admin)
+    return await cases.listCases(admin)
 
 
 @router.get("/{case_id}")
-async def getCase(case_id: str, admin: CurrentAdmin = Depends(getCurrentAdmin)):
-    return await cases.get_case(case_id, admin)
+async def getCase(case_id: int, admin: CurrentAdmin = Depends(getCurrentAdmin)):
+    return await cases.getCase(case_id, admin)
 
 
 @router.put("/{case_id}")
-async def updateCase(case_id: str, payload: CasePayload, admin: CurrentAdmin = Depends(getCurrentAdmin)):
-    return await cases.update_case(case_id, payload, admin)
+async def updateCase(case_id: int, payload: CasePayload, admin: CurrentAdmin = Depends(getCurrentAdmin)):
+    return await cases.updateCase(case_id, payload, admin)
 
 
 @router.delete("/{case_id}")
-async def deleteCase(case_id: str, admin: CurrentAdmin = Depends(getCurrentAdmin)):
-    return await cases.delete_case(case_id, admin)
+async def deleteCase(case_id: int, admin: CurrentAdmin = Depends(getCurrentAdmin)):
+    return await cases.deleteCase(case_id, admin)

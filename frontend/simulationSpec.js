@@ -58,10 +58,6 @@ const messageSse = (reply) => {
 
 // Wire up every backend endpoint the student flow touches, deterministically.
 async function mockBackend(page, { reply }) {
-    // WebSocket push channel: intercept and stay quiet (initial render is seeded
-    // from the /start payload; the socket only pushes later updates).
-    await page.routeWebSocket(/\/live$/, () => {})
-
     await page.route('**/api/simulations/start', async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(runState()) })
     })

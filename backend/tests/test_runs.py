@@ -1,24 +1,23 @@
-"""RunStore: serialization round-trips, expiry, and optimistic-locking mutate."""
 
 import time
+import uuid
 
 import pytest
 
-from Queries.simulation import runs as runs_module
-from Queries.simulation.runs import (
-    RUN_TTL_GRACE_MINUTES,
-    RunExpired,
-    RunNotFound,
-    RunStore,
-    RunWriteConflict,
-    compute_expiry,
-    deserialize_run,
-    serialize_run,
+from services.simulation.run_store import (
+    GRACE_PERIOD,
+    expiry,
+    deserializeRun,
+    serializeRun,
+    insertRun,
+    getRun,
+    updateRun,
+    deleteRuns,
 )
-from infra.settings import MAX_SIMULATION_DURATION
+from infra.settings import SIMULATION_DURATION
 
 
-def _run(**over):
+def run(**over):
     base = {
         "case_id": "c1",
         "case_snapshot": {"simulation_duration": 45},
@@ -37,125 +36,111 @@ def _run(**over):
     return base
 
 
+def expired_run(**over):
+    # A huge negative start_time offset guarantees expires_at is in the past
+    # regardless of the (uncapped) TTL, without needing to poke at storage directly.
+    return run(start_time=time.time() - 10_000_000, case_snapshot={"simulation_duration": None}, **over)
+
+
 # --- serialize / deserialize ------------------------------------------------
 class TestSerialization:
     def test_round_trip_preserves_run(self):
-        run = _run()
-        restored = deserialize_run(serialize_run(run))
-        assert restored == run
+        run_data = run()
+        restored = deserializeRun(serializeRun(run_data))
+        assert restored == run_data
 
     def test_unlocked_ids_survive_as_a_set(self):
-        run = _run(unlocked_referred_ids={"x", "y", "z"})
-        restored = deserialize_run(serialize_run(run))
+        run_data = run(unlocked_referred_ids={"x", "y", "z"})
+        restored = deserializeRun(serializeRun(run_data))
         assert restored["unlocked_referred_ids"] == {"x", "y", "z"}
         assert isinstance(restored["unlocked_referred_ids"], set)
 
     def test_empty_unlocked_ids_round_trip(self):
-        run = _run(unlocked_referred_ids=set())
-        restored = deserialize_run(serialize_run(run))
+        run_data = run(unlocked_referred_ids=set())
+        restored = deserializeRun(serializeRun(run_data))
         assert restored["unlocked_referred_ids"] == set()
 
-    def test_serialized_form_is_json_with_sorted_id_list(self):
-        import json
-
-        run = _run(unlocked_referred_ids={"b", "a", "c"})
-        payload = json.loads(serialize_run(run))
+    def test_serialized_form_has_sorted_id_list(self):
+        # serialize_run returns a JSONB-ready dict (not a JSON string) — the
+        # data column is JSONB, so there's no json.dumps step to round-trip here.
+        run_data = run(unlocked_referred_ids={"b", "a", "c"})
+        payload = serializeRun(run_data)
         assert payload["unlocked_referred_ids"] == ["a", "b", "c"]
 
 
 # --- compute_expiry ---------------------------------------------------------
 class TestComputeExpiry:
     def test_duration_plus_grace(self):
-        run = _run(start_time=1000.0, case_snapshot={"simulation_duration": 45})
-        expected = 1000.0 + (45 + RUN_TTL_GRACE_MINUTES) * 60
-        assert compute_expiry(run) == expected
+        run_data = run(start_time=1000.0, case_snapshot={"simulation_duration": 45})
+        expected = 1000.0 + (45 + GRACE_PERIOD) * 60
+        assert expiry(run_data) == expected
 
     def test_capped_at_max_lifetime(self):
         # a duration near the cap + grace must not exceed MAX_SIMULATION_DURATION.
-        run = _run(start_time=0.0, case_snapshot={"simulation_duration": MAX_SIMULATION_DURATION})
-        assert compute_expiry(run) == MAX_SIMULATION_DURATION * 60
+        run_data = run(start_time=0.0, case_snapshot={"simulation_duration": SIMULATION_DURATION})
+        assert expiry(run_data) == SIMULATION_DURATION * 60
 
     def test_missing_duration_uses_cap(self):
-        run = _run(start_time=0.0, case_snapshot={})
-        assert compute_expiry(run) == MAX_SIMULATION_DURATION * 60
+        run_data = run(start_time=0.0, case_snapshot={})
+        assert expiry(run_data) == SIMULATION_DURATION * 60
 
 
-# --- RunStore (async, fake DB) ---------------------------------------------
-@pytest.fixture
-def store(monkeypatch, fake_client):
-    # RunStore.* call getDb() internally; point it at the in-memory fake.
-    monkeypatch.setattr(runs_module, "getDb", lambda: fake_client)
-    return RunStore(), fake_client
+# --- run_store (async, real Postgres in a rolled-back transaction) ---------
+def run_id() -> str:
+    return f"test-{uuid.uuid4().hex}"
 
 
+@pytest.mark.usefixtures("db_session")
 class TestRunStore:
-    async def test_put_then_get_round_trips(self, store):
-        s, _client = store
-        run = _run()
-        await s.put("run1", run)
-        loaded = await s.get("run1")
-        assert loaded == run
+    async def test_put_then_get_round_trips(self):
+        rid = run_id()
+        run_data = run()
+        await insertRun(rid, run_data)
+        loaded = await getRun(rid)
+        assert loaded == run_data
 
-    async def test_get_missing_raises_not_found(self, store):
-        s, _client = store
-        with pytest.raises(RunNotFound):
-            await s.get("nope")
+    async def test_get_missing_raises_not_found(self):
+        with pytest.raises(ValueError, match="not found"):
+            await getRun(run_id())
 
-    async def test_get_expired_raises_and_deletes(self, store):
-        s, client = store
-        run = _run(start_time=time.time() - 10, case_snapshot={"simulation_duration": None})
-        await s.put("run1", run)
-        # force the stored row's expiry into the past
-        client.rows["run1"]["expires_at"] = time.time() - 1
-        with pytest.raises(RunExpired):
-            await s.get("run1")
-        assert "run1" not in client.rows  # cleaned up on read
+    async def test_get_expired_raises_and_deletes(self):
+        rid = run_id()
+        await insertRun(rid, expired_run())
+        with pytest.raises(ValueError, match="expired"):
+            await getRun(rid)
+        # cleaned up on read - a second get sees no row at all, not another expiry
+        with pytest.raises(ValueError, match="not found"):
+            await getRun(rid)
 
-    async def test_mutate_persists_and_increments_version(self, store):
-        s, client = store
-        await s.put("run1", _run(notes=""))
+    async def test_mutate_persists(self):
+        rid = run_id()
+        await insertRun(rid, run(notes=""))
 
         def set_notes(r):
             r["notes"] = "hello"
             return r["notes"]
 
-        result = await s.mutate("run1", set_notes)
+        result = await updateRun(rid, set_notes)
         assert result == "hello"
-        assert client.rows["run1"]["version"] == 1
-        assert (await s.get("run1"))["notes"] == "hello"
+        assert (await getRun(rid))["notes"] == "hello"
 
-    async def test_mutate_missing_raises_not_found(self, store):
-        s, _client = store
+    async def test_mutate_missing_raises_not_found(self):
+        with pytest.raises(ValueError, match="not found"):
+            await updateRun(run_id(), lambda r: None)
 
-        with pytest.raises(RunNotFound):
-            await s.mutate("nope", lambda r: None)
+    async def test_mutate_expired_raises_and_deletes(self):
+        rid = run_id()
+        await insertRun(rid, expired_run())
+        with pytest.raises(ValueError, match="expired"):
+            await updateRun(rid, lambda r: r)
 
-    async def test_mutate_raises_conflict_when_writes_never_land(self, store, monkeypatch):
-        s, client = store
-        await s.put("run1", _run())
+    async def test_purge_expired_deletes_only_stale_rows(self):
+        fresh_id, stale_id = run_id(), run_id()
+        await insertRun(fresh_id, run(case_snapshot={"simulation_duration": None}))
+        await insertRun(stale_id, expired_run())
 
-        # Simulate a perpetually-racing writer: every versioned UPDATE affects 0
-        # rows, so mutate exhausts its retries and surfaces a write conflict.
-        real_execute = client.execute
-
-        async def losing_execute(sql, params=()):
-            result = await real_execute(sql, params)
-            if " ".join(sql.split()).lower().startswith("update simulation_runs set data"):
-                result.rows_affected = 0
-            return result
-
-        monkeypatch.setattr(client, "execute", losing_execute)
-
-        with pytest.raises(RunWriteConflict):
-            await s.mutate("run1", lambda r: r, max_retries=3)
-
-    async def test_purge_expired_deletes_only_stale_rows(self, store):
-        s, client = store
-        await s.put("fresh", _run(case_snapshot={"simulation_duration": None}))
-        await s.put("stale", _run(case_snapshot={"simulation_duration": None}))
-        client.rows["stale"]["expires_at"] = time.time() - 1
-
-        deleted = await s.purge_expired()
-        assert deleted == 1
-        assert "fresh" in client.rows
-        assert "stale" not in client.rows
+        deleted = await deleteRuns()
+        assert deleted >= 1
+        assert (await getRun(fresh_id))["case_id"] == "c1"
+        with pytest.raises(ValueError, match="not found"):
+            await getRun(stale_id)

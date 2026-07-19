@@ -64,7 +64,7 @@ export default defineConfig({
         // Playwright specs live under e2e/ and run via their own runner.
         exclude: ['**/node_modules/**', '**/e2e/**'],
         // client.js reads VITE_API_BASE at module load; pin it for deterministic
-        // URL assertions (API + WebSocket base).
+        // URL assertions.
         env: { VITE_API_BASE: 'http://api.test' },
     },
 })

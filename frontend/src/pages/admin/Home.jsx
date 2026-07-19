@@ -31,16 +31,6 @@ function Home() {
                 aria-hidden="true"
                 className="pointer-events-none absolute -bottom-32 -right-32 z-0 w-[34rem] max-w-none select-none opacity-[0.14]"
             />
-            {adminRole === ADMIN_ROLE.SUPER && (
-                <button
-                    type="button"
-                    onClick={() => navigate({ to: '/admin/admins' })}
-                    className="fixed right-6 top-6 z-10 rounded-full border border-line bg-white px-6 py-3 text-sm font-semibold text-brand shadow-soft transition hover:border-brand hover:bg-brand-tint sm:right-10 sm:top-8"
-                >
-                    Manage admins
-                </button>
-            )}
-
             <button
                 type="button"
                 onClick={handleSignOut}
@@ -48,6 +38,23 @@ function Home() {
             >
                 Sign out
             </button>
+
+            {adminRole === ADMIN_ROLE.SUPER && (
+                <button
+                    type="button"
+                    onClick={() => navigate({ to: '/admin/admins' })}
+                    // Deliberately NOT top-6/right-6 (the landing page's Admin
+                    // Login button sits there, sm:top-12 sm:right-20) — if the
+                    // two buttons shared fixed coordinates, the cursor would
+                    // still be resting on Admin Login when this one mounts
+                    // right underneath it post-navigation, so the browser
+                    // never fires a mousemove/hover on it until the pointer
+                    // is nudged. Pushed below that button's footprint instead.
+                    className="fixed right-6 top-24 z-10 rounded-full border border-line bg-white px-6 py-3 text-sm font-semibold text-brand shadow-soft transition hover:border-brand hover:bg-brand-tint sm:right-10 sm:top-28"
+                >
+                    Manage admins
+                </button>
+            )}
 
             <div className="relative z-10 mx-auto flex min-h-[80vh] max-w-5xl flex-col justify-center">
                 <div className="max-w-2xl">

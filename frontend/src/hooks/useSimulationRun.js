@@ -2,7 +2,7 @@ import { notifications } from '@mantine/notifications'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { apiFetch, openSimulationSocket, streamChat } from '../client.js'
+import { apiFetch, streamChat } from '../client.js'
 import { mapContact, normalizeHistories } from '../pages/student/Helpers.js'
 import { useSessionStore } from './sessionStore.js'
 
@@ -16,9 +16,11 @@ const SIMULATION_KEY = (runId) => ['simulation', runId]
 const NOTES_SAVE_DEBOUNCE_MS = 800
 
 /**
- * Owns the simulation-run lifecycle for the student view. The polling
- * `useQuery` is the single source of truth for server state — contacts,
- * shared files, histories, and the case all derive from `data`. The only
+ * Owns the simulation-run lifecycle for the student view. The `useQuery`
+ * fetched once on mount is the single source of truth for server state —
+ * contacts, shared files, histories, and the case all derive from `data`,
+ * kept current afterward by the sending tab's own streamed-reply handlers
+ * (applyMeta/commitHistory below) rather than any background refresh. The only
  * local state is view selection (which contact is open), the elapsed-time
  * clock, and the in-flight streamed reply (an overlay that masks the sending
  * persona's history until the turn commits back into the query cache). New
@@ -77,15 +79,15 @@ export function useSimulationRun() {
         })
     }, [])
 
-    // --- server state: one query owns it, a live socket keeps it fresh -----
-    // The WS connection below (see openSimulationSocket) pushes updates as the
-    // server notices them, so this query only needs to cover the initial load
-    // and act as a safety net if the socket ever silently stops reconnecting.
+    // --- server state: one query owns it --------------------------------
+    // Fetched once on mount; the sending tab's own streamed reply updates the
+    // cache directly (see applyMeta/commitHistory below). A second viewer of
+    // the same run (another tab, another device) only sees a change on their
+    // own next load or manual refresh — there's no push channel back to them.
     const { data, error } = useQuery({
         queryKey: SIMULATION_KEY(runId),
         queryFn: () => apiFetch(`/api/simulations/${runId}`),
         enabled: Boolean(runId),
-        refetchInterval: 60000,
         refetchOnWindowFocus: false,
         // Home seeds the cache with the /start payload, so a short stale
         // window avoids an immediate redundant GET on mount.
@@ -197,8 +199,7 @@ export function useSimulationRun() {
     }, [])
 
     // Run expired: drop it, clear the stale selection, and restart (or bail
-    // home). Shared by the 404 poll-fallback path below and the live socket's
-    // 'expired' message.
+    // home). Triggered by a 404 on the server-state query.
     const handleRunExpired = useCallback(() => {
         setStoreRunId('')
         setActiveContactId(null)
@@ -211,19 +212,6 @@ export function useSimulationRun() {
         if (error?.status !== 404) return
         handleRunExpired()
     }, [error])
-
-    // Live state: a push-only WebSocket that mirrors server state into the
-    // query cache as the server notices changes (see backend's simulationLive
-    // poll loop). The query above still covers the initial load and acts as a
-    // fallback if this socket ever stops reconnecting.
-    useEffect(() => {
-        if (!runId) return
-        const close = openSimulationSocket(`/api/simulations/${runId}/live`, {
-            onState: (state) => queryClient.setQueryData(SIMULATION_KEY(runId), state),
-            onExpired: handleRunExpired,
-        })
-        return close
-    }, [runId, queryClient, handleRunExpired])
 
     // --- derive the view from server state (+ the streaming overlay) -------
     const caseData = data?.case ?? null

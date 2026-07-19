@@ -1,114 +1,148 @@
-import asyncio
 from fastapi import HTTPException
-from Queries.simulation import repository as repo
-from services.persona_shapes import photo_ref
+from sqlmodel import select
+from infra.db_models import Case
 from infra.spaces import getUrl
 
 
-def format_persona_row(row: dict, *, presign: bool = True) -> dict:
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "role": row["role"],
-        "profile_photo": photo_ref(row, presign=presign),
-        "availability_duration": row["availability_duration"],
-    }
+async def fetchCase(session, *, case_id: int | None = None, access_code: str | None = None) -> Case | None:
+    if case_id:
+        return await session.get(Case, case_id)
+    if access_code:
+        result = await session.exec(select(Case).where(Case.access_code == access_code.strip()))
+        return result.first()
+    raise ValueError("fetch_case requires case_id or access_code.")
 
 
-# Presigned photo URLs expire well inside a run's lifetime (SPACES_PRESIGN_EXPIRY_SECONDS,
-# 900s by default, vs. up to 120 minutes for a run) — same reasoning as
-# service.shared_file_payload. So the persona graph cached into the run blob (see
-# build_persona_graph below) stores each photo as a raw file reference, never a signed URL,
-# and this re-derives a fresh URL at read time from that cached reference.
-def hydrate_persona(persona: dict) -> dict:
+# The persona graph cached into the run blob stores each photo as a raw file reference, never a signed URL.
+# This re-derives a fresh URL at read time from that cached reference.
+def hydratePersona(persona: dict) -> dict:
     photo = persona.get("profile_photo")
     if photo is None:
         return persona
     return {**persona, "profile_photo": {**photo, "url": getUrl(photo["object_key"])}}
 
 
-async def get_case(client, access_code: str | None = None, case_id: str | None = None):
-    row = await repo.fetch_case_snapshot(client, access_code=access_code, case_id=case_id)
-    if row is None: raise HTTPException(status_code=404, detail="No case found.")
+def case_snapshot(case) -> dict:
     return {
-        "id": row["id"],
-        "case_name": row["case_name"],
-        "initial_brief": row["initial_brief"],
-        "simulation_duration": row["simulation_duration"],
-        "common_information": row["common_information"],
-        "access_code": row["access_code"],
+        "id": case.id,
+        "case_name": case.name,
+        "initial_brief": case.brief,
+        "simulation_duration": case.duration,
+        "common_information": case.common_information,
+        "access_code": case.access_code,
     }
 
 
-async def get_run_case(run: dict, client):
+async def getCase(session, access_code: str | None = None, case_id: int | None = None):
+    case = await fetchCase(session, access_code=access_code, case_id=case_id)
+    if case is None: raise HTTPException(status_code=404, detail="No case found.")
+    return case_snapshot(case)
+
+
+async def getRunCase(run: dict, session):
     cached = run.get("case_snapshot")
     if cached is not None: return cached
-    snapshot = await get_case(client, case_id=run["case_id"])
+    snapshot = await getCase(session, case_id=run["case_id"])
     run["case_snapshot"] = snapshot
     return snapshot
 
 
-# Root personas + the full referral graph for a case, fetched once and cached into the run
-# blob (run["persona_graph"]) exactly like case_snapshot — see get_run_persona_graph. Both
-# are immutable for a run's practical lifetime: a case edit mid-run regenerates persona ids
-# and breaks the run's references regardless, so caching this costs nothing that wasn't
-# already being lost. Stored with raw (unsigned) photo refs — see hydrate_persona.
-async def build_persona_graph(client, case_id: str) -> dict:
-    root_rows, referral_rows = await asyncio.gather(
-        repo.fetch_root_personas(client, case_id),
-        repo.fetch_all_referrals(client, case_id),
-    )
-    root_personas = [format_persona_row(row, presign=False) for row in root_rows]
-    referrals = [
-        {
-            "parent_persona_id": row["parent_persona_id"],
-            "referred_persona_id": row["referred_persona_id"],
-            "condition_trigger": row["condition_trigger"] or "",
-            "persona": {**format_persona_row(row, presign=False), "is_referred": True},
-        }
-        for row in referral_rows
-    ]
+def fileEntry(entry: dict) -> dict:
+    file_ref = entry.get("file") or {}
+    return {
+        "file_id": file_ref.get("file_id"),
+        "bucket": file_ref.get("bucket"),
+        "object_key": file_ref.get("object_key"),
+        "file_name": file_ref.get("file_name"),
+        "content_type": file_ref.get("content_type"),
+        "share_conditions": entry.get("share_conditions"),
+        "perceived_contents": entry.get("perceived_contents"),
+    }
+
+
+# Shapes a raw persona dict into the row format stored in the persona graph
+def getPersonaDetails(persona: dict, *, is_referred: bool = False) -> dict:
+    row = {
+        "id": persona["id"],
+        "name": persona.get("name") or "",
+        "role": persona.get("role") or "",
+        "profile_photo": persona.get("profile_photo"),
+        "availability_duration": persona.get("availability_minutes"),
+        "known_facts": persona.get("known_facts"),
+        "personality_traits": persona.get("personality_traits"),
+        "files": [fileEntry(f) for f in persona.get("files") or []],
+    }
+    if is_referred:
+        row["is_referred"] = True
+    return row
+
+
+# Walk the case's JSONB persona tree once into the flat {root_personas, referrals} shape
+def flattenPersonas(personas: list[dict]) -> tuple[list[dict], list[dict]]:
+    root_rows = sorted((getPersonaDetails(p) for p in personas), key=lambda p: p["name"])
+    edges: list[dict] = []
+
+    def walk(parent_id: str, referrals: list[dict]) -> None:
+        for referral in referrals:
+            child = referral["persona"]
+            edges.append(
+                {
+                    "parent_persona_id": parent_id,
+                    "referred_persona_id": child["id"],
+                    "condition_trigger": referral.get("conditions") or "",
+                    "persona": getPersonaDetails(child, is_referred=True),
+                }
+            )
+            walk(child["id"], child.get("referrals") or [])
+
+    for persona in personas:
+        walk(persona["id"], persona.get("referrals") or [])
+
+    return root_rows, edges
+
+
+# Root personas + the full referral graph for a case, fetched once and cached into the run blob
+async def buildPersonaGraph(session, case_id: int) -> dict:
+    case = await fetchCase(session, case_id=case_id)
+    if case is None: raise HTTPException(status_code=404, detail="No case found.")
+    root_personas, referrals = flattenPersonas(case.structure.get("personas") or [])
     return {"root_personas": root_personas, "referrals": referrals}
 
 
-async def get_run_persona_graph(run: dict, client) -> dict:
+# Persona graph for the current run
+async def getPersonaGraph(run: dict, session) -> dict:
     cached = run.get("persona_graph")
-    if cached is not None: return cached
-    graph = await build_persona_graph(client, run["case_id"])
+    if cached is not None:
+        return cached
+    graph = await buildPersonaGraph(session, run["case_id"])
     run["persona_graph"] = graph
     return graph
 
 
-# Referrals authored by one persona, with a freshly-signed photo URL for the referred
-# persona — this can end up directly in a live API response (a newly unlocked contact),
-# unlike most of the graph, which callers only hydrate where they actually need a URL.
-def graph_referrals_for(graph: dict, parent_persona_id: str) -> list[dict]:
+# Referrals authored by a persona
+def graphReferrals(graph: dict, parent_persona_id: str) -> list[dict]:
     return [
-        {**edge, "persona": hydrate_persona(edge["persona"])}
+        {**edge, "persona": hydratePersona(edge["persona"])}
         for edge in graph["referrals"]
         if edge["parent_persona_id"] == parent_persona_id
     ]
 
 
-# Persona dicts for a set of already-unlocked referred persona ids, de-duplicated by id (a
-# persona referred by more than one parent only needs one entry). Hydrated (live/presigned
-# photo URL) by default since this usually feeds a contacts list the frontend renders an
-# avatar from; pass hydrate=False where the photo is never read (e.g. export_simulation).
-def graph_referred_personas(graph: dict, referred_ids, *, hydrate: bool = True) -> list[dict]:
+# Persona dicts for a set of already-unlocked referred persona ids, de-duplicated by id
+def graphPersonas(graph: dict, referred_ids, *, hydrate: bool = True) -> list[dict]:
     seen = set()
     personas = []
     for edge in graph["referrals"]:
         pid = edge["referred_persona_id"]
         if pid in referred_ids and pid not in seen:
             seen.add(pid)
-            persona = hydrate_persona(edge["persona"]) if hydrate else edge["persona"]
+            persona = hydratePersona(edge["persona"]) if hydrate else edge["persona"]
             personas.append(persona)
     return personas
 
 
-# Raw (unsigned) persona dict for any id in the graph, root or referred — used where the
-# caller only needs fields like availability_duration, not a photo URL.
-def graph_persona_by_id(graph: dict, persona_id: str) -> dict | None:
+# Raw persona dict for any id in the graph, root or referred
+def graphPersonaById(graph: dict, persona_id: str) -> dict | None:
     for persona in graph["root_personas"]:
         if persona["id"] == persona_id:
             return persona
@@ -117,30 +151,3 @@ def graph_persona_by_id(graph: dict, persona_id: str) -> dict | None:
             return edge["persona"]
     return None
 
-
-async def get_persona_details(client, persona_id):
-    persona, files = await asyncio.gather(
-        repo.fetch_persona_core(client, persona_id),
-        repo.fetch_persona_files(client, persona_id),
-    )
-    if persona is None: raise HTTPException(status_code=404, detail="Persona not found.")
-    file_entries = [
-        {
-            "file_id": row["id"],
-            "bucket": row["bucket"],
-            "object_key": row["object_key"],
-            "file_name": row["file_name"],
-            "content_type": row["content_type"],
-            "share_conditions": row["share_conditions"],
-            "perceived_contents": row["perceived_contents"],
-        }
-        for row in files
-    ]
-    return {
-        "name": persona["name"],
-        "role": persona["role"],
-        "profile_photo": photo_ref(persona, presign=True),
-        "known_facts": persona["known_facts"],
-        "personality_traits": persona["personality_traits"],
-        "files": file_entries,
-    }

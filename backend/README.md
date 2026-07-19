@@ -40,30 +40,32 @@ backend/
 └── services/       # Business logic and orchestration — no raw SQL in here
     ├── admin_auth.py        #   admin session JWTs + Google ID-token verification
     ├── cases.py             #   case domain logic, orchestrates repositories.cases
-    ├── persona_shapes.py    #   the one shared, SQL-free persona-photo shaping
-    │                        #   helper used by both the case editor and the
-    │                        #   simulation domain
     └── simulation/          #   the live student-simulation engine
         ├── reads.py         #     repository reads shaped for the API/prompts
         ├── prompt.py        #     system-prompt construction, reply envelope
         ├── turn_state.py    #     pure per-turn helpers (availability, chat state)
+        ├── run_store.py     #     DB-backed run store (`RunStore`), TTL/cleanup
         └── service.py       #     orchestration: what api/simulations.py calls
 ```
 
-`infra/` holds the app's env-facing layer — settings plus the four modules
-that talk to something outside the process (Turso, Spaces, Anthropic) or
+`infra/` holds the app's env-facing layer — settings plus the modules that
+talk to something outside the process (Neon/Postgres, Spaces, Anthropic) or
 otherwise sit on the DB/env boundary (`rate_limit.py`, which enforces the
 abuse-prevention policy on top of `repositories/rate_limits.py`). `services/`
 keeps the actual business logic and orchestration.
 
-Database schema changes are applied by hand via the Turso SQL console;
-[`infra/schema.txt`](infra/schema.txt) is a reference snapshot kept in sync
-with the live schema (there is no migration runner).
+Database schema changes go through Alembic (`backend/alembic/`,
+`uv run alembic revision --autogenerate` + hand-review, `uv run alembic
+upgrade head`) — see [`docs/migration-plan-auth-db.md`](../docs/migration-plan-auth-db.md)
+for the schema's design rationale, in particular why `cases.structure` is a
+single JSONB document instead of normalized persona/referral/file tables.
+`infra/legacy_turso.py` is a read-only leftover, kept only for the one-time
+Turso→Postgres data migration script — the running app never touches it.
 
-Repository functions (`repositories/*.py`) return **dicts keyed by column
-name** (via `libsql_client`'s `Row.asdict()`), not positional tuples — so a
-caller reads `row["case_name"]`, and reordering a `SELECT`'s columns can't
-silently shift which value lands in which field.
+Repository functions (`repositories/*.py`) mostly work with SQLModel ORM
+objects directly (e.g. a `Case` or `SimulationRun`); a few return plain
+dicts (`.model_dump(mode="json")`) where a caller needs a JSON-ready shape
+rather than a live ORM instance.
 
 ## Environment variables
 

@@ -10,25 +10,25 @@ def headers(settings) -> dict:
 
 
 # Shared client so the 4-6 LLM calls a single student message can fan out to reuse one connection pool
-_client: httpx.AsyncClient | None = None
-_CLIENT_LIMITS = httpx.Limits(max_connections=1000, max_keepalive_connections=200)
+client: httpx.AsyncClient | None = None
+CLIENT_LIMITS = httpx.Limits(max_connections=1000, max_keepalive_connections=200)
 
 
 def initClient() -> None:
-    global _client
-    if _client is None: _client = httpx.AsyncClient(limits=_CLIENT_LIMITS)
+    global client
+    if client is None: client = httpx.AsyncClient(limits=CLIENT_LIMITS)
 
 
 async def closeClient() -> None:
-    global _client
-    if _client is not None:
-        await _client.aclose()
-        _client = None
+    global client
+    if client is not None:
+        await client.aclose()
+        client = None
 
 
 def getClient() -> httpx.AsyncClient | None:
-    if _client is None: initClient()
-    return _client
+    if client is None: initClient()
+    return client
 
 
 # Only Timeouts and rate-limit/server errors are worth retrying
@@ -49,10 +49,12 @@ async def chat(payload: dict, *, timeout: float, retries: int) -> dict:
     anthropic_payload = {
         "model": payload["model"], "messages": payload["messages"], "max_tokens": payload["max_tokens"]
     }
-    if "system" in payload: anthropic_payload["system"] = payload["system"]
-    if "temperature" in payload: anthropic_payload["temperature"] = payload["temperature"]
+    if "system" in payload:
+        anthropic_payload["system"] = payload["system"]
+    if "temperature" in payload:
+        anthropic_payload["temperature"] = payload["temperature"]
 
-    # Structured outputs: Used by the persona reply to GUARANTEE the {reply, introduce, send_files} envelope shape
+    # Structured outputs: Used by the persona reply to guarantee the {reply, introduce, send_files} envelope shape
     if "output_config" in payload: anthropic_payload["output_config"] = payload["output_config"]
 
     @retry(
@@ -70,13 +72,7 @@ async def chat(payload: dict, *, timeout: float, retries: int) -> dict:
     return await send()
 
 
-class LLMStreamError(RuntimeError):
-    """An `error` event arrived inside an otherwise-OK Anthropic SSE stream."""
-
-
-# Parse an async iterator of raw SSE lines into decoded event dicts. Anthropic frames each
-# event as one or more `data:` lines terminated by a blank line; `event:` lines duplicate the
-# type carried in the JSON body, and `:` lines are keep-alive comments — both are ignored.
+# Parse an async iterator of raw SSE lines into decoded event dicts
 async def parseSseLines(lines):
     data_parts: list[str] = []
     async for raw_line in lines:
@@ -96,11 +92,7 @@ async def parseSseLines(lines):
             data_parts.append(line[5:].lstrip(" "))
 
 
-# Stream Anthropic's Messages API, yielding decoded SSE event dicts. Mirrors chat()'s field
-# mapping plus "stream": True. Retries (via isRetryable) fire ONLY before the first event is
-# yielded — once bytes have reached the caller, a mid-stream failure propagates, because we
-# can't cleanly rewind an already-started reply. read=30 is per-chunk (idle) timeout on a
-# stream, which is exactly the "stalled generation" signal we want to bound.
+# Stream Anthropic's Messages API, yielding decoded SSE event dicts.
 async def streamChat(payload: dict, *, retries: int):
     settings = get_settings()
     header = headers(settings)
@@ -127,20 +119,20 @@ async def streamChat(payload: dict, *, retries: int):
                 "POST", settings.llm_base_url, json=anthropic_payload, headers=header, timeout=timeout
             ) as response:
                 if response.status_code >= 400:
-                    # Body must be drained before raise_for_status() on a streaming response,
-                    # otherwise httpx raises ResponseNotRead instead of the real status error.
+                    # Body must be drained before raise_for_status() on a streaming response, otherwise httpx raises
+                    # ResponseNotRead instead of the real status error.
                     await response.aread()
                     response.raise_for_status()
                 async for event in parseSseLines(response.aiter_lines()):
                     if event.get("type") == "error":
                         detail = (event.get("error") or {}).get("message", "stream error")
-                        raise LLMStreamError(detail)
+                        raise RuntimeError(detail)
                     yielded_any = True
                     yield event
             return
         except Exception as exc:
             if not yielded_any and attempt < retries and isRetryable(exc):
-                await asyncio.sleep(attempt)  # 1s, then 2s — mirrors wait_incrementing
+                await asyncio.sleep(attempt)
                 continue
             raise
 
@@ -203,9 +195,7 @@ async def personaReply(system: str | list[dict], messages: list[dict]) -> str:
     return raw
 
 
-# Streaming twin of personaReply: same constrained-JSON payload, but yields the reply's raw
-# text fragments as they arrive (structured outputs stream as ordinary text_delta events).
-# The caller reassembles the full JSON and extracts the "reply" field incrementally.
+# Streaming twin of personaReply
 async def personaReplyStream(system: str | list[dict], messages: list[dict]):
     payload = {
         "model": get_settings().llm_model,
@@ -240,7 +230,7 @@ def formatTranscript(conversation: list[dict]) -> tuple[str, int, int]:
 
 
 # YES / NO Classifier for below methods
-async def yesNoJudge(system_prompt: str, user_prompt: str) -> bool:
+async def classifier(system_prompt: str, user_prompt: str) -> bool:
     settings = get_settings()
     payload = {
         "model": settings.llm_classifier_model,
@@ -284,7 +274,7 @@ async def classifyCondition(kind: str, condition: str, conversation: list[dict])
         f"Conversation (most recent last):\n{transcript}\n\n"
         f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
     )
-    return await yesNoJudge(system_prompt, user_prompt)
+    return await classifier(system_prompt, user_prompt)
 
 
 async def classifyReferral(condition: str, conversation: list[dict]) -> bool:

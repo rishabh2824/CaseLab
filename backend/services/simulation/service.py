@@ -4,90 +4,68 @@ import time
 import uuid
 from fastapi import HTTPException
 from models.simulations import NotesPayload, SendMessagePayload, StartSimulationPayload
-from infra.db import getDb
+from infra.db import get_session
 from infra.llm import classifyHarassment, personaReplyStream
 from infra.rate_limit import messageLimit, simulationLimit
-from Queries.simulation.runs import run_store
-from services.simulation.prompt import (
-    reply_instructions,
-    build_system_prompt,
-    clean_reply,
-    coerce_handles,
-    parse_reply,
-    resolve_file_share,
-    resolve_referral_unlock,
-    sanitize_history,
-)
+from services.simulation.run_store import cleanupRuns, insertRun, getRun, updateRun
+from services.simulation.prompt import (replyInstructions, systemPrompt, cleanReply, coerceHandles, parseReply, fileShare, referralUnlock, sanitizeHistory)
 from services.simulation.reply_stream import ReplyExtractor
-from services.simulation.reads import (
-    build_persona_graph,
-    get_case,
-    get_persona_details,
-    get_run_case,
-    get_run_persona_graph,
-    graph_persona_by_id,
-    graph_referrals_for,
-    graph_referred_personas,
-    hydrate_persona,
-)
-from services.simulation.turn_state import (
-    NONSENSE_END_THRESHOLD,
-    _build_boundary_reply,
-    _chat_state_payload,
-    _chat_state_payload_from_state,
-    _elapsed_minutes,
-    _format_run_histories,
-    _get_persona_chat_state,
-    persona_availability,
-    _persona_chat_state_ref,
-)
+from services.simulation.reads import (buildPersonaGraph, getCase, getRunCase, getPersonaGraph, graphPersonaById, graphReferrals, graphPersonas, hydratePersona)
+from services.simulation.turn_state import (NONSENSE_THRESHOLD, boundaryReply, chatStatePayload, shapeChatState, elapsedMinutes, formatHistory, getChatState, persona_availability, editChatState)
 from infra.spaces import getUrl
+
 
 HISTORY_MESSAGE_LIMIT = 6
 DECISION_JUDGE_HISTORY_LIMIT = 8
-MAX_USER_MESSAGE_WORDS = 50
-MAX_NOTES_CHARS = 20000
+MESSAGE_WORDS = 50
+NOTES_CHARS = 20000
+GENERATION_TIMEOUT = 120 # Wall-clock cap on a single reply stream.
 
-#One Server-Sent Event as a sse-starlette dict; the response class handles the wire framing
+
+# One Server-Sent Event as a sse-starlette dict; the response class handles the wire framing
 def sse(event: str, data: dict) -> dict:
     return {"event": event, "data": json.dumps(data)}
 
 
-#One contact-list entry: persona fields + computed availability + chat state.
-def build_contact(run, persona, available_at_minutes, elapsed_minutes, *, is_referred):
+# One contact-list entry: persona fields + computed availability + chat state.
+def buildContact(run, persona, available_at_minutes, elapsed_minutes, *, is_referred):
     availability = persona_availability(persona, available_at_minutes, elapsed_minutes)
-    return {**persona, **availability, "is_referred": is_referred, **_chat_state_payload(run, persona["id"])}
+    contact = {**persona, **availability, "is_referred": is_referred, **chatStatePayload(run, persona["id"])}
+    # Each file's share_conditions/perceived_contents are the unlock secret/answer key —
+    # fine for internal judging (resolve_turn_decisions), never for the browser. The
+    # frontend contact list doesn't use `files` at all; drop it rather than trim it.
+    contact.pop("files", None)
+    return contact
 
 
-# Full contacts list: every root persona, plus every unlocked referred persona. Both lists
-# are expected pre-hydrated (live/presigned photo URLs) — see hydrate_persona.
-def build_contacts(run, root_personas, elapsed_minutes, referred_personas=None):
+# Full contacts list: every root persona, plus every unlocked referred persona. Both lists are expected pre-hydrated
+def buildContacts(run, root_personas, elapsed_minutes, referred_personas=None):
     contacts = [
-        build_contact(run, persona, 0, elapsed_minutes, is_referred=False)
+        buildContact(run, persona, 0, elapsed_minutes, is_referred=False)
         for persona in root_personas
     ]
     for persona in referred_personas or []:
         available_at = run["unlocked_at"].get(persona["id"], elapsed_minutes)
-        contacts.append(build_contact(run, persona, available_at, elapsed_minutes, is_referred=True))
+        contacts.append(buildContact(run, persona, available_at, elapsed_minutes, is_referred=True))
     return contacts
 
 
-async def start_simulation(payload: StartSimulationPayload):
-    client = getDb()
+async def startSimulation(payload: StartSimulationPayload):
     access_code = payload.access_code.strip()
     if not access_code:
         raise HTTPException(status_code=400, detail="Access code is required.")
     await simulationLimit(access_code)
-    case_snapshot = await get_case(client, access_code=access_code)
-    persona_graph = await build_persona_graph(client, case_snapshot["id"])
+    async with get_session() as session:
+        case_snapshot = await getCase(session, access_code=access_code)
+        persona_graph = await buildPersonaGraph(session, case_snapshot["id"])
     if not persona_graph["root_personas"]:
         raise HTTPException(status_code=400, detail="No root personas found.")
-    root_personas = [hydrate_persona(p) for p in persona_graph["root_personas"]]
+    root_personas = [hydratePersona(p) for p in persona_graph["root_personas"]]
     run_id = uuid.uuid4().hex
     run = {
         "case_id": case_snapshot["id"],
-        "case_snapshot": case_snapshot,  # cached for the life of the run
-        "persona_graph": persona_graph,  # cached for the life of the run — see reads.py
+        "case_snapshot": case_snapshot,
+        "persona_graph": persona_graph,
         "start_time": time.time(),
         "active_persona_id": root_personas[0]["id"],
         "unlocked_referred_ids": set(),
@@ -97,12 +75,12 @@ async def start_simulation(payload: StartSimulationPayload):
         "persona_chat_state": {},
         "notes": "",
     }
-    elapsed_minutes = _elapsed_minutes(run)
-    contacts = build_contacts(run, root_personas, elapsed_minutes)
+    elapsed = elapsedMinutes(run)
+    contacts = buildContacts(run, root_personas, elapsed)
     active_candidates = [c for c in contacts if c["available"]]
     if active_candidates:
         run["active_persona_id"] = active_candidates[0]["id"]
-    await run_store.put(run_id, run)
+    await insertRun(run_id, run)
     return {
         "run_id": run_id,
         "case": {
@@ -119,16 +97,16 @@ async def start_simulation(payload: StartSimulationPayload):
     }
 
 
-async def get_simulation_state(run_id: str):
-    run = await run_store.get(run_id)
-    client = getDb()
-    case_snapshot = await get_run_case(run, client)
-    graph = await get_run_persona_graph(run, client)
-    root_personas = [hydrate_persona(p) for p in graph["root_personas"]]
+async def getSimulationState(run_id: str):
+    run = await getRun(run_id)
+    async with get_session() as session:
+        case_snapshot = await getRunCase(run, session)
+        graph = await getPersonaGraph(run, session)
+    root_personas = [hydratePersona(p) for p in graph["root_personas"]]
     unlocked_ids = run["unlocked_referred_ids"]
-    elapsed_minutes = _elapsed_minutes(run)
-    referred_personas = graph_referred_personas(graph, unlocked_ids)
-    contacts = build_contacts(run, root_personas, elapsed_minutes, referred_personas)
+    elapsed = elapsedMinutes(run)
+    referred_personas = graphPersonas(graph, unlocked_ids)
+    contacts = buildContacts(run, root_personas, elapsed, referred_personas)
     visible_persona_ids = {persona["id"] for persona in contacts}
     return {
         "run_id": run_id,
@@ -140,38 +118,36 @@ async def get_simulation_state(run_id: str):
         },
         "contacts": contacts,
         "active_persona_id": run["active_persona_id"],
-        "shared_files": [shared_file_payload(info) for info in run["shared_files"].values()],
-        "histories": _format_run_histories(run, visible_persona_ids),
+        "shared_files": [file(info) for info in run["shared_files"].values()],
+        "histories": formatHistory(run, visible_persona_ids),
         "notes": run.get("notes", "")
     }
 
 
-async def update_notes(run_id: str, payload: NotesPayload) -> dict:
-    if len(payload.notes) > MAX_NOTES_CHARS:
+async def updateNotes(run_id: str, payload: NotesPayload) -> dict:
+    if len(payload.notes) > NOTES_CHARS:
         raise HTTPException(
-            status_code=400, detail=f"Notes are too long ({MAX_NOTES_CHARS} characters max)."
+            status_code=400, detail=f"Notes are too long ({NOTES_CHARS} characters max)."
         )
 
-    def _set_notes(run):
+    def set_notes(run):
         run["notes"] = payload.notes
         return run["notes"]
 
-    notes = await run_store.mutate(run_id, _set_notes)
+    notes = await updateRun(run_id, set_notes)
     return {"notes": notes}
 
 
-async def export_simulation(run_id: str):
-    run = await run_store.get(run_id)
-    client = getDb()
-    case_snapshot = await get_run_case(run, client)
-    graph = await get_run_persona_graph(run, client)
+async def exportSimulation(run_id: str):
+    run = await getRun(run_id)
+    async with get_session() as session:
+        case_snapshot = await getRunCase(run, session)
+        graph = await getPersonaGraph(run, session)
     unlocked_ids = run["unlocked_referred_ids"]
-    # No photo in the export output below, so the raw (unsigned) graph entries are used
-    # directly here — no need to hydrate a URL nobody reads.
     personas = [{**persona, "is_referred": False} for persona in graph["root_personas"]]
 
     if unlocked_ids:
-        referred_personas = graph_referred_personas(graph, unlocked_ids, hydrate=False)
+        referred_personas = graphPersonas(graph, unlocked_ids, hydrate=False)
         referred_personas.sort(
             key=lambda persona: run["unlocked_at"].get(persona["id"], 0)
         )
@@ -202,13 +178,12 @@ async def export_simulation(run_id: str):
 
 
 # Fetch the persona's referrals + details and resolve every unlock/share eligibility for this turn
-async def resolve_turn_decisions(client, persona_id, decision_history, run) -> dict:
-    # Referrals come straight out of the run's cached persona graph (no DB call) — see
-    # reads.get_run_persona_graph, populated earlier in prepare_message. persona_details
-    # (known_facts, personality_traits, files) isn't part of that cache yet — still fetched
-    # fresh, since it wasn't in scope for this pass.
-    referrals = graph_referrals_for(run["persona_graph"], persona_id)
-    persona_details = await get_persona_details(client, persona_id)
+async def resolveDecisions(persona_id, decision_history, run) -> dict:
+    graph = run["persona_graph"]
+    referrals = graphReferrals(graph, persona_id)
+    persona_details = graphPersonaById(graph, persona_id)
+    if persona_details is None:
+        raise HTTPException(status_code=404, detail="Persona not found.")
     pending_referrals = [
         referral
         for referral in referrals
@@ -221,8 +196,8 @@ async def resolve_turn_decisions(client, persona_id, decision_history, run) -> d
     ]
     judge_history = decision_history[-DECISION_JUDGE_HISTORY_LIMIT:]
     referral_results, file_results = await asyncio.gather(
-        asyncio.gather(*(resolve_referral_unlock(referral, judge_history) for referral in pending_referrals)),
-        asyncio.gather(*(resolve_file_share(file_entry, judge_history) for file_entry in pending_files)),
+        asyncio.gather(*(referralUnlock(referral, judge_history) for referral in pending_referrals)),
+        asyncio.gather(*(fileShare(file_entry, judge_history) for file_entry in pending_files)),
     )
     return {
         "referrals": referrals,
@@ -234,77 +209,72 @@ async def resolve_turn_decisions(client, persona_id, decision_history, run) -> d
     }
 
 
-async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
-    run = await run_store.get(run_id)
+# Prepares the message for final response generation
+async def message(run_id: str, payload: SendMessagePayload) -> dict:
+    run = await getRun(run_id)
     await messageLimit(run_id)
     persona_id = payload.persona_id
     user_message = payload.message.strip()
     if not persona_id or not user_message:
         raise HTTPException(status_code=400, detail="persona_id and message are required.")
-    if len(user_message.split()) > MAX_USER_MESSAGE_WORDS:
+    if len(user_message.split()) > MESSAGE_WORDS:
         raise HTTPException(
             status_code=400,
-            detail=f"Message is too long ({MAX_USER_MESSAGE_WORDS} words max). Please shorten it and try again.",
+            detail=f"Message is too long ({MESSAGE_WORDS} words max). Please shorten it and try again.",
         )
-    elapsed_minutes = _elapsed_minutes(run)
-    client = getDb()
-    case_snapshot = await get_run_case(run, client)
+    elapsed = elapsedMinutes(run)
+    async with get_session() as session:
+        case_snapshot = await getRunCase(run, session)
+        graph = await getPersonaGraph(run, session)
     simulation_duration = case_snapshot.get("simulation_duration")
-    if simulation_duration and elapsed_minutes >= simulation_duration:
+    if simulation_duration and elapsed >= simulation_duration:
         raise HTTPException(status_code=400, detail="This simulation has ended.")
-    graph = await get_run_persona_graph(run, client)
     root_map = {p["id"]: p for p in graph["root_personas"]}
     if persona_id in root_map:
-        availability = persona_availability(root_map[persona_id], 0, elapsed_minutes)
+        availability = persona_availability(root_map[persona_id], 0, elapsed)
     elif persona_id in run["unlocked_referred_ids"]:
-        persona = graph_persona_by_id(graph, persona_id)
+        persona = graphPersonaById(graph, persona_id)
         if persona is None:
             raise HTTPException(status_code=404, detail="Persona not found.")
-        available_at = run["unlocked_at"].get(persona_id, elapsed_minutes)
-        availability = persona_availability(persona, available_at, elapsed_minutes)
+        available_at = run["unlocked_at"].get(persona_id, elapsed)
+        availability = persona_availability(persona, available_at, elapsed)
     else:
         raise HTTPException(status_code=400, detail="Persona is not available yet.")
     if not availability["available"]:
         raise HTTPException(status_code=400, detail="Persona is not available yet.")
     def start_turn(r):
-        if _get_persona_chat_state(r, persona_id)["ended"]:
+        if getChatState(r, persona_id)["ended"]:
             raise HTTPException(status_code=400, detail="This conversation has ended.")
         r["active_persona_id"] = persona_id
         turns = r["history"].setdefault(persona_id, [])
         turns.append({"role": "user", "content": user_message})
         return turns
 
-    history = await run_store.mutate(run_id, start_turn)
+    history = await updateRun(run_id, start_turn)
     decision_history = [msg for msg in history if msg.get("role") != "system"]
 
     try:
         message_label, decisions = await asyncio.gather(
             classifyHarassment(user_message, decision_history),
-            resolve_turn_decisions(client, persona_id, decision_history, run),
+            resolveDecisions(persona_id, decision_history, run),
         )
     except Exception:
-        # No fallback here (unlike classifyHarassment's silent "normal" default) —
-        # a referral/file-eligibility judge failing after retries means we can't
-        # safely decide what the persona is allowed to reveal this turn, so the
-        # whole message fails rather than guessing.
-        raise HTTPException(
-            status_code=502, detail="Something went wrong. Please resend your message."
-        )
+        raise HTTPException(status_code=502, detail="Something went wrong. Please resend your message.")
     persona_details = decisions["persona_details"]
 
     if message_label != "normal":
         def flag_and_append(r):
-            state = _persona_chat_state_ref(r, persona_id)
+            state = editChatState(r, persona_id)
             state["last_flag_type"] = message_label
             state["warning_count"] += 1
-            if state["warning_count"] >= NONSENSE_END_THRESHOLD:
+            if state["warning_count"] >= NONSENSE_THRESHOLD:
                 state["ended"] = True
                 state["end_reason"] = message_label
-            reply = _build_boundary_reply(persona_details["name"], state["ended"])
-            history = append_assistant_turn(r, persona_id, reply)
+            reply = boundaryReply(persona_details["name"], state["ended"])
+            history = appendToTurn(r, persona_id, reply)
             return state, reply, history
 
-        chat_state, assistant_reply, boundary_history = await run_store.mutate(
+        chat_state, assistant_reply, boundary_history = await updateRun(
             run_id, flag_and_append
         )
         return {
@@ -316,7 +286,7 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
             "meta": {
                 "new_contacts": [],
                 "shared_files": [],
-                **_chat_state_payload_from_state(chat_state),
+                **shapeChatState(chat_state),
             },
         }
 
@@ -363,7 +333,7 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
         )
     ]
 
-    stable_prompt, turn_prompt = build_system_prompt(
+    stable_prompt, turn_prompt = systemPrompt(
         case_snapshot,
         persona_details,
         forbidden_referral_names=forbidden_referral_names,
@@ -371,9 +341,9 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
         eligible_files=eligible_files,
         withheld_file_names=withheld_file_names,
     )
-    reply_instruction = reply_instructions()
+    reply_instruction = replyInstructions()
 
-    sanitized_history = sanitize_history(decision_history, forbidden_referral_names)
+    sanitized_history = sanitizeHistory(decision_history, forbidden_referral_names)
     recent_history = sanitized_history[-HISTORY_MESSAGE_LIMIT:]
 
     cached_prompt = f"{reply_instruction}\n\n---\n\n{stable_prompt}"
@@ -397,12 +367,8 @@ async def prepare_message(run_id: str, payload: SendMessagePayload) -> dict:
     }
 
 
-"""Re-sign a previously-shared file's download URL from its stored
-    object_key. Presigned URLs expire (SPACES_PRESIGN_EXPIRY_SECONDS, 900s by
-    default) well before a run's ~2-hour lifetime, so the URL must be generated
-    fresh on every read rather than cached at share time — caching it made
-    links start 403ing partway through a still-active simulation."""
-def shared_file_payload(info: dict) -> dict:
+# Turns an internal file record into client facing shape
+def file(info: dict) -> dict:
     return {
         "file_id": info["file_id"],
         "file_name": info["file_name"],
@@ -411,12 +377,13 @@ def shared_file_payload(info: dict) -> dict:
     }
 
 
-async def apply_reply_decisions(run_id, prepared, unlock_handles, share_handles, persona_id, reply):
+# Applies the decisions received from the LLM
+async def applyDecisions(run_id, prepared, unlock_handles, share_handles, persona_id, reply):
     referral_handles = prepared["referral_handles"]
     file_handles = prepared["file_handles"]
 
-    def _apply_and_append(run):
-        elapsed_minutes = _elapsed_minutes(run)
+    def applyAppend(run):
+        elapsed = elapsedMinutes(run)
         new_contacts = []
         for handle in dict.fromkeys(unlock_handles):  # de-dupe, preserve order
             referral = referral_handles.get(handle)
@@ -426,9 +393,9 @@ async def apply_reply_decisions(run_id, prepared, unlock_handles, share_handles,
             if referred_id in run["unlocked_referred_ids"]:
                 continue
             run["unlocked_referred_ids"].add(referred_id)
-            run["unlocked_at"][referred_id] = elapsed_minutes
+            run["unlocked_at"][referred_id] = elapsed
             new_contacts.append(
-                {**referral["persona"], **_chat_state_payload(run, referred_id)}
+                {**referral["persona"], **chatStatePayload(run, referred_id)}
             )
 
         shared_files = []
@@ -446,53 +413,30 @@ async def apply_reply_decisions(run_id, prepared, unlock_handles, share_handles,
                 "object_key": file_entry["object_key"],
             }
             run["shared_files"][file_id] = shared_info
-            shared_files.append(shared_file_payload(shared_info))
+            shared_files.append(file(shared_info))
 
-        history = append_assistant_turn(run, persona_id, reply)
-        chat_state_payload = _chat_state_payload(run, persona_id)
-        return new_contacts, shared_files, history, chat_state_payload
+        history = appendToTurn(run, persona_id, reply)
+        chat_state = chatStatePayload(run, persona_id)
+        return new_contacts, shared_files, history, chat_state
 
-    return await run_store.mutate(run_id, _apply_and_append)
+    return await updateRun(run_id, applyAppend)
 
 
-# Append the assistant reply to a persona's history and return that persona's formatted history
-def append_assistant_turn(run, persona_id, reply):
-    """. Call INSIDE a run_store.mutate callback."""
+# Append {"role": "assistant", "content": reply} to the persona's history list and return that persona's formatted history
+def appendToTurn(run, persona_id, reply):
     run["history"].setdefault(persona_id, []).append(
         {"role": "assistant", "content": reply}
     )
-    return _format_run_histories(run, {persona_id}).get(persona_id, [])
+    return formatHistory(run, {persona_id}).get(persona_id, [])
 
 
-# Strong references to in-flight generations, keyed by nothing in particular —
-# just a set so asyncio doesn't garbage-collect a task mid-flight (a bare
-# create_task() result with no other referent is only weakly held by the loop).
+# Strong references to in-flight generations, just a set so asyncio doesn't garbage-collect a task mid-flight
 # Entries remove themselves via add_done_callback once finished.
-_in_flight_generations: set[asyncio.Task] = set()
-
-# Wall-clock cap on a single reply stream. read= in streamChat only bounds the
-# gap between chunks; this bounds the whole generation so a slow-but-never-idle
-# stream can't run unbounded.
-GENERATION_TOTAL_TIMEOUT = 120
+generations: set[asyncio.Task] = set()
 
 
-async def _generate_and_persist_reply(prepared: dict, queue: asyncio.Queue) -> None:
-    """Producer for a 'normal' reply turn: stream the persona reply from the LLM,
-    push SSE frames onto ``queue`` for stream_message to forward, then persist.
-
-    Runs as a detached task (see stream_message), so a client disconnecting
-    mid-generation — e.g. reloading the page while waiting — can no longer cancel
-    generation or lose the reply. It always runs to completion and is saved to the
-    run; a reconnecting client picks it up via the next GET /{run_id} poll or the
-    live WebSocket push. The queue is unbounded and written with put_nowait, so a
-    gone consumer never blocks or backpressures generation (bounded in practice by
-    max_tokens on the reply).
-
-    Frame order for a successful turn is ``delta* -> meta -> done``: the persona's
-    reply text streams first, but the referral/file decisions it enacts are only
-    known once the full reply is parsed, so ``meta`` necessarily trails the text.
-    A single ``error`` frame (and nothing persisted) replaces the rest on failure.
-    """
+# Takes the cleaned response from the LLM and saves it to DB.
+async def reply(prepared: dict, queue: asyncio.Queue) -> None:
     run_id = prepared["run_id"]
     persona_id = prepared["persona_id"]
     extractor = ReplyExtractor()
@@ -506,7 +450,7 @@ async def _generate_and_persist_reply(prepared: dict, queue: asyncio.Queue) -> N
         # a reply that fails to generate/stream has nothing safe to fall back to,
         # so the message fails and the user is asked to resend it.
         try:
-            async with asyncio.timeout(GENERATION_TOTAL_TIMEOUT):
+            async with asyncio.timeout(GENERATION_TIMEOUT):
                 async for text in personaReplyStream(prepared["system"], prepared["messages"]):
                     raw_parts.append(text)
                     delta = extractor.feed(text)
@@ -518,17 +462,17 @@ async def _generate_and_persist_reply(prepared: dict, queue: asyncio.Queue) -> N
 
         # Authoritative parse of the full raw text — the streamed deltas are a
         # best-effort preview; this is the reply of record for persistence + done.
-        envelope = parse_reply("".join(raw_parts))
-        reply = clean_reply(str(envelope.get("reply") or "")) if envelope else ""
+        envelope = parseReply("".join(raw_parts))
+        reply = cleanReply(str(envelope.get("reply") or "")) if envelope else ""
         if not reply:
             emit("error", {"detail": "The reply could not be generated. Please resend your message."})
             return
 
-        unlock_handles = coerce_handles(envelope.get("introduce"))
-        share_handles = coerce_handles(envelope.get("send_files"))
+        unlock_handles = coerceHandles(envelope.get("introduce"))
+        share_handles = coerceHandles(envelope.get("send_files"))
 
         try:
-            new_contacts, shared_files, history, chat_state_payload = await apply_reply_decisions(
+            new_contacts, shared_files, history, chat_state_payload = await applyDecisions(
                 run_id, prepared, unlock_handles, share_handles, persona_id, reply
             )
         except Exception:
@@ -549,25 +493,17 @@ async def _generate_and_persist_reply(prepared: dict, queue: asyncio.Queue) -> N
         queue.put_nowait(None)  # sentinel: tell the consumer the stream is complete
 
 
-async def stream_message(prepared: dict):
-    """Async generator of Server-Sent Events for one message turn.
-
-    A boundary reply is canned, so its meta + text are known up front and emitted
-    ``meta -> delta -> done``. A normal reply is produced by a detached task that
-    streams the persona's text token-by-token, so the event order is
-    ``delta* -> meta -> done`` — the referral/file decisions carried in the reply
-    are only known once it finishes. A single ``error`` event replaces the rest if
-    generation fails, in which case nothing is unlocked or shared.
-    """
+# Sends the final response to frontend
+async def streamMessage(prepared: dict):
     if prepared["kind"] == "boundary":
         # reply/history are already fully computed and persisted in
         # prepare_message's _flag_and_append mutate — nothing left to write
         # here, just yield the already-known values.
         yield sse("meta", prepared["meta"])
-        reply = prepared["reply"]
-        if reply:
-            yield sse("delta", {"text": reply})
-        yield sse("done", {"reply": reply, "history": prepared["history"]})
+        boundary_reply = prepared["reply"]
+        if boundary_reply:
+            yield sse("delta", {"text": boundary_reply})
+        yield sse("done", {"reply": boundary_reply, "history": prepared["history"]})
         return
 
     # --- normal: the producer runs as a task this generator does not own, and
@@ -577,9 +513,9 @@ async def stream_message(prepared: dict):
     # reaches only our `queue.get()` here — the producer keeps running and
     # persists the reply regardless of whether anyone is still listening.
     queue: asyncio.Queue = asyncio.Queue()
-    task = asyncio.create_task(_generate_and_persist_reply(prepared, queue))
-    _in_flight_generations.add(task)
-    task.add_done_callback(_in_flight_generations.discard)
+    task = asyncio.create_task(reply(prepared, queue))
+    generations.add(task)
+    task.add_done_callback(generations.discard)
 
     while True:
         try:

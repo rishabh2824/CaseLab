@@ -2,8 +2,8 @@ import asyncio
 import time
 from math import ceil
 from fastapi import HTTPException
-from Queries import rate_limits as repo
-from infra.db import getDb
+from services import rate_limits as repo
+from infra.db import get_session
 
 
 MESSAGE_LIMIT = 15 # Number of messages a single student can send in one minute
@@ -12,24 +12,24 @@ CLEANUP_INTERVAL = 300  # how often the stale-row sweeper runs
 
 
 async def messageLimit(run_id: str) -> None:
-    client = getDb()
     key = f"message:{run_id}"
     now = time.time()
-    row = await repo.upsert_and_get(client, key, now, 60)
+    async with get_session() as session:
+        row = await repo.upsertAndGet(session, key, now, 60)
 
     if row["count"] > MESSAGE_LIMIT:
-        retry_after = max(1, ceil(row["window_start"] + 60 - now))
+        retry_after = max(1, ceil(row["start_time"] + 60 - now))
         raise HTTPException(status_code=429, detail="Rate Limit exceeded", headers={"Retry-After": str(retry_after)})
 
 
 async def simulationLimit(access_code: str) -> None:
-    client = getDb()
     key = f"start:{access_code.strip().upper()}"
     now = time.time()
-    row = await repo.upsert_and_get(client, key, now, 60)
+    async with get_session() as session:
+        row = await repo.upsertAndGet(session, key, now, 60)
     if row["count"] > START_LIMIT:
         retry_after = max(
-            1, ceil(row["window_start"] + 60 - now)
+            1, ceil(row["start_time"] + 60 - now)
         )
         raise HTTPException(
             status_code=429,
@@ -40,9 +40,9 @@ async def simulationLimit(access_code: str) -> None:
 
 # Deletes all rate-limit rows in the rate_limits table whose window started more than 60 seconds ago
 async def purgeStaleLimits() -> int:
-    client = getDb()
     cutoff = time.time() - 60
-    return await repo.delete_stale(client, cutoff)
+    async with get_session() as session:
+        return await repo.deleteStale(session, cutoff)
 
 
 # Calls the above method

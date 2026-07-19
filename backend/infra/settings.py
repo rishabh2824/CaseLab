@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 JWT_EXPIRY = 24 * 60 * 60  # 24h
 JWT_ALGORITHM = "HS256"
-MAX_SIMULATION_DURATION = 120
+SIMULATION_DURATION = 120
 
 
 class Settings(BaseSettings):
@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     spaces_presign_expiry: int = 900
     db_url: str
     db_token: str
+    pooling_url: str = Field(default="", validation_alias="POOLING")
+    direct_url: str = Field(default="", validation_alias="DIRECT")
     frontend_urls_raw: str = Field(default="", validation_alias="FRONTEND_URLS")
     google_client_id: str
     google_client_secret: str
@@ -30,9 +32,6 @@ class Settings(BaseSettings):
     llm_key: str
     llm_base_url: str = "https://api.anthropic.com/v1/messages"
     admin_cookie_secure: bool = Field(default=True, validation_alias="ADMIN_COOKIE_SECURE")
-    # Optional. Empty disables pub/sub entirely — the live WebSocket falls back to
-    # polling the DB on its own, at STATE_POLL_INTERVAL_SECONDS in api/simulations.py.
-    redis_url: str = Field(default="", validation_alias="REDIS_URL")
 
     @property
     def frontendUrls(self) -> list[str]:

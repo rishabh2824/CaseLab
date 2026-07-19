@@ -12,7 +12,7 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    admin_id: str
+    admin_id: int
     role: AdminRole
     email: str
     name: str | None = None
@@ -25,7 +25,7 @@ class AddAdminRequest(BaseModel):
 
 
 class AdminOut(BaseModel):
-    id: str
+    id: int
     email: str
     name: str | None = None
     role: AdminRole

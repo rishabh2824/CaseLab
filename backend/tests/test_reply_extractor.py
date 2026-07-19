@@ -1,13 +1,3 @@
-"""ReplyExtractor: incrementally pulling the `reply` string out of streamed
-structured-output JSON. Every case is run over several chunkings — whole,
-char-by-char, and fixed sizes — because the wire can split a chunk at any
-point, including in the middle of an escape or a surrogate pair.
-
-JSON escape sequences in the inputs are built from ``BS`` (a single backslash)
-rather than written as literal ``\\uXXXX`` text, so the source can't be silently
-normalized into the decoded character — the whole point is to feed the extractor
-the *escaped* form and check that it decodes.
-"""
 
 import pytest
 
@@ -18,24 +8,23 @@ REPL = "�"  # Unicode replacement character
 EMOJI = "\U0001F600"  # 😀, encoded in JSON as the surrogate pair 😀
 
 
-def _u(hexcode: str) -> str:
-    """A JSON \\uXXXX escape as literal text (backslash, 'u', four hex digits)."""
+def u(hexcode: str) -> str:
     return BS + "u" + hexcode
 
 
-def _whole(s):
+def whole(s):
     return [s]
 
 
-def _chars(s):
+def chars(s):
     return list(s)
 
 
-def _by(n):
+def by(n):
     return lambda s: [s[i:i + n] for i in range(0, len(s), n)] or [""]
 
 
-CHUNKERS = [_whole, _chars, _by(2), _by(3), _by(7)]
+CHUNKERS = [whole, chars, by(2), by(3), by(7)]
 CHUNKER_IDS = ["whole", "chars", "by2", "by3", "by7"]
 
 # (id, raw JSON text, expected reply, expected found_reply)
@@ -50,10 +39,10 @@ CASES = [
         True,
     ),
     ("backspace_formfeed", '{"reply": "x' + BS + "by" + BS + 'fz"}', "x\by\fz", True),
-    ("unicode_escape", '{"reply": "caf' + _u("00e9") + '"}', "café", True),
-    ("surrogate_pair", '{"reply": "hi ' + _u("d83d") + _u("de00") + '!"}', "hi " + EMOJI + "!", True),
-    ("unpaired_high_surrogate", '{"reply": "' + _u("d83d") + 'X"}', REPL + "X", True),
-    ("lone_low_surrogate", '{"reply": "' + _u("de00") + 'Y"}', REPL + "Y", True),
+    ("unicode_escape", '{"reply": "caf' + u("00e9") + '"}', "café", True),
+    ("surrogate_pair", '{"reply": "hi ' + u("d83d") + u("de00") + '!"}', "hi " + EMOJI + "!", True),
+    ("unpaired_high_surrogate", '{"reply": "' + u("d83d") + 'X"}', REPL + "X", True),
+    ("lone_low_surrogate", '{"reply": "' + u("de00") + 'Y"}', REPL + "Y", True),
     ("braces_in_value", '{"reply": "use {this} or [that]", "introduce": []}', "use {this} or [that]", True),
     ("whitespace_around_colon", '{"reply"\n\t:  \n  "spaced"}', "spaced", True),
     (
@@ -73,7 +62,7 @@ CASES = [
 @pytest.mark.parametrize("chunker", CHUNKERS, ids=CHUNKER_IDS)
 @pytest.mark.parametrize("case", CASES, ids=[c[0] for c in CASES])
 def test_extract(case, chunker):
-    _id, text, expected, found = case
+    id, text, expected, found = case
     ex = ReplyExtractor()
     out = "".join(ex.feed(chunk) for chunk in chunker(text))
     assert out == expected
@@ -99,7 +88,7 @@ def test_unicode_escape_split_at_every_offset():
     # Split the é escape between every pair of characters to exercise the
     # partial-escape holdback at each boundary.
     prefix = '{"reply": "x'
-    esc = _u("00e9")
+    esc = u("00e9")
     full = prefix + esc + '"}'
     for cut in range(len(prefix), len(prefix) + len(esc)):
         ex = ReplyExtractor()
@@ -109,8 +98,8 @@ def test_unicode_escape_split_at_every_offset():
 
 def test_surrogate_pair_split_between_the_two_escapes():
     prefix = '{"reply": "'
-    full = prefix + _u("d83d") + _u("de00") + '"}'
-    cut = len(prefix) + len(_u("d83d"))  # split exactly between high and low surrogate
+    full = prefix + u("d83d") + u("de00") + '"}'
+    cut = len(prefix) + len(u("d83d"))  # split exactly between high and low surrogate
     ex = ReplyExtractor()
     out = ex.feed(full[:cut]) + ex.feed(full[cut:])
     assert out == EMOJI

@@ -1,19 +1,15 @@
-"""Pure, no-I/O helpers over an in-memory run dict: availability windows and
-per-persona chat (safety) state.
-"""
-
 import time
 
-# classify_message_safety only distinguishes "normal" vs "nonsense" (the
-# latter covers gibberish/spam as well as harassment/abuse) — one threshold
-# for the one non-normal label.
-NONSENSE_END_THRESHOLD = 3
+
+# Number of nonsense messages allowed before ending the chat
+NONSENSE_THRESHOLD = 3
 
 
-def _elapsed_minutes(run) -> int:
+def elapsedMinutes(run) -> int:
     return int((time.time() - run["start_time"]) / 60)
 
 
+# Computes if a persona should be currently reachable or not.
 def persona_availability(persona, available_at_minutes: int, elapsed_minutes: int):
     availability_duration = persona.get("availability_duration")
     available_at = available_at_minutes
@@ -39,7 +35,7 @@ def persona_availability(persona, available_at_minutes: int, elapsed_minutes: in
     return {"available": True, "available_in": 0, "expires_in": None}
 
 
-def _new_chat_state() -> dict:
+def newChatState() -> dict:
     return {
         "warning_count": 0,
         "ended": False,
@@ -48,22 +44,18 @@ def _new_chat_state() -> dict:
     }
 
 
-def _get_persona_chat_state(run: dict, persona_id: str) -> dict:
-    """Read a persona's chat (safety) state, or a fresh default if it has never
-    been flagged. Pure read: it does NOT create state on the run — writes go
-    through ``run_store.mutate`` + ``_persona_chat_state_ref`` (see
-    prepare_message)."""
-    return run.get("persona_chat_state", {}).get(persona_id) or _new_chat_state()
+# Gets the chat state for one persona
+def getChatState(run: dict, persona_id: str) -> dict:
+    return run.get("persona_chat_state", {}).get(persona_id) or newChatState()
 
 
-def _persona_chat_state_ref(run: dict, persona_id: str) -> dict:
-    """Get-or-create the live, stored chat-state dict for a persona so it can be
-    mutated. Only call this INSIDE a ``run_store.mutate`` callback — it writes to
-    the run."""
-    return run.setdefault("persona_chat_state", {}).setdefault(persona_id, _new_chat_state())
+# Same but this is an editable version
+def editChatState(run: dict, persona_id: str) -> dict:
+    return run.setdefault("persona_chat_state", {}).setdefault(persona_id, newChatState())
 
 
-def _chat_state_payload_from_state(state: dict) -> dict:
+# drops fields from the dict not needed by frontend
+def shapeChatState(state: dict) -> dict:
     return {
         "chat_ended": state["ended"],
         "chat_end_reason": state["end_reason"],
@@ -71,11 +63,13 @@ def _chat_state_payload_from_state(state: dict) -> dict:
     }
 
 
-def _chat_state_payload(run: dict, persona_id: str) -> dict:
-    return _chat_state_payload_from_state(_get_persona_chat_state(run, persona_id))
+# Final thing sent to the frontend
+def chatStatePayload(run: dict, persona_id: str) -> dict:
+    return shapeChatState(getChatState(run, persona_id))
 
 
-def _build_boundary_reply(persona_name: str, should_end: bool) -> str:
+# Persona response to a nonsense message.
+def boundaryReply(persona_name: str, should_end: bool) -> str:
     name = persona_name or "I"
     if should_end:
         return (
@@ -89,7 +83,8 @@ def _build_boundary_reply(persona_name: str, should_end: bool) -> str:
     )
 
 
-def _format_run_histories(run: dict, persona_ids: set[str] | None = None) -> dict:
+# takes the run's full history dict and returns only user/assistant turns, trimmed to {role, content}
+def formatHistory(run: dict, persona_ids: set[str] | None = None) -> dict:
     histories = {}
     for persona_id, messages in run["history"].items():
         if persona_ids is not None and persona_id not in persona_ids:

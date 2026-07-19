@@ -3,7 +3,7 @@ import re
 from infra.llm import classifyFileShare, classifyReferral
 
 
-def build_system_prompt(
+def systemPrompt(
     case_snapshot,
     persona_details,
     *,
@@ -13,13 +13,9 @@ def build_system_prompt(
     withheld_file_names,
 ):
     known_facts = persona_details.get("known_facts") or "None"
-    # Redact still-forbidden contacts from the facts the model sees, so it can't surface a name it isn't allowed to
-    # reveal yet.
+    # Redact still-forbidden contacts from the facts the model sees
     if forbidden_referral_names and known_facts != "None":
         for name in forbidden_referral_names:
-            # An empty/whitespace name would make the pattern collapse to \b\b —
-            # a zero-width match at every word boundary — which injects the
-            # replacement between every word and corrupts the facts. Skip it.
             if not name.strip():
                 continue
             known_facts = re.sub(rf"\b{re.escape(name)}\b","[undisclosed contact]", known_facts)
@@ -98,9 +94,7 @@ def build_system_prompt(
     return stable, turn
 
 
-def sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict]:
-    # Drop empty/whitespace names: their \b{}\b pattern collapses to \b\b, a
-    # zero-width match at every word boundary that would rewrite the whole message.
+def sanitizeHistory(history: list[dict], locked_names: list[str]) -> list[dict]:
     locked_names = [name for name in locked_names if name and name.strip()]
     if not locked_names:
         return history
@@ -116,7 +110,7 @@ def sanitize_history(history: list[dict], locked_names: list[str]) -> list[dict]
     return sanitized
 
 
-def reply_instructions() -> str:
+def replyInstructions() -> str:
     return (
         "Return ONLY a single JSON object (no code fences, no prose around it) with "
         "exactly these keys:\n"
@@ -133,13 +127,14 @@ def reply_instructions() -> str:
 
 
 # Strip a leading bracketed speaker tag like "[Mary, CFO ...]"
-def clean_reply(text: str) -> str:
+def cleanReply(text: str) -> str:
     reply = (text or "").strip()
     reply = re.sub(r"^\s*\[[^\]]+\]\s*", "", reply).strip()
     return reply
 
 
-def first_json_object(text: str) -> str | None:
+# Extracts the JSON if the reply is not clean
+def jsonExtractor(text: str) -> str | None:
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end <= start:
@@ -147,12 +142,13 @@ def first_json_object(text: str) -> str | None:
     return text[start : end + 1]
 
 
-def parse_reply(raw: str) -> dict | None:
+# Processes the LLM reply
+def parseReply(raw: str) -> dict | None:
     text = (raw or "").strip()
     if not text: return None
     fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
     if fence: text = fence.group(1).strip()
-    for candidate in (text, first_json_object(text)):
+    for candidate in (text, jsonExtractor(text)):
         if not candidate: continue
         try: data = json.loads(candidate)
         except (json.JSONDecodeError, TypeError): continue
@@ -160,7 +156,8 @@ def parse_reply(raw: str) -> dict | None:
     return None
 
 
-def coerce_handles(value) -> list[str]:
+# normalizes referral/file "handles" 
+def coerceHandles(value) -> list[str]:
     if isinstance(value, str): value = [value]
     if not isinstance(value, list): return []
     handles = []
@@ -171,13 +168,13 @@ def coerce_handles(value) -> list[str]:
     return handles
 
 
-async def resolve_referral_unlock(referral: dict, decision_history: list[dict]) -> bool:
+async def referralUnlock(referral: dict, decision_history: list[dict]) -> bool:
     condition = referral["condition_trigger"].strip()
     if not condition: return False
     return await classifyReferral(condition, decision_history)
 
 
-async def resolve_file_share(file_entry: dict, decision_history: list[dict]) -> bool:
+async def fileShare(file_entry: dict, decision_history: list[dict]) -> bool:
     condition = (file_entry.get("share_conditions") or "").strip()
     if not condition: return False
     return await classifyFileShare(condition, decision_history)
