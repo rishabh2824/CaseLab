@@ -22,7 +22,6 @@ def presign_upload(payload: PresignUploadRequest) -> PresignUploadResponse:
     upload_url = putUrl(object_key, payload.content_type)
     return PresignUploadResponse(
         upload_url=upload_url,
-        bucket=settings.spaces_bucket,
         object_key=object_key,
         file_name=payload.file_name,
         content_type=payload.content_type,

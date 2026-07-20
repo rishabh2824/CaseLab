@@ -29,12 +29,11 @@ def upgrade() -> None:
     op.create_index(op.f('ix_admins_email'), 'admins', ['email'], unique=True)
     op.create_table('files',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('bucket', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('object_key', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('content_type', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('bucket', 'object_key', name='uq_files_bucket_object_key')
+    sa.UniqueConstraint('object_key', name='uq_files_object_key')
     )
     op.create_table('rate_limits',
     sa.Column('key', sqlmodel.sql.sqltypes.AutoString(), nullable=False),

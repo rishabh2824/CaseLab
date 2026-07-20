@@ -27,7 +27,6 @@ def violation(exc: Exception) -> bool:
 def normalizeFile(entry: dict | None) -> dict | None:
     if not entry: return None
     return {
-        "bucket": entry["bucket"],
         "object_key": entry["object_key"],
         "file_name": entry["file_name"],
         "content_type": entry.get("content_type"),
@@ -77,18 +76,15 @@ async def accessCodeTaken(session, access_code: str, exclude_case_id: int | None
     return result.first() is not None
 
 
-# --- file dedup: get-or-create by (bucket, object_key), same as the old get_file_id ----
+# --- file dedup: get-or-create by object_key, same as the old get_file_id ----
 async def resolve_file_ref(session, file_ref: FileRef | None) -> dict | None:
     if file_ref is None:
         return None
     file_row = (
-        await session.exec(
-            select(File).where(File.bucket == file_ref.bucket, File.object_key == file_ref.object_key)
-        )
+        await session.exec(select(File).where(File.object_key == file_ref.object_key))
     ).first()
     if file_row is None:
         file_row = File(
-            bucket=file_ref.bucket,
             object_key=file_ref.object_key,
             name=file_ref.file_name,
             content_type=file_ref.content_type,
@@ -102,7 +98,6 @@ async def resolve_file_ref(session, file_ref: FileRef | None) -> dict | None:
         # JSON silently stringifies int dict keys on serialization, so keeping it a
         # string from the start avoids an int-vs-str mismatch after a round-trip.
         "file_id": str(file_row.id),
-        "bucket": file_row.bucket,
         "object_key": file_row.object_key,
         "file_name": file_row.name,
         "content_type": file_row.content_type,

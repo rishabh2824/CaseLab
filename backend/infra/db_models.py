@@ -31,10 +31,9 @@ class Case(SQLModel, table=True):
 
 class File(SQLModel, table=True):
     __tablename__ = "files"
-    __table_args__ = (UniqueConstraint("bucket", "object_key", name="uq_files_bucket_object_key"),)
+    __table_args__ = (UniqueConstraint("object_key", name="uq_files_object_key"),)
 
     id: int | None = Field(default=None, primary_key=True)
-    bucket: str
     object_key: str
     name: str
     content_type: str | None = None

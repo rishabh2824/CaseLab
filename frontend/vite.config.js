@@ -1,70 +1,50 @@
-import tailwindcss from '@tailwindcss/vite'
-import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import tailwindcss from '@tailwindcss/vite';
+import { defineConfig } from 'vitest/config';
+import adapter from '@sveltejs/adapter-static';
+import { sveltekit } from '@sveltejs/kit/vite';
 
-// Mirrors, in dev, the routing DO App Platform's static-site spec does in prod:
-// index_document="index.html" serves "/" only, catchall_document="app.html"
-// serves every other (client-side-routed) path — see index.html/app.html for
-// why (the landing-only Bg.webp preload). Without this, "vite dev" would fall
-// back to its own default of serving index.html for every unmatched route.
-function landingSplitDevRouting() {
-    return {
-        name: 'landing-split-dev-routing',
-        configureServer(server) {
-            server.middlewares.use((req, res, next) => {
-                const url = req.url || ''
-                const looksLikeAFile = /\.[a-zA-Z0-9]+(\?|$)/.test(url)
-                const isClientRoute =
-                    req.method === 'GET' &&
-                    url !== '/' &&
-                    !url.startsWith('/api') &&
-                    !url.startsWith('/@') &&
-                    !url.startsWith('/src/') &&
-                    !url.startsWith('/node_modules/') &&
-                    !looksLikeAFile
-                if (isClientRoute) req.url = '/app.html'
-                next()
-            })
-        },
-    }
-}
-
-// https://vite.dev/config/
 export default defineConfig({
-    plugins: [react(), tailwindcss(), landingSplitDevRouting()],
-    server: {
-        // Proxy API calls to the backend so the browser sees frontend and backend
-        // as the same origin locally too, matching production's path-based routing
-        // under one domain (see admin_auth.py's admin_session cookie, which is
-        // SameSite=Lax and gets silently rejected by the browser without this —
-        // it relies on first-party/same-origin, not cross-site CORS).
-        proxy: {
-            '/api': {
-                target: 'http://127.0.0.1:8000',
-                changeOrigin: true,
-                ws: true,
-            },
-        },
-    },
-    build: {
-        rollupOptions: {
-            // Multi-page build: index.html (landing, "/") and app.html (every
-            // other route) so only the landing page's built HTML preloads
-            // Bg.webp — see index.html's comment.
-            input: {
-                main: 'index.html',
-                app: 'app.html',
-            },
-        },
-    },
-    test: {
-        globals: true,
-        environment: 'jsdom',
-        setupFiles: './src/test/setup.js',
-        // Playwright specs live under e2e/ and run via their own runner.
-        exclude: ['**/node_modules/**', '**/e2e/**'],
-        // client.js reads VITE_API_BASE at module load; pin it for deterministic
-        // URL assertions.
-        env: { VITE_API_BASE: 'http://api.test' },
-    },
-})
+	plugins: [
+		tailwindcss(),
+		sveltekit({
+			compilerOptions: {
+				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
+				runes: ({ filename }) => filename.split(/[/\\]/).includes('node_modules') ? undefined : true
+			},
+			// SPA: no server-rendering (see root +layout.js), static-hosted, client
+			// routing needs the same fallback shim SvelteKit gives us for free.
+			adapter: adapter({ fallback: '200.html' })
+		})
+	],
+	server: {
+		// Proxy API calls to the backend so the browser sees frontend and backend
+		// as the same origin locally too, matching production's path-based routing
+		// under one domain (see backend/services/admin_auth.py's admin_session
+		// cookie, which is SameSite=Lax and gets silently rejected by the browser
+		// without this — it relies on first-party/same-origin, not cross-site CORS).
+		proxy: {
+			'/api': {
+				target: 'http://127.0.0.1:8000',
+				changeOrigin: true,
+				ws: true
+			}
+		}
+	},
+	test: {
+		expect: { requireAssertions: true },
+		projects: [
+			{
+				extends: './vite.config.js',
+				test: {
+					name: 'server',
+					environment: 'node',
+					include: ['src/**/*.{test,spec}.{js,ts}'],
+					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}'],
+					// client.js reads VITE_API_BASE at module load; pin it for
+					// deterministic URL assertions (mirrors the old frontend/vite.config.js).
+					env: { VITE_API_BASE: 'http://api.test' }
+				}
+			}
+		]
+	}
+});

@@ -51,7 +51,6 @@ def fileEntry(entry: dict) -> dict:
     file_ref = entry.get("file") or {}
     return {
         "file_id": file_ref.get("file_id"),
-        "bucket": file_ref.get("bucket"),
         "object_key": file_ref.get("object_key"),
         "file_name": file_ref.get("file_name"),
         "content_type": file_ref.get("content_type"),

@@ -9,7 +9,6 @@ class PresignUploadRequest(BaseModel):
 
 class PresignUploadResponse(BaseModel):
     upload_url: str
-    bucket: str
     object_key: str
     file_name: str
     content_type: str | None = None

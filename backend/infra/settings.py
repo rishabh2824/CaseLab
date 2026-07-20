@@ -17,9 +17,6 @@ class Settings(BaseSettings):
     llm_classifier_model: ClassVar[str] = "claude-haiku-4-5"
     spaces_key: str
     spaces_secret: str
-    spaces_bucket: str
-    spaces_region: str = "sfo3"
-    spaces_endpoint: str = ""
     spaces_presign_expiry: int = 900
     db_url: str
     db_token: str
