@@ -34,15 +34,12 @@ export default defineConfig({
 		expect: { requireAssertions: true },
 		projects: [
 			{
-				extends: './vite.config.js',
+				extends: './vite.config.ts',
 				test: {
 					name: 'server',
 					environment: 'node',
 					include: ['src/**/*.{test,spec}.{js,ts}'],
-					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}'],
-					// client.js reads VITE_API_BASE at module load; pin it for
-					// deterministic URL assertions (mirrors the old frontend/vite.config.js).
-					env: { VITE_API_BASE: 'http://api.test' }
+					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']
 				}
 			}
 		]

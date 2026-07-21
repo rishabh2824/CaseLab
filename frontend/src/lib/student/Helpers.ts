@@ -1,24 +1,27 @@
 // Pure data-shaping helpers
+import type { ChatMessage, Contact } from '../types.js'
 
 // Lowercase, replace runs of non-alphanumerics with a single '-', trim '-'.
-export const slugify = (value) =>
+export const slugify = (value: unknown) =>
     String(value ?? '')
         .trim()
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
 
-export const countWords = (value) =>
+export const countWords = (value: unknown) =>
     String(value ?? '').trim().split(/\s+/).filter(Boolean).length
 
-export const normalizeMessages = (messages = []) =>
+export const normalizeMessages = (messages: ChatMessage[] = []): ChatMessage[] =>
     (messages ?? []).filter(
         (message) =>
             (message.role === 'user' || message.role === 'assistant') &&
             typeof message.content === 'string',
     )
 
-export const normalizeHistories = (histories = {}) =>
+export const normalizeHistories = (
+    histories: Record<string, ChatMessage[]> = {},
+): Record<string, ChatMessage[]> =>
     Object.fromEntries(
         Object.entries(histories).map(([personaId, messages]) => [
             personaId,
@@ -26,10 +29,26 @@ export const normalizeHistories = (histories = {}) =>
         ]),
     )
 
-const getPersonaInitials = (name) =>
-    name ? name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') : 'NA'
+const getPersonaInitials = (name: string | undefined | null) =>
+    name ? name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '').join('') : 'NA'
 
-export const mapContact = (persona) => {
+export type MappedContact = {
+    id: string
+    initials: string
+    name: string
+    title: string
+    profilePhotoUrl: string | null
+    availability: number | null | undefined
+    isReferred: boolean
+    available: boolean
+    availableIn: number | null
+    expiresIn: number | null
+    chatEnded: boolean
+    chatEndReason: string | null
+    warningCount: number
+}
+
+export const mapContact = (persona: Contact): MappedContact => {
     const availability = persona.availability_duration
     return {
         id: persona.id,

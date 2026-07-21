@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
 	import { untrack } from 'svelte'
 	import { apiFetch } from '$lib/api/client.js'
 	import {
@@ -13,10 +13,19 @@
 	import { buildHTMLForm, downloadForm } from '$lib/case/exportCase.js'
 	import { CaseImportError, parseHTMLForm } from '$lib/case/importCase.js'
 	import PersonaFields from './PersonaFields.svelte'
+	import type { CaseDetailResponse, DraftPersona, DraftReferral } from '$lib/types.js'
 
 	const MAX_SIMULATION_DURATION = 120
 
-	let { templateId = null, editCaseId = null } = $props()
+	// Sourced straight from page.url.searchParams.get(...) by the routes that
+	// render this form — real URL query strings, never parsed to a number.
+	// Both are only ever interpolated into `/api/cases/${sourceCaseId}`.
+	type Props = {
+		templateId?: string | null
+		editCaseId?: string | null
+	}
+
+	let { templateId = null, editCaseId = null }: Props = $props()
 
 	const isEditMode = $derived(Boolean(editCaseId))
 	const sourceCaseId = $derived(editCaseId || templateId)
@@ -26,10 +35,10 @@
 	let caseName = $state('')
 	let initialBrief = $state('')
 	let commonInformation = $state('')
-	let simulationDurationMinutes = $state(null)
+	let simulationDurationMinutes = $state<number | null>(null)
 	let accessCode = $state('')
-	let totalPersonas = $state(null)
-	let personas = $state([])
+	let totalPersonas = $state<number | null>(null)
+	let personas = $state<DraftPersona[]>([])
 
 	let showFieldErrors = $state(false)
 	function revealErrors() {
@@ -41,13 +50,13 @@
 	let submitError = $state('')
 	let submitSuccess = $state('')
 	let isSubmitting = $state(false)
-	let importWarnings = $state([])
+	let importWarnings = $state<string[]>([])
 	let importError = $state('')
-	let fileInputEl = $state(null)
+	let fileInputEl = $state<HTMLInputElement | null>(null)
 
 	$effect(() => {
 		if (!sourceCaseId) return
-		apiFetch(`/api/cases/${sourceCaseId}`)
+		apiFetch<CaseDetailResponse>(`/api/cases/${sourceCaseId}`)
 			.then((data) => {
 				const templateCase = data.case
 				caseName = templateCase.case_name ?? ''
@@ -59,16 +68,17 @@
 				personas = (templateCase.personas ?? []).map((persona) => normalizePersona(persona))
 				revealErrors()
 			})
-			.catch((err) => {
+			.catch((err: unknown) => {
 				loadErrorMessage =
-					err.message || (isEditMode ? 'Failed to load case for editing.' : 'Failed to load case template.')
+					(err instanceof Error && err.message) ||
+					(isEditMode ? 'Failed to load case for editing.' : 'Failed to load case template.')
 			})
 			.finally(() => {
 				isLoadingSource = false
 			})
 	})
 
-	function parseIntOrNull(raw) {
+	function parseIntOrNull(raw: string): number | null {
 		if (raw === '') return null
 		const parsed = Number(raw)
 		return Number.isFinite(parsed) ? Math.trunc(parsed) : null
@@ -91,7 +101,9 @@
 
 	const referredPersonas = $derived(collectReferredPersonas(personas))
 	const rootPersonaErrors = $derived(
-		Array.from({ length: showPersonas ? totalPersonas : 0 }, (_, index) =>
+		// showPersonas doesn't narrow totalPersonas here (separate $derived) —
+		// re-check inline, same as the template's equivalent Array.from below.
+		Array.from({ length: showPersonas && typeof totalPersonas === 'number' ? totalPersonas : 0 }, (_, index) =>
 			getPersonaFieldErrors(normalizePersona(personas[index])),
 		),
 	)
@@ -112,15 +124,22 @@
 	// collectReferredPersonas (a pure helper, shared with export/import and validation) returns
 	// normalized *copies* for labeling — walk the path back into the live $state tree so
 	// PersonaFields binds to the real referred persona, not a throwaway snapshot.
-	function resolveReferredPersona(path) {
-		let persona = personas[path[0]]
+	function resolveReferredPersona(path: number[]): DraftPersona {
+		const rootIndex = path[0]
+		if (rootIndex === undefined) throw new Error('Internal error: empty referral path.')
+		let persona = personas[rootIndex]
+		if (!persona) throw new Error('Internal error: root persona not found while resolving a referral path.')
 		for (let depth = 1; depth < path.length; depth++) {
-			persona = persona.referrals[path[depth]].persona
+			const childIndex = path[depth]
+			if (childIndex === undefined) throw new Error('Internal error: malformed referral path.')
+			const referral: DraftReferral | undefined = persona.referrals[childIndex]
+			if (!referral) throw new Error('Internal error: referred persona not found while resolving a referral path.')
+			persona = referral.persona
 		}
 		return persona
 	}
 
-	function handleTotalPersonasChange(event) {
+	function handleTotalPersonasChange(event: Event & { currentTarget: EventTarget & HTMLInputElement }): void {
 		revealErrors()
 		const value = parseIntOrNull(event.currentTarget.value)
 		totalPersonas = value
@@ -133,7 +152,7 @@
 	}
 
 	// Builds a .html form from whatever's currently in this form
-	function handleExportTemplate() {
+	function handleExportTemplate(): void {
 		const html = buildHTMLForm({
 			caseName,
 			accessCode,
@@ -145,12 +164,12 @@
 		downloadForm(html, caseName)
 	}
 
-	function handleImportClick() {
+	function handleImportClick(): void {
 		fileInputEl?.click()
 	}
 
 	// Parses a filled-in export back into form state
-	async function handleImportFile(event) {
+	async function handleImportFile(event: Event & { currentTarget: EventTarget & HTMLInputElement }): Promise<void> {
 		const file = event.currentTarget.files?.[0]
 		event.currentTarget.value = ''
 		if (!file) return
@@ -182,7 +201,7 @@
 		}
 	}
 
-	async function handleSubmit(event) {
+	async function handleSubmit(event: SubmitEvent): Promise<void> {
 		event.preventDefault()
 		loadErrorMessage = ''
 		submitError = ''
@@ -197,12 +216,15 @@
 				commonInformation,
 				simulationDurationMinutes,
 				accessCode,
-				totalPersonas,
+				// The submit button is disabled while hasValidationErrors is true
+				// (which requires totalPersonas to be a valid number), so this is
+				// always a number by the time handleSubmit can actually run.
+				totalPersonas: totalPersonas as number,
 				personas,
 			})
 			submitSuccess = isEditMode ? 'Case updated successfully.' : 'Case saved successfully.'
 		} catch (err) {
-			submitError = err.message || 'Upload failed.'
+			submitError = (err instanceof Error && err.message) || 'Upload failed.'
 		} finally {
 			isSubmitting = false
 		}
@@ -407,9 +429,10 @@
 						AI Personas
 					</summary>
 					{#if showPersonas}
+						{@const personaCount = typeof totalPersonas === 'number' ? totalPersonas : 0}
 						<div class="flex flex-col gap-3 border-t border-line-soft px-5 py-5">
-							{#each Array.from({ length: totalPersonas }) as _, index (index)}
-								{@const persona = personas[index]}
+							{#each Array.from({ length: personaCount }) as _, index (index)}
+								{@const persona = personas[index] ?? createEmptyPersona()}
 								{@const personaLabel = getPersonaLabel(persona, `Persona ${index + 1}`)}
 								<details class="rounded-xl border border-line-soft bg-cream/40">
 									<summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink">

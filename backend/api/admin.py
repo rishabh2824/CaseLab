@@ -3,13 +3,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlmodel.ext.asyncio.session import AsyncSession
 from models.admin import AddAdminRequest, AdminOut, AdminRole, LoginRequest, LoginResponse
 from services import admin as admin_repository
-from services.auth import (
-    clearCookie,
-    createJwt,
-    exchangeCode,
-    setCookie,
-    verifyToken,
-)
+from services.auth import (clearCookie, createJwt, exchangeCode, setCookie, verifyToken)
 from infra.db import get_session, getRequestSession
 from .dependencies import requireSuperAdmin
 
@@ -59,6 +53,13 @@ async def deleteAdmin(admin_id: int, session: AsyncSession = Depends(getRequestS
     existing = await admin_repository.getById(session, admin_id)
     if existing is None: raise HTTPException(status_code=404, detail="Admin not found.")
     if existing["role"] == AdminRole.SUPER: raise HTTPException(status_code=403, detail="Super admins cannot be deleted.")
+
+    owned = await admin_repository.ownedCaseCount(session, admin_id)
+    if owned:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This admin owns {owned} case{'s' if owned != 1 else ''}. Delete or reassign their cases first.",
+        )
 
     await admin_repository.delete(session, admin_id)
     return {"ok": True}

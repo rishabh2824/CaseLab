@@ -1,17 +1,22 @@
-<script>
+<script lang="ts">
 	import { onMount } from 'svelte'
 	import { goto } from '$app/navigation'
 	import { cases } from '$lib/case/cases.svelte.js'
+	import type { CaseSummary } from '$lib/types.js'
 
-	let { mode = 'template' } = $props()
+	type Props = {
+		mode?: 'template' | 'edit'
+	}
 
-	let deletingId = $state(null)
+	let { mode = 'template' }: Props = $props()
+
+	let deletingId = $state<number | null>(null)
 
 	onMount(() => {
 		cases.fetchAll()
 	})
 
-	function openCase(caseItem) {
+	function openCase(caseItem: CaseSummary) {
 		if (mode === 'edit') {
 			goto(`/admin/edit/form?caseId=${caseItem.id}`)
 		} else {
@@ -19,7 +24,7 @@
 		}
 	}
 
-	async function handleDelete(event, caseItem) {
+	async function handleDelete(event: MouseEvent, caseItem: CaseSummary) {
 		event.stopPropagation()
 		const confirmed = window.confirm(
 			`Delete "${caseItem.case_name}"? This also frees its access code for reuse. This cannot be undone.`,

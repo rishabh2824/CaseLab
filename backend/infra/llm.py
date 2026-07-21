@@ -214,12 +214,18 @@ async def personaReplyStream(system: str | list[dict], messages: list[dict]):
                 yield text
 
 
-# Formats the message transcript
-def formatTranscript(conversation: list[dict]) -> tuple[str, int, int]:
+# Shared "last N turns" window for every classifier prompt (harassment + referral/file
+# conditions) — one number, so batching them into a single call later doesn't require
+# reconciling mismatched windows.
+CLASSIFIER_HISTORY_LIMIT = 8
+
+
+# Formats the last `limit` non-system turns of a conversation as "role: content" lines
+def formatTranscript(conversation: list[dict], limit: int = CLASSIFIER_HISTORY_LIMIT) -> tuple[str, int, int]:
     lines = []
     user_count = 0
     assistant_count = 0
-    for message in conversation:
+    for message in conversation[-limit:]:
         role = message.get("role")
         if role == "system": continue
         lines.append(f"{role}: {message.get('content', '')}")
@@ -287,13 +293,7 @@ async def classifyFileShare(condition: str, conversation: list[dict]) -> bool:
 
 async def classifyHarassment(user_message: str, conversation: list[dict]) -> str:
     settings = get_settings()
-    transcript = "\n".join(
-        f"{msg.get('role')}: {msg.get('content', '')}"
-        for msg in conversation[-6:]
-        if msg.get("role") != "system"
-    )
-    if not transcript:
-        transcript = "No prior conversation."
+    transcript, _, _ = formatTranscript(conversation)
 
     payload = {
         "model": settings.llm_classifier_model,

@@ -1,5 +1,13 @@
 // Pure data-shaping helpers for the case form
-export const createEmptyPersona = (overrides = {}) => ({
+import type {
+    DraftPersona,
+    DraftReferral,
+    PartialDraftPersona,
+    PartialDraftReferral,
+    PersonaFieldErrors,
+} from '../types.js'
+
+export const createEmptyPersona = (overrides: Partial<DraftPersona> = {}): DraftPersona => ({
     name: '',
     role: '',
     profile_photo: null,
@@ -14,7 +22,7 @@ export const createEmptyPersona = (overrides = {}) => ({
 })
 
 
-export const createEmptyReferral = (overrides = {}) => ({
+export const createEmptyReferral = (overrides: Partial<DraftReferral> = {}): DraftReferral => ({
     name: '',
     conditions: '',
     persona: createEmptyPersona(),
@@ -22,29 +30,33 @@ export const createEmptyReferral = (overrides = {}) => ({
 })
 
 
-export const normalizePersona = (persona) => ({
+// Accepts anything shaped like a (partial) DraftPersona — including the
+// PersonaOut the API returns when loading a template/edit source. Only this
+// persona's own fields are defaulted; nested referrals are passed through
+// as-is (not deep-normalized) — see PartialDraftReferral.
+export const normalizePersona = (persona: PartialDraftPersona | null | undefined): DraftPersona => ({
     ...createEmptyPersona(),
     ...(persona ?? {}),
     files: persona?.files ?? [],
-    referrals: persona?.referrals ?? [],
+    referrals: (persona?.referrals ?? []) as DraftReferral[],
 })
 
 
-export const normalizeReferral = (referral) => ({
+export const normalizeReferral = (referral: PartialDraftReferral | null | undefined): DraftReferral => ({
     ...createEmptyReferral(),
     ...(referral ?? {}),
     persona: normalizePersona(referral?.persona),
 })
 
 
-export const getPersonaLabel = (persona, fallback) => {
+export const getPersonaLabel = (persona: { name: string }, fallback: string): string => {
     const trimmed = persona.name.trim()
     return trimmed.length > 0 ? trimmed : fallback
 }
 
 
-export const getPersonaFieldErrors = (persona) => {
-    const errors = {}
+export const getPersonaFieldErrors = (persona: DraftPersona): PersonaFieldErrors => {
+    const errors: PersonaFieldErrors = {}
     if (!persona.name?.trim()) errors.name = 'Name is required.'
     if (!persona.role?.trim()) errors.role = 'Role is required.'
     if (typeof persona.availability_minutes === 'number' && persona.availability_minutes < 1) {
@@ -60,13 +72,20 @@ export const getPersonaFieldErrors = (persona) => {
 }
 
 
-export const hasFieldErrors = (errors) => Object.values(errors).some(Boolean)
+export const hasFieldErrors = (errors: PersonaFieldErrors): boolean => Object.values(errors).some(Boolean)
 
 
-export const collectReferredPersonas = (personas) => {
-    const referredItems = []
+export type ReferredPersonaItem = {
+    path: number[]
+    persona: DraftPersona
+    label: string
+    parentLabel: string
+}
 
-    const walk = (currentPersona, path, parentLabel) => {
+export const collectReferredPersonas = (personas: DraftPersona[]): ReferredPersonaItem[] => {
+    const referredItems: ReferredPersonaItem[] = []
+
+    const walk = (currentPersona: DraftPersona, path: number[], parentLabel: string) => {
         const referrals = currentPersona?.referrals ?? []
         referrals.forEach((referralRaw, referralIndex) => {
             const referral = normalizeReferral(referralRaw)

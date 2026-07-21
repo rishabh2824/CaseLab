@@ -26,11 +26,11 @@ def putUrl(object_key: str, content_type=None) -> str:
     client = get_spaces_client()
     params: dict[str, str] = {"Bucket": SPACES_BUCKET, "Key": object_key}
     if content_type: params["ContentType"] = content_type
-    return client.generate_presigned_url("put_object", Params=params, ExpiresIn=settings.spaces_presign_expiry)
+    return client.generate_presigned_url("put_object", Params=params, ExpiresIn=settings.spaces_upload_expiry)
 
 
 def getUrl(object_key: str) -> str:
     settings = get_settings()
     client = get_spaces_client()
     params: dict[str, str] = {"Bucket": SPACES_BUCKET, "Key": object_key}
-    return client.generate_presigned_url("get_object", Params=params, ExpiresIn=settings.spaces_presign_expiry)
+    return client.generate_presigned_url("get_object", Params=params, ExpiresIn=settings.spaces_download_expiry)

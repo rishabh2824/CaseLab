@@ -1,19 +1,24 @@
 // Exports an empty case form so admins can autofill it with AI
-import {slugify} from '../student/Helpers.js'
+import { slugify } from '../student/Helpers.js'
+import type { PartialDraftPersona } from '../types.js'
+
+const escapeHtml = (value: unknown): string =>
+    String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
 
 
-const escapeHtml = (value) => String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+const blank = (value: unknown): string => (value == null ? '' : String(value))
 
 
-const blank = (value) => (value == null ? '' : String(value))
+type FlatPersonaEntry = { id: string; persona: PartialDraftPersona; isRoot: boolean }
+type ReferralEdge = { fromId: string; toId: string; conditions: string }
+type FlattenedPersonaGraph = { flatPersonas: FlatPersonaEntry[]; referralEdges: ReferralEdge[] }
 
-
-function flattenPersonaGraph(personas) {
-    const flatPersonas = [] // { id, persona, isRoot }
-    const referralEdges = [] // { fromId, toId, conditions }
+function flattenPersonaGraph(personas: PartialDraftPersona[] | null | undefined): FlattenedPersonaGraph {
+    const flatPersonas: FlatPersonaEntry[] = [] // { id, persona, isRoot }
+    const referralEdges: ReferralEdge[] = [] // { fromId, toId, conditions }
     let personaCounter = 0
     const nextPersonaId = () => `P${++personaCounter}`
 
@@ -23,22 +28,22 @@ function flattenPersonaGraph(personas) {
         return {id, persona}
     })
 
-    const walkReferrals = (parentId, persona) => {
+    const walkReferrals = (parentId: string, persona: PartialDraftPersona | undefined) => {
         for (const referral of persona?.referrals ?? []) {
             const childId = nextPersonaId()
-            const childPersona = referral?.persona ?? {}
+            const childPersona: PartialDraftPersona = referral?.persona ?? {}
             flatPersonas.push({id: childId, persona: childPersona, isRoot: false})
             referralEdges.push({fromId: parentId, toId: childId, conditions: referral?.conditions ?? ''})
             walkReferrals(childId, childPersona)
         }
     }
-    rootEntries.forEach(({id, persona}) => walkReferrals(id, persona))
+    rootEntries.forEach(({id, persona}) => { walkReferrals(id, persona) })
     return {flatPersonas, referralEdges}
 }
 
 
-function scaffoldPersonas() {
-    const blankPersona = () => ({
+function scaffoldPersonas(): PartialDraftPersona[] {
+    const blankPersona = (): PartialDraftPersona => ({
         name: '',
         role: '',
         known_facts: '',
@@ -51,7 +56,16 @@ function scaffoldPersonas() {
 }
 
 
-function fields({field, label, hint, value, rows = 1, required = false}) {
+type FieldsInput = {
+    field: string
+    label: string
+    hint?: string
+    value?: string | number | null
+    rows?: number
+    required?: boolean
+}
+
+function fields({field, label, hint, value, rows = 1, required = false}: FieldsInput): string {
     return `<div class="field">
     <label class="field-label">${escapeHtml(label)}${required ? '<span class="required-mark"> *</span>' : ''}</label>
     ${hint ? `<p class="field-hint">${escapeHtml(hint)}</p>` : ''}
@@ -62,7 +76,7 @@ function fields({field, label, hint, value, rows = 1, required = false}) {
 }
 
 
-function fileShare(persona) {
+function fileShare(persona: PartialDraftPersona | null | undefined): string {
     const canShare = (persona?.files ?? []).length > 0 ? 'yes' : 'no'
     return `<div class="field">
     <label class="field-label">Can this Persona share files?</label>
@@ -75,7 +89,7 @@ function fileShare(persona) {
 }
 
 
-function personaCardMarkup(id, persona, isRoot) {
+function personaCardMarkup(id: string, persona: PartialDraftPersona, isRoot: boolean): string {
     const availabilityHint = isRoot ? 'Blank = the whole simulation.' : "Counts from when they're unlocked."
 
     // P1 is always the first root persona flattenPersonaGraph assigns
@@ -118,14 +132,14 @@ function personaCardMarkup(id, persona, isRoot) {
 }
 
 
-function personaOptions(personaIds, selectedId) {
+function personaOptions(personaIds: string[], selectedId: string): string {
     return personaIds
         .map((id) => `<option value="${id}" ${id === selectedId ? 'selected' : ''}>${id}</option>`)
         .join('')
 }
 
 
-function referralRowMarkup(edge, personaIds) {
+function referralRowMarkup(edge: ReferralEdge, personaIds: string[]): string {
     return `<div class="referral-row" data-referral="true">
     <div class="referral-selects">
       <select class="input select-persona" data-role="from">${personaOptions(personaIds, edge.fromId)}</select>
@@ -193,7 +207,16 @@ const STYLES = `
 `
 
 
-export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, initialBrief, commonInformation, personas}) {
+export type BuildHTMLFormInput = {
+    caseName: string
+    accessCode: string
+    simulationDurationMinutes: number | null
+    initialBrief: string
+    commonInformation: string
+    personas?: PartialDraftPersona[] | null
+}
+
+export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, initialBrief, commonInformation, personas}: BuildHTMLFormInput): string {
     const effectivePersonas = Array.isArray(personas) && personas.length > 0 ? personas : scaffoldPersonas()
     const {flatPersonas, referralEdges} = flattenPersonaGraph(effectivePersonas)
     const personaIds = flatPersonas.map((p) => p.id)
@@ -219,16 +242,16 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
             <div class="page">
                 <article class="sheet">
                     <h1 class="doc-title">Wisconsin Case Lab — Case Import Form</h1>
-        
+
                     <section class="block">
                         <div class="eyebrow">
                             <span class="rule"></span><span>Case Setup</span><span class="rule"></span>
                         </div>
                         <h2 class="section-title">Case Setup</h2>
                         ${fields({
-                            field: 'case_name', 
-                            label: 'Case Name', 
-                            value: caseName, 
+                            field: 'case_name',
+                            label: 'Case Name',
+                            value: caseName,
                             required: true})}
                         ${fields({
                             field: 'access_code',
@@ -259,26 +282,26 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
                             rows: 5
                         })}
                     </section>
-        
+
                     <section class="block">
                         <div class="eyebrow">
                             <span class="rule"></span><span>Personas</span><span class="rule"></span>
                         </div>
-                        
+
                         <h2 class="section-title">Personas</h2>
                         <p class="section-hint">
-                            Every persona gets one card, whether available from the start (Root) or unlocked later via a 
+                            Every persona gets one card, whether available from the start (Root) or unlocked later via a
                             referral (Referred) — switch that with the dropdown on each card.
                         </p>
                         <div id="personas-list">${personaCards}</div>
                         <button type="button" class="btn-add" id="add-persona-btn">+ Add persona</button>
                     </section>
-        
+
                     <section class="block">
                         <div class="eyebrow">
                             <span class="rule"></span><span>Referrals</span><span class="rule"></span>
                         </div>
-                        
+
                         <h2 class="section-title">Referrals</h2>
                         <p class="section-hint">
                             The first persona introduces the second once the condition below is met in conversation.
@@ -288,7 +311,7 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
                     </section>
                 </article>
             </div>
-        
+
             <template id="persona-template">
                 <article class="persona-card" data-persona-id="" data-persona-root="true">
                     <div class="persona-card-head">
@@ -299,17 +322,17 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
                         </select>
                         <button type="button" class="btn-text btn-remove" data-action="remove-persona">Remove persona</button>
                     </div>
-                    
+
                     ${fields({
-                        field: 'name', 
-                        label: 'Name', 
-                        value: '', 
+                        field: 'name',
+                        label: 'Name',
+                        value: '',
                         required: true
                     })}
                     ${fields({
-                        field: 'role', 
-                        label: 'Role / Title', 
-                        value: '', 
+                        field: 'role',
+                        label: 'Role / Title',
+                        value: '',
                         required: true
                     })}
                     ${fields({
@@ -335,7 +358,7 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
                     ${fileShare(null)}
                 </article>
             </template>
-        
+
             <template id="referral-template">
           <div class="referral-row" data-referral="true">
             <div class="referral-selects">
@@ -448,7 +471,7 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
 }
 
 
-export function downloadForm(html, caseName) {
+export function downloadForm(html: string, caseName: string): void {
     const slug = slugify(caseName)
     const filename = `${slug || 'new-case'}.html`
     const file = new Blob([html], {type: 'text/html;charset=utf-8'})

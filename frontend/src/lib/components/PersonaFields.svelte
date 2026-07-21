@@ -1,21 +1,30 @@
-<script>
+<script lang="ts">
 	import { createEmptyReferral, getPersonaLabel, normalizeReferral } from '$lib/case/Helpers.js'
+	import type { DraftPersona, PersonaFieldErrors } from '$lib/types.js'
 
-	let { persona, errors = {} } = $props()
+	type Props = {
+		persona: DraftPersona
+		errors?: PersonaFieldErrors
+	}
+
+	let { persona, errors = {} }: Props = $props()
 	const uid = $props.id()
 
-	function parseIntOrNull(raw) {
+	type InputEvent_ = Event & { currentTarget: EventTarget & HTMLInputElement }
+	type TextAreaEvent = Event & { currentTarget: EventTarget & HTMLTextAreaElement }
+
+	function parseIntOrNull(raw: string): number | null {
 		if (raw === '') return null
 		const parsed = Number(raw)
 		return Number.isFinite(parsed) ? Math.trunc(parsed) : null
 	}
 
-	function handlePhotoChange(event) {
+	function handlePhotoChange(event: InputEvent_): void {
 		persona.profile_photo = event.currentTarget.files?.[0] ?? null
 		event.currentTarget.value = ''
 	}
 
-	function handleFileCountChange(event) {
+	function handleFileCountChange(event: InputEvent_): void {
 		const count = parseIntOrNull(event.currentTarget.value)
 		persona.file_count = typeof count === 'number' && count >= 0 ? count : null
 		if (typeof persona.file_count === 'number') {
@@ -29,12 +38,14 @@
 		}
 	}
 
-	function handleFileChange(event, fileIndex) {
-		persona.files[fileIndex].file = event.currentTarget.files?.[0] ?? null
+	function handleFileChange(event: InputEvent_, fileIndex: number): void {
+		const entry = persona.files[fileIndex]
+		if (!entry) return
+		entry.file = event.currentTarget.files?.[0] ?? null
 		event.currentTarget.value = ''
 	}
 
-	function handleReferralOutCountChange(event) {
+	function handleReferralOutCountChange(event: InputEvent_): void {
 		const count = parseIntOrNull(event.currentTarget.value)
 		persona.referral_out_count = typeof count === 'number' && count >= 0 ? count : null
 		if (typeof persona.referral_out_count !== 'number') {
@@ -48,16 +59,18 @@
 		}
 	}
 
-	function handleReferralNameChange(event, referralIndex) {
+	function handleReferralNameChange(event: InputEvent_, referralIndex: number): void {
 		const value = event.currentTarget.value
-		persona.referrals[referralIndex] = normalizeReferral(persona.referrals[referralIndex])
-		persona.referrals[referralIndex].name = value
-		persona.referrals[referralIndex].persona.name = value
+		const normalized = normalizeReferral(persona.referrals[referralIndex])
+		persona.referrals[referralIndex] = normalized
+		normalized.name = value
+		normalized.persona.name = value
 	}
 
-	function handleReferralConditionsChange(event, referralIndex) {
-		persona.referrals[referralIndex] = normalizeReferral(persona.referrals[referralIndex])
-		persona.referrals[referralIndex].conditions = event.currentTarget.value
+	function handleReferralConditionsChange(event: TextAreaEvent, referralIndex: number): void {
+		const normalized = normalizeReferral(persona.referrals[referralIndex])
+		persona.referrals[referralIndex] = normalized
+		normalized.conditions = event.currentTarget.value
 	}
 </script>
 
@@ -189,7 +202,7 @@
 								id="{uid}-file-{fileIndex}-conditions"
 								rows="2"
 								placeholder="Describe the conditions"
-								bind:value={persona.files[fileIndex].share_conditions}
+								bind:value={fileEntry.share_conditions}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							></textarea>
 						</div>
@@ -199,7 +212,7 @@
 								id="{uid}-file-{fileIndex}-perceived"
 								rows="2"
 								placeholder="Describe perceived contents"
-								bind:value={persona.files[fileIndex].perceived_contents}
+								bind:value={fileEntry.perceived_contents}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							></textarea>
 						</div>

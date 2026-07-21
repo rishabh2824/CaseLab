@@ -1,28 +1,30 @@
-<script>
+<script lang="ts">
 	import { onMount } from 'svelte'
 	import { apiFetch } from '$lib/api/client.js'
 	import { ADMIN_ROLE } from '$lib/constants.js'
+	import type { AddAdminRequest, AdminOut, AdminRole } from '$lib/types.js'
 
-	const ROLE_LABELS = { [ADMIN_ROLE.SUPER]: 'Super Admin', [ADMIN_ROLE.ADMIN]: 'Admin' }
+	const ROLE_LABELS: Record<AdminRole, string> = { [ADMIN_ROLE.SUPER]: 'Super Admin', [ADMIN_ROLE.ADMIN]: 'Admin' }
 
-	let admins = $state([])
+	let admins = $state<AdminOut[]>([])
 	let isLoading = $state(true)
 	let listError = $state('')
 
 	let email = $state('')
 	let name = $state('')
-	let role = $state(ADMIN_ROLE.ADMIN)
+	let role = $state<AdminRole>(ADMIN_ROLE.ADMIN)
 	let formError = $state('')
 	let isAdding = $state(false)
-	let deletingId = $state(null)
+	let deletingId = $state<number | null>(null)
+	let deleteError = $state('')
 
-	async function loadAdmins() {
+	async function loadAdmins(): Promise<void> {
 		isLoading = true
 		listError = ''
 		try {
-			admins = await apiFetch('/api/admin/admins')
+			admins = await apiFetch<AdminOut[]>('/api/admin/admins')
 		} catch (err) {
-			listError = err.message || 'Failed to load admins.'
+			listError = (err instanceof Error && err.message) || 'Failed to load admins.'
 		} finally {
 			isLoading = false
 		}
@@ -30,7 +32,7 @@
 
 	onMount(loadAdmins)
 
-	async function handleAdd(event) {
+	async function handleAdd(event: SubmitEvent): Promise<void> {
 		event.preventDefault()
 		const trimmedEmail = email.trim()
 		if (!trimmedEmail) {
@@ -41,7 +43,7 @@
 		try {
 			await apiFetch('/api/admin/admins', {
 				method: 'POST',
-				body: { email: trimmedEmail, name: name.trim() || null, role },
+				body: { email: trimmedEmail, name: name.trim() || null, role } satisfies AddAdminRequest,
 			})
 			formError = ''
 			email = ''
@@ -49,21 +51,24 @@
 			role = ADMIN_ROLE.ADMIN
 			await loadAdmins()
 		} catch (err) {
-			formError = err.message || 'Failed to add admin.'
+			formError = (err instanceof Error && err.message) || 'Failed to add admin.'
 		} finally {
 			isAdding = false
 		}
 	}
 
-	async function handleDelete(admin) {
+	async function handleDelete(admin: AdminOut): Promise<void> {
 		const confirmed = window.confirm(
-			`Delete ${admin.email}? This also deletes every case they own. This cannot be undone.`,
+			`Delete ${admin.email}? This cannot be undone. Admins who own cases can't be deleted until those cases are reassigned or removed.`,
 		)
 		if (!confirmed) return
+		deleteError = ''
 		deletingId = admin.id
 		try {
 			await apiFetch(`/api/admin/admins/${admin.id}`, { method: 'DELETE' })
 			await loadAdmins()
+		} catch (err) {
+			deleteError = (err instanceof Error && err.message) || 'Failed to delete admin.'
 		} finally {
 			deletingId = null
 		}
@@ -135,6 +140,10 @@
 				<p class="w-full text-sm font-medium text-brand">{formError}</p>
 			{/if}
 		</form>
+
+		{#if deleteError}
+			<p class="mt-4 text-sm font-medium text-brand">{deleteError}</p>
+		{/if}
 
 		<div class="mt-8 overflow-hidden rounded-2xl border border-line bg-white shadow-soft">
 			{#if isLoading}

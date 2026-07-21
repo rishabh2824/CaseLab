@@ -1,6 +1,6 @@
-<script module>
+<script module lang="ts">
 	import { cn } from "$lib/utils.js";
-	import { tv } from "tailwind-variants";
+	import { tv, type VariantProps } from "tailwind-variants";
 
 	export const buttonVariants = tv({
 		base: "focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 rounded-lg border border-transparent bg-clip-padding text-sm font-medium focus-visible:ring-3 active:not-aria-[haspopup]:translate-y-px aria-invalid:ring-3 [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-all outline-none select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
@@ -30,9 +30,22 @@
 		},
 	});
 
+	export type ButtonVariant = VariantProps<typeof buttonVariants>["variant"];
+	export type ButtonSize = VariantProps<typeof buttonVariants>["size"];
 </script>
 
-<script>
+<script lang="ts">
+	import type { Snippet } from "svelte";
+	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from "svelte/elements";
+
+	type ButtonProps = HTMLButtonAttributes &
+		HTMLAnchorAttributes & {
+			variant?: ButtonVariant;
+			size?: ButtonSize;
+			ref?: HTMLButtonElement | HTMLAnchorElement | null;
+			children?: Snippet;
+		};
+
 	let {
 		class: className,
 		variant = "default",
@@ -43,7 +56,7 @@
 		disabled,
 		children,
 		...restProps
-	} = $props();
+	}: ButtonProps = $props();
 </script>
 
 {#if href}

@@ -1,10 +1,10 @@
-<script>
+<script lang="ts">
 	import { goto } from '$app/navigation'
 	import { apiFetch } from '$lib/api/client.js'
 	import { ADMIN_ROLE } from '$lib/constants.js'
 	import { session } from '$lib/session.svelte.js'
 
-	async function handleSignOut() {
+	async function handleSignOut(): Promise<void> {
 		session.clearAdmin()
 		await goto('/')
 		try {

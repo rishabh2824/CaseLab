@@ -1,5 +1,6 @@
 from fastapi import HTTPException
 from sqlmodel import select
+from infra.db import get_session
 from infra.db_models import Case
 from infra.spaces import getUrl
 
@@ -39,10 +40,14 @@ async def getCase(session, access_code: str | None = None, case_id: int | None =
     return case_snapshot(case)
 
 
-async def getRunCase(run: dict, session):
+# startSimulation always seeds run["case_snapshot"] at creation, so this only ever opens
+# a session on the (effectively unreachable today) cold-cache path — callers don't need
+# to hold one open themselves for what's normally a pure in-memory read.
+async def getRunCase(run: dict):
     cached = run.get("case_snapshot")
     if cached is not None: return cached
-    snapshot = await getCase(session, case_id=run["case_id"])
+    async with get_session() as session:
+        snapshot = await getCase(session, case_id=run["case_id"])
     run["case_snapshot"] = snapshot
     return snapshot
 
@@ -108,12 +113,14 @@ async def buildPersonaGraph(session, case_id: int) -> dict:
     return {"root_personas": root_personas, "referrals": referrals}
 
 
-# Persona graph for the current run
-async def getPersonaGraph(run: dict, session) -> dict:
+# Persona graph for the current run. Same cold-cache-only session pattern as getRunCase —
+# startSimulation always seeds run["persona_graph"] at creation.
+async def getPersonaGraph(run: dict) -> dict:
     cached = run.get("persona_graph")
     if cached is not None:
         return cached
-    graph = await buildPersonaGraph(session, run["case_id"])
+    async with get_session() as session:
+        graph = await buildPersonaGraph(session, run["case_id"])
     run["persona_graph"] = graph
     return graph
 

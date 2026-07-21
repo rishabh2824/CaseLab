@@ -35,6 +35,10 @@ Each app reads its config from a git-ignored `.env` file in its own folder:
   `JWT_SECRET`. See `backend/infra/settings.py` for the full list and defaults.
 - `frontend/.env` — `VITE_GOOGLE_CLIENT_ID`.
 
+Set `ENABLE_OPENAPI=true` in `backend/.env` to serve `/openapi.json` locally
+(off by default — production doesn't publish its schema). Needed only to
+regenerate `frontend/src/lib/api/schema.d.ts` (see below).
+
 ## Running locally
 
 ```bash
@@ -47,13 +51,22 @@ cd frontend
 pnpm run dev
 ```
 
-The frontend's dev server proxies `/api` to `127.0.0.1:8000` (see
-`frontend/vite.config.js`), so both apps look same-origin to the browser
-locally, matching how DigitalOcean App Platform routes them in production
+The frontend's dev server proxies `/api` to `127.0.0.1:8000`
 (`/api` → backend, everything else → the static frontend, one domain).
-That's also why `VITE_API_BASE` is empty rather than an absolute URL — every
-API call is a relative `/api/...` request, resolved against whatever origin
-served the page, dev or prod alike.
+
+## API types
+
+`frontend/src/lib/api/schema.d.ts` is generated from the backend's OpenAPI
+schema and checked into git — the frontend does not regenerate it at build
+time. Regenerate it whenever a Pydantic request/response model changes:
+
+```bash
+# backend, with ENABLE_OPENAPI=true in .env
+uv run uvicorn main:app --port 8000
+
+# frontend
+pnpm gen:api
+```
 
 ## Workflows
 
@@ -75,6 +88,28 @@ contacts/files, chat-ended state), and a final `done` event commits the
 authoritative message history. The frontend renders an optimistic overlay
 during streaming and reconciles it with `done`'s payload once the turn
 completes.
+
+**Persona reply generation (LLM pipeline).** Each student message triggers
+four kinds of Anthropic calls: one Claude Sonnet call that generates the
+reply, and up to three kinds of Claude Haiku classifier calls — a
+harassment/nonsense check on the message, one referral-unlock check per
+still-locked referral the active persona could introduce, and one
+file-share check per still-withheld file they could send. All classifier
+calls run concurrently (`asyncio.gather`); the Sonnet reply call runs
+strictly after, since its system prompt depends on which referrals/files
+the classifiers just deemed eligible. The system prompt is split into a
+stable block (case brief, common information, and the active persona's own
+traits/known facts) marked with a one-hour ephemeral `cache_control`, and a
+turn-specific block (this turn's eligible referrals/files) that changes
+every message and is never cached — conversation history is also never
+cached and is resent in full (the last 6 messages of that persona's own
+thread) on every call. The reply itself is requested as an Anthropic
+structured output (`{reply, introduce, send_files}`) and streamed via SSE;
+a small incremental JSON parser (`ReplyExtractor`) extracts just the
+`reply` string's characters as they arrive for a live-typing effect, but
+this is a best-effort preview only — once the stream ends, the full raw
+text is re-parsed from scratch, and that authoritative parse is what gets
+persisted and what drives referral/file unlocking.
 
 **File uploads (two-phase, direct-to-Spaces).** The browser never sends file
 bytes through the backend. It first calls `/api/uploads/presign` to get a

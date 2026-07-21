@@ -1,4 +1,4 @@
-<script>
+<script lang="ts">
 	import { onMount } from 'svelte'
 	import { toast } from 'svelte-sonner'
 	import { apiFetch } from '$lib/api/client.js'
@@ -7,6 +7,7 @@
 	import { countWords } from '$lib/student/Helpers.js'
 	import { run } from '$lib/student/run.svelte.js'
 	import SimulationClock from '$lib/components/SimulationClock.svelte'
+	import type { ExportResponse } from '$lib/types.js'
 
 	onMount(() => {
 		run.init()
@@ -14,12 +15,12 @@
 
 	let inputValue = $state('')
 	let isExporting = $state(false)
-	let chatInputEl = $state(null)
-	let messagesEndEl = $state(null)
+	let chatInputEl = $state<HTMLTextAreaElement | null>(null)
+	let messagesEndEl = $state<HTMLDivElement | null>(null)
 
 	const wordCount = $derived(countWords(inputValue))
 	const overWordLimit = $derived(wordCount > MAX_MESSAGE_WORDS)
-	const activeMessages = $derived(run.messagesByPersona[run.activeContactId] ?? [])
+	const activeMessages = $derived(run.activeContactId ? (run.messagesByPersona[run.activeContactId] ?? []) : [])
 
 	$effect(() => {
 		if (run.activeContactId && run.activePersonaAvailable && !run.isSending) {
@@ -36,16 +37,16 @@
 	})
 
 	// sendMessage clears nothing itself; clear the input only when it accepted.
-	function handleSend() {
+	function handleSend(): void {
 		if (overWordLimit) return
 		if (run.sendMessage(inputValue)) inputValue = ''
 	}
 
-	async function handleExportPdf() {
+	async function handleExportPdf(): Promise<void> {
 		if (!session.runId || isExporting) return
 		isExporting = true
 		try {
-			const data = await apiFetch(`/api/simulations/${session.runId}/export`)
+			const data = await apiFetch<ExportResponse>(`/api/simulations/${session.runId}/export`)
 			const { buildChatPdfBlob, slugifyFileName } = await import('$lib/student/pdf.js')
 			const blob = buildChatPdfBlob(data.personas ?? [], run.notes)
 			const url = window.URL.createObjectURL(blob)

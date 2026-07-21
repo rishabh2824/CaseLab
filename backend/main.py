@@ -33,7 +33,14 @@ async def lifespan(app: FastAPI):
         await closeDb()
 
 
-app = FastAPI(title="caseLab API", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(
+    title="caseLab API",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if settings.enable_openapi else None,
+)
 
 
 if settings.frontendUrls:

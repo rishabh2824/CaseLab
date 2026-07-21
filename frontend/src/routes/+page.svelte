@@ -1,20 +1,21 @@
-<script>
+<script lang="ts">
 	import { goto } from '$app/navigation'
 	import { apiFetch } from '$lib/api/client.js'
 	import { session } from '$lib/session.svelte.js'
 	import SignInButton from '$lib/components/SignInButton.svelte'
+	import type { RunState, StartSimulationPayload } from '$lib/types.js'
 
 	let accessCode = $state('')
 	let error = $state('')
 	let isSubmitting = $state(false)
 
-	async function submit(code) {
+	async function submit(code: string): Promise<void> {
 		isSubmitting = true
 		try {
 			const normalized = code.toUpperCase()
-			const data = await apiFetch('/api/simulations/start', {
+			const data = await apiFetch<RunState>('/api/simulations/start', {
 				method: 'POST',
-				body: { access_code: normalized },
+				body: { access_code: normalized } satisfies StartSimulationPayload,
 			})
 			error = ''
 			session.startRun({
@@ -30,7 +31,7 @@
 		}
 	}
 
-	function handleSubmit(event) {
+	function handleSubmit(event: SubmitEvent): void {
 		event.preventDefault()
 		const code = accessCode.trim()
 		if (!code) {

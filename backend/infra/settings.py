@@ -17,9 +17,10 @@ class Settings(BaseSettings):
     llm_classifier_model: ClassVar[str] = "claude-haiku-4-5"
     spaces_key: str
     spaces_secret: str
-    spaces_presign_expiry: int = 900
-    db_url: str
-    db_token: str
+    spaces_upload_expiry: int = 900  # short-lived: covers a single browser->Spaces PUT
+    # Long-lived: covers a full simulation run (SIMULATION_DURATION cap + run_store's
+    # grace period) so shared files/photos signed early in a run don't 403 later on.
+    spaces_download_expiry: int = (SIMULATION_DURATION + 30) * 60
     pooling_url: str = Field(default="", validation_alias="POOLING")
     direct_url: str = Field(default="", validation_alias="DIRECT")
     frontend_urls_raw: str = Field(default="", validation_alias="FRONTEND_URLS")
@@ -28,7 +29,9 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(min_length=32)
     llm_key: str
     llm_base_url: str = "https://api.anthropic.com/v1/messages"
-    admin_cookie_secure: bool = Field(default=True, validation_alias="ADMIN_COOKIE_SECURE")
+    # Off by default (production doesn't publish its schema); set ENABLE_OPENAPI=true
+    # in a local .env to serve /openapi.json for frontend codegen (see frontend/package.json's gen:api).
+    enable_openapi: bool = Field(default=False, validation_alias="ENABLE_OPENAPI")
 
     @property
     def frontendUrls(self) -> list[str]:

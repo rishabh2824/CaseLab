@@ -1,8 +1,9 @@
 # CRUD for the ``admins`` table. Scale is ~20 admins total, so every function here does the simplest possible
 # query rather than anything batched/paginated.
 
+from sqlalchemy import func
 from sqlmodel import select
-from infra.db_models import Admin
+from infra.db_models import Admin, Case
 
 
 async def getByEmail(session, email: str) -> dict | None:
@@ -26,6 +27,12 @@ async def create(session, email: str, name: str | None, role: int) -> dict:
     await session.commit()
     await session.refresh(admin)
     return admin.model_dump(mode="json")
+
+
+async def ownedCaseCount(session, admin_id: int) -> int:
+    return (
+        await session.exec(select(func.count()).select_from(Case).where(Case.admin == admin_id))
+    ).one()
 
 
 async def delete(session, admin_id: int) -> None:

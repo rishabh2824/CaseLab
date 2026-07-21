@@ -1,9 +1,9 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 
 // A run-state payload shaped exactly like the backend's start_simulation /
 // get_simulation_state response, with one available contact.
 const RUN_ID = 'testrun123'
-const runState = (overrides = {}) => ({
+const runState = (overrides: Record<string, unknown> = {}) => ({
     run_id: RUN_ID,
     case: {
         id: 'case1',
@@ -37,7 +37,7 @@ const runState = (overrides = {}) => ({
 // One message turn as an SSE body, matching stream_message's streamed order
 // (delta* -> meta -> done). The reply text is split across two delta frames to
 // exercise the incremental renderer the way real token streaming does.
-const messageSse = (reply) => {
+const messageSse = (reply: string): string => {
     const split = Math.ceil(reply.length / 2)
     return [
         'event: delta',
@@ -57,7 +57,7 @@ const messageSse = (reply) => {
 }
 
 // Wire up every backend endpoint the student flow touches, deterministically.
-async function mockBackend(page, { reply }) {
+async function mockBackend(page: Page, { reply }: { reply: string }): Promise<void> {
     await page.route('**/api/simulations/start', async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(runState()) })
     })

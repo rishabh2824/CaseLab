@@ -1,15 +1,19 @@
 // Imports the autofilled HTML form back into the app
+import type { DraftPersona } from '../types.js'
+
 export class CaseImportError extends Error {}
 
 const FIXED_ROOT_ID = 'P1'
 
-function fieldValue(root, field) {
-    const el = root.querySelector(`[data-field="${field}"]`)
+type FormFieldElement = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+
+function fieldValue(root: ParentNode, field: string): string {
+    const el = root.querySelector(`[data-field="${field}"]`) as FormFieldElement | null
     return el ? el.value : ''
 }
 
 
-function parseNumberField(text, label, warnings) {
+function parseNumberField(text: string, label: string, warnings: string[]): number | null {
     const trimmed = (text ?? '').trim()
     if (!trimmed) return null
     const parsed = Number(trimmed)
@@ -21,10 +25,15 @@ function parseNumberField(text, label, warnings) {
 }
 
 
-function parsePersonaCards(doc, warnings) {
+type ParsedPersonaCards = {
+    personaOrder: string[]
+    personaById: Map<string, DraftPersona>
+}
+
+function parsePersonaCards(doc: Document, warnings: string[]): ParsedPersonaCards {
     const cards = Array.from(doc.querySelectorAll('.persona-card[data-persona-id]'))
-    const personaOrder = []
-    const personaById = new Map()
+    const personaOrder: string[] = []
+    const personaById = new Map<string, DraftPersona>()
 
     for (const card of cards) {
         const id = card.getAttribute('data-persona-id')
@@ -56,16 +65,18 @@ function parsePersonaCards(doc, warnings) {
 }
 
 
-function parseReferralEdges(doc, personaById, warnings) {
+type ReferralEdge = { fromId: string; toId: string; conditions: string }
+
+function parseReferralEdges(doc: Document, personaById: Map<string, DraftPersona>, warnings: string[]): ReferralEdge[] {
     const rows = Array.from(doc.querySelectorAll('.referral-row[data-referral="true"]'))
-    const edges = []
+    const edges: ReferralEdge[] = []
 
     // A persona can be referred by at most one parent Keep the first edge into any given id, in document order, and
     // drop the rest rather than letting a persona end up duplicated under two parents.
-    const referredBy = new Map()
+    const referredBy = new Map<string, string>()
     for (const row of rows) {
-        const fromId = row.querySelector('select[data-role="from"]')?.value
-        const toId = row.querySelector('select[data-role="to"]')?.value
+        const fromId = (row.querySelector('select[data-role="from"]') as HTMLSelectElement | null)?.value
+        const toId = (row.querySelector('select[data-role="to"]') as HTMLSelectElement | null)?.value
         const conditions = fieldValue(row, 'conditions').trim()
         if (!fromId || !toId) continue
         if (!personaById.has(fromId) || !personaById.has(toId)) {
@@ -98,18 +109,38 @@ function parseReferralEdges(doc, personaById, warnings) {
 }
 
 
-function buildPersonaTree(personaOrder, personaById, edges, warnings) {
-    const edgesFrom = new Map()
+type PersonaTreeResult = { personas: DraftPersona[]; rootCount: number }
+
+function buildPersonaTree(
+    personaOrder: string[],
+    personaById: Map<string, DraftPersona>,
+    edges: ReferralEdge[],
+    warnings: string[],
+): PersonaTreeResult {
+    const edgesFrom = new Map<string, ReferralEdge[]>()
     for (const edge of edges) {
-        if (!edgesFrom.has(edge.fromId)) edgesFrom.set(edge.fromId, [])
-        edgesFrom.get(edge.fromId).push(edge)
+        const bucket = edgesFrom.get(edge.fromId) ?? []
+        bucket.push(edge)
+        edgesFrom.set(edge.fromId, bucket)
     }
     const referredIds = new Set(edges.map((edge) => edge.toId))
-    const usedIds = new Set()
+    const usedIds = new Set<string>()
 
-    function buildNode(id, ancestry) {
+    function buildNode(id: string, ancestry: Set<string>): DraftPersona {
         usedIds.add(id)
-        const node = { ...personaById.get(id), referrals: [] }
+        const base = personaById.get(id)
+        if (!base) {
+            // Every id passed here comes from personaOrder (built straight off
+            // the parsed document) or from an edge.toId that
+            // parseReferralEdges already confirmed exists in personaById, so
+            // this is unreachable in practice. Throwing here — instead of the
+            // old `{ ...personaById.get(id), referrals: [] }`, which silently
+            // built a node with every field but `referrals` missing — is what
+            // noUncheckedIndexedAccess/strict flags as a genuine
+            // undefined-spread once this file is typed.
+            throw new CaseImportError(`Internal error: persona "${id}" not found while building the persona tree.`)
+        }
+        const node: DraftPersona = { ...base, referrals: [] }
         for (const edge of edgesFrom.get(id) ?? []) {
             if (ancestry.has(edge.toId)) {
                 warnings.push(`Cycle detected involving ${edge.toId} — that referral was dropped.`)
@@ -144,13 +175,28 @@ function buildPersonaTree(personaOrder, personaById, edges, warnings) {
 }
 
 
-export function parseHTMLForm(htmlText) {
+export type ImportedCaseData = {
+    caseName: string
+    accessCode: string
+    simulationDurationMinutes: number | null
+    initialBrief: string
+    commonInformation: string
+    totalPersonas: number
+    personas: DraftPersona[]
+}
+
+export type ParsedHTMLForm = {
+    data: ImportedCaseData
+    warnings: string[]
+}
+
+export function parseHTMLForm(htmlText: string): ParsedHTMLForm {
     const doc = new DOMParser().parseFromString(htmlText, 'text/html')
     if (!doc.getElementById('personas-list') || !doc.getElementById('referrals-list')) {
         throw new CaseImportError("This doesn't look like a Case Lab import file.")
     }
 
-    const warnings = []
+    const warnings: string[] = []
     const caseName = fieldValue(doc, 'case_name').trim()
     const accessCode = fieldValue(doc, 'access_code').trim()
     const initialBrief = fieldValue(doc, 'initial_brief').trim()

@@ -37,24 +37,22 @@ def createJwt(admin_id: int, role: AdminRole) -> str:
 
 
 def setCookie(response: Response, token: str) -> None:
-    settings = get_settings()
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         max_age=JWT_EXPIRY,
         httponly=True,
-        secure=settings.admin_cookie_secure,
+        secure=True,
         samesite="lax",
         path="/",
     )
 
 
 def clearCookie(response: Response) -> None:
-    settings = get_settings()
     response.delete_cookie(
         key=COOKIE_NAME,
         path="/",
-        secure=settings.admin_cookie_secure,
+        secure=True,
         samesite="lax",
     )
 

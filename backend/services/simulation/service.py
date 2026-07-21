@@ -16,7 +16,6 @@ from infra.spaces import getUrl
 
 
 HISTORY_MESSAGE_LIMIT = 6
-DECISION_JUDGE_HISTORY_LIMIT = 8
 MESSAGE_WORDS = 50
 NOTES_CHARS = 20000
 GENERATION_TIMEOUT = 120 # Wall-clock cap on a single reply stream.
@@ -31,10 +30,13 @@ def sse(event: str, data: dict) -> dict:
 def buildContact(run, persona, available_at_minutes, elapsed_minutes, *, is_referred):
     availability = persona_availability(persona, available_at_minutes, elapsed_minutes)
     contact = {**persona, **availability, "is_referred": is_referred, **chatStatePayload(run, persona["id"])}
-    # Each file's share_conditions/perceived_contents are the unlock secret/answer key —
-    # fine for internal judging (resolve_turn_decisions), never for the browser. The
-    # frontend contact list doesn't use `files` at all; drop it rather than trim it.
+    # Each file's share_conditions/perceived_contents are the unlock secret/answer key,
+    # and known_facts/personality_traits are the LLM prompt's persona secrets — all fine
+    # for internal judging/prompting, never for the browser. The frontend contact list
+    # doesn't use any of these; drop them rather than trim them.
     contact.pop("files", None)
+    contact.pop("known_facts", None)
+    contact.pop("personality_traits", None)
     return contact
 
 
@@ -99,9 +101,8 @@ async def startSimulation(payload: StartSimulationPayload):
 
 async def getSimulationState(run_id: str):
     run = await getRun(run_id)
-    async with get_session() as session:
-        case_snapshot = await getRunCase(run, session)
-        graph = await getPersonaGraph(run, session)
+    case_snapshot = await getRunCase(run)
+    graph = await getPersonaGraph(run)
     root_personas = [hydratePersona(p) for p in graph["root_personas"]]
     unlocked_ids = run["unlocked_referred_ids"]
     elapsed = elapsedMinutes(run)
@@ -140,9 +141,8 @@ async def updateNotes(run_id: str, payload: NotesPayload) -> dict:
 
 async def exportSimulation(run_id: str):
     run = await getRun(run_id)
-    async with get_session() as session:
-        case_snapshot = await getRunCase(run, session)
-        graph = await getPersonaGraph(run, session)
+    case_snapshot = await getRunCase(run)
+    graph = await getPersonaGraph(run)
     unlocked_ids = run["unlocked_referred_ids"]
     personas = [{**persona, "is_referred": False} for persona in graph["root_personas"]]
 
@@ -194,10 +194,11 @@ async def resolveDecisions(persona_id, decision_history, run) -> dict:
         for file_entry in persona_details["files"]
         if file_entry.get("file_id") and file_entry["file_id"] not in run["shared_files"]
     ]
-    judge_history = decision_history[-DECISION_JUDGE_HISTORY_LIMIT:]
+    # decision_history is passed through unsliced — formatTranscript (infra/llm.py) applies
+    # the shared CLASSIFIER_HISTORY_LIMIT window itself, same as classifyHarassment.
     referral_results, file_results = await asyncio.gather(
-        asyncio.gather(*(referralUnlock(referral, judge_history) for referral in pending_referrals)),
-        asyncio.gather(*(fileShare(file_entry, judge_history) for file_entry in pending_files)),
+        asyncio.gather(*(referralUnlock(referral, decision_history) for referral in pending_referrals)),
+        asyncio.gather(*(fileShare(file_entry, decision_history) for file_entry in pending_files)),
     )
     return {
         "referrals": referrals,
@@ -212,7 +213,6 @@ async def resolveDecisions(persona_id, decision_history, run) -> dict:
 # Prepares the message for final response generation
 async def message(run_id: str, payload: SendMessagePayload) -> dict:
     run = await getRun(run_id)
-    await messageLimit(run_id)
     persona_id = payload.persona_id
     user_message = payload.message.strip()
     if not persona_id or not user_message:
@@ -223,9 +223,8 @@ async def message(run_id: str, payload: SendMessagePayload) -> dict:
             detail=f"Message is too long ({MESSAGE_WORDS} words max). Please shorten it and try again.",
         )
     elapsed = elapsedMinutes(run)
-    async with get_session() as session:
-        case_snapshot = await getRunCase(run, session)
-        graph = await getPersonaGraph(run, session)
+    case_snapshot = await getRunCase(run)
+    graph = await getPersonaGraph(run)
     simulation_duration = case_snapshot.get("simulation_duration")
     if simulation_duration and elapsed >= simulation_duration:
         raise HTTPException(status_code=400, detail="This simulation has ended.")
@@ -242,6 +241,11 @@ async def message(run_id: str, payload: SendMessagePayload) -> dict:
         raise HTTPException(status_code=400, detail="Persona is not available yet.")
     if not availability["available"]:
         raise HTTPException(status_code=400, detail="Persona is not available yet.")
+
+    # Every check above is in-memory/cached-read only and can reject the request outright —
+    # only pay for the rate-limit DB write once a message could plausibly succeed.
+    await messageLimit(run_id)
+
     def start_turn(r):
         if getChatState(r, persona_id)["ended"]:
             raise HTTPException(status_code=400, detail="This conversation has ended.")
@@ -394,9 +398,12 @@ async def applyDecisions(run_id, prepared, unlock_handles, share_handles, person
                 continue
             run["unlocked_referred_ids"].add(referred_id)
             run["unlocked_at"][referred_id] = elapsed
-            new_contacts.append(
-                {**referral["persona"], **chatStatePayload(run, referred_id)}
-            )
+            contact = {**referral["persona"], **chatStatePayload(run, referred_id)}
+            # Strip secrets (same as buildContact) — never send to browser.
+            contact.pop("files", None)
+            contact.pop("known_facts", None)
+            contact.pop("personality_traits", None)
+            new_contacts.append(contact)
 
         shared_files = []
         for handle in dict.fromkeys(share_handles):

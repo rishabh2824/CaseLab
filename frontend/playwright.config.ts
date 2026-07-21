@@ -2,7 +2,8 @@ import { defineConfig, devices } from '@playwright/test'
 
 // E2E runs a production build+preview against a fully-mocked backend (see
 // *Spec.js files), so it needs no live API, database, or Anthropic tokens.
-// VITE_API_BASE points at the same origin the server serves, and every
+// Every fetch in client.ts is a same-origin relative path, so it naturally
+// resolves against whatever origin the preview server serves, and every
 // /api call is intercepted. Uses build+preview rather than `vite dev`: the
 // landing route is prerendered/SSR'd, so its markup exists before hydration
 // finishes — under the dev server's slower per-request compile, Playwright's
@@ -14,9 +15,9 @@ const BASE_URL = `http://localhost:${PORT}`
 
 export default defineConfig({
 	testDir: '.',
-	// Files are named `*Spec.js` (no dot before "Spec"), not Playwright's
-	// default `*.spec.js` — matches frontend/playwright.config.js's convention.
-	testMatch: '**/*Spec.js',
+	// Files are named `*Spec.ts` (no dot before "Spec"), not Playwright's
+	// default `*.spec.ts` — matches frontend/playwright.config.ts's convention.
+	testMatch: '**/*Spec.ts',
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 2 : 0,
@@ -30,7 +31,6 @@ export default defineConfig({
 		command: `npx vite build && npx vite preview --port ${PORT} --strictPort`,
 		url: BASE_URL,
 		reuseExistingServer: !process.env.CI,
-		env: { VITE_API_BASE: BASE_URL },
 		timeout: 120_000,
 	},
 })

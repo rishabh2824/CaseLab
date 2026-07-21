@@ -1,11 +1,23 @@
 import { apiFetch } from '../api/client.js'
 import { slugify } from '../student/Helpers.js'
 import { normalizePersona, normalizeReferral } from './Helpers.js'
+import type {
+    CaseCreatedResponse,
+    CasePayload,
+    DraftFileEntry,
+    DraftPersona,
+    FileEntry,
+    FileRef,
+    PartialDraftPersona,
+    PersonaPayload,
+    PresignUploadRequest,
+    PresignUploadResponse,
+} from '../types.js'
 
-async function uploadFile(file, prefix) {
-    const presign = await apiFetch('/api/uploads/presign', {
+async function uploadFile(file: File, prefix: string): Promise<FileRef> {
+    const presign = await apiFetch<PresignUploadResponse>('/api/uploads/presign', {
         method: 'POST',
-        body: { file_name: file.name, content_type: file.type || null, prefix },
+        body: { file_name: file.name, content_type: file.type || null, prefix } satisfies PresignUploadRequest,
     })
 
     const putResponse = await fetch(presign.upload_url, {
@@ -23,19 +35,19 @@ async function uploadFile(file, prefix) {
     }
 }
 
-async function normalizeFileEntry(entry, prefix) {
-    if (!entry?.file) return { ...entry, file: null }
+async function normalizeFileEntry(entry: DraftFileEntry, prefix: string): Promise<FileEntry> {
+    if (!entry.file) return { ...entry, file: null }
     if (entry.file instanceof File) return { ...entry, file: await uploadFile(entry.file, prefix) }
-    return { ...entry }
+    return { ...entry, file: entry.file }
 }
 
-async function normalizeProfilePhoto(profilePhoto, prefix) {
+async function normalizeProfilePhoto(profilePhoto: File | FileRef | null, prefix: string): Promise<FileRef | null> {
     if (!profilePhoto) return null
     if (profilePhoto instanceof File) return uploadFile(profilePhoto, prefix)
     return profilePhoto
 }
 
-async function buildPersonaPayload(persona, prefix) {
+async function buildPersonaPayload(persona: PartialDraftPersona, prefix: string): Promise<PersonaPayload> {
     const normalized = normalizePersona(persona)
     const profile_photo = await normalizeProfilePhoto(normalized.profile_photo, prefix)
     const files = await Promise.all(
@@ -62,6 +74,18 @@ async function buildPersonaPayload(persona, prefix) {
     }
 }
 
+export type SubmitCaseInput = {
+    isEditMode: boolean
+    editCaseId?: string | null
+    caseName: string
+    initialBrief: string
+    commonInformation: string
+    simulationDurationMinutes: number | null
+    accessCode: string
+    totalPersonas: number
+    personas: DraftPersona[]
+}
+
 // Uploads any new (File-valued) profile photos/attachments to Spaces, then creates or updates the case.
 export async function submitCase({
     isEditMode,
@@ -73,13 +97,13 @@ export async function submitCase({
     accessCode,
     totalPersonas,
     personas,
-}) {
+}: SubmitCaseInput): Promise<CaseCreatedResponse> {
     const slug = slugify(caseName)
     const prefix = slug ? `cases/${slug}` : 'cases'
     const personasPayload = await Promise.all(
         personas.map((persona) => buildPersonaPayload(persona, prefix)),
     )
-    const payload = {
+    const payload: CasePayload = {
         case_name: caseName.trim(),
         initial_brief: initialBrief.trim(),
         common_information: commonInformation.trim(),
@@ -88,7 +112,7 @@ export async function submitCase({
         total_non_referred_personas: totalPersonas,
         personas: personasPayload,
     }
-    return apiFetch(isEditMode ? `/api/cases/${editCaseId}` : '/api/cases', {
+    return apiFetch<CaseCreatedResponse>(isEditMode ? `/api/cases/${editCaseId}` : '/api/cases', {
         method: isEditMode ? 'PUT' : 'POST',
         body: payload,
     })

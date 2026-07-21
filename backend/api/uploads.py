@@ -25,5 +25,5 @@ def presign_upload(payload: PresignUploadRequest) -> PresignUploadResponse:
         object_key=object_key,
         file_name=payload.file_name,
         content_type=payload.content_type,
-        expires_in=settings.spaces_presign_expiry,
+        expires_in=settings.spaces_upload_expiry,
     )
