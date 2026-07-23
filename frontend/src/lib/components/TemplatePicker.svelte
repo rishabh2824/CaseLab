@@ -1,44 +1,44 @@
 <script lang="ts">
-	import { onMount } from 'svelte'
-	import { goto } from '$app/navigation'
-	import { cases } from '$lib/case/cases.svelte.js'
-	import type { CaseSummary } from '$lib/types.js'
+import { onMount } from "svelte";
+import { goto } from "$app/navigation";
+import { cases } from "$lib/case/cases.svelte.js";
+import type { CaseSummary } from "$lib/types.js";
 
-	type Props = {
-		mode?: 'template' | 'edit'
+type Props = {
+	mode?: "template" | "edit";
+};
+
+let { mode = "template" }: Props = $props();
+
+let deletingId = $state<number | null>(null);
+
+onMount(() => {
+	cases.fetchAll();
+});
+
+function openCase(caseItem: CaseSummary) {
+	if (mode === "edit") {
+		goto(`/admin/edit/form?caseId=${caseItem.id}`);
+	} else {
+		goto(`/admin/new/form?template=${caseItem.id}`);
 	}
+}
 
-	let { mode = 'template' }: Props = $props()
-
-	let deletingId = $state<number | null>(null)
-
-	onMount(() => {
-		cases.fetchAll()
-	})
-
-	function openCase(caseItem: CaseSummary) {
-		if (mode === 'edit') {
-			goto(`/admin/edit/form?caseId=${caseItem.id}`)
-		} else {
-			goto(`/admin/new/form?template=${caseItem.id}`)
-		}
+async function handleDelete(event: MouseEvent, caseItem: CaseSummary) {
+	event.stopPropagation();
+	const confirmed = window.confirm(
+		`Delete "${caseItem.case_name}"? This also frees its access code for reuse. This cannot be undone.`,
+	);
+	if (!confirmed) return;
+	deletingId = caseItem.id;
+	try {
+		await cases.deleteCase(caseItem.id);
+	} finally {
+		deletingId = null;
 	}
+}
 
-	async function handleDelete(event: MouseEvent, caseItem: CaseSummary) {
-		event.stopPropagation()
-		const confirmed = window.confirm(
-			`Delete "${caseItem.case_name}"? This also frees its access code for reuse. This cannot be undone.`,
-		)
-		if (!confirmed) return
-		deletingId = caseItem.id
-		try {
-			await cases.deleteCase(caseItem.id)
-		} finally {
-			deletingId = null
-		}
-	}
-
-	const isEditMode = $derived(mode === 'edit')
+const isEditMode = $derived(mode === "edit");
 </script>
 
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">

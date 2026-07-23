@@ -1,6 +1,6 @@
-import { requireAdmin } from '$lib/auth.js'
-import type { LayoutLoad } from './$types'
+import { requireAdmin } from "$lib/auth.js";
+import type { LayoutLoad } from "./$types";
 
 export const load: LayoutLoad = () => {
-    requireAdmin()
-}
+	requireAdmin();
+};

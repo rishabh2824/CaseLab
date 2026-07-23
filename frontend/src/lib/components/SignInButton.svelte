@@ -1,92 +1,131 @@
 <script lang="ts">
-	import { onMount, type Snippet } from 'svelte'
-	import { goto } from '$app/navigation'
-	import { apiFetch } from '$lib/api/client.js'
-	import { session } from '$lib/session.svelte.js'
-	import type { LoginRequest, LoginResponse } from '$lib/types.js'
+import type { Snippet } from "svelte";
+import { goto } from "$app/navigation";
+import { apiFetch } from "$lib/api/client.js";
+import { session } from "$lib/session.svelte.js";
+import type { LoginRequest, LoginResponse } from "$lib/types.js";
 
-	// window.google is typed ambiently in $lib/google-identity.d.ts (Google
-	// Identity Services loads it at runtime — see onMount below; no @types
-	// package exists for it).
+// window.google is typed ambiently in $lib/google-identity.d.ts (Google
+// Identity Services loads it at runtime — see loadGsiScript below; no
+// @types package exists for it).
 
-	type Props = {
-		class?: string
-		children?: Snippet
+type Props = {
+	class?: string;
+	children?: Snippet;
+};
+
+let { class: className = "", children }: Props = $props();
+
+const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+
+let error = $state("");
+let isPending = $state(false);
+let showPicker = $state(false);
+let pickerContainer: HTMLDivElement | undefined = $state();
+let initialized = false;
+let gsiLoadPromise: Promise<void> | null = null;
+
+// Deferred to first click (rather than onMount) so the GSI script isn't
+// downloaded by every landing-page visitor — the vast majority are students
+// who never touch this button.
+function loadGsiScript(): Promise<void> {
+	if (gsiLoadPromise) return gsiLoadPromise;
+	gsiLoadPromise = new Promise((resolve, reject) => {
+		const existing =
+			document.querySelector<HTMLScriptElement>("script[data-gsi]");
+		if (existing) {
+			if (window.google?.accounts?.id) resolve();
+			else existing.addEventListener("load", () => resolve());
+			return;
+		}
+		const script = document.createElement("script");
+		script.src = "https://accounts.google.com/gsi/client";
+		script.async = true;
+		script.dataset.gsi = "true";
+		script.onload = () => resolve();
+		script.onerror = () => reject(new Error("Failed to load Google sign-in"));
+		document.head.appendChild(script);
+	});
+	return gsiLoadPromise;
+}
+
+async function login(credential: string): Promise<void> {
+	isPending = true;
+	try {
+		const data = await apiFetch<LoginResponse>("/api/admin/login", {
+			method: "POST",
+			body: { credential } satisfies LoginRequest,
+		});
+		error = "";
+		session.setAdmin({ adminRole: data.role, adminEmail: data.email });
+		await goto("/admin");
+	} catch (err) {
+		error =
+			(err instanceof Error && err.message) ||
+			"Your account is not authorized. Ask a super admin to add you.";
+	} finally {
+		isPending = false;
 	}
+}
 
-	let { class: className = '', children }: Props = $props()
+function handleCredentialResponse(response: GoogleCredentialResponse): void {
+	showPicker = false;
+	login(response.credential);
+}
 
-	const GOOGLE_CLIENT_ID: string = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
+function ensureInitialized(): boolean {
+	if (initialized) return true;
+	const id = window.google?.accounts?.id;
+	if (!id) return false;
+	id.initialize({
+		client_id: GOOGLE_CLIENT_ID,
+		callback: handleCredentialResponse,
+		use_fedcm_for_button: true,
+	});
+	initialized = true;
+	return true;
+}
 
-	let error = $state('')
-	let isPending = $state(false)
-	let codeClient: GoogleCodeClient | null = null
+// Renders Google's real button (full "Sign in with Google" button) into the
+// popover every time it opens. This has to be Google's own element, not
+// ours — a custom button can only trigger One Tap (accounts.id.prompt),
+// which silently fails on Safari/Firefox since they don't support FedCM.
+// renderButton's click falls back to a real popup on those browsers
+// instead, so it's the only mechanism here that works across all of them.
+$effect(() => {
+	if (showPicker && pickerContainer) {
+		window.google?.accounts?.id?.renderButton(pickerContainer, {
+			type: "standard",
+			size: "large",
+			text: "signin_with",
+			shape: "rectangular",
+		});
+	}
+});
 
-	// Loaded here (rather than a static <script> in app.html) so the GSI
-	// client only ever loads on a page that actually renders this button —
-	// student/admin routes don't pay for it.
-	onMount(() => {
-		if (document.querySelector('script[data-gsi]')) return
-		const script = document.createElement('script')
-		script.src = 'https://accounts.google.com/gsi/client'
-		script.async = true
-		script.defer = true
-		script.dataset.gsi = 'true'
-		document.head.appendChild(script)
-	})
-
-	async function login(googleAuthCode: string): Promise<void> {
-		isPending = true
+async function handleClick(): Promise<void> {
+	error = "";
+	if (showPicker) {
+		showPicker = false;
+		return;
+	}
+	if (!window.google?.accounts?.id) {
+		isPending = true;
 		try {
-			const data = await apiFetch<LoginResponse>('/api/admin/login', {
-				method: 'POST',
-				body: { google_auth_code: googleAuthCode } satisfies LoginRequest,
-			})
-			error = ''
-			session.setAdmin({ adminRole: data.role, adminEmail: data.email })
-			await goto('/admin')
-		} catch (err) {
-			error = (err instanceof Error && err.message) || 'Your account is not authorized. Ask a super admin to add you.'
-		} finally {
-			isPending = false
+			await loadGsiScript();
+		} catch {
+			isPending = false;
+			error = "Google sign-in is unavailable right now. Try again in a moment.";
+			return;
 		}
+		isPending = false;
 	}
-
-	function handleCodeResponse(response: GoogleCodeResponse): void {
-		if (response.error) {
-			// 'popup_closed' fires when the admin just closes the picker
-			// without choosing an account — not a real error.
-			if (response.error !== 'popup_closed') {
-				error = 'Google sign-in did not complete.'
-			}
-			return
-		}
-		login(response.code)
+	if (!ensureInitialized()) {
+		error = "Google sign-in is unavailable right now. Try again in a moment.";
+		return;
 	}
-
-	function ensureCodeClient(): GoogleCodeClient | null {
-		const oauth2 = window.google?.accounts?.oauth2
-		if (!oauth2) return null
-		if (!codeClient) {
-			codeClient = oauth2.initCodeClient({
-				client_id: GOOGLE_CLIENT_ID,
-				scope: 'openid email profile',
-				ux_mode: 'popup',
-				callback: handleCodeResponse,
-			})
-		}
-		return codeClient
-	}
-
-	function handleClick() {
-		error = ''
-		const client = ensureCodeClient()
-		if (!client) {
-			error = 'Google sign-in is still loading. Try again in a moment.'
-			return
-		}
-		client.requestCode()
-	}
+	showPicker = true;
+}
 </script>
 
 <div class="relative inline-block">
@@ -97,6 +136,15 @@
 			{@render children?.()}
 		{/if}
 	</button>
+	{#if showPicker}
+		<div class="absolute right-0 top-full z-20 mt-2 rounded-lg border border-line bg-white p-2 shadow-md">
+			<!-- Google's injected icon SVG has no width/height attrs and its own
+			     stylesheet sizes it with a %, which can't resolve here (the
+			     containing chain bottoms out in an auto-width box) — renders
+			     as a blank square without this explicit fallback size. -->
+			<div bind:this={pickerContainer} class="[&_svg]:size-5"></div>
+		</div>
+	{/if}
 	{#if error}
 		<p class="absolute right-0 top-full z-20 mt-2 w-64 rounded-lg border border-line bg-white px-3 py-2 text-xs font-medium text-brand shadow-md">
 			{error}

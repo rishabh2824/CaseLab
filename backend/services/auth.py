@@ -2,7 +2,6 @@ from __future__ import annotations
 import time
 from typing import NamedTuple, TypedDict, Any, Mapping
 import cachecontrol
-import httpx
 import jwt
 import requests
 from fastapi import Response
@@ -12,7 +11,6 @@ from models.admin import AdminRole
 from infra.settings import JWT_ALGORITHM, JWT_EXPIRY, get_settings
 
 
-AUTH_ENDPOINT = "https://oauth2.googleapis.com/token"
 COOKIE_NAME = "admin_session"
 
 # A cache-backed session so Google's signing certs are fetched once and reused across logins
@@ -71,29 +69,9 @@ def decodeJwt(token: str) -> AdminTokenPayload:
     return {"admin_id": admin_id, "role": AdminRole(role)}
 
 
-# Exchange the authorization code from the frontend's ``initCodeClient({ux_mode: 'popup'})`` flow for a Google ID token.
-async def exchangeCode(auth_code: str) -> str:
-    settings = get_settings()
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            AUTH_ENDPOINT,
-            data={
-                "code": auth_code,
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
-                "redirect_uri": "postmessage",
-                "grant_type": "authorization_code",
-            },
-        )
-    if response.status_code != 200:
-        raise ValueError(f"Google code exchange failed: {response.text}")
-
-    id_token_str = response.json().get("id_token")
-    if not id_token_str:
-        raise ValueError("Google code exchange did not return an ID token.")
-    return id_token_str
-
-
+# Verifies the ID token from the frontend's google.accounts.id CredentialResponse
+# (SignInButton.svelte) locally against Google's cached public signing keys — no
+# outbound call to Google needed, unlike the old code-exchange flow this replaced.
 def verifyToken(id_token_str: str) -> Mapping[str, Any]:
     settings = get_settings()
     claims = google_id_token.verify_oauth2_token(

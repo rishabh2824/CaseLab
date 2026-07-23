@@ -42,6 +42,13 @@ class CasePayload(BaseModel):
     access_code: str | None = None
     total_non_referred_personas: int
     personas: list[PersonaPayload] = Field(default_factory=list)
+    collaborator_admin_ids: list[int] = Field(default_factory=list)
+
+
+# PUT-only: carries the version the client last loaded, so updateCase can reject
+# with a 409 if someone else saved in between (see services/cases.py).
+class CaseUpdatePayload(CasePayload):
+    expected_version: int
 
 
 # --- Response models, mirroring services/cases.py's return shapes exactly ----
@@ -89,6 +96,9 @@ class CaseDetail(BaseModel):
     simulation_duration: int | None = None
     total_non_referred_personas: int
     personas: list[PersonaOut] = Field(default_factory=list)
+    version: int
+    owner_admin_id: int
+    collaborator_admin_ids: list[int] = Field(default_factory=list)
 
 
 class CaseDetailResponse(BaseModel):
@@ -102,3 +112,9 @@ class CaseCreatedResponse(BaseModel):
 
 class CaseDeletedResponse(BaseModel):
     ok: bool
+
+
+# GET /cases/{case_id}/version — the lightweight poll endpoint CaseForm.svelte
+# hits while a case is open for editing, to detect a concurrent save.
+class CaseVersionResponse(BaseModel):
+    version: int

@@ -1,77 +1,94 @@
 <script lang="ts">
-	import { createEmptyReferral, getPersonaLabel, normalizeReferral } from '$lib/case/Helpers.js'
-	import type { DraftPersona, PersonaFieldErrors } from '$lib/types.js'
+import {
+	createEmptyReferral,
+	getPersonaLabel,
+	normalizeReferral,
+} from "$lib/case/Helpers.js";
+import type { DraftPersona, PersonaFieldErrors } from "$lib/types.js";
 
-	type Props = {
-		persona: DraftPersona
-		errors?: PersonaFieldErrors
-	}
+type Props = {
+	persona: DraftPersona;
+	errors?: PersonaFieldErrors;
+};
 
-	let { persona, errors = {} }: Props = $props()
-	const uid = $props.id()
+let { persona, errors = {} }: Props = $props();
+const uid = $props.id();
 
-	type InputEvent_ = Event & { currentTarget: EventTarget & HTMLInputElement }
-	type TextAreaEvent = Event & { currentTarget: EventTarget & HTMLTextAreaElement }
+type InputEvent_ = Event & { currentTarget: EventTarget & HTMLInputElement };
+type TextAreaEvent = Event & {
+	currentTarget: EventTarget & HTMLTextAreaElement;
+};
 
-	function parseIntOrNull(raw: string): number | null {
-		if (raw === '') return null
-		const parsed = Number(raw)
-		return Number.isFinite(parsed) ? Math.trunc(parsed) : null
-	}
+function parseIntOrNull(raw: string): number | null {
+	if (raw === "") return null;
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
 
-	function handlePhotoChange(event: InputEvent_): void {
-		persona.profile_photo = event.currentTarget.files?.[0] ?? null
-		event.currentTarget.value = ''
-	}
+function handlePhotoChange(event: InputEvent_): void {
+	persona.profile_photo = event.currentTarget.files?.[0] ?? null;
+	event.currentTarget.value = "";
+}
 
-	function handleFileCountChange(event: InputEvent_): void {
-		const count = parseIntOrNull(event.currentTarget.value)
-		persona.file_count = typeof count === 'number' && count >= 0 ? count : null
-		if (typeof persona.file_count === 'number') {
-			if (persona.files.length > persona.file_count) {
-				persona.files.length = persona.file_count
-			} else {
-				while (persona.files.length < persona.file_count) {
-					persona.files.push({ file: null, share_conditions: '', perceived_contents: '' })
-				}
-			}
-		}
-	}
-
-	function handleFileChange(event: InputEvent_, fileIndex: number): void {
-		const entry = persona.files[fileIndex]
-		if (!entry) return
-		entry.file = event.currentTarget.files?.[0] ?? null
-		event.currentTarget.value = ''
-	}
-
-	function handleReferralOutCountChange(event: InputEvent_): void {
-		const count = parseIntOrNull(event.currentTarget.value)
-		persona.referral_out_count = typeof count === 'number' && count >= 0 ? count : null
-		if (typeof persona.referral_out_count !== 'number') {
-			persona.referrals = []
-		} else if (persona.referrals.length > persona.referral_out_count) {
-			persona.referrals.length = persona.referral_out_count
+function handleFileCountChange(event: InputEvent_): void {
+	const count = parseIntOrNull(event.currentTarget.value);
+	persona.file_count = typeof count === "number" && count >= 0 ? count : null;
+	if (typeof persona.file_count === "number") {
+		if (persona.files.length > persona.file_count) {
+			persona.files.length = persona.file_count;
 		} else {
-			while (persona.referrals.length < persona.referral_out_count) {
-				persona.referrals.push(createEmptyReferral())
+			while (persona.files.length < persona.file_count) {
+				persona.files.push({
+					file: null,
+					share_conditions: "",
+					perceived_contents: "",
+				});
 			}
 		}
 	}
+}
 
-	function handleReferralNameChange(event: InputEvent_, referralIndex: number): void {
-		const value = event.currentTarget.value
-		const normalized = normalizeReferral(persona.referrals[referralIndex])
-		persona.referrals[referralIndex] = normalized
-		normalized.name = value
-		normalized.persona.name = value
-	}
+function handleFileChange(event: InputEvent_, fileIndex: number): void {
+	const entry = persona.files[fileIndex];
+	if (!entry) return;
+	entry.file = event.currentTarget.files?.[0] ?? null;
+	event.currentTarget.value = "";
+}
 
-	function handleReferralConditionsChange(event: TextAreaEvent, referralIndex: number): void {
-		const normalized = normalizeReferral(persona.referrals[referralIndex])
-		persona.referrals[referralIndex] = normalized
-		normalized.conditions = event.currentTarget.value
+function handleReferralOutCountChange(event: InputEvent_): void {
+	const count = parseIntOrNull(event.currentTarget.value);
+	persona.referral_out_count =
+		typeof count === "number" && count >= 0 ? count : null;
+	if (typeof persona.referral_out_count !== "number") {
+		persona.referrals = [];
+	} else if (persona.referrals.length > persona.referral_out_count) {
+		persona.referrals.length = persona.referral_out_count;
+	} else {
+		while (persona.referrals.length < persona.referral_out_count) {
+			persona.referrals.push(createEmptyReferral());
+		}
 	}
+}
+
+function handleReferralNameChange(
+	event: InputEvent_,
+	referralIndex: number,
+): void {
+	const value = event.currentTarget.value;
+	const normalized = normalizeReferral(persona.referrals[referralIndex]);
+	persona.referrals[referralIndex] = normalized;
+	normalized.name = value;
+	normalized.persona.name = value;
+}
+
+function handleReferralConditionsChange(
+	event: TextAreaEvent,
+	referralIndex: number,
+): void {
+	const normalized = normalizeReferral(persona.referrals[referralIndex]);
+	persona.referrals[referralIndex] = normalized;
+	normalized.conditions = event.currentTarget.value;
+}
 </script>
 
 <div class="flex flex-col gap-4">

@@ -1,6 +1,14 @@
 from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
-from models.cases import CaseCreatedResponse, CaseDeletedResponse, CaseDetailResponse, CaseListResponse, CasePayload
+from models.cases import (
+    CaseCreatedResponse,
+    CaseDeletedResponse,
+    CaseDetailResponse,
+    CaseListResponse,
+    CasePayload,
+    CaseUpdatePayload,
+    CaseVersionResponse,
+)
 from services import cases
 from infra.db import getRequestSession
 from .dependencies import CurrentAdmin, getCurrentAdmin
@@ -38,11 +46,20 @@ async def getCase(
 @router.put("/{case_id}", response_model=CaseCreatedResponse)
 async def updateCase(
     case_id: int,
-    payload: CasePayload,
+    payload: CaseUpdatePayload,
     admin: CurrentAdmin = Depends(getCurrentAdmin),
     session: AsyncSession = Depends(getRequestSession),
 ):
     return await cases.updateCase(session, case_id, payload, admin)
+
+
+@router.get("/{case_id}/version", response_model=CaseVersionResponse)
+async def getCaseVersion(
+    case_id: int,
+    admin: CurrentAdmin = Depends(getCurrentAdmin),
+    session: AsyncSession = Depends(getRequestSession),
+):
+    return await cases.getCaseVersion(session, case_id, admin)
 
 
 @router.delete("/{case_id}", response_model=CaseDeletedResponse)

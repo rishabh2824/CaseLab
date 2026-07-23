@@ -1,69 +1,75 @@
 <script lang="ts">
-	import { onMount } from 'svelte'
-	import { toast } from 'svelte-sonner'
-	import { apiFetch } from '$lib/api/client.js'
-	import { MAX_MESSAGE_WORDS } from '$lib/constants.js'
-	import { session } from '$lib/session.svelte.js'
-	import { countWords } from '$lib/student/Helpers.js'
-	import { run } from '$lib/student/run.svelte.js'
-	import SimulationClock from '$lib/components/SimulationClock.svelte'
-	import type { ExportResponse } from '$lib/types.js'
+import { onMount } from "svelte";
+import { toast } from "svelte-sonner";
+import { apiFetch } from "$lib/api/client.js";
+import SimulationClock from "$lib/components/SimulationClock.svelte";
+import { MAX_MESSAGE_WORDS } from "$lib/constants.js";
+import { session } from "$lib/session.svelte.js";
+import { countWords } from "$lib/student/Helpers.js";
+import { run } from "$lib/student/run.svelte.js";
+import type { ExportResponse } from "$lib/types.js";
 
-	onMount(() => {
-		run.init()
-	})
+onMount(() => {
+	run.init();
+});
 
-	let inputValue = $state('')
-	let isExporting = $state(false)
-	let chatInputEl = $state<HTMLTextAreaElement | null>(null)
-	let messagesEndEl = $state<HTMLDivElement | null>(null)
+let inputValue = $state("");
+let isExporting = $state(false);
+let chatInputEl = $state<HTMLTextAreaElement | null>(null);
+let messagesEndEl = $state<HTMLDivElement | null>(null);
 
-	const wordCount = $derived(countWords(inputValue))
-	const overWordLimit = $derived(wordCount > MAX_MESSAGE_WORDS)
-	const activeMessages = $derived(run.activeContactId ? (run.messagesByPersona[run.activeContactId] ?? []) : [])
+const wordCount = $derived(countWords(inputValue));
+const overWordLimit = $derived(wordCount > MAX_MESSAGE_WORDS);
+const activeMessages = $derived(
+	run.activeContactId ? (run.messagesByPersona[run.activeContactId] ?? []) : [],
+);
 
-	$effect(() => {
-		if (run.activeContactId && run.activePersonaAvailable && !run.isSending) {
-			const el = chatInputEl
-			requestAnimationFrame(() => el?.focus())
-		}
-	})
-
-	// Re-scroll whenever the active thread's message list changes.
-	$effect(() => {
-		if (!run.activeContactId) return
-		activeMessages.length
-		requestAnimationFrame(() => messagesEndEl?.scrollIntoView({ block: 'end' }))
-	})
-
-	// sendMessage clears nothing itself; clear the input only when it accepted.
-	function handleSend(): void {
-		if (overWordLimit) return
-		if (run.sendMessage(inputValue)) inputValue = ''
+$effect(() => {
+	if (run.activeContactId && run.activePersonaAvailable && !run.isSending) {
+		const el = chatInputEl;
+		requestAnimationFrame(() => el?.focus());
 	}
+});
 
-	async function handleExportPdf(): Promise<void> {
-		if (!session.runId || isExporting) return
-		isExporting = true
-		try {
-			const data = await apiFetch<ExportResponse>(`/api/simulations/${session.runId}/export`)
-			const { buildChatPdfBlob, slugifyFileName } = await import('$lib/student/pdf.js')
-			const blob = buildChatPdfBlob(data.personas ?? [], run.notes)
-			const url = window.URL.createObjectURL(blob)
-			const link = document.createElement('a')
-			link.href = url
-			link.download = `${slugifyFileName(data.case?.case_name)}-chat-history.pdf`
-			document.body.appendChild(link)
-			link.click()
-			link.remove()
-			window.setTimeout(() => window.URL.revokeObjectURL(url), 1000)
-		} catch (err) {
-			console.error(err)
-			toast('Unable to export PDF. Please try again.')
-		} finally {
-			isExporting = false
-		}
+// Re-scroll whenever the active thread's message list changes.
+$effect(() => {
+	if (!run.activeContactId) return;
+	activeMessages.length;
+	requestAnimationFrame(() => messagesEndEl?.scrollIntoView({ block: "end" }));
+});
+
+// sendMessage clears nothing itself; clear the input only when it accepted.
+function handleSend(): void {
+	if (overWordLimit) return;
+	if (run.sendMessage(inputValue)) inputValue = "";
+}
+
+async function handleExportPdf(): Promise<void> {
+	if (!session.runId || isExporting) return;
+	isExporting = true;
+	try {
+		const data = await apiFetch<ExportResponse>(
+			`/api/simulations/${session.runId}/export`,
+		);
+		const { buildChatPdfBlob, slugifyFileName } = await import(
+			"$lib/student/pdf.js"
+		);
+		const blob = buildChatPdfBlob(data.personas ?? [], run.notes);
+		const url = window.URL.createObjectURL(blob);
+		const link = document.createElement("a");
+		link.href = url;
+		link.download = `${slugifyFileName(data.case?.case_name)}-chat-history.pdf`;
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+	} catch (err) {
+		console.error(err);
+		toast("Unable to export PDF. Please try again.");
+	} finally {
+		isExporting = false;
 	}
+}
 </script>
 
 <div class="min-h-screen bg-parchment">

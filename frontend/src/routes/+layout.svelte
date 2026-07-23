@@ -1,11 +1,11 @@
 <script lang="ts">
-	import '../app.css';
-	import type { Snippet } from 'svelte'
+import "../app.css";
+import type { Snippet } from "svelte";
 
-	type Props = { children: Snippet }
+type Props = { children: Snippet };
 
-	let { children }: Props = $props();
+let { children }: Props = $props();
 </script>
 
 <svelte:head><link rel="icon" href="/uwlogo.svg" /></svelte:head>
-{@render children()}
+<main>{@render children()}</main>

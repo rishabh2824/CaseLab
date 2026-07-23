@@ -1,9 +1,10 @@
 # CRUD for the ``admins`` table. Scale is ~20 admins total, so every function here does the simplest possible
 # query rather than anything batched/paginated.
 
-from sqlalchemy import func
+from sqlalchemy import delete
+from fastapi import HTTPException
 from sqlmodel import select
-from infra.db_models import Admin, Case
+from infra.db_models import Admin, Case, Collaborator
 
 
 async def getByEmail(session, email: str) -> dict | None:
@@ -29,14 +30,43 @@ async def create(session, email: str, name: str | None, role: int) -> dict:
     return admin.model_dump(mode="json")
 
 
-async def ownedCaseCount(session, admin_id: int) -> int:
-    return (
-        await session.exec(select(func.count()).select_from(Case).where(Case.admin == admin_id))
-    ).one()
+# Replaces the old blocking "can't delete an admin who owns cases" behavior.
+# For every case this admin owns: delete it if nobody else has access, or
+# promote the longest-standing collaborator to owner if someone does — a case
+# only ever gets deleted once no admin has access to it anymore. Atomic: one
+# commit at the end, so a failure partway through leaves nothing persisted.
+async def deleteWithCascade(session, admin_id: int) -> dict:
+    owned_cases = (await session.exec(select(Case).where(Case.admin == admin_id))).all()
+    cases_deleted = 0
+    cases_reassigned = 0
+    for case in owned_cases:
+        collaborators = (
+            await session.exec(
+                select(Collaborator).where(Collaborator.case_id == case.id).order_by(Collaborator.added_at.asc())
+            )
+        ).all()
+        if not collaborators:
+            await session.delete(case)
+            cases_deleted += 1
+        else:
+            oldest = collaborators[0]
+            case.admin = oldest.admin_id  # promote
+            session.add(case)
+            await session.delete(oldest)  # they're the owner now, not a collaborator
+            cases_reassigned += 1
 
+    # Cascade-clean any rows where this admin is a *collaborator* elsewhere —
+    # disjoint from the loop above by construction, since resolveCollaboratorIds
+    # never lets an admin collaborate on their own case.
+    await session.execute(delete(Collaborator).where(Collaborator.admin_id == admin_id))
 
-async def delete(session, admin_id: int) -> None:
     admin = await session.get(Admin, admin_id)
     if admin is not None:
         await session.delete(admin)
+
+    try:
         await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete admin.") from exc
+    return {"ok": True, "cases_deleted": cases_deleted, "cases_reassigned": cases_reassigned}

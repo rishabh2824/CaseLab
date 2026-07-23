@@ -1,4 +1,5 @@
 from __future__ import annotations
+import time
 from sqlalchemy import CheckConstraint, Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB
 from sqlmodel import Field, SQLModel
@@ -27,6 +28,21 @@ class Case(SQLModel, table=True):
     access_code: str | None = Field(default=None, sa_column=Column(CITEXT))
     admin: int = Field(foreign_key="admins.id", index=True)
     structure: dict = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False))
+    # Optimistic-concurrency counter: updateCase() only commits when the caller's
+    # expected_version still matches this, so two admins saving the same case
+    # concurrently can't silently overwrite one another.
+    version: int = Field(default=1, sa_column_kwargs={"server_default": "1"})
+
+
+class Collaborator(SQLModel, table=True):
+    __tablename__ = "collaborators"
+
+    case_id: int = Field(foreign_key="cases.id", ondelete="CASCADE", primary_key=True)
+    admin_id: int = Field(foreign_key="admins.id", ondelete="CASCADE", primary_key=True, index=True)
+    # Epoch seconds, matching SimulationRun.expires_at / RateLimit.start_time.
+    # Determines who gets promoted to owner if the case's owner is deleted
+    # (services/admin.py::deleteWithCascade promotes the oldest collaborator).
+    added_at: float = Field(default_factory=time.time)
 
 
 class File(SQLModel, table=True):

@@ -1,18 +1,18 @@
 <script lang="ts">
-	import { goto } from '$app/navigation'
-	import { apiFetch } from '$lib/api/client.js'
-	import { ADMIN_ROLE } from '$lib/constants.js'
-	import { session } from '$lib/session.svelte.js'
+import { goto } from "$app/navigation";
+import { apiFetch } from "$lib/api/client.js";
+import { ADMIN_ROLE } from "$lib/constants.js";
+import { session } from "$lib/session.svelte.js";
 
-	async function handleSignOut(): Promise<void> {
-		session.clearAdmin()
-		await goto('/')
-		try {
-			await apiFetch('/api/admin/logout', { method: 'POST' })
-		} catch {
-			// best-effort — the cookie will simply expire on its own otherwise
-		}
+async function handleSignOut(): Promise<void> {
+	session.clearAdmin();
+	await goto("/");
+	try {
+		await apiFetch("/api/admin/logout", { method: "POST" });
+	} catch {
+		// best-effort — the cookie will simply expire on its own otherwise
 	}
+}
 </script>
 
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
@@ -26,7 +26,7 @@
 	<button
 		type="button"
 		onclick={handleSignOut}
-		class="fixed bottom-6 left-6 z-10 rounded-xl border border-line bg-white px-5 py-3 text-sm font-semibold text-stone shadow-soft transition hover:border-ink hover:text-ink"
+		class="fixed bottom-6 left-6 z-20 rounded-xl border border-line bg-white px-5 py-3 text-sm font-semibold text-stone shadow-soft transition hover:border-ink hover:text-ink"
 	>
 		Sign out
 	</button>
@@ -35,7 +35,7 @@
 		<button
 			type="button"
 			onclick={() => goto('/admin/admins')}
-			class="fixed right-6 top-24 z-10 rounded-full border border-line bg-white px-6 py-3 text-sm font-semibold text-brand shadow-soft transition hover:border-brand hover:bg-brand-tint sm:right-10 sm:top-28"
+			class="fixed bottom-6 right-6 z-20 rounded-full border border-line bg-white px-6 py-3 text-sm font-semibold text-brand shadow-soft transition hover:border-brand hover:bg-brand-tint sm:bottom-auto sm:right-20 sm:top-12"
 		>
 			Manage admins
 		</button>

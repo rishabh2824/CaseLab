@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test'
+import { defineConfig, devices } from "@playwright/test";
 
 // E2E runs a production build+preview against a fully-mocked backend (see
 // *Spec.js files), so it needs no live API, database, or Anthropic tokens.
@@ -10,27 +10,27 @@ import { defineConfig, devices } from '@playwright/test'
 // click can land before the submit handler attaches, causing a native form
 // GET instead of the SPA navigation. A bundled preview build hydrates fast
 // enough that this race doesn't happen.
-const PORT = 5199
-const BASE_URL = `http://localhost:${PORT}`
+const PORT = 5199;
+const BASE_URL = `http://localhost:${PORT}`;
 
 export default defineConfig({
-	testDir: '.',
+	testDir: ".",
 	// Files are named `*Spec.ts` (no dot before "Spec"), not Playwright's
 	// default `*.spec.ts` — matches frontend/playwright.config.ts's convention.
-	testMatch: '**/*Spec.ts',
+	testMatch: "**/*Spec.ts",
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 2 : 0,
-	reporter: 'list',
+	reporter: "list",
 	use: {
 		baseURL: BASE_URL,
-		trace: 'on-first-retry',
+		trace: "on-first-retry",
 	},
-	projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 	webServer: {
 		command: `npx vite build && npx vite preview --port ${PORT} --strictPort`,
 		url: BASE_URL,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
 	},
-})
+});

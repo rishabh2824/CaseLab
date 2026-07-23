@@ -1,3 +1,10 @@
-# allow crawling everything by default
+# The landing page ("/") is the only public, indexable route — everything
+# under /admin and /student requires a login/access code and renders no
+# content for a logged-out crawler, so there's nothing to gain by indexing
+# them (they're also marked noindex directly, see the (app) route group).
 User-agent: *
-Disallow:
+Allow: /
+Disallow: /admin
+Disallow: /student
+
+Sitemap: https://wisconsincaselab.com/sitemap.xml

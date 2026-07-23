@@ -1,78 +1,113 @@
 <script lang="ts">
-	import { onMount } from 'svelte'
-	import { apiFetch } from '$lib/api/client.js'
-	import { ADMIN_ROLE } from '$lib/constants.js'
-	import type { AddAdminRequest, AdminOut, AdminRole } from '$lib/types.js'
+import { onMount } from "svelte";
+import { toast } from "svelte-sonner";
+import { apiFetch } from "$lib/api/client.js";
+import { ADMIN_ROLE } from "$lib/constants.js";
+import type {
+	AddAdminRequest,
+	AdminDeletedResponse,
+	AdminOut,
+	AdminRole,
+} from "$lib/types.js";
 
-	const ROLE_LABELS: Record<AdminRole, string> = { [ADMIN_ROLE.SUPER]: 'Super Admin', [ADMIN_ROLE.ADMIN]: 'Admin' }
+const ROLE_LABELS: Record<AdminRole, string> = {
+	[ADMIN_ROLE.SUPER]: "Super Admin",
+	[ADMIN_ROLE.ADMIN]: "Admin",
+};
 
-	let admins = $state<AdminOut[]>([])
-	let isLoading = $state(true)
-	let listError = $state('')
+let admins = $state<AdminOut[]>([]);
+let isLoading = $state(true);
+let listError = $state("");
 
-	let email = $state('')
-	let name = $state('')
-	let role = $state<AdminRole>(ADMIN_ROLE.ADMIN)
-	let formError = $state('')
-	let isAdding = $state(false)
-	let deletingId = $state<number | null>(null)
-	let deleteError = $state('')
+let email = $state("");
+let name = $state("");
+let role = $state<AdminRole>(ADMIN_ROLE.ADMIN);
+let formError = $state("");
+let isAdding = $state(false);
+let deletingId = $state<number | null>(null);
+let deleteError = $state("");
 
-	async function loadAdmins(): Promise<void> {
-		isLoading = true
-		listError = ''
-		try {
-			admins = await apiFetch<AdminOut[]>('/api/admin/admins')
-		} catch (err) {
-			listError = (err instanceof Error && err.message) || 'Failed to load admins.'
-		} finally {
-			isLoading = false
-		}
+async function loadAdmins(): Promise<void> {
+	isLoading = true;
+	listError = "";
+	try {
+		admins = await apiFetch<AdminOut[]>("/api/admin/admins");
+	} catch (err) {
+		listError =
+			(err instanceof Error && err.message) || "Failed to load admins.";
+	} finally {
+		isLoading = false;
 	}
+}
 
-	onMount(loadAdmins)
+onMount(loadAdmins);
 
-	async function handleAdd(event: SubmitEvent): Promise<void> {
-		event.preventDefault()
-		const trimmedEmail = email.trim()
-		if (!trimmedEmail) {
-			formError = 'Email is required.'
-			return
-		}
-		isAdding = true
-		try {
-			await apiFetch('/api/admin/admins', {
-				method: 'POST',
-				body: { email: trimmedEmail, name: name.trim() || null, role } satisfies AddAdminRequest,
-			})
-			formError = ''
-			email = ''
-			name = ''
-			role = ADMIN_ROLE.ADMIN
-			await loadAdmins()
-		} catch (err) {
-			formError = (err instanceof Error && err.message) || 'Failed to add admin.'
-		} finally {
-			isAdding = false
-		}
+async function handleAdd(event: SubmitEvent): Promise<void> {
+	event.preventDefault();
+	const trimmedEmail = email.trim();
+	if (!trimmedEmail) {
+		formError = "Email is required.";
+		return;
 	}
-
-	async function handleDelete(admin: AdminOut): Promise<void> {
-		const confirmed = window.confirm(
-			`Delete ${admin.email}? This cannot be undone. Admins who own cases can't be deleted until those cases are reassigned or removed.`,
-		)
-		if (!confirmed) return
-		deleteError = ''
-		deletingId = admin.id
-		try {
-			await apiFetch(`/api/admin/admins/${admin.id}`, { method: 'DELETE' })
-			await loadAdmins()
-		} catch (err) {
-			deleteError = (err instanceof Error && err.message) || 'Failed to delete admin.'
-		} finally {
-			deletingId = null
-		}
+	isAdding = true;
+	try {
+		await apiFetch("/api/admin/admins", {
+			method: "POST",
+			body: {
+				email: trimmedEmail,
+				name: name.trim() || null,
+				role,
+			} satisfies AddAdminRequest,
+		});
+		formError = "";
+		email = "";
+		name = "";
+		role = ADMIN_ROLE.ADMIN;
+		await loadAdmins();
+	} catch (err) {
+		formError = (err instanceof Error && err.message) || "Failed to add admin.";
+	} finally {
+		isAdding = false;
 	}
+}
+
+async function handleDelete(admin: AdminOut): Promise<void> {
+	const confirmed = window.confirm(
+		`Delete ${admin.email}? This cannot be undone. Any case they own with no collaborators is deleted; a case they own that has collaborators is reassigned to the longest-standing collaborator.`,
+	);
+	if (!confirmed) return;
+	deleteError = "";
+	deletingId = admin.id;
+	try {
+		const result = await apiFetch<AdminDeletedResponse>(
+			`/api/admin/admins/${admin.id}`,
+			{ method: "DELETE" },
+		);
+		const parts: string[] = [];
+		if (result.cases_deleted > 0) {
+			parts.push(
+				`${result.cases_deleted} case${result.cases_deleted === 1 ? "" : "s"} deleted`,
+			);
+		}
+		if (result.cases_reassigned > 0) {
+			parts.push(
+				`${result.cases_reassigned} case${result.cases_reassigned === 1 ? "" : "s"} reassigned`,
+			);
+		}
+		toast(
+			parts.length > 0
+				? `Deleted ${admin.email} — ${parts.join(", ")}.`
+				: `Deleted ${admin.email}.`,
+			{ duration: 4000 },
+		);
+		await loadAdmins();
+	} catch (err) {
+		deleteError =
+			(err instanceof Error && err.message) || "Failed to delete admin.";
+	} finally {
+		deletingId = null;
+	}
+}
 </script>
 
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
@@ -88,7 +123,8 @@
 			Manage admins
 		</h1>
 		<p class="mt-4 max-w-xl text-sm leading-6 text-stone">
-			Add an admin by email. Deleting an admin also deletes every case they own.
+			Add an admin by email. Deleting an admin deletes any case they own with no collaborators, and
+			reassigns ownership of cases they own with collaborators to the longest-standing collaborator.
 		</p>
 
 		<form

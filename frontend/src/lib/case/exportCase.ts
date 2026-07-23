@@ -1,146 +1,180 @@
 // Exports an empty case form so admins can autofill it with AI
-import { slugify } from '../student/Helpers.js'
-import type { PartialDraftPersona } from '../types.js'
+import { slugify } from "../student/Helpers.js";
+import type { PartialDraftPersona } from "../types.js";
 
 const escapeHtml = (value: unknown): string =>
-    String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
+	String(value ?? "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;");
 
+const blank = (value: unknown): string => (value == null ? "" : String(value));
 
-const blank = (value: unknown): string => (value == null ? '' : String(value))
+type FlatPersonaEntry = {
+	id: string;
+	persona: PartialDraftPersona;
+	isRoot: boolean;
+};
+type ReferralEdge = { fromId: string; toId: string; conditions: string };
+type FlattenedPersonaGraph = {
+	flatPersonas: FlatPersonaEntry[];
+	referralEdges: ReferralEdge[];
+};
 
+function flattenPersonaGraph(
+	personas: PartialDraftPersona[] | null | undefined,
+): FlattenedPersonaGraph {
+	const flatPersonas: FlatPersonaEntry[] = []; // { id, persona, isRoot }
+	const referralEdges: ReferralEdge[] = []; // { fromId, toId, conditions }
+	let personaCounter = 0;
+	const nextPersonaId = () => `P${++personaCounter}`;
 
-type FlatPersonaEntry = { id: string; persona: PartialDraftPersona; isRoot: boolean }
-type ReferralEdge = { fromId: string; toId: string; conditions: string }
-type FlattenedPersonaGraph = { flatPersonas: FlatPersonaEntry[]; referralEdges: ReferralEdge[] }
+	const rootEntries = (personas ?? []).map((persona) => {
+		const id = nextPersonaId();
+		flatPersonas.push({ id, persona, isRoot: true });
+		return { id, persona };
+	});
 
-function flattenPersonaGraph(personas: PartialDraftPersona[] | null | undefined): FlattenedPersonaGraph {
-    const flatPersonas: FlatPersonaEntry[] = [] // { id, persona, isRoot }
-    const referralEdges: ReferralEdge[] = [] // { fromId, toId, conditions }
-    let personaCounter = 0
-    const nextPersonaId = () => `P${++personaCounter}`
-
-    const rootEntries = (personas ?? []).map((persona) => {
-        const id = nextPersonaId()
-        flatPersonas.push({id, persona, isRoot: true})
-        return {id, persona}
-    })
-
-    const walkReferrals = (parentId: string, persona: PartialDraftPersona | undefined) => {
-        for (const referral of persona?.referrals ?? []) {
-            const childId = nextPersonaId()
-            const childPersona: PartialDraftPersona = referral?.persona ?? {}
-            flatPersonas.push({id: childId, persona: childPersona, isRoot: false})
-            referralEdges.push({fromId: parentId, toId: childId, conditions: referral?.conditions ?? ''})
-            walkReferrals(childId, childPersona)
-        }
-    }
-    rootEntries.forEach(({id, persona}) => { walkReferrals(id, persona) })
-    return {flatPersonas, referralEdges}
+	const walkReferrals = (
+		parentId: string,
+		persona: PartialDraftPersona | undefined,
+	) => {
+		for (const referral of persona?.referrals ?? []) {
+			const childId = nextPersonaId();
+			const childPersona: PartialDraftPersona = referral?.persona ?? {};
+			flatPersonas.push({ id: childId, persona: childPersona, isRoot: false });
+			referralEdges.push({
+				fromId: parentId,
+				toId: childId,
+				conditions: referral?.conditions ?? "",
+			});
+			walkReferrals(childId, childPersona);
+		}
+	};
+	rootEntries.forEach(({ id, persona }) => {
+		walkReferrals(id, persona);
+	});
+	return { flatPersonas, referralEdges };
 }
-
 
 function scaffoldPersonas(): PartialDraftPersona[] {
-    const blankPersona = (): PartialDraftPersona => ({
-        name: '',
-        role: '',
-        known_facts: '',
-        personality_traits: '',
-        availability_minutes: null,
-        files: [],
-        referrals: [],
-    })
-    return [{...blankPersona(), referrals: [{conditions: '', persona: blankPersona()}]}, blankPersona(),]
+	const blankPersona = (): PartialDraftPersona => ({
+		name: "",
+		role: "",
+		known_facts: "",
+		personality_traits: "",
+		availability_minutes: null,
+		files: [],
+		referrals: [],
+	});
+	return [
+		{
+			...blankPersona(),
+			referrals: [{ conditions: "", persona: blankPersona() }],
+		},
+		blankPersona(),
+	];
 }
-
 
 type FieldsInput = {
-    field: string
-    label: string
-    hint?: string
-    value?: string | number | null
-    rows?: number
-    required?: boolean
-}
+	field: string;
+	label: string;
+	hint?: string;
+	value?: string | number | null;
+	rows?: number;
+	required?: boolean;
+};
 
-function fields({field, label, hint, value, rows = 1, required = false}: FieldsInput): string {
-    return `<div class="field">
-    <label class="field-label">${escapeHtml(label)}${required ? '<span class="required-mark"> *</span>' : ''}</label>
-    ${hint ? `<p class="field-hint">${escapeHtml(hint)}</p>` : ''}
-    <textarea class="input ${rows === 1 ? 'input--line' : 'input--area'}"
+function fields({
+	field,
+	label,
+	hint,
+	value,
+	rows = 1,
+	required = false,
+}: FieldsInput): string {
+	return `<div class="field">
+    <label class="field-label">${escapeHtml(label)}${required ? '<span class="required-mark"> *</span>' : ""}</label>
+    ${hint ? `<p class="field-hint">${escapeHtml(hint)}</p>` : ""}
+    <textarea class="input ${rows === 1 ? "input--line" : "input--area"}"
         data-field="${field}" rows="${rows}">${escapeHtml(blank(value))}
     </textarea>
-  </div>`
+  </div>`;
 }
 
-
 function fileShare(persona: PartialDraftPersona | null | undefined): string {
-    const canShare = (persona?.files ?? []).length > 0 ? 'yes' : 'no'
-    return `<div class="field">
+	const canShare = (persona?.files ?? []).length > 0 ? "yes" : "no";
+	return `<div class="field">
     <label class="field-label">Can this Persona share files?</label>
     <p class="field-hint">Details will be entered in app.</p>
     <select class="input select-yesno" data-field="can_share_files">
-      <option value="no" ${canShare === 'no' ? 'selected' : ''}>No</option>
-      <option value="yes" ${canShare === 'yes' ? 'selected' : ''}>Yes</option>
+      <option value="no" ${canShare === "no" ? "selected" : ""}>No</option>
+      <option value="yes" ${canShare === "yes" ? "selected" : ""}>Yes</option>
     </select>
-  </div>`
+  </div>`;
 }
 
+function personaCardMarkup(
+	id: string,
+	persona: PartialDraftPersona,
+	isRoot: boolean,
+): string {
+	const availabilityHint = isRoot
+		? "Blank = the whole simulation."
+		: "Counts from when they're unlocked.";
 
-function personaCardMarkup(id: string, persona: PartialDraftPersona, isRoot: boolean): string {
-    const availabilityHint = isRoot ? 'Blank = the whole simulation.' : "Counts from when they're unlocked."
-
-    // P1 is always the first root persona flattenPersonaGraph assigns
-    const isFixedRoot = id === 'P1'
-    const headControls = isFixedRoot ? `<span class="chip chip--fixed-root">Root &middot; required</span>` : `<select class="persona-type-select" data-role="persona-type">
-        <option value="root" ${isRoot ? 'selected' : ''}>Root (available from the start)</option>
-        <option value="referred" ${isRoot ? '' : 'selected'}>Referred (unlocked later)</option>
+	// P1 is always the first root persona flattenPersonaGraph assigns
+	const isFixedRoot = id === "P1";
+	const headControls = isFixedRoot
+		? `<span class="chip chip--fixed-root">Root &middot; required</span>`
+		: `<select class="persona-type-select" data-role="persona-type">
+        <option value="root" ${isRoot ? "selected" : ""}>Root (available from the start)</option>
+        <option value="referred" ${isRoot ? "" : "selected"}>Referred (unlocked later)</option>
       </select>
-      <button type="button" class="btn-text btn-remove" data-action="remove-persona">Remove persona</button>`
+      <button type="button" class="btn-text btn-remove" data-action="remove-persona">Remove persona</button>`;
 
-    return `<article class="persona-card" data-persona-id="${id}" data-persona-root="${isRoot}">
+	return `<article class="persona-card" data-persona-id="${id}" data-persona-root="${isRoot}">
     <div class="persona-card-head">
       <span class="chip chip--persona">${id}</span>
       ${headControls}
     </div>
-    ${fields({field: 'name', label: 'Name', value: persona?.name, required: true})}
-    ${fields({field: 'role', label: 'Role / Title', value: persona?.role, required: true})}
+    ${fields({ field: "name", label: "Name", value: persona?.name, required: true })}
+    ${fields({ field: "role", label: "Role / Title", value: persona?.role, required: true })}
     ${fields({
-        field: 'availability_minutes',
-        label: 'Available for (minutes)',
-        hint: availabilityHint,
-        value: persona?.availability_minutes
-    })}
+			field: "availability_minutes",
+			label: "Available for (minutes)",
+			hint: availabilityHint,
+			value: persona?.availability_minutes,
+		})}
     ${fields({
-        field: 'known_facts',
-        label: 'Persona Related Information',
-        hint: 'Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.',
-        value: persona?.known_facts,
-        rows: 5
-    })}
+			field: "known_facts",
+			label: "Persona Related Information",
+			hint: "Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.",
+			value: persona?.known_facts,
+			rows: 5,
+		})}
     ${fields({
-        field: 'personality_traits',
-        label: 'Personality Traits',
-        hint: 'Tone, temperament, communication style, quirks.',
-        value: persona?.personality_traits,
-        rows: 3
-    })}
+			field: "personality_traits",
+			label: "Personality Traits",
+			hint: "Tone, temperament, communication style, quirks.",
+			value: persona?.personality_traits,
+			rows: 3,
+		})}
     ${fileShare(persona)}
-  </article>`
+  </article>`;
 }
-
 
 function personaOptions(personaIds: string[], selectedId: string): string {
-    return personaIds
-        .map((id) => `<option value="${id}" ${id === selectedId ? 'selected' : ''}>${id}</option>`)
-        .join('')
+	return personaIds
+		.map(
+			(id) =>
+				`<option value="${id}" ${id === selectedId ? "selected" : ""}>${id}</option>`,
+		)
+		.join("");
 }
 
-
 function referralRowMarkup(edge: ReferralEdge, personaIds: string[]): string {
-    return `<div class="referral-row" data-referral="true">
+	return `<div class="referral-row" data-referral="true">
     <div class="referral-selects">
       <select class="input select-persona" data-role="from">${personaOptions(personaIds, edge.fromId)}</select>
       <span class="referral-arrow">&rarr;</span>
@@ -148,15 +182,14 @@ function referralRowMarkup(edge: ReferralEdge, personaIds: string[]): string {
       <button type="button" class="btn-text btn-remove" data-action="remove-referral">Remove</button>
     </div>
     ${fields({
-        field: 'conditions',
-        label: 'When',
-        hint: 'The condition (in conversation) that makes the first persona introduce the second.',
-        value: edge.conditions,
-        rows: 2
-    })}
-  </div>`
+			field: "conditions",
+			label: "When",
+			hint: "The condition (in conversation) that makes the first persona introduce the second.",
+			value: edge.conditions,
+			rows: 2,
+		})}
+  </div>`;
 }
-
 
 const STYLES = `
   :root {
@@ -204,33 +237,45 @@ const STYLES = `
   .select-persona { width: auto; min-width: 90px; flex: none; }
   .referral-arrow { color: var(--brand); font-weight: 600; }
   @media (max-width: 560px) { .sheet { padding: 28px 16px 40px; } }
-`
-
+`;
 
 export type BuildHTMLFormInput = {
-    caseName: string
-    accessCode: string
-    simulationDurationMinutes: number | null
-    initialBrief: string
-    commonInformation: string
-    personas?: PartialDraftPersona[] | null
-}
+	caseName: string;
+	accessCode: string;
+	simulationDurationMinutes: number | null;
+	initialBrief: string;
+	commonInformation: string;
+	personas?: PartialDraftPersona[] | null;
+};
 
-export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, initialBrief, commonInformation, personas}: BuildHTMLFormInput): string {
-    const effectivePersonas = Array.isArray(personas) && personas.length > 0 ? personas : scaffoldPersonas()
-    const {flatPersonas, referralEdges} = flattenPersonaGraph(effectivePersonas)
-    const personaIds = flatPersonas.map((p) => p.id)
+export function buildHTMLForm({
+	caseName,
+	accessCode,
+	simulationDurationMinutes,
+	initialBrief,
+	commonInformation,
+	personas,
+}: BuildHTMLFormInput): string {
+	const effectivePersonas =
+		Array.isArray(personas) && personas.length > 0
+			? personas
+			: scaffoldPersonas();
+	const { flatPersonas, referralEdges } =
+		flattenPersonaGraph(effectivePersonas);
+	const personaIds = flatPersonas.map((p) => p.id);
 
-    const personaCards = flatPersonas
-        .map(({id, persona, isRoot}) => personaCardMarkup(id, persona, isRoot))
-        .join('\n')
-    const referralRows = referralEdges
-        .map((edge) => referralRowMarkup(edge, personaIds))
-        .join('\n')
+	const personaCards = flatPersonas
+		.map(({ id, persona, isRoot }) => personaCardMarkup(id, persona, isRoot))
+		.join("\n");
+	const referralRows = referralEdges
+		.map((edge) => referralRowMarkup(edge, personaIds))
+		.join("\n");
 
-    const title = caseName ? `${escapeHtml(caseName)} — Case Lab Import Form` : 'Case Lab Import Form'
+	const title = caseName
+		? `${escapeHtml(caseName)} — Case Lab Import Form`
+		: "Case Lab Import Form";
 
-    return `<!DOCTYPE html>
+	return `<!DOCTYPE html>
     <html lang="en">
         <head>
             <meta charset="UTF-8" />
@@ -249,38 +294,39 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
                         </div>
                         <h2 class="section-title">Case Setup</h2>
                         ${fields({
-                            field: 'case_name',
-                            label: 'Case Name',
-                            value: caseName,
-                            required: true})}
+													field: "case_name",
+													label: "Case Name",
+													value: caseName,
+													required: true,
+												})}
                         ${fields({
-                            field: 'access_code',
-                            label: 'Access Code',
-                            hint: 'Students type this to start the simulation.',
-                            value: accessCode,
-                            required: true
-                        })}
+													field: "access_code",
+													label: "Access Code",
+													hint: "Students type this to start the simulation.",
+													value: accessCode,
+													required: true,
+												})}
                         ${fields({
-                            field: 'simulation_duration_minutes',
-                            label: 'Simulation Duration (minutes)',
-                            hint: 'Leave blank for unlimited.',
-                            value: simulationDurationMinutes
-                        })}
+													field: "simulation_duration_minutes",
+													label: "Simulation Duration (minutes)",
+													hint: "Leave blank for unlimited.",
+													value: simulationDurationMinutes,
+												})}
                         ${fields({
-                            field: 'initial_brief',
-                            label: 'Initial Brief',
-                            hint: 'What the student reads before the simulation begins — sets up the scenario and their objective.',
-                            value: initialBrief,
-                            rows: 5,
-                            required: true
-                        })}
+													field: "initial_brief",
+													label: "Initial Brief",
+													hint: "What the student reads before the simulation begins — sets up the scenario and their objective.",
+													value: initialBrief,
+													rows: 5,
+													required: true,
+												})}
                         ${fields({
-                            field: 'common_information',
-                            label: 'Case Background',
-                            hint: 'Shared context every persona in this case implicitly knows.',
-                            value: commonInformation,
-                            rows: 5
-                        })}
+													field: "common_information",
+													label: "Case Background",
+													hint: "Shared context every persona in this case implicitly knows.",
+													value: commonInformation,
+													rows: 5,
+												})}
                     </section>
 
                     <section class="block">
@@ -324,37 +370,37 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
                     </div>
 
                     ${fields({
-                        field: 'name',
-                        label: 'Name',
-                        value: '',
-                        required: true
-                    })}
+											field: "name",
+											label: "Name",
+											value: "",
+											required: true,
+										})}
                     ${fields({
-                        field: 'role',
-                        label: 'Role / Title',
-                        value: '',
-                        required: true
-                    })}
+											field: "role",
+											label: "Role / Title",
+											value: "",
+											required: true,
+										})}
                     ${fields({
-                        field: 'availability_minutes',
-                        label: 'Available for (minutes)',
-                        hint: 'Blank = the whole simulation.',
-                        value: ''
-                    })}
+											field: "availability_minutes",
+											label: "Available for (minutes)",
+											hint: "Blank = the whole simulation.",
+											value: "",
+										})}
                     ${fields({
-                        field: 'known_facts',
-                        label: 'Persona Related Information',
-                        hint: 'Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.',
-                        value: '',
-                        rows: 5
-                    })}
+											field: "known_facts",
+											label: "Persona Related Information",
+											hint: "Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.",
+											value: "",
+											rows: 5,
+										})}
                     ${fields({
-                        field: 'personality_traits',
-                        label: 'Personality Traits',
-                        hint: 'Tone, temperament, communication style, quirks.',
-                        value: '',
-                        rows: 3
-                    })}
+											field: "personality_traits",
+											label: "Personality Traits",
+											hint: "Tone, temperament, communication style, quirks.",
+											value: "",
+											rows: 3,
+										})}
                     ${fileShare(null)}
                 </article>
             </template>
@@ -368,12 +414,12 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
               <button type="button" class="btn-text btn-remove" data-action="remove-referral">Remove</button>
             </div>
             ${fields({
-                field: 'conditions',
-                label: 'When',
-                hint: 'The condition (in conversation) that makes the first persona introduce the second.',
-                value: '',
-                rows: 2
-            })}
+							field: "conditions",
+							label: "When",
+							hint: "The condition (in conversation) that makes the first persona introduce the second.",
+							value: "",
+							rows: 2,
+						})}
           </div>
         </template>
 
@@ -467,20 +513,19 @@ export function buildHTMLForm({caseName, accessCode, simulationDurationMinutes, 
 })();
 </script>
         </body>
-    </html>`
+    </html>`;
 }
 
-
 export function downloadForm(html: string, caseName: string): void {
-    const slug = slugify(caseName)
-    const filename = `${slug || 'new-case'}.html`
-    const file = new Blob([html], {type: 'text/html;charset=utf-8'})
-    const url = URL.createObjectURL(file)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+	const slug = slugify(caseName);
+	const filename = `${slug || "new-case"}.html`;
+	const file = new Blob([html], { type: "text/html;charset=utf-8" });
+	const url = URL.createObjectURL(file);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = filename;
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+	window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -30,9 +30,25 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpath = ["tests"]
+testpaths = ["tests"]
+pythonpath = ["."]
 asyncio_mode = "auto"
-filterwarnings = ["error::DeprecationWarning"]
+# infra/db.py's engine/session-factory are process-lifetime @lru_cache singletons
+# (correct in the real app, which has one event loop for its whole life) — tests
+# need to share that same single event loop too, or asyncpg connections created
+# in one test's loop break when reused from a different test's loop.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+filterwarnings = [
+    "error::DeprecationWarning",
+    # SQLModel nudges every session.execute() call toward session.exec(), but
+    # exec() has no rowcount-bearing equivalent for Core UPDATE/DELETE — the
+    # conditional version-lock UPDATE in services/cases.py and the bulk
+    # collaborator DELETEs in services/cases.py and services/admin.py
+    # genuinely need session.execute() and can't be rewritten around this.
+    "ignore::DeprecationWarning:services.cases",
+    "ignore::DeprecationWarning:services.admin",
+]
 
 [tool.deptry.package_module_name_map]
 pyjwt = ["jwt"]

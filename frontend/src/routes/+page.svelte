@@ -1,49 +1,93 @@
 <script lang="ts">
-	import { goto } from '$app/navigation'
-	import { apiFetch } from '$lib/api/client.js'
-	import { session } from '$lib/session.svelte.js'
-	import SignInButton from '$lib/components/SignInButton.svelte'
-	import type { RunState, StartSimulationPayload } from '$lib/types.js'
+import { goto } from "$app/navigation";
+import { apiFetch } from "$lib/api/client.js";
+import SignInButton from "$lib/components/SignInButton.svelte";
+import { session } from "$lib/session.svelte.js";
+import type { RunState, StartSimulationPayload } from "$lib/types.js";
 
-	let accessCode = $state('')
-	let error = $state('')
-	let isSubmitting = $state(false)
+let accessCode = $state("");
+let error = $state("");
+let isSubmitting = $state(false);
 
-	async function submit(code: string): Promise<void> {
-		isSubmitting = true
-		try {
-			const normalized = code.toUpperCase()
-			const data = await apiFetch<RunState>('/api/simulations/start', {
-				method: 'POST',
-				body: { access_code: normalized } satisfies StartSimulationPayload,
-			})
-			error = ''
-			session.startRun({
-				runId: data.run_id,
-				accessCode: normalized,
-				startTime: Date.now(),
-			})
-			await goto('/student')
-		} catch {
-			error = 'Invalid access code.'
-		} finally {
-			isSubmitting = false
-		}
+async function submit(code: string): Promise<void> {
+	isSubmitting = true;
+	try {
+		const normalized = code.toUpperCase();
+		const data = await apiFetch<RunState>("/api/simulations/start", {
+			method: "POST",
+			body: { access_code: normalized } satisfies StartSimulationPayload,
+		});
+		error = "";
+		session.startRun({
+			runId: data.run_id,
+			accessCode: normalized,
+			startTime: Date.now(),
+		});
+		await goto("/student");
+	} catch {
+		error = "Invalid access code.";
+	} finally {
+		isSubmitting = false;
 	}
+}
 
-	function handleSubmit(event: SubmitEvent): void {
-		event.preventDefault()
-		const code = accessCode.trim()
-		if (!code) {
-			error = 'Invalid access code.'
-			return
-		}
-		submit(code)
+function handleSubmit(event: SubmitEvent): void {
+	event.preventDefault();
+	const code = accessCode.trim();
+	if (!code) {
+		error = "Invalid access code.";
+		return;
 	}
+	submit(code);
+}
 </script>
 
 <svelte:head>
 	<link rel="preload" as="image" href="/Bg.webp" />
+
+	<meta
+		name="description"
+		content="Enter your access code to start an interactive business case simulation from the Wisconsin School of Business, University of Wisconsin–Madison."
+	/>
+	<link rel="canonical" href="https://wisconsincaselab.com/" />
+
+	<meta property="og:type" content="website" />
+	<meta property="og:site_name" content="Wisconsin Case Lab" />
+	<meta property="og:title" content="Wisconsin Case Lab | Wisconsin School of Business" />
+	<meta
+		property="og:description"
+		content="Enter your access code to start an interactive business case simulation from the Wisconsin School of Business, University of Wisconsin–Madison."
+	/>
+	<meta property="og:url" content="https://wisconsincaselab.com/" />
+	<meta property="og:image" content="https://wisconsincaselab.com/WSBLogo.webp" />
+	<meta property="og:image:alt" content="Wisconsin School of Business" />
+
+	<meta name="twitter:card" content="summary" />
+	<meta name="twitter:title" content="Wisconsin Case Lab | Wisconsin School of Business" />
+	<meta
+		name="twitter:description"
+		content="Enter your access code to start an interactive business case simulation from the Wisconsin School of Business, University of Wisconsin–Madison."
+	/>
+	<meta name="twitter:image" content="https://wisconsincaselab.com/WSBLogo.webp" />
+
+	{@html `<script type="application/ld+json">${JSON.stringify({
+		'@context': 'https://schema.org',
+		'@type': 'WebSite',
+		name: 'Wisconsin Case Lab',
+		url: 'https://wisconsincaselab.com/',
+		description:
+			'Interactive business case simulation platform from the Wisconsin School of Business, University of Wisconsin–Madison.',
+		publisher: {
+			'@type': 'CollegeOrUniversity',
+			name: 'Wisconsin School of Business',
+			url: 'https://business.wisc.edu/',
+			parentOrganization: {
+				'@type': 'CollegeOrUniversity',
+				name: 'University of Wisconsin–Madison',
+				url: 'https://www.wisc.edu/',
+			},
+		},
+	})}</script>`}
 </svelte:head>
 
 <div
@@ -70,7 +114,7 @@
 		class="absolute left-6 top-6 z-10 h-12 w-auto sm:h-20"
 	/>
 
-	<div class="absolute bottom-6 right-6 z-10 sm:bottom-auto sm:top-12 sm:right-20">
+	<div class="absolute right-6 top-6 z-10 sm:right-20 sm:top-12">
 		<SignInButton
 			class="rounded-full border-2 border-brand bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-stone shadow-sm backdrop-blur transition hover:bg-brand hover:text-ink"
 		>

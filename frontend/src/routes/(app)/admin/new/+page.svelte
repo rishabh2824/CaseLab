@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { goto } from '$app/navigation'
+import { goto } from "$app/navigation";
 </script>
 
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">

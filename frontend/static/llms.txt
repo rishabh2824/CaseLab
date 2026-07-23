@@ -1,0 +1,11 @@
+# Wisconsin Case Lab
+
+> Wisconsin Case Lab is an interactive business case simulation platform built by the Wisconsin School of Business, University of Wisconsin–Madison. Students enter an access code to work through a timed case simulation with AI-driven personas; instructors author and manage cases as admins.
+
+## Pages
+
+- [Wisconsin Case Lab](https://wisconsincaselab.com/): Landing page — enter an access code to start a simulation.
+
+## Notes
+
+- Simulation and admin pages require an access code or an authorized Google sign-in and are not publicly crawlable content.

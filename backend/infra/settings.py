@@ -25,7 +25,6 @@ class Settings(BaseSettings):
     direct_url: str = Field(default="", validation_alias="DIRECT")
     frontend_urls_raw: str = Field(default="", validation_alias="FRONTEND_URLS")
     google_client_id: str
-    google_client_secret: str
     jwt_secret: str = Field(min_length=32)
     llm_key: str
     llm_base_url: str = "https://api.anthropic.com/v1/messages"

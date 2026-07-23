@@ -1,38 +1,40 @@
 <script lang="ts">
-	type Props = {
-		startTime: number | null
-		totalDurationSeconds: number | null
-	}
+type Props = {
+	startTime: number | null;
+	totalDurationSeconds: number | null;
+};
 
-	let { startTime, totalDurationSeconds }: Props = $props()
+let { startTime, totalDurationSeconds }: Props = $props();
 
-	let elapsedSeconds = $state(0)
+let elapsedSeconds = $state(0);
 
-	function formatTime(totalSeconds: number): string {
-		const minutes = Math.floor(totalSeconds / 60)
-		const seconds = totalSeconds % 60
-		return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-	}
+function formatTime(totalSeconds: number): string {
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
 
-	$effect(() => {
-		const start = startTime ?? Date.now()
-		const tick = () => {
-			elapsedSeconds = Math.max(0, Math.floor((Date.now() - start) / 1000))
-		}
-		tick()
-		const intervalId = window.setInterval(tick, 1000)
-		return () => window.clearInterval(intervalId)
-	})
+$effect(() => {
+	const start = startTime ?? Date.now();
+	const tick = () => {
+		elapsedSeconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
+	};
+	tick();
+	const intervalId = window.setInterval(tick, 1000);
+	return () => window.clearInterval(intervalId);
+});
 
-	// `number | null` can't narrow through a separately-stored boolean derived,
-	// so the type check is inlined at each point totalDurationSeconds is
-	// actually used — same runtime condition as the old `hasTotal`, just
-	// re-checked at each site instead of read from one shared derived.
-	const progressPercent = $derived(
-		typeof totalDurationSeconds === 'number' ? Math.min(100, (elapsedSeconds / totalDurationSeconds) * 100) : 0,
-	)
-	// Warn as time runs low: the bar shifts to Wisconsin red past 80% elapsed.
-	const isRunningLow = $derived(progressPercent >= 80)
+// `number | null` can't narrow through a separately-stored boolean derived,
+// so the type check is inlined at each point totalDurationSeconds is
+// actually used — same runtime condition as the old `hasTotal`, just
+// re-checked at each site instead of read from one shared derived.
+const progressPercent = $derived(
+	typeof totalDurationSeconds === "number"
+		? Math.min(100, (elapsedSeconds / totalDurationSeconds) * 100)
+		: 0,
+);
+// Warn as time runs low: the bar shifts to Wisconsin red past 80% elapsed.
+const isRunningLow = $derived(progressPercent >= 80);
 </script>
 
 <div class="rounded-2xl border border-line bg-white p-4 shadow-soft">

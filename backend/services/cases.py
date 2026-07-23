@@ -1,20 +1,51 @@
 import uuid
+from sqlalchemy import delete, or_
+from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from sqlmodel import select
 from models.admin import AdminRole
-from models.cases import CasePayload, FileRef, PersonaPayload
+from models.cases import CasePayload, CaseUpdatePayload, FileRef, PersonaPayload
 from services.auth import CurrentAdmin
-from infra.db_models import Case, File
+from infra.db_models import Admin, Case, Collaborator, File
 
 
 ACCESS_CODE_CONFLICT = "An access code with this value already exists on another case."
+VERSION_CONFLICT = {
+    "message": "This case was changed by someone else since you loaded it — reload to see their changes.",
+    "code": "version_conflict",
+}
 
 
-# Authorize access to a case
-def caseAccess(owner_admin_id: int, admin: CurrentAdmin) -> None:
+# Authorize access to a case: SUPER admins bypass everything, otherwise the
+# caller must be the owner or a collaborator.
+async def caseAccess(session, case: Case, admin: CurrentAdmin) -> None:
     if admin.role == AdminRole.SUPER: return
-    if owner_admin_id != admin.id: raise HTTPException(status_code=403, detail="You do not have access to this case.")
+    if case.admin == admin.id: return
+    row = await session.exec(
+        select(Collaborator.admin_id).where(Collaborator.case_id == case.id, Collaborator.admin_id == admin.id)
+    )
+    if row.first() is None:
+        raise HTTPException(status_code=403, detail="You do not have access to this case.")
+
+
+# Validates + normalizes a collaborator id list for create/update: dedupes,
+# rejects the case owner appearing in their own collaborator list, rejects
+# unknown admin ids, and rejects SUPER admins (who already have full access
+# everywhere, so explicitly granting it is meaningless).
+async def resolveCollaboratorIds(session, ids: list[int] | None, owner_admin_id: int) -> list[int]:
+    ids = list(dict.fromkeys(ids or []))  # dedupe, preserve order
+    if not ids: return []
+    if owner_admin_id in ids:
+        raise HTTPException(status_code=400, detail="The case owner cannot also be listed as a collaborator.")
+    rows = (await session.exec(select(Admin.id, Admin.role).where(Admin.id.in_(ids)))).all()
+    found = {row[0]: row[1] for row in rows}
+    missing = set(ids) - found.keys()
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Unknown admin id(s): {sorted(missing)}")
+    if any(role == AdminRole.SUPER for role in found.values()):
+        raise HTTPException(status_code=400, detail="Super admins cannot be added as collaborators.")
+    return ids
 
 
 # Whether exc looks like a UNIQUE constraint violation from Postgres
@@ -140,17 +171,24 @@ async def build_structure(session, payload: CasePayload) -> dict:
     return {"personas": [await build_persona_dict(session, p) for p in payload.personas]}
 
 
-async def fetchCases(session, owner_admin_id: int | None = None) -> list[Case]:
-    stmt = select(Case).order_by(Case.name)
-    if owner_admin_id is not None:
-        stmt = stmt.where(Case.admin == owner_admin_id)
+async def fetchCases(session, admin: CurrentAdmin) -> list[Case]:
+    if admin.role == AdminRole.SUPER:
+        stmt = select(Case).order_by(Case.name)
+    else:
+        collaborator_case_ids = select(Collaborator.case_id).where(Collaborator.admin_id == admin.id)
+        stmt = (
+            select(Case)
+            .where(or_(Case.admin == admin.id, Case.id.in_(collaborator_case_ids)))
+            .order_by(Case.name)
+        )
     return (await session.exec(stmt)).all()
 
 
-async def createCase(session, payload, admin: CurrentAdmin) -> dict:
+async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict:
     normalized_code = normalizeAccessCode(payload.access_code)
     if normalized_code and await accessCodeTaken(session, normalized_code):
         raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
+    collaborator_ids = await resolveCollaboratorIds(session, payload.collaborator_admin_ids, owner_admin_id=admin.id)
     case = Case(
         name=payload.case_name,
         access_code=normalized_code,
@@ -162,6 +200,8 @@ async def createCase(session, payload, admin: CurrentAdmin) -> dict:
         structure=await build_structure(session, payload),
     )
     session.add(case)
+    await session.flush()  # assigns case.id without committing, needed for the collaborator rows below
+    session.add_all([Collaborator(case_id=case.id, admin_id=aid) for aid in collaborator_ids])
     try:
         await session.commit()
     except Exception as exc:
@@ -173,8 +213,7 @@ async def createCase(session, payload, admin: CurrentAdmin) -> dict:
 
 
 async def listCases(session, admin: CurrentAdmin) -> dict:
-    owner_filter = None if admin.role == AdminRole.SUPER else admin.id
-    cases = await fetchCases(session, owner_admin_id=owner_filter)
+    cases = await fetchCases(session, admin)
     return {
         "cases": [
             {"id": case.id, "case_name": case.name, "access_code": case.access_code} for case in cases
@@ -186,8 +225,11 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
     case = await session.get(Case, case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found.")
-    caseAccess(case.admin, admin)
+    await caseAccess(session, case, admin)
     personas = [adminTree(p) for p in (case.structure.get("personas") or [])]
+    collaborator_ids = (
+        await session.exec(select(Collaborator.admin_id).where(Collaborator.case_id == case_id))
+    ).all()
     return {
         "case": {
             "id": case.id,
@@ -198,28 +240,62 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
             "simulation_duration": case.duration,
             "total_non_referred_personas": case.root_personas,
             "personas": personas,
+            "version": case.version,
+            "owner_admin_id": case.admin,
+            "collaborator_admin_ids": list(collaborator_ids),
         }
     }
 
 
-async def updateCase(session, case_id: int, payload, admin: CurrentAdmin) -> dict:
+async def getCaseVersion(session, case_id: int, admin: CurrentAdmin) -> dict:
     case = await session.get(Case, case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found.")
-    caseAccess(case.admin, admin)
+    await caseAccess(session, case, admin)
+    return {"version": case.version}
+
+
+async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: CurrentAdmin) -> dict:
+    case = await session.get(Case, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    await caseAccess(session, case, admin)
+
+    # Validate everything before touching the row — an invalid payload should
+    # never bump the version or partially write collaborators.
     normalized_code = normalizeAccessCode(payload.access_code)
     if normalized_code and await accessCodeTaken(session, normalized_code, exclude_case_id=case_id):
         raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
-    case.name = payload.case_name
-    case.access_code = normalized_code
-    case.brief = payload.initial_brief
-    case.common_information = payload.common_information
-    case.duration = payload.simulation_duration
-    case.root_personas = payload.total_non_referred_personas
-    # Always a full reassignment (never an in-place mutation of case.structure) so
-    # SQLAlchemy's ORM change tracking picks it up — see infra/db_models.py.
-    case.structure = await build_structure(session, payload)
-    session.add(case)
+    collaborator_ids = await resolveCollaboratorIds(session, payload.collaborator_admin_ids, owner_admin_id=case.admin)
+    structure = await build_structure(session, payload)
+
+    # Optimistic lock: a plain ORM mutate-then-commit can't distinguish "row
+    # updated" from "someone else already updated it", so this is a conditional
+    # bulk UPDATE instead — 0 rows affected means payload.expected_version is
+    # stale, i.e. another admin saved this case first.
+    result = await session.execute(
+        sa_update(Case)
+        .where(Case.id == case_id, Case.version == payload.expected_version)
+        .values(
+            name=payload.case_name,
+            access_code=normalized_code,
+            brief=payload.initial_brief,
+            common_information=payload.common_information,
+            duration=payload.simulation_duration,
+            root_personas=payload.total_non_referred_personas,
+            structure=structure,
+            version=Case.version + 1,
+        )
+    )
+    if result.rowcount == 0:
+        await session.rollback()
+        raise HTTPException(status_code=409, detail=VERSION_CONFLICT)
+
+    # Replace-all, same convention as case.structure — not an incremental diff.
+    await session.execute(delete(Collaborator).where(Collaborator.case_id == case_id))
+    if collaborator_ids:
+        session.add_all([Collaborator(case_id=case_id, admin_id=aid) for aid in collaborator_ids])
+
     try:
         await session.commit()
     except Exception as exc:
@@ -234,7 +310,7 @@ async def deleteCase(session, case_id: int, admin: CurrentAdmin) -> dict:
     case = await session.get(Case, case_id)
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found.")
-    caseAccess(case.admin, admin)
+    await caseAccess(session, case, admin)
     await session.delete(case)
     await session.commit()
     return {"ok": True}
