@@ -4,7 +4,7 @@ from botocore.config import Config
 from infra.settings import get_settings
 
 SPACES_REGION = "sfo3"
-SPACES_ENDPOINT = "https://case-file.sfo3.digitaloceanspaces.com"
+SPACES_ENDPOINT = "https://sfo3.digitaloceanspaces.com"
 SPACES_BUCKET = "case-file"
 
 
