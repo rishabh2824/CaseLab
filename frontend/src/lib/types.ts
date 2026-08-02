@@ -11,7 +11,7 @@ type S = components["schemas"];
 export type FileRef = S["FileRef"];
 export type FileEntry = S["FileEntry"];
 export type PersonaPayload = S["PersonaPayload"];
-export type ReferralPayload = S["ReferralPayload"];
+export type ReferralEdgePayload = S["ReferralEdgePayload"];
 export type CasePayload = S["CasePayload"];
 // PUT-only: CasePayload plus the version the client loaded, so the backend can
 // reject a save with a 409 if someone else saved the case first (see
@@ -67,15 +67,14 @@ export type AdminDeletedResponse = S["AdminDeletedResponse"];
 // lockstep.
 export type AdminRole = S["AdminRole"];
 
-// --- Draft personas -------------------------------------------------------
+// --- Personas + referral edges (flat graph) --------------------------------
 //
-// The shape CaseForm/PersonaFields edit in memory. A persona being edited
+// The flat shape CaseForm/PersonaFields edit in memory: personas and referral
+// edges are held as sibling arrays (see CaseForm.svelte's $state: personas,
+// referrals, roots), not a nested tree — a persona has no embedded referrals
+// field, and a referral edge has no embedded persona. A persona being edited
 // holds a browser File for any photo/attachment that hasn't been uploaded
-// yet, and the wire FileRef once it has (see isPendingUpload). file_count
-// and referral_out_count are client-only: they drive the repeat count
-// rendered in PersonaFields and are never sent to the API — submitCase.js
-// derives the real counts from files.length/referrals.length when it
-// builds the actual payload.
+// yet, and the wire FileRef once it has (see isPendingUpload).
 
 // `file?:` (optional key, not a required key typed `| undefined`) matches
 // FileEntry's own optionality — CaseForm.svelte normalizes raw PersonaOut
@@ -85,43 +84,18 @@ export type DraftFileEntry = Omit<FileEntry, "file"> & {
 	file?: File | FileRef | null;
 };
 
-export type DraftReferral = Omit<ReferralPayload, "persona"> & {
-	// Client-only label, kept in sync with persona.name by
-	// handleReferralNameChange (PersonaFields.svelte); dropped before the
-	// API call (submitCase.js only sends conditions + persona).
-	name: string;
-	persona: DraftPersona;
+export type Persona = Omit<PersonaPayload, "profile_photo" | "files"> & {
+	profile_photo: File | FileRef | null;
+	files: DraftFileEntry[];
 };
 
-export type DraftPersona = Omit<
-	PersonaPayload,
-	"profile_photo" | "files" | "referrals"
-> & {
-	profile_photo: File | FileRef | null;
-	file_count: number | null;
-	files: DraftFileEntry[];
-	referral_out_count: number | null;
-	referrals: DraftReferral[];
-};
+// Identical shape on the wire whether it's a request or a response — a
+// referral edge is just {from_id, to_id, conditions}, nothing to diverge on.
+export type ReferralEdge = ReferralEdgePayload;
 
 export const isPendingUpload = (
 	value: File | FileRef | null | undefined,
 ): value is File => value instanceof File;
-
-// Loosely-shaped input normalizePersona/normalizeReferral (case/Helpers.ts)
-// accept — anywhere from a fully-formed Draft*, to a bare API PersonaOut/
-// ReferralOut, to a completely empty object. Nested referrals are NOT
-// required to already be normalized: normalizePersona only defaults its own
-// top-level fields and passes `referrals` through untouched, so every real
-// consumer (submitCase.js, PersonaFields.svelte, collectReferredPersonas)
-// calls normalizeReferral again at the point it actually reads a referral.
-export type PartialDraftReferral = Partial<Omit<DraftReferral, "persona">> & {
-	persona?: PartialDraftPersona;
-};
-
-export type PartialDraftPersona = Partial<Omit<DraftPersona, "referrals">> & {
-	referrals?: PartialDraftReferral[];
-};
 
 // --- SSE turn events -------------------------------------------------------
 //

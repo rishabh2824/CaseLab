@@ -4,12 +4,14 @@ import { onDestroy, onMount, untrack } from "svelte";
 import { ApiError, apiFetch } from "$lib/api/client.js";
 import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
 import {
-	collectReferredPersonas,
 	createEmptyPersona,
 	getPersonaFieldErrors,
 	getPersonaLabel,
 	hasFieldErrors,
 	normalizePersona,
+	normalizeReferral,
+	reachableFrom,
+	referralsTo,
 } from "$lib/case/Helpers.js";
 import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
 import { submitCase } from "$lib/case/submitCase.js";
@@ -20,8 +22,8 @@ import type {
 	AdminOut,
 	CaseDetailResponse,
 	CaseVersionResponse,
-	DraftPersona,
-	DraftReferral,
+	Persona,
+	ReferralEdge,
 } from "$lib/types.js";
 import CaseConflictModal from "./CaseConflictModal.svelte";
 import PersonaFields from "./PersonaFields.svelte";
@@ -49,7 +51,9 @@ let commonInformation = $state("");
 let simulationDurationMinutes = $state<number | null>(null);
 let accessCode = $state("");
 let totalPersonas = $state<number | null>(null);
-let personas = $state<DraftPersona[]>([]);
+let personas = $state<Persona[]>([]);
+let referrals = $state<ReferralEdge[]>([]);
+let roots = $state<string[]>([]);
 
 // Collaborators: access-control metadata, not case content — only ever
 // populated in edit mode (see loadCase). A new case (blank or from a
@@ -76,6 +80,8 @@ function snapshotFields(): string {
 		accessCode,
 		totalPersonas,
 		personas,
+		referrals,
+		roots,
 		collaboratorAdminIds,
 	});
 }
@@ -133,10 +139,14 @@ async function loadCase(id: string): Promise<void> {
 	commonInformation = loadedCase.common_information ?? "";
 	simulationDurationMinutes = loadedCase.simulation_duration ?? null;
 	accessCode = loadedCase.access_code ?? "";
-	totalPersonas = loadedCase.total_non_referred_personas ?? null;
 	personas = (loadedCase.personas ?? []).map((persona) =>
 		normalizePersona(persona),
 	);
+	referrals = (loadedCase.referrals ?? []).map((referral) =>
+		normalizeReferral(referral),
+	);
+	roots = loadedCase.roots ?? [];
+	totalPersonas = roots.length;
 	if (isEditMode) {
 		collaboratorAdminIds = loadedCase.collaborator_admin_ids ?? [];
 		ownerAdminId = loadedCase.owner_admin_id ?? null;
@@ -272,24 +282,34 @@ const simulationDurationError = $derived(
 		: null,
 );
 
-const referredPersonas = $derived(collectReferredPersonas(personas));
-const rootPersonaErrors = $derived(
-	// showPersonas doesn't narrow totalPersonas here (separate $derived) —
-	// re-check inline, same as the template's equivalent Array.from below.
-	Array.from(
-		{
-			length:
-				showPersonas && typeof totalPersonas === "number" ? totalPersonas : 0,
-		},
-		(_, index) => getPersonaFieldErrors(normalizePersona(personas[index])),
+const personasById = $derived(new Map(personas.map((p) => [p.id, p])));
+
+// Personas not in `roots` — i.e. every persona reachable only via a referral,
+// in flat document order. A persona can have more than one referrer under
+// the flat model, so the header shows every parent, not just one.
+const referredPersonas = $derived(
+	personas
+		.filter((persona) => !roots.includes(persona.id))
+		.map((persona, index) => ({
+			persona,
+			label: getPersonaLabel(persona, `Referred Persona ${index + 1}`),
+			parentLabel: referralsTo(referrals, persona.id)
+				.map((referral) =>
+					getPersonaLabel(
+						personasById.get(referral.from_id) ?? { name: "" },
+						"Unknown",
+					),
+				)
+				.join(", "),
+		})),
+);
+const personaErrors = $derived(
+	Object.fromEntries(
+		personas.map((persona) => [persona.id, getPersonaFieldErrors(persona)]),
 	),
 );
-const referredPersonaErrors = $derived(
-	referredPersonas.map((item) => getPersonaFieldErrors(item.persona)),
-);
 const hasAnyPersonaError = $derived(
-	rootPersonaErrors.some(hasFieldErrors) ||
-		referredPersonaErrors.some(hasFieldErrors),
+	Object.values(personaErrors).some(hasFieldErrors),
 );
 const hasValidationErrors = $derived(
 	Boolean(caseNameError) ||
@@ -301,32 +321,6 @@ const hasValidationErrors = $derived(
 );
 const displayedError = $derived(submitError || loadErrorMessage);
 
-// collectReferredPersonas (a pure helper, shared with export/import and validation) returns
-// normalized *copies* for labeling — walk the path back into the live $state tree so
-// PersonaFields binds to the real referred persona, not a throwaway snapshot.
-function resolveReferredPersona(path: number[]): DraftPersona {
-	const rootIndex = path[0];
-	if (rootIndex === undefined)
-		throw new Error("Internal error: empty referral path.");
-	let persona = personas[rootIndex];
-	if (!persona)
-		throw new Error(
-			"Internal error: root persona not found while resolving a referral path.",
-		);
-	for (let depth = 1; depth < path.length; depth++) {
-		const childIndex = path[depth];
-		if (childIndex === undefined)
-			throw new Error("Internal error: malformed referral path.");
-		const referral: DraftReferral | undefined = persona.referrals[childIndex];
-		if (!referral)
-			throw new Error(
-				"Internal error: referred persona not found while resolving a referral path.",
-			);
-		persona = referral.persona;
-	}
-	return persona;
-}
-
 function handleTotalPersonasChange(
 	event: Event & { currentTarget: EventTarget & HTMLInputElement },
 ): void {
@@ -334,10 +328,33 @@ function handleTotalPersonasChange(
 	const value = parseIntOrNull(event.currentTarget.value);
 	totalPersonas = value;
 	if (typeof value === "number" && value >= 1) {
-		if (personas.length > value) personas = personas.slice(0, value);
-		while (personas.length < value) personas.push(createEmptyPersona());
+		if (roots.length > value) {
+			// Removing a root discards its whole subtree — every persona only
+			// reachable from a removed root, not also reachable from a kept one.
+			const keptRoots = roots.slice(0, value);
+			const removedRoots = roots.slice(value);
+			const stillReachable = reachableFrom(keptRoots, referrals);
+			const toRemove = new Set(
+				[...reachableFrom(removedRoots, referrals)].filter(
+					(id) => !stillReachable.has(id),
+				),
+			);
+			personas = personas.filter((persona) => !toRemove.has(persona.id));
+			referrals = referrals.filter(
+				(referral) =>
+					!toRemove.has(referral.from_id) && !toRemove.has(referral.to_id),
+			);
+			roots = keptRoots;
+		}
+		while (roots.length < value) {
+			const persona = createEmptyPersona();
+			personas = [...personas, persona];
+			roots = [...roots, persona.id];
+		}
 	} else {
 		personas = [];
+		referrals = [];
+		roots = [];
 	}
 }
 
@@ -350,6 +367,8 @@ function handleExportTemplate(): void {
 		initialBrief,
 		commonInformation,
 		personas,
+		referrals,
+		roots,
 	});
 	downloadForm(html, caseName);
 }
@@ -390,8 +409,10 @@ async function handleImportFile(
 		initialBrief = data.initialBrief;
 		commonInformation = data.commonInformation;
 		simulationDurationMinutes = data.simulationDurationMinutes;
-		totalPersonas = data.totalPersonas;
 		personas = data.personas;
+		referrals = data.referrals;
+		roots = data.roots;
+		totalPersonas = data.roots.length;
 		importWarnings = warnings;
 		revealErrors();
 	} catch (err) {
@@ -425,8 +446,9 @@ async function performSave(): Promise<SaveResult> {
 			commonInformation,
 			simulationDurationMinutes,
 			accessCode,
-			totalPersonas: totalPersonas as number,
 			personas,
+			referrals,
+			roots,
 			collaboratorAdminIds,
 			// Populated by loadCase before isLoadingSource clears in edit mode
 			// (the submit button stays disabled until then), so this is always
@@ -727,10 +749,9 @@ onDestroy(() => {
 						AI Personas
 					</summary>
 					{#if showPersonas}
-						{@const personaCount = typeof totalPersonas === 'number' ? totalPersonas : 0}
 						<div class="flex flex-col gap-3 border-t border-line-soft px-5 py-5">
-							{#each Array.from({ length: personaCount }) as _, index (index)}
-								{@const persona = personas[index] ?? createEmptyPersona()}
+							{#each roots as rootId, index (rootId)}
+								{@const persona = personasById.get(rootId) as Persona}
 								{@const personaLabel = getPersonaLabel(persona, `Persona ${index + 1}`)}
 								<details class="rounded-xl border border-line-soft bg-cream/40">
 									<summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink">
@@ -739,20 +760,26 @@ onDestroy(() => {
 									<div class="border-t border-line-soft px-4 py-4">
 										<PersonaFields
 											{persona}
-											errors={showFieldErrors ? rootPersonaErrors[index] : {}}
+											{personas}
+											{referrals}
+											{roots}
+											errors={showFieldErrors ? personaErrors[persona.id] : {}}
 										/>
 									</div>
 								</details>
 							{/each}
-							{#each referredPersonas as item, referredIndex (item.path.join('-'))}
+							{#each referredPersonas as item (item.persona.id)}
 								<details class="rounded-xl border border-line-soft bg-cream/40">
 									<summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink">
 										{item.label} &larr; {item.parentLabel}
 									</summary>
 									<div class="border-t border-line-soft px-4 py-4">
 										<PersonaFields
-											persona={resolveReferredPersona(item.path)}
-											errors={showFieldErrors ? referredPersonaErrors[referredIndex] : {}}
+											persona={item.persona}
+											{personas}
+											{referrals}
+											{roots}
+											errors={showFieldErrors ? personaErrors[item.persona.id] : {}}
 										/>
 									</div>
 								</details>

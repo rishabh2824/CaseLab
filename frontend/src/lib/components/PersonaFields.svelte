@@ -1,17 +1,22 @@
 <script lang="ts">
 import {
+	createEmptyPersona,
 	createEmptyReferral,
 	getPersonaLabel,
-	normalizeReferral,
+	reachableFrom,
+	referralsFrom,
 } from "$lib/case/Helpers.js";
-import type { DraftPersona, PersonaFieldErrors } from "$lib/types.js";
+import type { Persona, PersonaFieldErrors, ReferralEdge } from "$lib/types.js";
 
 type Props = {
-	persona: DraftPersona;
+	persona: Persona;
+	personas: Persona[];
+	referrals: ReferralEdge[];
+	roots: string[];
 	errors?: PersonaFieldErrors;
 };
 
-let { persona, errors = {} }: Props = $props();
+let { persona, personas, referrals, roots, errors = {} }: Props = $props();
 const uid = $props.id();
 
 type InputEvent_ = Event & { currentTarget: EventTarget & HTMLInputElement };
@@ -32,18 +37,16 @@ function handlePhotoChange(event: InputEvent_): void {
 
 function handleFileCountChange(event: InputEvent_): void {
 	const count = parseIntOrNull(event.currentTarget.value);
-	persona.file_count = typeof count === "number" && count >= 0 ? count : null;
-	if (typeof persona.file_count === "number") {
-		if (persona.files.length > persona.file_count) {
-			persona.files.length = persona.file_count;
-		} else {
-			while (persona.files.length < persona.file_count) {
-				persona.files.push({
-					file: null,
-					share_conditions: "",
-					perceived_contents: "",
-				});
-			}
+	const target = typeof count === "number" && count >= 0 ? count : 0;
+	if (persona.files.length > target) {
+		persona.files.length = target;
+	} else {
+		while (persona.files.length < target) {
+			persona.files.push({
+				file: null,
+				share_conditions: "",
+				perceived_contents: "",
+			});
 		}
 	}
 }
@@ -55,39 +58,64 @@ function handleFileChange(event: InputEvent_, fileIndex: number): void {
 	event.currentTarget.value = "";
 }
 
-function handleReferralOutCountChange(event: InputEvent_): void {
-	const count = parseIntOrNull(event.currentTarget.value);
-	persona.referral_out_count =
-		typeof count === "number" && count >= 0 ? count : null;
-	if (typeof persona.referral_out_count !== "number") {
-		persona.referrals = [];
-	} else if (persona.referrals.length > persona.referral_out_count) {
-		persona.referrals.length = persona.referral_out_count;
-	} else {
-		while (persona.referrals.length < persona.referral_out_count) {
-			persona.referrals.push(createEmptyReferral());
+const personasById = $derived(new Map(personas.map((p) => [p.id, p])));
+const ownReferrals = $derived(referralsFrom(referrals, persona.id));
+
+// Removes this persona's referral edges into `targetIds`, then cascade-deletes
+// each removed target's own subtree — unless a target is still reachable some
+// other way once those edges are gone (e.g. a second parent).
+function removeReferralsTo(targetIds: Set<string>): void {
+	for (let i = referrals.length - 1; i >= 0; i--) {
+		const referral = referrals[i];
+		if (referral.from_id === persona.id && targetIds.has(referral.to_id)) {
+			referrals.splice(i, 1);
+		}
+	}
+	const stillReachable = reachableFrom(roots, referrals);
+	const toDelete = new Set(
+		[...reachableFrom([...targetIds], referrals)].filter(
+			(id) => !stillReachable.has(id),
+		),
+	);
+	if (toDelete.size === 0) return;
+	for (let i = personas.length - 1; i >= 0; i--) {
+		if (toDelete.has(personas[i].id)) personas.splice(i, 1);
+	}
+	for (let i = referrals.length - 1; i >= 0; i--) {
+		const referral = referrals[i];
+		if (toDelete.has(referral.from_id) || toDelete.has(referral.to_id)) {
+			referrals.splice(i, 1);
 		}
 	}
 }
 
-function handleReferralNameChange(
-	event: InputEvent_,
-	referralIndex: number,
-): void {
-	const value = event.currentTarget.value;
-	const normalized = normalizeReferral(persona.referrals[referralIndex]);
-	persona.referrals[referralIndex] = normalized;
-	normalized.name = value;
-	normalized.persona.name = value;
+// UX unchanged from before the flat-graph refactor: this always creates a
+// brand-new referred persona per added referral, never links to an existing
+// one — authoring a second parent for an existing persona isn't exposed here.
+function handleReferralOutCountChange(event: InputEvent_): void {
+	const count = parseIntOrNull(event.currentTarget.value);
+	const target = typeof count === "number" && count >= 0 ? count : 0;
+	const own = referralsFrom(referrals, persona.id);
+	if (own.length > target) {
+		removeReferralsTo(
+			new Set(own.slice(target).map((referral) => referral.to_id)),
+		);
+	} else {
+		while (referralsFrom(referrals, persona.id).length < target) {
+			const referredPersona = createEmptyPersona();
+			personas.push(referredPersona);
+			referrals.push(
+				createEmptyReferral({ from_id: persona.id, to_id: referredPersona.id }),
+			);
+		}
+	}
 }
 
 function handleReferralConditionsChange(
 	event: TextAreaEvent,
-	referralIndex: number,
+	referral: ReferralEdge,
 ): void {
-	const normalized = normalizeReferral(persona.referrals[referralIndex]);
-	persona.referrals[referralIndex] = normalized;
-	normalized.conditions = event.currentTarget.value;
+	referral.conditions = event.currentTarget.value;
 }
 </script>
 
@@ -181,17 +209,15 @@ function handleReferralConditionsChange(
 			min="0"
 			step="1"
 			placeholder="Leave empty for 0"
-			value={persona.file_count ?? ''}
+			value={persona.files.length}
 			oninput={handleFileCountChange}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		/>
-		{#if errors.fileCount}<p class="text-xs font-medium text-brand">{errors.fileCount}</p>{/if}
 	</div>
 
-	{#if typeof persona.file_count === 'number' && persona.file_count > 0}
+	{#if persona.files.length > 0}
 		<div class="flex flex-col gap-3">
-			{#each Array.from({ length: persona.file_count }) as _, fileIndex (fileIndex)}
-				{@const fileEntry = persona.files[fileIndex] ?? { file: null, share_conditions: '', perceived_contents: '' }}
+			{#each persona.files as fileEntry, fileIndex (fileIndex)}
 				<details class="rounded-xl border border-line-soft bg-cream/40">
 					<summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-ink">
 						File {fileIndex + 1}
@@ -247,41 +273,39 @@ function handleReferralConditionsChange(
 			min="0"
 			step="1"
 			placeholder="Leave empty for none"
-			value={persona.referral_out_count ?? ''}
+			value={ownReferrals.length}
 			oninput={handleReferralOutCountChange}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		/>
-		{#if errors.referralOutCount}<p class="text-xs font-medium text-brand">{errors.referralOutCount}</p>{/if}
 	</div>
 
-	{#if typeof persona.referral_out_count === 'number' && persona.referral_out_count > 0}
+	{#if ownReferrals.length > 0}
 		<div class="flex flex-col gap-3">
-			{#each Array.from({ length: persona.referral_out_count }) as _, referralIndex (referralIndex)}
-				{@const referral = normalizeReferral(persona.referrals[referralIndex])}
+			{#each ownReferrals as referral (referral.to_id)}
+				{@const referredPersona = personasById.get(referral.to_id) as Persona}
 				<details class="rounded-xl border border-line-soft bg-cream/40">
 					<summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-ink">
-						{getPersonaLabel({ name: referral.name }, 'Referred Persona')}
+						{getPersonaLabel(referredPersona, 'Referred Persona')}
 					</summary>
 					<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
 						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-referral-{referralIndex}-name" class="text-xs font-medium text-stone-soft">Name</label>
+							<label for="{uid}-referral-{referral.to_id}-name" class="text-xs font-medium text-stone-soft">Name</label>
 							<input
-								id="{uid}-referral-{referralIndex}-name"
+								id="{uid}-referral-{referral.to_id}-name"
 								type="text"
 								placeholder="Enter name"
-								value={referral.name}
-								oninput={(event) => handleReferralNameChange(event, referralIndex)}
+								bind:value={referredPersona.name}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							/>
 						</div>
 						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-referral-{referralIndex}-conditions" class="text-xs font-medium text-stone-soft">Describe the referral conditions</label>
+							<label for="{uid}-referral-{referral.to_id}-conditions" class="text-xs font-medium text-stone-soft">Describe the referral conditions</label>
 							<textarea
-								id="{uid}-referral-{referralIndex}-conditions"
+								id="{uid}-referral-{referral.to_id}-conditions"
 								rows="2"
 								placeholder="Describe the referral conditions"
 								value={referral.conditions}
-								oninput={(event) => handleReferralConditionsChange(event, referralIndex)}
+								oninput={(event) => handleReferralConditionsChange(event, referral)}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							></textarea>
 						</div>

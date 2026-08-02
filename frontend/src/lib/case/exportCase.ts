@@ -1,6 +1,8 @@
 // Exports an empty case form so admins can autofill it with AI
+
 import { slugify } from "../student/Helpers.js";
-import type { PartialDraftPersona } from "../types.js";
+import type { Persona, ReferralEdge } from "../types.js";
+import { createEmptyPersona } from "./Helpers.js";
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
@@ -10,70 +12,26 @@ const escapeHtml = (value: unknown): string =>
 
 const blank = (value: unknown): string => (value == null ? "" : String(value));
 
-type FlatPersonaEntry = {
-	id: string;
-	persona: PartialDraftPersona;
-	isRoot: boolean;
-};
-type ReferralEdge = { fromId: string; toId: string; conditions: string };
-type FlattenedPersonaGraph = {
-	flatPersonas: FlatPersonaEntry[];
-	referralEdges: ReferralEdge[];
+type Graph = {
+	personas: Persona[];
+	referrals: ReferralEdge[];
+	roots: string[];
 };
 
-function flattenPersonaGraph(
-	personas: PartialDraftPersona[] | null | undefined,
-): FlattenedPersonaGraph {
-	const flatPersonas: FlatPersonaEntry[] = []; // { id, persona, isRoot }
-	const referralEdges: ReferralEdge[] = []; // { fromId, toId, conditions }
-	let personaCounter = 0;
-	const nextPersonaId = () => `P${++personaCounter}`;
-
-	const rootEntries = (personas ?? []).map((persona) => {
-		const id = nextPersonaId();
-		flatPersonas.push({ id, persona, isRoot: true });
-		return { id, persona };
-	});
-
-	const walkReferrals = (
-		parentId: string,
-		persona: PartialDraftPersona | undefined,
-	) => {
-		for (const referral of persona?.referrals ?? []) {
-			const childId = nextPersonaId();
-			const childPersona: PartialDraftPersona = referral?.persona ?? {};
-			flatPersonas.push({ id: childId, persona: childPersona, isRoot: false });
-			referralEdges.push({
-				fromId: parentId,
-				toId: childId,
-				conditions: referral?.conditions ?? "",
-			});
-			walkReferrals(childId, childPersona);
-		}
+function scaffoldGraph(): Graph {
+	const root = createEmptyPersona();
+	const referred = createEmptyPersona();
+	return {
+		personas: [root, referred],
+		referrals: [{ from_id: root.id, to_id: referred.id, conditions: "" }],
+		roots: [root.id],
 	};
-	rootEntries.forEach(({ id, persona }) => {
-		walkReferrals(id, persona);
-	});
-	return { flatPersonas, referralEdges };
 }
 
-function scaffoldPersonas(): PartialDraftPersona[] {
-	const blankPersona = (): PartialDraftPersona => ({
-		name: "",
-		role: "",
-		known_facts: "",
-		personality_traits: "",
-		availability_minutes: null,
-		files: [],
-		referrals: [],
-	});
-	return [
-		{
-			...blankPersona(),
-			referrals: [{ conditions: "", persona: blankPersona() }],
-		},
-		blankPersona(),
-	];
+// Short, human-friendly label for a persona card/option — falls back to a
+// truncated id only when the name is still blank (a fresh scaffold persona).
+function personaLabel(persona: Persona): string {
+	return persona.name.trim() || `Persona ${persona.id.slice(0, 6)}`;
 }
 
 type FieldsInput = {
@@ -102,7 +60,7 @@ function fields({
   </div>`;
 }
 
-function fileShare(persona: PartialDraftPersona | null | undefined): string {
+function fileShare(persona: Persona | null | undefined): string {
 	const canShare = (persona?.files ?? []).length > 0 ? "yes" : "no";
 	return `<div class="field">
     <label class="field-label">Can this Persona share files?</label>
@@ -115,16 +73,14 @@ function fileShare(persona: PartialDraftPersona | null | undefined): string {
 }
 
 function personaCardMarkup(
-	id: string,
-	persona: PartialDraftPersona,
+	persona: Persona,
 	isRoot: boolean,
+	isFixedRoot: boolean,
 ): string {
 	const availabilityHint = isRoot
 		? "Blank = the whole simulation."
 		: "Counts from when they're unlocked.";
 
-	// P1 is always the first root persona flattenPersonaGraph assigns
-	const isFixedRoot = id === "P1";
 	const headControls = isFixedRoot
 		? `<span class="chip chip--fixed-root">Root &middot; required</span>`
 		: `<select class="persona-type-select" data-role="persona-type">
@@ -133,59 +89,62 @@ function personaCardMarkup(
       </select>
       <button type="button" class="btn-text btn-remove" data-action="remove-persona">Remove persona</button>`;
 
-	return `<article class="persona-card" data-persona-id="${id}" data-persona-root="${isRoot}">
+	return `<article class="persona-card" data-persona-id="${persona.id}" data-persona-root="${isRoot}" data-fixed-root="${isFixedRoot}">
     <div class="persona-card-head">
-      <span class="chip chip--persona">${id}</span>
+      <span class="chip chip--persona">${escapeHtml(persona.id.slice(0, 6))}</span>
       ${headControls}
     </div>
-    ${fields({ field: "name", label: "Name", value: persona?.name, required: true })}
-    ${fields({ field: "role", label: "Role / Title", value: persona?.role, required: true })}
+    ${fields({ field: "name", label: "Name", value: persona.name, required: true })}
+    ${fields({ field: "role", label: "Role / Title", value: persona.role, required: true })}
     ${fields({
 			field: "availability_minutes",
 			label: "Available for (minutes)",
 			hint: availabilityHint,
-			value: persona?.availability_minutes,
+			value: persona.availability_minutes,
 		})}
     ${fields({
 			field: "known_facts",
 			label: "Persona Related Information",
 			hint: "Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.",
-			value: persona?.known_facts,
+			value: persona.known_facts,
 			rows: 5,
 		})}
     ${fields({
 			field: "personality_traits",
 			label: "Personality Traits",
 			hint: "Tone, temperament, communication style, quirks.",
-			value: persona?.personality_traits,
+			value: persona.personality_traits,
 			rows: 3,
 		})}
     ${fileShare(persona)}
   </article>`;
 }
 
-function personaOptions(personaIds: string[], selectedId: string): string {
-	return personaIds
+function personaOptions(personas: Persona[], selectedId: string): string {
+	return personas
 		.map(
-			(id) =>
-				`<option value="${id}" ${id === selectedId ? "selected" : ""}>${id}</option>`,
+			(persona) =>
+				`<option value="${persona.id}" ${persona.id === selectedId ? "selected" : ""}>${escapeHtml(personaLabel(persona))}</option>`,
 		)
 		.join("");
 }
 
-function referralRowMarkup(edge: ReferralEdge, personaIds: string[]): string {
+function referralRowMarkup(
+	referral: ReferralEdge,
+	personas: Persona[],
+): string {
 	return `<div class="referral-row" data-referral="true">
     <div class="referral-selects">
-      <select class="input select-persona" data-role="from">${personaOptions(personaIds, edge.fromId)}</select>
+      <select class="input select-persona" data-role="from">${personaOptions(personas, referral.from_id)}</select>
       <span class="referral-arrow">&rarr;</span>
-      <select class="input select-persona" data-role="to">${personaOptions(personaIds, edge.toId)}</select>
+      <select class="input select-persona" data-role="to">${personaOptions(personas, referral.to_id)}</select>
       <button type="button" class="btn-text btn-remove" data-action="remove-referral">Remove</button>
     </div>
     ${fields({
 			field: "conditions",
 			label: "When",
 			hint: "The condition (in conversation) that makes the first persona introduce the second.",
-			value: edge.conditions,
+			value: referral.conditions,
 			rows: 2,
 		})}
   </div>`;
@@ -245,7 +204,9 @@ export type BuildHTMLFormInput = {
 	simulationDurationMinutes: number | null;
 	initialBrief: string;
 	commonInformation: string;
-	personas?: PartialDraftPersona[] | null;
+	personas?: Persona[] | null;
+	referrals?: ReferralEdge[] | null;
+	roots?: string[] | null;
 };
 
 export function buildHTMLForm({
@@ -255,20 +216,30 @@ export function buildHTMLForm({
 	initialBrief,
 	commonInformation,
 	personas,
+	referrals,
+	roots,
 }: BuildHTMLFormInput): string {
-	const effectivePersonas =
+	const graph: Graph =
 		Array.isArray(personas) && personas.length > 0
-			? personas
-			: scaffoldPersonas();
-	const { flatPersonas, referralEdges } =
-		flattenPersonaGraph(effectivePersonas);
-	const personaIds = flatPersonas.map((p) => p.id);
+			? { personas, referrals: referrals ?? [], roots: roots ?? [] }
+			: scaffoldGraph();
 
-	const personaCards = flatPersonas
-		.map(({ id, persona, isRoot }) => personaCardMarkup(id, persona, isRoot))
+	// The exported form's own "+ Add persona" always leaves the first root
+	// (whichever is exported as roots[0]) as the one mandatory, un-removable
+	// root — same invariant the app itself enforces (at least one root).
+	const fixedRootId = graph.roots[0] ?? null;
+
+	const personaCards = graph.personas
+		.map((persona) =>
+			personaCardMarkup(
+				persona,
+				graph.roots.includes(persona.id),
+				persona.id === fixedRootId,
+			),
+		)
 		.join("\n");
-	const referralRows = referralEdges
-		.map((edge) => referralRowMarkup(edge, personaIds))
+	const referralRows = graph.referrals
+		.map((referral) => referralRowMarkup(referral, graph.personas))
 		.join("\n");
 
 	const title = caseName
@@ -425,15 +396,19 @@ export function buildHTMLForm({
 
             <script>
 (function () {
+  var FIXED_ROOT_ID = ${JSON.stringify(fixedRootId)};
   var personasList = document.getElementById('personas-list');
   var referralsList = document.getElementById('referrals-list');
   var personaTemplate = document.getElementById('persona-template');
   var referralTemplate = document.getElementById('referral-template');
 
-  function currentPersonaIds() {
+  function currentPersonas() {
     return Array.prototype.map.call(
       document.querySelectorAll('[data-persona-id]'),
-      function (el) { return el.getAttribute('data-persona-id'); }
+      function (el) {
+        var nameField = el.querySelector('textarea[data-field="name"]');
+        return { id: el.getAttribute('data-persona-id'), name: (nameField && nameField.value.trim()) || '' };
+      }
     );
   }
 
@@ -448,15 +423,17 @@ export function buildHTMLForm({
   }
 
   function refreshReferralOptions() {
-    var ids = currentPersonaIds();
+    var personas = currentPersonas();
     document.querySelectorAll('.referral-row').forEach(function (row) {
       ['from', 'to'].forEach(function (role) {
         var select = row.querySelector('select[data-role="' + role + '"]');
         var current = select.value;
-        select.innerHTML = ids.map(function (id) {
-          var sel = id === current ? ' selected' : '';
-          return '<option value="' + id + '"' + sel + '>' + id + '</option>';
+        select.innerHTML = personas.map(function (persona) {
+          var sel = persona.id === current ? ' selected' : '';
+          var label = persona.name || ('Persona ' + persona.id.slice(0, 6));
+          return '<option value="' + persona.id + '"' + sel + '>' + label + '</option>';
         }).join('');
+        var ids = personas.map(function (p) { return p.id; });
         if (!ids.includes(current) && ids.length) select.value = ids[0];
       });
     });
@@ -474,9 +451,10 @@ export function buildHTMLForm({
 
   function removePersona(card) {
     var id = card.getAttribute('data-persona-id');
-    // P1 has no "Remove persona" button (see personaCardMarkup), but guard
-    // here too — it's the case's one mandatory root persona.
-    if (id === 'P1') return;
+    // The fixed first root has no "Remove persona" button (see
+    // personaCardMarkup), but guard here too — it's the case's one
+    // mandatory root persona.
+    if (id === FIXED_ROOT_ID) return;
     document.querySelectorAll('.referral-row').forEach(function (row) {
       var from = row.querySelector('select[data-role="from"]').value;
       var to = row.querySelector('select[data-role="to"]').value;
@@ -487,8 +465,8 @@ export function buildHTMLForm({
   }
 
   function addReferral() {
-    var ids = currentPersonaIds();
-    if (ids.length < 1) { window.alert('Add at least one persona before adding a referral.'); return; }
+    var personas = currentPersonas();
+    if (personas.length < 1) { window.alert('Add at least one persona before adding a referral.'); return; }
     var frag = referralTemplate.content.cloneNode(true);
     referralsList.appendChild(frag);
     refreshReferralOptions();
@@ -508,6 +486,9 @@ export function buildHTMLForm({
     if (event.target.getAttribute('data-role') === 'persona-type') {
       var card = event.target.closest('.persona-card');
       card.setAttribute('data-persona-root', event.target.value === 'root' ? 'true' : 'false');
+    }
+    if (event.target.getAttribute('data-field') === 'name') {
+      refreshReferralOptions();
     }
   });
 })();

@@ -1,11 +1,11 @@
-import uuid
+from collections import Counter
 from sqlalchemy import delete, or_
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException
 from sqlmodel import select
 from models.admin import AdminRole
-from models.cases import CasePayload, CaseUpdatePayload, FileRef, PersonaPayload
+from models.cases import CasePayload, CaseStructure, CaseUpdatePayload, FileRef
 from services.auth import CurrentAdmin
 from infra.db_models import Admin, Case, Collaborator, File
 
@@ -59,46 +59,6 @@ def violation(exc: Exception) -> bool:
     return getattr(exc.orig, "sqlstate", None) == "23505"
 
 
-# Normalizes a file record down to just the fields needed to display it
-def normalizeFile(entry: dict | None) -> dict | None:
-    if not entry: return None
-    return {
-        "object_key": entry["object_key"],
-        "file_name": entry["file_name"],
-        "content_type": entry.get("content_type"),
-    }
-
-
-# Takes the root persona and produces a fully expanded tree
-def adminTree(persona: dict) -> dict:
-    files = [
-        {
-            "file": normalizeFile(f.get("file")),
-            "share_conditions": f.get("share_conditions"),
-            "perceived_contents": f.get("perceived_contents"),
-        }
-        for f in persona.get("files") or []
-    ]
-    referrals = []
-    for referral in persona.get("referrals") or []:
-        referred_persona = adminTree(referral["persona"])
-        referrals.append(
-            {"name": referred_persona["name"], "conditions": referral.get("conditions"), "persona": referred_persona}
-        )
-    return {
-        "name": persona.get("name") or "",
-        "role": persona.get("role") or "",
-        "profile_photo": normalizeFile(persona.get("profile_photo")),
-        "known_facts": persona.get("known_facts"),
-        "personality_traits": persona.get("personality_traits"),
-        "availability_minutes": persona.get("availability_minutes"),
-        "file_count": len(files),
-        "files": files,
-        "referral_out_count": len(referrals),
-        "referrals": referrals,
-    }
-
-
 # whitespace case mismatches
 def normalizeAccessCode(access_code: str | None) -> str | None:
     return access_code.strip() if access_code and access_code.strip() else None
@@ -140,40 +100,85 @@ async def resolve_file_ref(session, file_ref: FileRef | None) -> dict | None:
     }
 
 
-async def build_persona_dict(session, persona: PersonaPayload) -> dict:
-    files = []
-    for entry in persona.files:
-        if not entry.file:
-            continue
-        files.append(
+# Validates the flat persona/referral graph a save is about to write: duplicate
+# ids, dangling from_id/to_id/roots references, and referral cycles are all things
+# a nested tree ruled out by construction — flat JSONB storage doesn't, so this is
+# the graph's referential-integrity check now that nothing else provides one.
+def validateGraph(payload: CasePayload) -> None:
+    persona_ids = [p.id for p in payload.personas]
+    duplicates = sorted(pid for pid, count in Counter(persona_ids).items() if count > 1)
+    if duplicates:
+        raise HTTPException(status_code=400, detail=f"Duplicate persona id(s): {duplicates}")
+    valid_ids = set(persona_ids)
+
+    for root_id in payload.roots:
+        if root_id not in valid_ids:
+            raise HTTPException(status_code=400, detail=f"Unknown root persona id: {root_id}")
+    for referral in payload.referrals:
+        if referral.from_id not in valid_ids:
+            raise HTTPException(status_code=400, detail=f"Unknown referral from_id: {referral.from_id}")
+        if referral.to_id not in valid_ids:
+            raise HTTPException(status_code=400, detail=f"Unknown referral to_id: {referral.to_id}")
+
+    adjacency: dict[str, list[str]] = {}
+    for referral in payload.referrals:
+        adjacency.setdefault(referral.from_id, []).append(referral.to_id)
+
+    UNVISITED, IN_PROGRESS, DONE = 0, 1, 2
+    state = dict.fromkeys(persona_ids, UNVISITED)
+
+    def visit(node: str) -> str | None:
+        state[node] = IN_PROGRESS
+        for neighbor in adjacency.get(node, []):
+            if state[neighbor] == IN_PROGRESS: return neighbor
+            if state[neighbor] == UNVISITED:
+                cycle_node = visit(neighbor)
+                if cycle_node is not None: return cycle_node
+        state[node] = DONE
+        return None
+
+    for persona_id in persona_ids:
+        if state[persona_id] == UNVISITED:
+            cycle_node = visit(persona_id)
+            if cycle_node is not None:
+                raise HTTPException(status_code=400, detail=f"Referral cycle detected involving persona id: {cycle_node}")
+
+
+async def build_structure(session, payload: CasePayload) -> CaseStructure:
+    validateGraph(payload)
+    personas = []
+    for persona in payload.personas:
+        files = []
+        for entry in persona.files:
+            if not entry.file:
+                continue
+            files.append(
+                {
+                    "file": await resolve_file_ref(session, entry.file),
+                    "share_conditions": entry.share_conditions,
+                    "perceived_contents": entry.perceived_contents,
+                }
+            )
+        personas.append(
             {
-                "file": await resolve_file_ref(session, entry.file),
-                "share_conditions": entry.share_conditions,
-                "perceived_contents": entry.perceived_contents,
+                # Trusted as given, never regenerated — the frontend is the sole id-issuing
+                # authority (assigned once via crypto.randomUUID() when a persona is first
+                # added), which is what makes ids stable across saves.
+                "id": persona.id,
+                "name": persona.name,
+                "role": persona.role,
+                "profile_photo": await resolve_file_ref(session, persona.profile_photo),
+                "known_facts": persona.known_facts,
+                "personality_traits": persona.personality_traits,
+                "availability_minutes": persona.availability_minutes,
+                "files": files,
             }
         )
     referrals = [
-        {"conditions": referral.conditions, "persona": await build_persona_dict(session, referral.persona)}
-        for referral in persona.referrals
+        {"from_id": referral.from_id, "to_id": referral.to_id, "conditions": referral.conditions}
+        for referral in payload.referrals
     ]
-    return {
-        # Regenerated on every save, same as the old delete-and-reinsert behavior — an
-        # in-flight simulation run has already cached its own persona_graph snapshot by
-        # the time a case is edited, so it never observes these ids changing mid-run.
-        "id": uuid.uuid4().hex,
-        "name": persona.name,
-        "role": persona.role,
-        "profile_photo": await resolve_file_ref(session, persona.profile_photo),
-        "known_facts": persona.known_facts,
-        "personality_traits": persona.personality_traits,
-        "availability_minutes": persona.availability_minutes,
-        "files": files,
-        "referrals": referrals,
-    }
-
-
-async def build_structure(session, payload: CasePayload) -> dict:
-    return {"personas": [await build_persona_dict(session, p) for p in payload.personas]}
+    return CaseStructure(personas=personas, referrals=referrals, roots=list(payload.roots))
 
 
 async def fetchCases(session, admin: CurrentAdmin) -> list[Case]:
@@ -200,9 +205,9 @@ async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict
         brief=payload.initial_brief,
         common_information=payload.common_information,
         duration=payload.simulation_duration,
-        root_personas=payload.total_non_referred_personas,
+        root_personas=len(payload.roots),
         admin=admin.id,
-        structure=await build_structure(session, payload),
+        structure=(await build_structure(session, payload)).model_dump(mode="json"),
     )
     session.add(case)
     await session.flush()  # assigns case.id without committing, needed for the collaborator rows below
@@ -231,10 +236,10 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
     if case is None:
         raise HTTPException(status_code=404, detail="Case not found.")
     await caseAccess(session, case, admin)
-    personas = [adminTree(p) for p in (case.structure.get("personas") or [])]
     collaborator_ids = (
         await session.exec(select(Collaborator.admin_id).where(Collaborator.case_id == case_id))
     ).all()
+    structure = CaseStructure.model_validate(case.structure)
     return {
         "case": {
             "id": case.id,
@@ -243,8 +248,9 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
             "initial_brief": case.brief,
             "common_information": case.common_information,
             "simulation_duration": case.duration,
-            "total_non_referred_personas": case.root_personas,
-            "personas": personas,
+            "personas": structure.personas,
+            "referrals": structure.referrals,
+            "roots": structure.roots,
             "version": case.version,
             "owner_admin_id": case.admin,
             "collaborator_admin_ids": list(collaborator_ids),
@@ -262,7 +268,7 @@ async def getDemoCase(session) -> dict:
     case = await session.get(Case, DEMO_CASE_ID)
     if case is None:
         raise HTTPException(status_code=404, detail="Demo case is not configured.")
-    personas = [adminTree(p) for p in (case.structure.get("personas") or [])]
+    structure = CaseStructure.model_validate(case.structure)
     return {
         "case": {
             "case_name": case.name,
@@ -270,8 +276,9 @@ async def getDemoCase(session) -> dict:
             "initial_brief": case.brief,
             "common_information": case.common_information,
             "simulation_duration": case.duration,
-            "total_non_referred_personas": case.root_personas,
-            "personas": personas,
+            "personas": structure.personas,
+            "referrals": structure.referrals,
+            "roots": structure.roots,
         }
     }
 
@@ -296,7 +303,7 @@ async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: C
     if normalized_code and await accessCodeTaken(session, normalized_code, exclude_case_id=case_id):
         raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
     collaborator_ids = await resolveCollaboratorIds(session, payload.collaborator_admin_ids, owner_admin_id=case.admin)
-    structure = await build_structure(session, payload)
+    structure = (await build_structure(session, payload)).model_dump(mode="json")
 
     # Optimistic lock: a plain ORM mutate-then-commit can't distinguish "row
     # updated" from "someone else already updated it", so this is a conditional
@@ -311,7 +318,7 @@ async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: C
             brief=payload.initial_brief,
             common_information=payload.common_information,
             duration=payload.simulation_duration,
-            root_personas=payload.total_non_referred_personas,
+            root_personas=len(payload.roots),
             structure=structure,
             version=Case.version + 1,
         )

@@ -307,10 +307,12 @@ export interface components {
 			common_information?: string | null;
 			/** Simulation Duration */
 			simulation_duration?: number | null;
-			/** Total Non Referred Personas */
-			total_non_referred_personas: number;
 			/** Personas */
 			personas?: components["schemas"]["PersonaOut"][];
+			/** Referrals */
+			referrals?: components["schemas"]["ReferralOut"][];
+			/** Roots */
+			roots?: string[];
 			/** Version */
 			version: number;
 			/** Owner Admin Id */
@@ -339,10 +341,12 @@ export interface components {
 			simulation_duration?: number | null;
 			/** Access Code */
 			access_code?: string | null;
-			/** Total Non Referred Personas */
-			total_non_referred_personas: number;
 			/** Personas */
 			personas?: components["schemas"]["PersonaPayload"][];
+			/** Referrals */
+			referrals?: components["schemas"]["ReferralEdgePayload"][];
+			/** Roots */
+			roots?: string[];
 			/** Collaborator Admin Ids */
 			collaborator_admin_ids?: number[];
 		};
@@ -367,10 +371,12 @@ export interface components {
 			simulation_duration?: number | null;
 			/** Access Code */
 			access_code?: string | null;
-			/** Total Non Referred Personas */
-			total_non_referred_personas: number;
 			/** Personas */
 			personas?: components["schemas"]["PersonaPayload"][];
+			/** Referrals */
+			referrals?: components["schemas"]["ReferralEdgePayload"][];
+			/** Roots */
+			roots?: string[];
 			/** Collaborator Admin Ids */
 			collaborator_admin_ids?: number[];
 			/** Expected Version */
@@ -433,10 +439,12 @@ export interface components {
 			common_information?: string | null;
 			/** Simulation Duration */
 			simulation_duration?: number | null;
-			/** Total Non Referred Personas */
-			total_non_referred_personas: number;
 			/** Personas */
 			personas?: components["schemas"]["PersonaOut"][];
+			/** Referrals */
+			referrals?: components["schemas"]["ReferralOut"][];
+			/** Roots */
+			roots?: string[];
 		};
 		/** DemoCaseResponse */
 		DemoCaseResponse: {
@@ -515,6 +523,8 @@ export interface components {
 		};
 		/** PersonaOut */
 		PersonaOut: {
+			/** Id */
+			id: string;
 			/** Name */
 			name: string;
 			/** Role */
@@ -526,17 +536,13 @@ export interface components {
 			personality_traits?: string | null;
 			/** Availability Minutes */
 			availability_minutes?: number | null;
-			/** File Count */
-			file_count: number;
 			/** Files */
 			files?: components["schemas"]["FileEntry"][];
-			/** Referral Out Count */
-			referral_out_count: number;
-			/** Referrals */
-			referrals?: components["schemas"]["ReferralOut"][];
 		};
 		/** PersonaPayload */
 		PersonaPayload: {
+			/** Id */
+			id: string;
 			/**
 			 * Name
 			 * @default
@@ -556,8 +562,6 @@ export interface components {
 			availability_minutes?: number | null;
 			/** Files */
 			files?: components["schemas"]["FileEntry"][];
-			/** Referrals */
-			referrals?: components["schemas"]["ReferralPayload"][];
 		};
 		/** PersonaPhotoOut */
 		PersonaPhotoOut: {
@@ -596,17 +600,21 @@ export interface components {
 		};
 		/** ReferralOut */
 		ReferralOut: {
-			/** Name */
-			name: string;
+			/** From Id */
+			from_id: string;
+			/** To Id */
+			to_id: string;
 			/** Conditions */
 			conditions?: string | null;
-			persona: components["schemas"]["PersonaOut"];
 		};
-		/** ReferralPayload */
-		ReferralPayload: {
+		/** ReferralEdgePayload */
+		ReferralEdgePayload: {
+			/** From Id */
+			from_id: string;
+			/** To Id */
+			to_id: string;
 			/** Conditions */
 			conditions?: string | null;
-			persona: components["schemas"]["PersonaPayload"];
 		};
 		/** RunCaseSummary */
 		RunCaseSummary: {

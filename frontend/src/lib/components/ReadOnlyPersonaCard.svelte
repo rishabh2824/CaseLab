@@ -1,11 +1,18 @@
 <script lang="ts">
-import { getPersonaLabel } from "$lib/case/Helpers.js";
-import type { DraftPersona } from "$lib/types.js";
+import { getPersonaLabel, referralsFrom } from "$lib/case/Helpers.js";
+import type { Persona, ReferralEdge } from "$lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 
-type Props = { persona: DraftPersona };
+type Props = {
+	persona: Persona;
+	personas: Persona[];
+	referrals: ReferralEdge[];
+};
 
-let { persona }: Props = $props();
+let { persona, personas, referrals }: Props = $props();
+
+const personasById = $derived(new Map(personas.map((p) => [p.id, p])));
+const ownReferrals = $derived(referralsFrom(referrals, persona.id));
 </script>
 
 <div class="flex flex-col gap-4">
@@ -55,13 +62,14 @@ let { persona }: Props = $props();
 		</div>
 	{/if}
 
-	{#if persona.referrals.length > 0}
+	{#if ownReferrals.length > 0}
 		<div class="flex flex-col gap-3">
 			<span class="text-xs font-medium text-stone-soft">Refers out to</span>
-			{#each persona.referrals as referral, referralIndex (referralIndex)}
+			{#each ownReferrals as referral (referral.to_id)}
+				{@const referredPersona = personasById.get(referral.to_id) as Persona}
 				<div class="rounded-xl border border-line-soft bg-white px-4 py-3">
 					<p class="text-sm font-semibold text-ink">
-						{getPersonaLabel({ name: referral.name }, 'Referred Persona')}
+						{getPersonaLabel(referredPersona, 'Referred Persona')}
 					</p>
 					<div class="mt-2">
 						<ReadOnlyField

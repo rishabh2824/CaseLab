@@ -1,9 +1,7 @@
 // Imports the autofilled HTML form back into the app
-import type { DraftPersona } from "../types.js";
+import type { Persona, ReferralEdge } from "../types.js";
 
 export class CaseImportError extends Error {}
-
-const FIXED_ROOT_ID = "P1";
 
 type FormFieldElement =
 	| HTMLInputElement
@@ -36,7 +34,11 @@ function parseNumberField(
 
 type ParsedPersonaCards = {
 	personaOrder: string[];
-	personaById: Map<string, DraftPersona>;
+	personaById: Map<string, Persona>;
+	// Whichever card was exported with data-fixed-root="true" — the case's one
+	// mandatory, un-removable root. Falls back to the first card encountered
+	// for a hand-authored file that predates this marker.
+	fixedRootId: string | null;
 };
 
 function parsePersonaCards(
@@ -47,7 +49,8 @@ function parsePersonaCards(
 		doc.querySelectorAll(".persona-card[data-persona-id]"),
 	);
 	const personaOrder: string[] = [];
-	const personaById = new Map<string, DraftPersona>();
+	const personaById = new Map<string, Persona>();
+	let fixedRootId: string | null = null;
 
 	for (const card of cards) {
 		const id = card.getAttribute("data-persona-id");
@@ -60,8 +63,15 @@ function parsePersonaCards(
 		}
 		const canShareFiles =
 			fieldValue(card, "can_share_files").trim().toLowerCase() === "yes";
+		if (
+			fixedRootId === null &&
+			card.getAttribute("data-fixed-root") === "true"
+		) {
+			fixedRootId = id;
+		}
 		personaOrder.push(id);
 		personaById.set(id, {
+			id,
 			name: fieldValue(card, "name").trim(),
 			role: fieldValue(card, "role").trim(),
 			known_facts: fieldValue(card, "known_facts").trim(),
@@ -72,32 +82,28 @@ function parsePersonaCards(
 				warnings,
 			),
 			profile_photo: null,
-			file_count: canShareFiles ? 1 : null,
 			files: canShareFiles
 				? [{ file: null, share_conditions: "", perceived_contents: "" }]
 				: [],
-			referral_out_count: null,
-			referrals: [],
 		});
 	}
-	return { personaOrder, personaById };
+	if (fixedRootId === null) fixedRootId = personaOrder[0] ?? null;
+	return { personaOrder, personaById, fixedRootId };
 }
 
-type ReferralEdge = { fromId: string; toId: string; conditions: string };
+type ParsedEdge = { fromId: string; toId: string; conditions: string };
 
 function parseReferralEdges(
 	doc: Document,
-	personaById: Map<string, DraftPersona>,
+	personaById: Map<string, Persona>,
+	fixedRootId: string | null,
 	warnings: string[],
-): ReferralEdge[] {
+): ParsedEdge[] {
 	const rows = Array.from(
 		doc.querySelectorAll('.referral-row[data-referral="true"]'),
 	);
-	const edges: ReferralEdge[] = [];
+	const edges: ParsedEdge[] = [];
 
-	// A persona can be referred by at most one parent Keep the first edge into any given id, in document order, and
-	// drop the rest rather than letting a persona end up duplicated under two parents.
-	const referredBy = new Map<string, string>();
 	for (const row of rows) {
 		const fromId = (
 			row.querySelector('select[data-role="from"]') as HTMLSelectElement | null
@@ -117,22 +123,17 @@ function parseReferralEdges(
 			warnings.push(`Skipped a referral where ${fromId} refers to itself.`);
 			continue;
 		}
-		if (referredBy.has(toId)) {
-			warnings.push(
-				`Skipped a referral (${fromId} → ${toId}) — ${toId} is already referred by ${referredBy.get(toId)}; a persona can only be referred by one parent.`,
-			);
-			continue;
-		}
-		referredBy.set(toId, fromId);
+		// No "one parent" restriction here — the flat model allows a persona to
+		// be referred by more than one other persona.
 		edges.push({ fromId, toId, conditions });
 	}
 
-	if (personaById.has(FIXED_ROOT_ID)) {
+	if (fixedRootId && personaById.has(fixedRootId)) {
 		const before = edges.length;
-		const kept = edges.filter((edge) => edge.toId !== FIXED_ROOT_ID);
+		const kept = edges.filter((edge) => edge.toId !== fixedRootId);
 		if (kept.length < before) {
 			warnings.push(
-				`${FIXED_ROOT_ID} is always a root persona — removed the referral(s) pointing to it.`,
+				`${fixedRootId} is always a root persona — removed the referral(s) pointing to it.`,
 			);
 		}
 		return kept;
@@ -140,66 +141,63 @@ function parseReferralEdges(
 	return edges;
 }
 
-type PersonaTreeResult = { personas: DraftPersona[]; rootCount: number };
+type FlatGraph = {
+	personas: Persona[];
+	referrals: ReferralEdge[];
+	roots: string[];
+};
 
-function buildPersonaTree(
+// Validates the parsed edges (cycle detection, unreachable-persona warnings —
+// still necessary; a flat edge list can encode a cycle just as easily as
+// nested objects could) and returns the flat graph directly — no tree to
+// assemble under the flat model.
+function validateAndFlattenGraph(
 	personaOrder: string[],
-	personaById: Map<string, DraftPersona>,
-	edges: ReferralEdge[],
+	personaById: Map<string, Persona>,
+	edges: ParsedEdge[],
 	warnings: string[],
-): PersonaTreeResult {
-	const edgesFrom = new Map<string, ReferralEdge[]>();
+): FlatGraph {
+	const edgesFrom = new Map<string, ParsedEdge[]>();
 	for (const edge of edges) {
 		const bucket = edgesFrom.get(edge.fromId) ?? [];
 		bucket.push(edge);
 		edgesFrom.set(edge.fromId, bucket);
 	}
 	const referredIds = new Set(edges.map((edge) => edge.toId));
-	const usedIds = new Set<string>();
+	const rootIds = personaOrder.filter((id) => !referredIds.has(id));
 
-	function buildNode(id: string, ancestry: Set<string>): DraftPersona {
-		usedIds.add(id);
-		const base = personaById.get(id);
-		if (!base) {
-			// Every id passed here comes from personaOrder (built straight off
-			// the parsed document) or from an edge.toId that
-			// parseReferralEdges already confirmed exists in personaById, so
-			// this is unreachable in practice. Throwing here — instead of the
-			// old `{ ...personaById.get(id), referrals: [] }`, which silently
-			// built a node with every field but `referrals` missing — is what
-			// noUncheckedIndexedAccess/strict flags as a genuine
-			// undefined-spread once this file is typed.
-			throw new CaseImportError(
-				`Internal error: persona "${id}" not found while building the persona tree.`,
-			);
-		}
-		const node: DraftPersona = { ...base, referrals: [] };
+	// 3-color DFS cycle detection (same approach as the backend's
+	// validateGraph) — correct even with multiple parents into the same
+	// persona, unlike a per-path ancestry set, which can miss a cycle only
+	// reachable via a persona's second parent.
+	const UNVISITED = 0;
+	const IN_PROGRESS = 1;
+	const DONE = 2;
+	const state = new Map<string, number>(
+		personaOrder.map((id) => [id, UNVISITED]),
+	);
+	const acceptedEdges: ParsedEdge[] = [];
+	const reachable = new Set<string>();
+
+	function visit(id: string): void {
+		state.set(id, IN_PROGRESS);
+		reachable.add(id);
 		for (const edge of edgesFrom.get(id) ?? []) {
-			if (ancestry.has(edge.toId)) {
+			if (state.get(edge.toId) === IN_PROGRESS) {
 				warnings.push(
 					`Cycle detected involving ${edge.toId} — that referral was dropped.`,
 				);
 				continue;
 			}
-			const childAncestry = new Set(ancestry);
-			childAncestry.add(edge.toId);
-			const childPersona = buildNode(edge.toId, childAncestry);
-			node.referrals.push({
-				name: childPersona.name,
-				conditions: edge.conditions,
-				persona: childPersona,
-			});
+			acceptedEdges.push(edge);
+			if (state.get(edge.toId) === UNVISITED) visit(edge.toId);
 		}
-		node.referral_out_count =
-			node.referrals.length > 0 ? node.referrals.length : null;
-		return node;
+		state.set(id, DONE);
 	}
-
-	const rootIds = personaOrder.filter((id) => !referredIds.has(id));
-	const personas = rootIds.map((id) => buildNode(id, new Set([id])));
+	for (const id of rootIds) visit(id);
 
 	for (const id of personaOrder) {
-		if (!usedIds.has(id)) {
+		if (!reachable.has(id)) {
 			const name = personaById.get(id)?.name;
 			warnings.push(
 				`${id}${name ? ` (${name})` : ""} couldn't be placed — it's only reachable through a referral cycle.`,
@@ -207,7 +205,17 @@ function buildPersonaTree(
 		}
 	}
 
-	return { personas, rootCount: rootIds.length };
+	return {
+		personas: personaOrder
+			.filter((id) => reachable.has(id))
+			.map((id) => personaById.get(id) as Persona),
+		referrals: acceptedEdges.map((edge) => ({
+			from_id: edge.fromId,
+			to_id: edge.toId,
+			conditions: edge.conditions,
+		})),
+		roots: rootIds,
+	};
 }
 
 export type ImportedCaseData = {
@@ -216,8 +224,9 @@ export type ImportedCaseData = {
 	simulationDurationMinutes: number | null;
 	initialBrief: string;
 	commonInformation: string;
-	totalPersonas: number;
-	personas: DraftPersona[];
+	personas: Persona[];
+	referrals: ReferralEdge[];
+	roots: string[];
 };
 
 export type ParsedHTMLForm = {
@@ -245,20 +254,23 @@ export function parseHTMLForm(htmlText: string): ParsedHTMLForm {
 		warnings,
 	);
 
-	const { personaOrder, personaById } = parsePersonaCards(doc, warnings);
+	const { personaOrder, personaById, fixedRootId } = parsePersonaCards(
+		doc,
+		warnings,
+	);
 	if (personaOrder.length === 0) {
 		throw new CaseImportError(
 			"No personas found in this file — add at least one before importing.",
 		);
 	}
-	const edges = parseReferralEdges(doc, personaById, warnings);
-	const { personas, rootCount } = buildPersonaTree(
+	const edges = parseReferralEdges(doc, personaById, fixedRootId, warnings);
+	const { personas, referrals, roots } = validateAndFlattenGraph(
 		personaOrder,
 		personaById,
 		edges,
 		warnings,
 	);
-	if (rootCount === 0) {
+	if (roots.length === 0) {
 		throw new CaseImportError(
 			"This file has no root personas — every persona is referred.",
 		);
@@ -271,8 +283,9 @@ export function parseHTMLForm(htmlText: string): ParsedHTMLForm {
 			simulationDurationMinutes,
 			initialBrief,
 			commonInformation,
-			totalPersonas: rootCount,
 			personas,
+			referrals,
+			roots,
 		},
 		warnings,
 	};

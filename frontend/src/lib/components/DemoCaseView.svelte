@@ -3,11 +3,12 @@ import { onMount } from "svelte";
 import { goto } from "$app/navigation";
 import { apiFetch } from "$lib/api/client.js";
 import {
-	collectReferredPersonas,
 	getPersonaLabel,
 	normalizePersona,
+	normalizeReferral,
+	referralsTo,
 } from "$lib/case/Helpers.js";
-import type { DemoCaseDetail, DemoCaseResponse } from "$lib/types.js";
+import type { DemoCaseDetail, DemoCaseResponse, Persona } from "$lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
@@ -27,13 +28,37 @@ onMount(async () => {
 	}
 });
 
-// normalizePersona/collectReferredPersonas are the same helpers CaseForm.svelte
-// uses on live PersonaOut data — reused here so the demo view's persona tree
-// (root personas + flattened referred personas) matches the real editor exactly.
+// normalizePersona/normalizeReferral are the same helpers CaseForm.svelte uses
+// on live PersonaOut/ReferralOut data — reused here so the demo view's persona
+// graph (root personas + referred personas) matches the real editor exactly.
 const personas = $derived(
 	(caseData?.personas ?? []).map((persona) => normalizePersona(persona)),
 );
-const referredPersonas = $derived(collectReferredPersonas(personas));
+const referrals = $derived(
+	(caseData?.referrals ?? []).map((referral) => normalizeReferral(referral)),
+);
+const roots = $derived(caseData?.roots ?? []);
+const rootPersonas = $derived(
+	roots
+		.map((id) => personas.find((persona) => persona.id === id))
+		.filter((persona): persona is Persona => Boolean(persona)),
+);
+const referredPersonas = $derived(
+	personas
+		.filter((persona) => !roots.includes(persona.id))
+		.map((persona, index) => ({
+			persona,
+			label: getPersonaLabel(persona, `Referred Persona ${index + 1}`),
+			parentLabel: referralsTo(referrals, persona.id)
+				.map((referral) =>
+					getPersonaLabel(
+						personas.find((p) => p.id === referral.from_id) ?? { name: "" },
+						"Unknown",
+					),
+				)
+				.join(", "),
+		})),
+);
 </script>
 
 <div class="relative min-h-screen bg-parchment">
@@ -101,7 +126,7 @@ const referredPersonas = $derived(collectReferredPersonas(personas));
 						{#if personas.length === 0}
 							<p class="text-sm text-stone">No personas in this case.</p>
 						{/if}
-						{#each personas as persona, index (index)}
+						{#each rootPersonas as persona, index (persona.id)}
 							<details class="rounded-xl border border-line-soft bg-cream/40">
 								<summary
 									class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink"
@@ -109,11 +134,11 @@ const referredPersonas = $derived(collectReferredPersonas(personas));
 									{getPersonaLabel(persona, `Persona ${index + 1}`)}
 								</summary>
 								<div class="border-t border-line-soft px-4 py-4">
-									<ReadOnlyPersonaCard {persona} />
+									<ReadOnlyPersonaCard {persona} {personas} {referrals} />
 								</div>
 							</details>
 						{/each}
-						{#each referredPersonas as item (item.path.join('-'))}
+						{#each referredPersonas as item (item.persona.id)}
 							<details class="rounded-xl border border-line-soft bg-cream/40">
 								<summary
 									class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink"
@@ -121,7 +146,7 @@ const referredPersonas = $derived(collectReferredPersonas(personas));
 									{item.label} &larr; {item.parentLabel}
 								</summary>
 								<div class="border-t border-line-soft px-4 py-4">
-									<ReadOnlyPersonaCard persona={item.persona} />
+									<ReadOnlyPersonaCard persona={item.persona} {personas} {referrals} />
 								</div>
 							</details>
 						{/each}

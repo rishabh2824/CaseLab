@@ -1,9 +1,13 @@
-from __future__ import annotations
 from pydantic import BaseModel, Field
 from infra.settings import SIMULATION_DURATION
 
 
 class FileRef(BaseModel):
+    # file_id is never sent by the client — resolve_file_ref (services/cases.py)
+    # fills it in server-side on save, and it must round-trip through
+    # CaseStructure on every later read since services/simulation/service.py
+    # keys run["shared_files"] by it.
+    file_id: str | None = None
     object_key: str
     file_name: str
     content_type: str | None = None
@@ -15,12 +19,8 @@ class FileEntry(BaseModel):
     perceived_contents: str | None = None
 
 
-class ReferralPayload(BaseModel):
-    conditions: str | None = None
-    persona: PersonaPayload
-
-
 class PersonaPayload(BaseModel):
+    id: str
     name: str = ""
     role: str = ""
     profile_photo: FileRef | None = None
@@ -28,10 +28,12 @@ class PersonaPayload(BaseModel):
     personality_traits: str | None = None
     availability_minutes: int | None = None
     files: list[FileEntry] = Field(default_factory=list)
-    referrals: list[ReferralPayload] = Field(default_factory=list)
 
 
-ReferralPayload.model_rebuild()
+class ReferralEdgePayload(BaseModel):
+    from_id: str
+    to_id: str
+    conditions: str | None = None
 
 
 class CasePayload(BaseModel):
@@ -40,8 +42,9 @@ class CasePayload(BaseModel):
     common_information: str | None = None
     simulation_duration: int | None = Field(default=None, ge=1, le=SIMULATION_DURATION)
     access_code: str | None = None
-    total_non_referred_personas: int
     personas: list[PersonaPayload] = Field(default_factory=list)
+    referrals: list[ReferralEdgePayload] = Field(default_factory=list)
+    roots: list[str] = Field(default_factory=list)
     collaborator_admin_ids: list[int] = Field(default_factory=list)
 
 
@@ -51,30 +54,34 @@ class CaseUpdatePayload(CasePayload):
     expected_version: int
 
 
-# --- Response models, mirroring services/cases.py's return shapes exactly ----
+# --- Response models. getCase/getDemoCase build their responses out of actual
+# instances of these (via CaseStructure below), not hand-built dicts kept in
+# sync by convention. -----------------------------------------------------
 
 class ReferralOut(BaseModel):
-    name: str
+    from_id: str
+    to_id: str
     conditions: str | None = None
-    persona: PersonaOut
 
 
-# adminTree()'s shape: a PersonaPayload plus the two derived counts the admin
-# UI reads back (file_count / referral_out_count).
 class PersonaOut(BaseModel):
+    id: str
     name: str
     role: str
     profile_photo: FileRef | None = None
     known_facts: str | None = None
     personality_traits: str | None = None
     availability_minutes: int | None = None
-    file_count: int
     files: list[FileEntry] = Field(default_factory=list)
-    referral_out_count: int
+
+
+# The single parsed shape of Case.structure/DemoCase's structure — every reader
+# of the JSONB blob parses into this once at the read boundary instead of
+# re-deriving its own defensive .get(x) or default shaping.
+class CaseStructure(BaseModel):
+    personas: list[PersonaOut] = Field(default_factory=list)
     referrals: list[ReferralOut] = Field(default_factory=list)
-
-
-ReferralOut.model_rebuild()
+    roots: list[str] = Field(default_factory=list)
 
 
 class CaseSummary(BaseModel):
@@ -94,8 +101,9 @@ class CaseDetail(BaseModel):
     initial_brief: str
     common_information: str | None = None
     simulation_duration: int | None = None
-    total_non_referred_personas: int
     personas: list[PersonaOut] = Field(default_factory=list)
+    referrals: list[ReferralOut] = Field(default_factory=list)
+    roots: list[str] = Field(default_factory=list)
     version: int
     owner_admin_id: int
     collaborator_admin_ids: list[int] = Field(default_factory=list)
@@ -114,8 +122,9 @@ class DemoCaseDetail(BaseModel):
     initial_brief: str
     common_information: str | None = None
     simulation_duration: int | None = None
-    total_non_referred_personas: int
     personas: list[PersonaOut] = Field(default_factory=list)
+    referrals: list[ReferralOut] = Field(default_factory=list)
+    roots: list[str] = Field(default_factory=list)
 
 
 class DemoCaseResponse(BaseModel):

@@ -1,56 +1,45 @@
 // Pure data-shaping helpers for the case form
-import type {
-	DraftPersona,
-	DraftReferral,
-	PartialDraftPersona,
-	PartialDraftReferral,
-	PersonaFieldErrors,
-} from "../types.js";
+import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
 
 export const createEmptyPersona = (
-	overrides: Partial<DraftPersona> = {},
-): DraftPersona => ({
+	overrides: Partial<Persona> = {},
+): Persona => ({
+	id: crypto.randomUUID(),
 	name: "",
 	role: "",
 	profile_photo: null,
 	known_facts: "",
 	personality_traits: "",
 	availability_minutes: null,
-	file_count: null,
 	files: [],
-	referral_out_count: null,
-	referrals: [],
 	...overrides,
 });
 
 export const createEmptyReferral = (
-	overrides: Partial<DraftReferral> = {},
-): DraftReferral => ({
-	name: "",
+	overrides: Partial<ReferralEdge> = {},
+): ReferralEdge => ({
+	from_id: "",
+	to_id: "",
 	conditions: "",
-	persona: createEmptyPersona(),
 	...overrides,
 });
 
-// Accepts anything shaped like a (partial) DraftPersona — including the
-// PersonaOut the API returns when loading a template/edit source. Only this
-// persona's own fields are defaulted; nested referrals are passed through
-// as-is (not deep-normalized) — see PartialDraftReferral.
+// Accepts anything shaped like a partial Persona — including the PersonaOut
+// the API returns when loading a template/edit source. Only this persona's
+// own (flat) fields are defaulted; there's nothing nested left to normalize.
 export const normalizePersona = (
-	persona: PartialDraftPersona | null | undefined,
-): DraftPersona => ({
+	persona: Partial<Persona> | null | undefined,
+): Persona => ({
 	...createEmptyPersona(),
 	...(persona ?? {}),
 	files: persona?.files ?? [],
-	referrals: (persona?.referrals ?? []) as DraftReferral[],
 });
 
 export const normalizeReferral = (
-	referral: PartialDraftReferral | null | undefined,
-): DraftReferral => ({
+	referral: Partial<ReferralEdge> | null | undefined,
+): ReferralEdge => ({
 	...createEmptyReferral(),
 	...(referral ?? {}),
-	persona: normalizePersona(referral?.persona),
 });
 
 export const getPersonaLabel = (
@@ -61,9 +50,7 @@ export const getPersonaLabel = (
 	return trimmed.length > 0 ? trimmed : fallback;
 };
 
-export const getPersonaFieldErrors = (
-	persona: DraftPersona,
-): PersonaFieldErrors => {
+export const getPersonaFieldErrors = (persona: Persona): PersonaFieldErrors => {
 	const errors: PersonaFieldErrors = {};
 	if (!persona.name?.trim()) errors.name = "Name is required.";
 	if (!persona.role?.trim()) errors.role = "Role is required.";
@@ -73,62 +60,48 @@ export const getPersonaFieldErrors = (
 	) {
 		errors.availability = "Must be at least 1 minute.";
 	}
-	if (typeof persona.file_count === "number" && persona.file_count < 0) {
-		errors.fileCount = "Cannot be negative.";
-	}
-	if (
-		typeof persona.referral_out_count === "number" &&
-		persona.referral_out_count < 0
-	) {
-		errors.referralOutCount = "Cannot be negative.";
-	}
 	return errors;
 };
 
 export const hasFieldErrors = (errors: PersonaFieldErrors): boolean =>
 	Object.values(errors).some(Boolean);
 
-export type ReferredPersonaItem = {
-	path: number[];
-	persona: DraftPersona;
-	label: string;
-	parentLabel: string;
-};
+// Referral edges authored by a given persona (its "refers out to" list).
+export const referralsFrom = (
+	referrals: ReferralEdge[],
+	personaId: string,
+): ReferralEdge[] =>
+	referrals.filter((referral) => referral.from_id === personaId);
 
-export const collectReferredPersonas = (
-	personas: DraftPersona[],
-): ReferredPersonaItem[] => {
-	const referredItems: ReferredPersonaItem[] = [];
+// Referral edges pointing at a given persona (who refers to it — plural,
+// since the flat model allows more than one parent).
+export const referralsTo = (
+	referrals: ReferralEdge[],
+	personaId: string,
+): ReferralEdge[] =>
+	referrals.filter((referral) => referral.to_id === personaId);
 
-	const walk = (
-		currentPersona: DraftPersona,
-		path: number[],
-		parentLabel: string,
-	) => {
-		const referrals = currentPersona?.referrals ?? [];
-		referrals.forEach((referralRaw, referralIndex) => {
-			const referral = normalizeReferral(referralRaw);
-			const childPath = [...path, referralIndex];
-			const referralLabel = getPersonaLabel(
-				{ name: referral.name },
-				"Referred Persona",
-			);
-			referredItems.push({
-				path: childPath,
-				persona: referral.persona,
-				label: referralLabel,
-				parentLabel,
-			});
-			const childLabel = getPersonaLabel(referral.persona, "Referred Persona");
-			walk(referral.persona, childPath, childLabel);
-		});
-	};
+export const isRoot = (roots: string[], personaId: string): boolean =>
+	roots.includes(personaId);
 
-	personas.forEach((persona, index) => {
-		const normalized = normalizePersona(persona);
-		const baseLabel = getPersonaLabel(normalized, `Persona ${index + 1}`);
-		walk(normalized, [index], baseLabel);
-	});
-
-	return referredItems;
+// Every persona reachable from `startIds` by following referral edges
+// outward, including `startIds` themselves. Used to cascade-delete a
+// persona's subtree without discarding a persona still reachable some other
+// way (e.g. a second parent, under the flat model's multi-parent support).
+export const reachableFrom = (
+	startIds: string[],
+	referrals: ReferralEdge[],
+): Set<string> => {
+	const reachable = new Set(startIds);
+	const queue = [...startIds];
+	while (queue.length > 0) {
+		const currentId = queue.shift() as string;
+		for (const referral of referrals) {
+			if (referral.from_id === currentId && !reachable.has(referral.to_id)) {
+				reachable.add(referral.to_id);
+				queue.push(referral.to_id);
+			}
+		}
+	}
+	return reachable;
 };

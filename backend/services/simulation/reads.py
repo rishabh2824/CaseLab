@@ -3,6 +3,7 @@ from sqlmodel import select
 from infra.db import get_session
 from infra.db_models import Case
 from infra.spaces import getUrl
+from models.cases import CaseStructure, FileEntry, PersonaOut
 
 
 async def fetchCase(session, *, case_id: int | None = None, access_code: str | None = None) -> Case | None:
@@ -52,56 +53,56 @@ async def getRunCase(run: dict):
     return snapshot
 
 
-def fileEntry(entry: dict) -> dict:
-    file_ref = entry.get("file") or {}
+def fileEntry(entry: FileEntry) -> dict:
+    file_ref = entry.file
     return {
-        "file_id": file_ref.get("file_id"),
-        "object_key": file_ref.get("object_key"),
-        "file_name": file_ref.get("file_name"),
-        "content_type": file_ref.get("content_type"),
-        "share_conditions": entry.get("share_conditions"),
-        "perceived_contents": entry.get("perceived_contents"),
+        "file_id": file_ref.file_id if file_ref else None,
+        "object_key": file_ref.object_key if file_ref else None,
+        "file_name": file_ref.file_name if file_ref else None,
+        "content_type": file_ref.content_type if file_ref else None,
+        "share_conditions": entry.share_conditions,
+        "perceived_contents": entry.perceived_contents,
     }
 
 
-# Shapes a raw persona dict into the row format stored in the persona graph
-def getPersonaDetails(persona: dict, *, is_referred: bool = False) -> dict:
+# Shapes a parsed PersonaOut into the row format stored in the persona graph
+def getPersonaDetails(persona: PersonaOut, *, is_referred: bool = False) -> dict:
     row = {
-        "id": persona["id"],
-        "name": persona.get("name") or "",
-        "role": persona.get("role") or "",
-        "profile_photo": persona.get("profile_photo"),
-        "availability_duration": persona.get("availability_minutes"),
-        "known_facts": persona.get("known_facts"),
-        "personality_traits": persona.get("personality_traits"),
-        "files": [fileEntry(f) for f in persona.get("files") or []],
+        "id": persona.id,
+        "name": persona.name,
+        "role": persona.role,
+        "profile_photo": persona.profile_photo.model_dump() if persona.profile_photo else None,
+        "availability_duration": persona.availability_minutes,
+        "known_facts": persona.known_facts,
+        "personality_traits": persona.personality_traits,
+        "files": [fileEntry(f) for f in persona.files],
     }
     if is_referred:
         row["is_referred"] = True
     return row
 
 
-# Walk the case's JSONB persona tree once into the flat {root_personas, referrals} shape
-def flattenPersonas(personas: list[dict]) -> tuple[list[dict], list[dict]]:
-    root_rows = sorted((getPersonaDetails(p) for p in personas), key=lambda p: p["name"])
-    edges: list[dict] = []
-
-    def walk(parent_id: str, referrals: list[dict]) -> None:
-        for referral in referrals:
-            child = referral["persona"]
-            edges.append(
-                {
-                    "parent_persona_id": parent_id,
-                    "referred_persona_id": child["id"],
-                    "condition_trigger": referral.get("conditions") or "",
-                    "persona": getPersonaDetails(child, is_referred=True),
-                }
-            )
-            walk(child["id"], child.get("referrals") or [])
-
-    for persona in personas:
-        walk(persona["id"], persona.get("referrals") or [])
-
+# Reshapes the case's already-flat, parsed CaseStructure into the
+# {root_personas, referrals} shape the simulation runtime expects (field names
+# kept as parent_persona_id/referred_persona_id/condition_trigger — this is an
+# internal run-blob cache shape, not the case storage/wire contract, so it's
+# left as-is rather than renamed to match).
+def flattenPersonas(structure: CaseStructure) -> tuple[list[dict], list[dict]]:
+    personas_by_id = {p.id: p for p in structure.personas}
+    roots = set(structure.roots)
+    root_rows = sorted(
+        (getPersonaDetails(p) for p in personas_by_id.values() if p.id in roots),
+        key=lambda p: p["name"],
+    )
+    edges = [
+        {
+            "parent_persona_id": referral.from_id,
+            "referred_persona_id": referral.to_id,
+            "condition_trigger": referral.conditions or "",
+            "persona": getPersonaDetails(personas_by_id[referral.to_id], is_referred=True),
+        }
+        for referral in structure.referrals
+    ]
     return root_rows, edges
 
 
@@ -109,7 +110,8 @@ def flattenPersonas(personas: list[dict]) -> tuple[list[dict], list[dict]]:
 async def buildPersonaGraph(session, case_id: int) -> dict:
     case = await fetchCase(session, case_id=case_id)
     if case is None: raise HTTPException(status_code=404, detail="No case found.")
-    root_personas, referrals = flattenPersonas(case.structure.get("personas") or [])
+    structure = CaseStructure.model_validate(case.structure)
+    root_personas, referrals = flattenPersonas(structure)
     return {"root_personas": root_personas, "referrals": referrals}
 
 

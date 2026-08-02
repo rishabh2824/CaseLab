@@ -5,15 +5,15 @@ import type {
 	CasePayload,
 	CaseUpdatePayload,
 	DraftFileEntry,
-	DraftPersona,
 	FileEntry,
 	FileRef,
-	PartialDraftPersona,
+	Persona,
 	PersonaPayload,
 	PresignUploadRequest,
 	PresignUploadResponse,
+	ReferralEdge,
 } from "../types.js";
-import { normalizePersona, normalizeReferral } from "./Helpers.js";
+import { normalizePersona } from "./Helpers.js";
 
 async function uploadFile(file: File, prefix: string): Promise<FileRef> {
 	const presign = await apiFetch<PresignUploadResponse>(
@@ -65,7 +65,7 @@ async function normalizeProfilePhoto(
 }
 
 async function buildPersonaPayload(
-	persona: PartialDraftPersona,
+	persona: Partial<Persona>,
 	prefix: string,
 ): Promise<PersonaPayload> {
 	const normalized = normalizePersona(persona);
@@ -76,16 +76,8 @@ async function buildPersonaPayload(
 	const files = await Promise.all(
 		(normalized.files ?? []).map((entry) => normalizeFileEntry(entry, prefix)),
 	);
-	const referrals = await Promise.all(
-		(normalized.referrals ?? []).map(async (referral) => {
-			const normalizedReferral = normalizeReferral(referral);
-			return {
-				conditions: normalizedReferral.conditions,
-				persona: await buildPersonaPayload(normalizedReferral.persona, prefix),
-			};
-		}),
-	);
 	return {
+		id: normalized.id,
 		name: normalized.name,
 		role: normalized.role,
 		profile_photo,
@@ -93,7 +85,6 @@ async function buildPersonaPayload(
 		personality_traits: normalized.personality_traits,
 		availability_minutes: normalized.availability_minutes,
 		files,
-		referrals,
 	};
 }
 
@@ -105,8 +96,9 @@ export type SubmitCaseInput = {
 	commonInformation: string;
 	simulationDurationMinutes: number | null;
 	accessCode: string;
-	totalPersonas: number;
-	personas: DraftPersona[];
+	personas: Persona[];
+	referrals: ReferralEdge[];
+	roots: string[];
 	collaboratorAdminIds: number[];
 	// Required in edit mode (the version the form loaded, for the optimistic
 	// concurrency check) — unused when creating a brand-new case.
@@ -122,8 +114,9 @@ export async function submitCase({
 	commonInformation,
 	simulationDurationMinutes,
 	accessCode,
-	totalPersonas,
 	personas,
+	referrals,
+	roots,
 	collaboratorAdminIds,
 	expectedVersion,
 }: SubmitCaseInput): Promise<CaseCreatedResponse> {
@@ -138,8 +131,13 @@ export async function submitCase({
 		common_information: commonInformation.trim(),
 		simulation_duration: simulationDurationMinutes,
 		access_code: accessCode.trim(),
-		total_non_referred_personas: totalPersonas,
 		personas: personasPayload,
+		referrals: referrals.map((referral) => ({
+			from_id: referral.from_id,
+			to_id: referral.to_id,
+			conditions: referral.conditions,
+		})),
+		roots,
 		collaborator_admin_ids: collaboratorAdminIds,
 	};
 	const payload: CasePayload | CaseUpdatePayload = isEditMode
