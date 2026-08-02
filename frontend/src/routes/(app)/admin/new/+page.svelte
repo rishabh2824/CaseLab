@@ -69,5 +69,30 @@ import { goto } from "$app/navigation";
 				</div>
 			</button>
 		</div>
+
+		<button
+			type="button"
+			onclick={() => goto('/admin/new/demo')}
+			class="group mt-6 flex w-full items-center justify-between gap-4 rounded-2xl border border-line-soft bg-cream/40 px-6 py-5 text-left transition hover:border-brand hover:bg-cream/70"
+		>
+			<div>
+				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">
+					Option 3 &middot; Just Looking?
+				</p>
+				<h2 class="mt-2 font-display text-lg font-semibold text-ink">
+					View the Sterling Industries demo case
+				</h2>
+				<p class="mt-1 text-sm leading-6 text-stone">
+					See a fully built-out example case before you start your own — it's read-only, so
+					there's nothing to save or break.
+				</p>
+			</div>
+			<span
+				aria-hidden="true"
+				class="shrink-0 text-stone transition group-hover:translate-x-1 group-hover:text-brand"
+			>
+				&rarr;
+			</span>
+		</button>
 	</div>
 </div>

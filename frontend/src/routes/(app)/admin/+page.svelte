@@ -1,18 +1,7 @@
 <script lang="ts">
 import { goto } from "$app/navigation";
-import { apiFetch } from "$lib/api/client.js";
 import { ADMIN_ROLE } from "$lib/constants.js";
 import { session } from "$lib/session.svelte.js";
-
-async function handleSignOut(): Promise<void> {
-	session.clearAdmin();
-	await goto("/");
-	try {
-		await apiFetch("/api/admin/logout", { method: "POST" });
-	} catch {
-		// best-effort — the cookie will simply expire on its own otherwise
-	}
-}
 </script>
 
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
@@ -23,13 +12,6 @@ async function handleSignOut(): Promise<void> {
 		aria-hidden="true"
 		class="pointer-events-none absolute -bottom-32 -right-32 z-0 w-[34rem] max-w-none select-none opacity-[0.14]"
 	/>
-	<button
-		type="button"
-		onclick={handleSignOut}
-		class="fixed bottom-6 left-6 z-20 rounded-xl border border-line bg-white px-5 py-3 text-sm font-semibold text-stone shadow-soft transition hover:border-ink hover:text-ink"
-	>
-		Sign out
-	</button>
 
 	{#if session.adminRole === ADMIN_ROLE.SUPER}
 		<button

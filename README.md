@@ -9,8 +9,8 @@ dashboard.
 
 **Backend** — FastAPI (Python 3.14, [uv](https://docs.astral.sh/uv/)), SQLModel +
 Alembic over Neon Postgres (`asyncpg`), DigitalOcean Spaces for file storage,
-Anthropic Claude for persona replies, Google Identity Services (FedCM ID-token
-sign-in) + hand-rolled JWT for admin auth.
+Claude (via [OpenRouter](https://openrouter.ai)) for persona replies, Google
+Identity Services (FedCM ID-token sign-in) + hand-rolled JWT for admin auth.
 
 **Frontend** — SvelteKit (Svelte 5 runes) in SPA mode, Tailwind 4, shadcn-svelte
 (Bits UI) + svelte-sonner, built with `adapter-static` and served from
@@ -31,10 +31,11 @@ pnpm install
 Each app reads its config from a git-ignored `.env` file in its own folder:
 
 - `backend/.env` — `SPACES_KEY`, `SPACES_SECRET`, `POOLING`/`DIRECT` (Neon
-  Postgres), `FRONTEND_URLS`, `LLM_KEY`, `GOOGLE_CLIENT_ID`, `JWT_SECRET`.
-  See `backend/infra/settings.py` for the full list and defaults. No client
-  secret is needed — admin auth only verifies ID tokens locally, it never
-  calls Google to exchange one (see Workflows below).
+  Postgres), `FRONTEND_URLS`, `LLM_KEY` (an [OpenRouter](https://openrouter.ai)
+  API key), `GOOGLE_CLIENT_ID`, `JWT_SECRET`. See `backend/infra/settings.py`
+  for the full list and defaults. No client secret is needed — admin auth only
+  verifies ID tokens locally, it never calls Google to exchange one (see
+  Workflows below).
 - `frontend/.env` — `VITE_GOOGLE_CLIENT_ID`.
 
 Set `ENABLE_OPENAPI=true` in `backend/.env` to serve `/openapi.json` locally
@@ -73,24 +74,19 @@ pnpm gen:api
 ## Workflows
 
 **Auth (admins only).** GIS (`accounts.google.com/gsi/client`) is loaded lazily
-— only on the first click of "Admin Login" — since the vast majority of
-landing-page visitors are students who never touch it. That click opens a
-small popover and renders Google's own icon-only Sign In With Google button
-into it (`accounts.id.renderButton`, not `.prompt()`/One Tap — One Tap only
-works via FedCM, which Safari and Firefox don't support, so it fails
-silently there; `renderButton`'s click falls back to a real popup on those
-browsers instead, making it the one mechanism here that works everywhere).
-It has to be Google's actual rendered element, not a custom-styled one —
-Google's branding guidelines require their button be shown unmodified and
-unobscured, and a custom trigger can only invoke `.prompt()` (i.e. the
-FedCM-only path). Clicking it hands the frontend a signed ID token (a JWT)
-directly, which gets POSTed as `credential` to `/api/admin/login`. The
-backend verifies its signature against Google's cached public keys locally
-— no outbound call to Google, unlike the authorization-code flow this
-replaced. Once verified, the backend checks the token's email against the
-`admins` table and — if found — signs its own JWT and sets it as an
-httpOnly, `SameSite=Lax` cookie. The frontend never sees that JWT itself;
-the browser just attaches the cookie automatically.
+— only on the first click of "Admin Login". That click opens a small popover 
+and renders Google's own Sign In With Google button into it 
+(`accounts.id.renderButton`, not `.prompt()`/One Tap — One Tap only works via 
+FedCM, which Safari and Firefox don't support. It has to be Google's actual 
+rendered element, not a custom-styled one — Google's branding guidelines 
+require their button be shown unmodified and unobscured, and a custom 
+trigger can only invoke `.prompt()` (i.e. the FedCM-only path). Clicking it 
+hands the frontend a signed ID token (a JWT) directly, which gets POSTed as 
+`credential` to `/api/admin/login`. The backend verifies its signature against 
+Google's cached public keys locally. Once verified, the backend checks the 
+token's email against the `admins` table and — if found — signs its own JWT 
+and sets it as an httpOnly, `SameSite=Lax` cookie. The frontend never sees that 
+JWT itself; the browser just attaches the cookie automatically.
 
 
 **Simulation chat (SSE streaming).** Sending a student message opens a
@@ -105,7 +101,9 @@ completes.
 
 
 **Persona reply generation (LLM pipeline).** Each student message triggers
-four kinds of Anthropic calls: one Claude Sonnet call that generates the
+four kinds of OpenRouter calls (`anthropic/claude-sonnet-5` and
+`anthropic/claude-haiku-4.5`, both through OpenRouter's OpenAI-compatible
+`/chat/completions` endpoint): one Claude Sonnet call that generates the
 reply, and up to three kinds of Claude Haiku classifier calls — a
 harassment/nonsense check on the message, one referral-unlock check per
 still-locked referral the active persona could introduce, and one
@@ -115,13 +113,13 @@ strictly after, since its system prompt depends on which referrals/files
 the classifiers just deemed eligible. The system prompt is split into a
 stable block (case brief, common information, and the active persona's own
 traits/known facts) marked with a one-hour ephemeral `cache_control`, and a
-turn-specific block (this turn's eligible referrals/files). The reply itself 
-is requested as an Anthropic structured output (`{reply, introduce, send_files}`) 
-and streamed via SSE; a JSON parser (`ReplyExtractor`) extracts just the 
-`reply` string's characters as they arrive for a live-typing effect, but 
-this is a best-effort preview only — once the stream ends, the full raw 
-text is re-parsed from scratch, and that authoritative parse is what gets
-persisted and what drives referral/file unlocking.
+turn-specific block (this turn's eligible referrals/files). The reply text
+itself streams straight to the client via SSE as plain text, with no
+wrapping or parsing in between; in the same streaming response, the model
+separately calls a `report_reply_metadata` tool (via `tool_choice: "auto"`,
+which — confirmed empirically — still returns the reply text alongside the
+tool call) to report which contacts it introduced and which files it sent
+this turn, which drives referral/file unlocking once the stream ends.
 
 
 **File uploads (two-phase, direct-to-Spaces).** The browser never sends file

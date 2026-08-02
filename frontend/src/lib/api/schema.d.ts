@@ -108,6 +108,23 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/cases/demo": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** Getdemocase */
+		get: operations["getDemoCase_api_cases_demo_get"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/cases/{case_id}": {
 		parameters: {
 			query?: never;
@@ -403,6 +420,27 @@ export interface components {
 			chat_end_reason?: string | null;
 			/** Warning Count */
 			warning_count: number;
+		};
+		/** DemoCaseDetail */
+		DemoCaseDetail: {
+			/** Case Name */
+			case_name: string;
+			/** Access Code */
+			access_code?: string | null;
+			/** Initial Brief */
+			initial_brief: string;
+			/** Common Information */
+			common_information?: string | null;
+			/** Simulation Duration */
+			simulation_duration?: number | null;
+			/** Total Non Referred Personas */
+			total_non_referred_personas: number;
+			/** Personas */
+			personas?: components["schemas"]["PersonaOut"][];
+		};
+		/** DemoCaseResponse */
+		DemoCaseResponse: {
+			case: components["schemas"]["DemoCaseDetail"];
 		};
 		/** ExportCaseSummary */
 		ExportCaseSummary: {
@@ -887,6 +925,37 @@ export interface operations {
 				};
 				content: {
 					"application/json": components["schemas"]["CaseCreatedResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
+				};
+			};
+		};
+	};
+	getDemoCase_api_cases_demo_get: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: {
+				admin_session?: string | null;
+			};
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["DemoCaseResponse"];
 				};
 			};
 			/** @description Validation Error */

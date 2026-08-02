@@ -23,6 +23,10 @@ export type ReferralOut = S["ReferralOut"];
 export type CaseDetail = S["CaseDetail"];
 export type CaseSummary = S["CaseSummary"];
 export type CaseDetailResponse = S["CaseDetailResponse"];
+// GET /api/cases/demo — a trimmed-down, read-only CaseDetail (no id/version/
+// owner/collaborators) for the "View demo" admin-panel screen (DemoCaseView.svelte).
+export type DemoCaseDetail = S["DemoCaseDetail"];
+export type DemoCaseResponse = S["DemoCaseResponse"];
 export type CaseListResponse = S["CaseListResponse"];
 export type CaseCreatedResponse = S["CaseCreatedResponse"];
 export type CaseDeletedResponse = S["CaseDeletedResponse"];

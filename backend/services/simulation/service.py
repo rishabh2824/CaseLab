@@ -8,8 +8,7 @@ from infra.db import get_session
 from infra.llm import classifyHarassment, personaReplyStream
 from infra.rate_limit import messageLimit, simulationLimit
 from services.simulation.run_store import cleanupRuns, insertRun, getRun, updateRun
-from services.simulation.prompt import (replyInstructions, systemPrompt, cleanReply, coerceHandles, parseReply, fileShare, referralUnlock, sanitizeHistory)
-from services.simulation.reply_stream import ReplyExtractor
+from services.simulation.prompt import (replyInstructions, systemPrompt, cleanReply, parseReplyMetadata, fileShare, referralUnlock, sanitizeHistory)
 from services.simulation.reads import (buildPersonaGraph, getCase, getRunCase, getPersonaGraph, graphPersonaById, graphReferrals, graphPersonas, hydratePersona)
 from services.simulation.turn_state import (NONSENSE_THRESHOLD, boundaryReply, chatStatePayload, shapeChatState, elapsedMinutes, formatHistory, getChatState, persona_availability, editChatState)
 from infra.spaces import getUrl
@@ -351,21 +350,23 @@ async def message(run_id: str, payload: SendMessagePayload) -> dict:
     recent_history = sanitized_history[-HISTORY_MESSAGE_LIMIT:]
 
     cached_prompt = f"{reply_instruction}\n\n---\n\n{stable_prompt}"
-    system = [
-        {
-            "type": "text",
-            "text": cached_prompt,
-            "cache_control": {"type": "ephemeral", "ttl": "1h"},
-        },
-        {"type": "text", "text": turn_prompt},
-    ]
+    system_message = {
+        "role": "system",
+        "content": [
+            {
+                "type": "text",
+                "text": cached_prompt,
+                "cache_control": {"type": "ephemeral", "ttl": "1h"},
+            },
+            {"type": "text", "text": turn_prompt},
+        ],
+    }
 
     return {
         "kind": "normal",
         "run_id": run_id,
         "persona_id": persona_id,
-        "system": system,
-        "messages": recent_history,
+        "messages": [system_message, *recent_history],
         "referral_handles": referral_handles,
         "file_handles": file_handles,
     }
@@ -446,8 +447,8 @@ generations: set[asyncio.Task] = set()
 async def reply(prepared: dict, queue: asyncio.Queue) -> None:
     run_id = prepared["run_id"]
     persona_id = prepared["persona_id"]
-    extractor = ReplyExtractor()
     raw_parts: list[str] = []
+    tool_call_arguments: dict | None = None
 
     def emit(event: str, data: dict) -> None:
         queue.put_nowait(sse(event, data))
@@ -458,25 +459,22 @@ async def reply(prepared: dict, queue: asyncio.Queue) -> None:
         # so the message fails and the user is asked to resend it.
         try:
             async with asyncio.timeout(GENERATION_TIMEOUT):
-                async for text in personaReplyStream(prepared["system"], prepared["messages"]):
-                    raw_parts.append(text)
-                    delta = extractor.feed(text)
-                    if delta:
-                        emit("delta", {"text": delta})
+                async for event in personaReplyStream(prepared["messages"]):
+                    if event["type"] == "delta":
+                        raw_parts.append(event["text"])
+                        emit("delta", {"text": event["text"]})
+                    elif event["type"] == "tool_call":
+                        tool_call_arguments = event["arguments"]
         except Exception:
             emit("error", {"detail": "The reply could not be generated. Please resend your message."})
             return
 
-        # Authoritative parse of the full raw text — the streamed deltas are a
-        # best-effort preview; this is the reply of record for persistence + done.
-        envelope = parseReply("".join(raw_parts))
-        reply = cleanReply(str(envelope.get("reply") or "")) if envelope else ""
+        reply = cleanReply("".join(raw_parts))
         if not reply:
             emit("error", {"detail": "The reply could not be generated. Please resend your message."})
             return
 
-        unlock_handles = coerceHandles(envelope.get("introduce"))
-        share_handles = coerceHandles(envelope.get("send_files"))
+        unlock_handles, share_handles = parseReplyMetadata(tool_call_arguments)
 
         try:
             new_contacts, shared_files, history, chat_state_payload = await applyDecisions(
@@ -485,14 +483,6 @@ async def reply(prepared: dict, queue: asyncio.Queue) -> None:
         except Exception:
             emit("error", {"detail": "The reply could not be saved. Please try again."})
             return
-
-        if not extractor.found_reply:
-            # The incremental lexer never surfaced the reply text (an unparseable
-            # stream, or `reply` absent from the streamed view) — emit it once now,
-            # matching the old single-delta behavior. A lexer bug can degrade the
-            # live preview but never lose the reply, which is the authoritative
-            # value parsed above.
-            emit("delta", {"text": reply})
 
         emit("meta", {"new_contacts": new_contacts, "shared_files": shared_files, **chat_state_payload})
         emit("done", {"reply": reply, "history": history})

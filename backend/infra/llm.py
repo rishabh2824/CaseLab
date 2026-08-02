@@ -1,217 +1,133 @@
-import asyncio
 import json
 import httpx
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_incrementing
+from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, RateLimitError, InternalServerError
 from infra.settings import get_settings
 
-
-def headers(settings) -> dict:
-    return {"x-api-key": settings.llm_key, "anthropic-version": "2023-06-01", "content-type": "application/json"}
-
-
 # Shared client so the 4-6 LLM calls a single student message can fan out to reuse one connection pool
-client: httpx.AsyncClient | None = None
+client: AsyncOpenAI | None = None
 CLIENT_LIMITS = httpx.Limits(max_connections=1000, max_keepalive_connections=200)
 
 
 def initClient() -> None:
     global client
-    if client is None: client = httpx.AsyncClient(limits=CLIENT_LIMITS)
+    if client is None:
+        settings = get_settings()
+        client = AsyncOpenAI(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_key,
+            max_retries=2,
+            http_client=httpx.AsyncClient(limits=CLIENT_LIMITS),
+        )
 
 
 async def closeClient() -> None:
     global client
     if client is not None:
-        await client.aclose()
+        await client.close()
         client = None
 
 
-def getClient() -> httpx.AsyncClient | None:
-    if client is None: initClient()
-    return client
+# Call the chat completions endpoint and return the reply text.
+async def chat(
+    *, model: str, messages: list[dict], max_tokens: int, timeout: float, temperature: float | None = None
+) -> str:
+    if client is None: raise RuntimeError("LLM client failed to initialize.")
+    kwargs = {"model": model, "messages": messages, "max_tokens": max_tokens, "timeout": timeout}
+    if temperature is not None: kwargs["temperature"] = temperature
+    response = await client.chat.completions.create(**kwargs)
+    return response.choices[0].message.content or ""
 
 
-# Only Timeouts and rate-limit/server errors are worth retrying
-def isRetryable(exc: BaseException) -> bool:
-    if isinstance(exc, (httpx.ReadTimeout, httpx.ConnectTimeout)): return True
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        return status == 429 or status >= 500
-    return False
+# Tool the persona reply call uses to report contacts/files touched this turn — the reply
+# itself is plain streamed text now (see personaReplyStream), not part of any schema.
+REPLY_METADATA_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "report_reply_metadata",
+        "description": "Report which contacts you introduced and which files you sent in this reply.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "introduce": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        'Contact handles (e.g. "R1") you are introducing in this reply. '
+                        "If your reply text introduces or connects the user to a contact, "
+                        "that contact's handle MUST appear here; otherwise []. Only use "
+                        "handles listed as available to you this turn."
+                    ),
+                },
+                "send_files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        'File handles (e.g. "F1") you are sending with this reply, or []. '
+                        "If your reply text says you are sending/attaching a file, that "
+                        "file's handle MUST appear here. Only use handles listed as "
+                        "available to you this turn."
+                    ),
+                },
+            },
+            "required": ["introduce", "send_files"],
+            "additionalProperties": False,
+        },
+    },
+}
 
 
-# POST a payload to Anthropic's Messages API and return the parsed JSON response body.
-async def chat(payload: dict, *, timeout: float, retries: int) -> dict:
+# Only connection/timeout/rate-limit/server errors are worth retrying
+RETRYABLE_EXCEPTIONS = (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)
+
+
+# Streaming persona reply. Yields {"type": "delta", "text": ...} for each fragment of the
+# in-character reply as it streams, then one final {"type": "tool_call", "arguments": ...}
+# once the stream ends ("arguments" is None if the model never called the tool, or if its
+# arguments were truncated mid-generation and failed to parse as JSON).
+async def personaReplyStream(messages: list[dict]):
+    if client is None: raise RuntimeError("LLM client failed to initialize.")
     settings = get_settings()
-    header = headers(settings)
-    client = getClient()
-
-    anthropic_payload = {
-        "model": payload["model"], "messages": payload["messages"], "max_tokens": payload["max_tokens"]
-    }
-    if "system" in payload:
-        anthropic_payload["system"] = payload["system"]
-    if "temperature" in payload:
-        anthropic_payload["temperature"] = payload["temperature"]
-
-    # Structured outputs: Used by the persona reply to guarantee the {reply, introduce, send_files} envelope shape
-    if "output_config" in payload: anthropic_payload["output_config"] = payload["output_config"]
-
-    @retry(
-        stop=stop_after_attempt(retries),
-        wait=wait_incrementing(start=1, increment=1),
-        retry=retry_if_exception(isRetryable),
-        reraise=True,
-    )
-    async def send() -> dict:
-        if client is None: raise RuntimeError("HTTP client failed to initialize.")
-        response = await client.post(settings.llm_base_url, json=anthropic_payload, headers=header, timeout=timeout)
-        response.raise_for_status()
-        return response.json()
-
-    return await send()
-
-
-# Parse an async iterator of raw SSE lines into decoded event dicts
-async def parseSseLines(lines):
-    data_parts: list[str] = []
-    async for raw_line in lines:
-        line = raw_line.rstrip("\r\n")
-        if not line:
-            if data_parts:
-                payload = "\n".join(data_parts)
-                data_parts = []
-                try:
-                    yield json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-            continue
-        if line.startswith(":"):
-            continue
-        if line.startswith("data:"):
-            data_parts.append(line[5:].lstrip(" "))
-
-
-# Stream Anthropic's Messages API, yielding decoded SSE event dicts.
-async def streamChat(payload: dict, *, retries: int):
-    settings = get_settings()
-    header = headers(settings)
-    client = getClient()
-    if client is None:
-        raise RuntimeError("HTTP client failed to initialize.")
-
-    anthropic_payload = {
-        "model": payload["model"], "messages": payload["messages"],
-        "max_tokens": payload["max_tokens"], "stream": True,
-    }
-    if "system" in payload: anthropic_payload["system"] = payload["system"]
-    if "temperature" in payload: anthropic_payload["temperature"] = payload["temperature"]
-    if "output_config" in payload: anthropic_payload["output_config"] = payload["output_config"]
-
-    timeout = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=10.0)
+    retries = 2
 
     attempt = 0
     while True:
         attempt += 1
         yielded_any = False
+        tool_call_parts: dict[int, str] = {}
         try:
-            async with client.stream(
-                "POST", settings.llm_base_url, json=anthropic_payload, headers=header, timeout=timeout
-            ) as response:
-                if response.status_code >= 400:
-                    # Body must be drained before raise_for_status() on a streaming response, otherwise httpx raises
-                    # ResponseNotRead instead of the real status error.
-                    await response.aread()
-                    response.raise_for_status()
-                async for event in parseSseLines(response.aiter_lines()):
-                    if event.get("type") == "error":
-                        detail = (event.get("error") or {}).get("message", "stream error")
-                        raise RuntimeError(detail)
+            stream = await client.chat.completions.create(
+                model=settings.llm_model,
+                messages=messages,
+                max_tokens=600,
+                tools=[REPLY_METADATA_TOOL],
+                tool_choice="auto",
+                stream=True,
+                timeout=30,
+            )
+            async for chunk in stream:
+                if not chunk.choices: continue
+                delta = chunk.choices[0].delta
+                if delta.content:
                     yielded_any = True
-                    yield event
+                    yield {"type": "delta", "text": delta.content}
+                if delta.tool_calls:
+                    for tool_call_delta in delta.tool_calls:
+                        fragment = (tool_call_delta.function.arguments if tool_call_delta.function else None) or ""
+                        tool_call_parts[tool_call_delta.index] = tool_call_parts.get(tool_call_delta.index, "") + fragment
+
+            arguments = None
+            if tool_call_parts:
+                raw_arguments = "".join(tool_call_parts[i] for i in sorted(tool_call_parts))
+                try:
+                    arguments = json.loads(raw_arguments)
+                except json.JSONDecodeError:
+                    arguments = None
+            yield {"type": "tool_call", "arguments": arguments}
             return
         except Exception as exc:
-            if not yielded_any and attempt < retries and isRetryable(exc):
-                await asyncio.sleep(attempt)
+            if not yielded_any and attempt < retries and isinstance(exc, RETRYABLE_EXCEPTIONS):
                 continue
             raise
-
-
-# Extracts the raw message from API Response
-def messageContent(data: dict) -> str:
-    for block in data.get("content", []):
-        if block.get("type") == "text": return block.get("text", "")
-    return ""
-
-
-# Schema the persona reply is CONSTRAINED to (structured outputs)
-PERSONA_REPLY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "reply": {
-            "type": "string",
-            "description": (
-                "Your in-character reply as plain text, 1-3 concise sentences, "
-                "with no speaker-name prefix and no surrounding quotes."
-            ),
-        },
-        "introduce": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": (
-                'Contact handles (e.g. "R1") you are introducing in this reply. '
-                "If your reply text introduces or connects the user to a contact, "
-                "that contact's handle MUST appear here; otherwise []. Only use "
-                "handles listed as available to you this turn."
-            ),
-        },
-        "send_files": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": (
-                'File handles (e.g. "F1") you are sending with this reply, or []. '
-                "If your reply text says you are sending/attaching a file, that "
-                "file's handle MUST appear here. Only use handles listed as "
-                "available to you this turn."
-            ),
-        },
-    },
-    "required": ["reply", "introduce", "send_files"],
-    "additionalProperties": False,
-}
-
-
-# Generates the persona's response to user message
-async def personaReply(system: str | list[dict], messages: list[dict]) -> str:
-    payload = {
-        "model": get_settings().llm_model,
-        "system": system,
-        "messages": messages,
-        "max_tokens": 600,
-        "output_config": {"format": {"type": "json_schema", "schema": PERSONA_REPLY_SCHEMA}}
-    }
-    data = await chat(payload, timeout=30, retries=2)
-    raw = messageContent(data)
-    return raw
-
-
-# Streaming twin of personaReply
-async def personaReplyStream(system: str | list[dict], messages: list[dict]):
-    payload = {
-        "model": get_settings().llm_model,
-        "system": system,
-        "messages": messages,
-        "max_tokens": 600,
-        "output_config": {"format": {"type": "json_schema", "schema": PERSONA_REPLY_SCHEMA}},
-    }
-    async for event in streamChat(payload, retries=2):
-        if event.get("type") != "content_block_delta":
-            continue
-        delta = event.get("delta") or {}
-        if delta.get("type") == "text_delta":
-            text = delta.get("text")
-            if text:
-                yield text
 
 
 # Shared "last N turns" window for every classifier prompt (harassment + referral/file
@@ -238,17 +154,14 @@ def formatTranscript(conversation: list[dict], limit: int = CLASSIFIER_HISTORY_L
 # YES / NO Classifier for below methods
 async def classifier(system_prompt: str, user_prompt: str) -> bool:
     settings = get_settings()
-    payload = {
-        "model": settings.llm_classifier_model,
-        "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}],
-        "temperature": 0,
-        "max_tokens": 10,
-    }
-    data = await chat(payload, timeout=20, retries=2)
-    raw = messageContent(data)
-    result = raw.strip().upper().startswith("YES")
-    return result
+    raw = await chat(
+        model=settings.llm_classifier_model,
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+        temperature=0,
+        max_tokens=10,
+        timeout=20,
+    )
+    return raw.strip().upper().startswith("YES")
 
 
 CONDITION_KINDS = {
@@ -295,33 +208,27 @@ async def classifyHarassment(user_message: str, conversation: list[dict]) -> str
     settings = get_settings()
     transcript, _, _ = formatTranscript(conversation)
 
-    payload = {
-        "model": settings.llm_classifier_model,
-        "system": (
-            "You are a strict conversation safety classifier for a case simulation. "
-            "Classify the latest user message in context. "
-            "Return ONLY one label from this set: NORMAL, NONSENSE.\n"
-            "Use NONSENSE for spam, gibberish, or repeatedly incoherent case-irrelevant "
-            "input, AND for rude, insulting, harassing, or abusive messages, including "
-            "explicit threats or severe abuse — anything that isn't a normal, coherent, "
-            "case-related message.\n"
-            "Otherwise return NORMAL."
-        ),
-        "messages": [
-            {
-                "role": "user",
-                "content": (
-                    f"Recent conversation:\n{transcript}\n\n"
-                    f"Latest user message:\n{user_message}"
-                ),
-            },
-        ],
-        "temperature": 0,
-        "max_tokens": 10,
-    }
+    system_prompt = (
+        "You are a strict conversation safety classifier for a case simulation. "
+        "Classify the latest user message in context. "
+        "Return ONLY one label from this set: NORMAL, NONSENSE.\n"
+        "Use NONSENSE for spam, gibberish, or repeatedly incoherent case-irrelevant "
+        "input, AND for rude, insulting, harassing, or abusive messages, including "
+        "explicit threats or severe abuse — anything that isn't a normal, coherent, "
+        "case-related message.\n"
+        "Otherwise return NORMAL."
+    )
+    user_prompt = f"Recent conversation:\n{transcript}\n\nLatest user message:\n{user_message}"
+
     try:
-        data = await chat(payload, timeout=30, retries=2)
+        raw = await chat(
+            model=settings.llm_classifier_model,
+            messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+            temperature=0,
+            max_tokens=10,
+            timeout=30,
+        )
     except Exception: return "normal"
-    label = messageContent(data).strip().upper()
+    label = raw.strip().upper()
     if label.startswith("NONSENSE"): return "nonsense"
     return "normal"

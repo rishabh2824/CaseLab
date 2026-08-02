@@ -8,6 +8,7 @@ from models.cases import (
     CasePayload,
     CaseUpdatePayload,
     CaseVersionResponse,
+    DemoCaseResponse,
 )
 from services import cases
 from infra.db import getRequestSession
@@ -32,6 +33,13 @@ async def listCases(
     session: AsyncSession = Depends(getRequestSession),
 ):
     return await cases.listCases(session, admin)
+
+
+@router.get("/demo", response_model=DemoCaseResponse)
+async def getDemoCase(
+    session: AsyncSession = Depends(getRequestSession),
+):
+    return await cases.getDemoCase(session)
 
 
 @router.get("/{case_id}", response_model=CaseDetailResponse)

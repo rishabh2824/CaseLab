@@ -16,6 +16,11 @@ VERSION_CONFLICT = {
     "code": "version_conflict",
 }
 
+# Hardcoded stand-in until a dedicated demo case exists (Sterling Industries,
+# id 1, is just the most complete case on hand today) — swap this constant
+# once that case is built. getDemoCase() below is the only thing that reads it.
+DEMO_CASE_ID = 1
+
 
 # Authorize access to a case: SUPER admins bypass everything, otherwise the
 # caller must be the owner or a collaborator.
@@ -243,6 +248,30 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
             "version": case.version,
             "owner_admin_id": case.admin,
             "collaborator_admin_ids": list(collaborator_ids),
+        }
+    }
+
+
+
+# Read-only and deliberately skips caseAccess: every signed-in admin — not
+# just DEMO_CASE_ID's owner/collaborators — gets to see a fully filled-out
+# example case. Safe to leave wide open because there's no matching write
+# path; the response also drops version/owner/collaborator fields, which are
+# meaningless for a case the viewer doesn't actually have access to.
+async def getDemoCase(session) -> dict:
+    case = await session.get(Case, DEMO_CASE_ID)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Demo case is not configured.")
+    personas = [adminTree(p) for p in (case.structure.get("personas") or [])]
+    return {
+        "case": {
+            "case_name": case.name,
+            "access_code": case.access_code,
+            "initial_brief": case.brief,
+            "common_information": case.common_information,
+            "simulation_duration": case.duration,
+            "total_non_referred_personas": case.root_personas,
+            "personas": personas,
         }
     }
 

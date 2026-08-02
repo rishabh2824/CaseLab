@@ -1,6 +1,6 @@
 <script lang="ts">
 import { Popover } from "bits-ui";
-import { untrack } from "svelte";
+import { onDestroy, onMount, untrack } from "svelte";
 import { ApiError, apiFetch } from "$lib/api/client.js";
 import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
 import {
@@ -13,6 +13,7 @@ import {
 } from "$lib/case/Helpers.js";
 import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
 import { submitCase } from "$lib/case/submitCase.js";
+import { caseEditState, type SaveResult } from "$lib/caseEditState.svelte.js";
 import { ADMIN_ROLE } from "$lib/constants.js";
 import { session } from "$lib/session.svelte.js";
 import type {
@@ -60,6 +61,36 @@ let collaboratorAdminIds = $state<number[]>([]);
 let ownerAdminId = $state<number | null>(null);
 let loadedVersion = $state<number | null>(null);
 let showConflictModal = $state(false);
+
+// Tracks unsaved edits so AdminTopBar can gate home/logout navigation behind
+// a save-or-discard prompt. null baseline means "nothing loaded to compare
+// against yet" (edit/template mode before loadCase resolves).
+let baselineSnapshot = $state<string | null>(null);
+
+function snapshotFields(): string {
+	return JSON.stringify({
+		caseName,
+		initialBrief,
+		commonInformation,
+		simulationDurationMinutes,
+		accessCode,
+		totalPersonas,
+		personas,
+		collaboratorAdminIds,
+	});
+}
+
+function markSaved(): void {
+	baselineSnapshot = snapshotFields();
+}
+
+// A brand-new case (no source to load) has nothing to wait on — the empty
+// form itself is the baseline, captured once at setup.
+if (!sourceCaseId) markSaved();
+
+const isDirty = $derived(
+	baselineSnapshot !== null && snapshotFields() !== baselineSnapshot,
+);
 
 let showFieldErrors = $state(false);
 function revealErrors() {
@@ -112,6 +143,7 @@ async function loadCase(id: string): Promise<void> {
 		loadedVersion = loadedCase.version ?? null;
 	}
 	revealErrors();
+	markSaved();
 }
 
 $effect(() => {
@@ -370,8 +402,16 @@ async function handleImportFile(
 	}
 }
 
-async function handleSubmit(event: SubmitEvent): Promise<void> {
-	event.preventDefault();
+// Single source of truth for saving: used by the form's own Submit button
+// and by AdminTopBar's "Save changes" action (via caseEditState), so both
+// paths get the same validation gate and version-conflict handling.
+async function performSave(): Promise<SaveResult> {
+	revealErrors();
+	if (hasValidationErrors) {
+		const message = "Resolve the highlighted fields before saving.";
+		submitError = message;
+		return { ok: false, error: message };
+	}
 	loadErrorMessage = "";
 	submitError = "";
 	submitSuccess = "";
@@ -385,9 +425,6 @@ async function handleSubmit(event: SubmitEvent): Promise<void> {
 			commonInformation,
 			simulationDurationMinutes,
 			accessCode,
-			// The submit button is disabled while hasValidationErrors is true
-			// (which requires totalPersonas to be a valid number), so this is
-			// always a number by the time handleSubmit can actually run.
 			totalPersonas: totalPersonas as number,
 			personas,
 			collaboratorAdminIds,
@@ -405,16 +442,40 @@ async function handleSubmit(event: SubmitEvent): Promise<void> {
 		// stale and the next version-poll tick falsely detects a "conflict"
 		// against the admin's own save.
 		if (isEditMode && loadedVersion !== null) loadedVersion += 1;
+		markSaved();
+		return { ok: true };
 	} catch (err) {
 		if (err instanceof ApiError && err.code === "version_conflict") {
 			showConflictModal = true;
-		} else {
-			submitError = (err instanceof Error && err.message) || "Upload failed.";
+			const message =
+				"This case was updated by someone else. Resolve the conflict, then save again.";
+			return { ok: false, error: message };
 		}
+		const message = (err instanceof Error && err.message) || "Upload failed.";
+		submitError = message;
+		return { ok: false, error: message };
 	} finally {
 		isSubmitting = false;
 	}
 }
+
+async function handleSubmit(event: SubmitEvent): Promise<void> {
+	event.preventDefault();
+	await performSave();
+}
+
+$effect(() => {
+	caseEditState.setDirty(isDirty);
+});
+
+onMount(() => {
+	caseEditState.registerSaveHandler(performSave);
+});
+
+onDestroy(() => {
+	caseEditState.registerSaveHandler(null);
+	caseEditState.setDirty(false);
+});
 </script>
 
 <div class="relative min-h-screen bg-parchment">

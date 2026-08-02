@@ -105,6 +105,23 @@ class CaseDetailResponse(BaseModel):
     case: CaseDetail
 
 
+# GET /api/cases/demo — deliberately narrower than CaseDetail: no id, version,
+# owner, or collaborators, since those are meaningless to a viewer who isn't
+# actually the demo case's owner/collaborator (see services/cases.py::getDemoCase).
+class DemoCaseDetail(BaseModel):
+    case_name: str
+    access_code: str | None = None
+    initial_brief: str
+    common_information: str | None = None
+    simulation_duration: int | None = None
+    total_non_referred_personas: int
+    personas: list[PersonaOut] = Field(default_factory=list)
+
+
+class DemoCaseResponse(BaseModel):
+    case: DemoCaseDetail
+
+
 # Shared by createCase and updateCase, both of which return only {"case_id": ...}.
 class CaseCreatedResponse(BaseModel):
     case_id: int
