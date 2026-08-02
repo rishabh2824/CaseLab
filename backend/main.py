@@ -1,8 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from api.router import api_router
+from domain_errors import DomainError
 from infra.db import closeDb
 from infra.llm import closeClient, initClient
 from infra.rate_limit import cleanStaleLimits
@@ -51,6 +53,16 @@ if settings.frontendUrls:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+
+
+# Single mapping from a domain exception (raised by services/infra, no FastAPI
+# import needed on their side) to an HTTP response. Registering the base
+# DomainError class alone covers every subclass — Starlette resolves handlers
+# by walking the raised exception's MRO.
+@app.exception_handler(DomainError)
+async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
 
 
 app.include_router(api_router, prefix="/api")

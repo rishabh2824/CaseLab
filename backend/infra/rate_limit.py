@@ -1,7 +1,7 @@
 import asyncio
 import time
 from math import ceil
-from fastapi import HTTPException
+from domain_errors import RateLimited
 from services import rate_limits as repo
 from infra.db import get_session
 
@@ -19,7 +19,7 @@ async def messageLimit(run_id: str) -> None:
 
     if row["count"] > MESSAGE_LIMIT:
         retry_after = max(1, ceil(row["start_time"] + 60 - now))
-        raise HTTPException(status_code=429, detail="Rate Limit exceeded", headers={"Retry-After": str(retry_after)})
+        raise RateLimited("Rate Limit exceeded", retry_after)
 
 
 async def simulationLimit(access_code: str) -> None:
@@ -31,10 +31,9 @@ async def simulationLimit(access_code: str) -> None:
         retry_after = max(
             1, ceil(row["start_time"] + 60 - now)
         )
-        raise HTTPException(
-            status_code=429,
-            detail="Too many simulations have been started with this access code recently. Please wait a moment and try again.",
-            headers={"Retry-After": str(retry_after)},
+        raise RateLimited(
+            "Too many simulations have been started with this access code recently. Please wait a moment and try again.",
+            retry_after,
         )
 
 

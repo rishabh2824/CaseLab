@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import uuid
-from fastapi import HTTPException
+from domain_errors import InvalidRequest, NotFoundError, UpstreamError
 from models.simulations import NotesPayload, SendMessagePayload, StartSimulationPayload
 from infra.db import get_session
 from infra.llm import classifyHarassment, personaReplyStream
@@ -54,13 +54,13 @@ def buildContacts(run, root_personas, elapsed_minutes, referred_personas=None):
 async def startSimulation(payload: StartSimulationPayload):
     access_code = payload.access_code.strip()
     if not access_code:
-        raise HTTPException(status_code=400, detail="Access code is required.")
+        raise InvalidRequest("Access code is required.")
     await simulationLimit(access_code)
     async with get_session() as session:
         case_snapshot = await getCase(session, access_code=access_code)
         persona_graph = await buildPersonaGraph(session, case_snapshot["id"])
     if not persona_graph["root_personas"]:
-        raise HTTPException(status_code=400, detail="No root personas found.")
+        raise InvalidRequest("No root personas found.")
     root_personas = [hydratePersona(p) for p in persona_graph["root_personas"]]
     run_id = uuid.uuid4().hex
     run = {
@@ -126,9 +126,7 @@ async def getSimulationState(run_id: str):
 
 async def updateNotes(run_id: str, payload: NotesPayload) -> dict:
     if len(payload.notes) > NOTES_CHARS:
-        raise HTTPException(
-            status_code=400, detail=f"Notes are too long ({NOTES_CHARS} characters max)."
-        )
+        raise InvalidRequest(f"Notes are too long ({NOTES_CHARS} characters max).")
 
     def set_notes(run):
         run["notes"] = payload.notes
@@ -182,7 +180,7 @@ async def resolveDecisions(persona_id, decision_history, run) -> dict:
     referrals = graphReferrals(graph, persona_id)
     persona_details = graphPersonaById(graph, persona_id)
     if persona_details is None:
-        raise HTTPException(status_code=404, detail="Persona not found.")
+        raise NotFoundError("Persona not found.")
     pending_referrals = [
         referral
         for referral in referrals
@@ -215,31 +213,28 @@ async def message(run_id: str, payload: SendMessagePayload) -> dict:
     persona_id = payload.persona_id
     user_message = payload.message.strip()
     if not persona_id or not user_message:
-        raise HTTPException(status_code=400, detail="persona_id and message are required.")
+        raise InvalidRequest("persona_id and message are required.")
     if len(user_message.split()) > MESSAGE_WORDS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Message is too long ({MESSAGE_WORDS} words max). Please shorten it and try again.",
-        )
+        raise InvalidRequest(f"Message is too long ({MESSAGE_WORDS} words max). Please shorten it and try again.")
     elapsed = elapsedMinutes(run)
     case_snapshot = await getRunCase(run)
     graph = await getPersonaGraph(run)
     simulation_duration = case_snapshot.get("simulation_duration")
     if simulation_duration and elapsed >= simulation_duration:
-        raise HTTPException(status_code=400, detail="This simulation has ended.")
+        raise InvalidRequest("This simulation has ended.")
     root_map = {p["id"]: p for p in graph["root_personas"]}
     if persona_id in root_map:
         availability = persona_availability(root_map[persona_id], 0, elapsed)
     elif persona_id in run["unlocked_referred_ids"]:
         persona = graphPersonaById(graph, persona_id)
         if persona is None:
-            raise HTTPException(status_code=404, detail="Persona not found.")
+            raise NotFoundError("Persona not found.")
         available_at = run["unlocked_at"].get(persona_id, elapsed)
         availability = persona_availability(persona, available_at, elapsed)
     else:
-        raise HTTPException(status_code=400, detail="Persona is not available yet.")
+        raise InvalidRequest("Persona is not available yet.")
     if not availability["available"]:
-        raise HTTPException(status_code=400, detail="Persona is not available yet.")
+        raise InvalidRequest("Persona is not available yet.")
 
     # Every check above is in-memory/cached-read only and can reject the request outright —
     # only pay for the rate-limit DB write once a message could plausibly succeed.
@@ -247,7 +242,7 @@ async def message(run_id: str, payload: SendMessagePayload) -> dict:
 
     def start_turn(r):
         if getChatState(r, persona_id)["ended"]:
-            raise HTTPException(status_code=400, detail="This conversation has ended.")
+            raise InvalidRequest("This conversation has ended.")
         r["active_persona_id"] = persona_id
         turns = r["history"].setdefault(persona_id, [])
         turns.append({"role": "user", "content": user_message})
@@ -262,7 +257,7 @@ async def message(run_id: str, payload: SendMessagePayload) -> dict:
             resolveDecisions(persona_id, decision_history, run),
         )
     except Exception:
-        raise HTTPException(status_code=502, detail="Something went wrong. Please resend your message.")
+        raise UpstreamError("Something went wrong. Please resend your message.")
     persona_details = decisions["persona_details"]
 
     if message_label != "normal":

@@ -1,5 +1,5 @@
-from fastapi import HTTPException
 from sqlmodel import select
+from domain_errors import CaseNotFound
 from infra.db import get_session
 from infra.db_models import Case
 from infra.spaces import getUrl
@@ -37,7 +37,7 @@ def case_snapshot(case) -> dict:
 
 async def getCase(session, access_code: str | None = None, case_id: int | None = None):
     case = await fetchCase(session, access_code=access_code, case_id=case_id)
-    if case is None: raise HTTPException(status_code=404, detail="No case found.")
+    if case is None: raise CaseNotFound("No case found.")
     return case_snapshot(case)
 
 
@@ -109,7 +109,7 @@ def flattenPersonas(structure: CaseStructure) -> tuple[list[dict], list[dict]]:
 # Root personas + the full referral graph for a case, fetched once and cached into the run blob
 async def buildPersonaGraph(session, case_id: int) -> dict:
     case = await fetchCase(session, case_id=case_id)
-    if case is None: raise HTTPException(status_code=404, detail="No case found.")
+    if case is None: raise CaseNotFound("No case found.")
     structure = CaseStructure.model_validate(case.structure)
     root_personas, referrals = flattenPersonas(structure)
     return {"root_personas": root_personas, "referrals": referrals}

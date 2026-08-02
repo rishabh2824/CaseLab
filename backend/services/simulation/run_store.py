@@ -4,6 +4,7 @@ from copy import deepcopy
 from sqlalchemy import delete
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import select
+from domain_errors import RunNotFound
 from infra.db import get_session
 from infra.db_models import SimulationRun
 from infra.settings import SIMULATION_DURATION
@@ -47,11 +48,11 @@ async def insertRun(run_id: str, run: dict) -> None:
 async def getRun(run_id: str) -> dict:
     async with get_session() as session:
         row = await session.get(SimulationRun, run_id)
-        if row is None: raise ValueError(f"Run {run_id} not found.")
+        if row is None: raise RunNotFound(f"Run {run_id} not found.")
         if time.time() > row.expires_at:
             await session.delete(row)
             await session.commit()
-            raise ValueError(f"Run {run_id} expired.")
+            raise RunNotFound(f"Run {run_id} expired.")
         return deserializeRun(row.data)
 
 
@@ -62,11 +63,11 @@ async def updateRun(run_id: str, fn):
                 select(SimulationRun).where(SimulationRun.run_id == run_id).with_for_update()
             )
         ).first()
-        if row is None: raise ValueError(f"Run {run_id} not found.")
+        if row is None: raise RunNotFound(f"Run {run_id} not found.")
         if time.time() > row.expires_at:
             await session.delete(row)
             await session.commit()
-            raise ValueError(f"Run {run_id} expired.")
+            raise RunNotFound(f"Run {run_id} expired.")
         run = deserializeRun(row.data)
         result = fn(run)
         row.data = serializeRun(run)

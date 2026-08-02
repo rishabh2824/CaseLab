@@ -2,8 +2,8 @@
 # query rather than anything batched/paginated.
 
 from sqlalchemy import delete
-from fastapi import HTTPException
 from sqlmodel import select
+from domain_errors import PersistenceError
 from infra.db_models import Admin, Case, Collaborator
 
 
@@ -68,5 +68,5 @@ async def deleteWithCascade(session, admin_id: int) -> dict:
         await session.commit()
     except Exception as exc:
         await session.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete admin.") from exc
+        raise PersistenceError("Failed to delete admin.") from exc
     return {"ok": True, "cases_deleted": cases_deleted, "cases_reassigned": cases_reassigned}

@@ -2,8 +2,8 @@ from collections import Counter
 from sqlalchemy import delete, or_
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
-from fastapi import HTTPException
 from sqlmodel import select
+from domain_errors import AccessCodeConflict, AccessDenied, CaseNotFound, InvalidRequest, PersistenceError, VersionConflict
 from models.admin import AdminRole
 from models.cases import CasePayload, CaseStructure, CaseUpdatePayload, FileRef
 from services.auth import CurrentAdmin
@@ -31,7 +31,7 @@ async def caseAccess(session, case: Case, admin: CurrentAdmin) -> None:
         select(Collaborator.admin_id).where(Collaborator.case_id == case.id, Collaborator.admin_id == admin.id)
     )
     if row.first() is None:
-        raise HTTPException(status_code=403, detail="You do not have access to this case.")
+        raise AccessDenied("You do not have access to this case.")
 
 
 # Validates + normalizes a collaborator id list for create/update: dedupes,
@@ -42,14 +42,14 @@ async def resolveCollaboratorIds(session, ids: list[int] | None, owner_admin_id:
     ids = list(dict.fromkeys(ids or []))  # dedupe, preserve order
     if not ids: return []
     if owner_admin_id in ids:
-        raise HTTPException(status_code=400, detail="The case owner cannot also be listed as a collaborator.")
+        raise InvalidRequest("The case owner cannot also be listed as a collaborator.")
     rows = (await session.exec(select(Admin.id, Admin.role).where(Admin.id.in_(ids)))).all()
     found = {row[0]: row[1] for row in rows}
     missing = set(ids) - found.keys()
     if missing:
-        raise HTTPException(status_code=400, detail=f"Unknown admin id(s): {sorted(missing)}")
+        raise InvalidRequest(f"Unknown admin id(s): {sorted(missing)}")
     if any(role == AdminRole.SUPER for role in found.values()):
-        raise HTTPException(status_code=400, detail="Super admins cannot be added as collaborators.")
+        raise InvalidRequest("Super admins cannot be added as collaborators.")
     return ids
 
 
@@ -108,17 +108,17 @@ def validateGraph(payload: CasePayload) -> None:
     persona_ids = [p.id for p in payload.personas]
     duplicates = sorted(pid for pid, count in Counter(persona_ids).items() if count > 1)
     if duplicates:
-        raise HTTPException(status_code=400, detail=f"Duplicate persona id(s): {duplicates}")
+        raise InvalidRequest(f"Duplicate persona id(s): {duplicates}")
     valid_ids = set(persona_ids)
 
     for root_id in payload.roots:
         if root_id not in valid_ids:
-            raise HTTPException(status_code=400, detail=f"Unknown root persona id: {root_id}")
+            raise InvalidRequest(f"Unknown root persona id: {root_id}")
     for referral in payload.referrals:
         if referral.from_id not in valid_ids:
-            raise HTTPException(status_code=400, detail=f"Unknown referral from_id: {referral.from_id}")
+            raise InvalidRequest(f"Unknown referral from_id: {referral.from_id}")
         if referral.to_id not in valid_ids:
-            raise HTTPException(status_code=400, detail=f"Unknown referral to_id: {referral.to_id}")
+            raise InvalidRequest(f"Unknown referral to_id: {referral.to_id}")
 
     adjacency: dict[str, list[str]] = {}
     for referral in payload.referrals:
@@ -141,7 +141,7 @@ def validateGraph(payload: CasePayload) -> None:
         if state[persona_id] == UNVISITED:
             cycle_node = visit(persona_id)
             if cycle_node is not None:
-                raise HTTPException(status_code=400, detail=f"Referral cycle detected involving persona id: {cycle_node}")
+                raise InvalidRequest(f"Referral cycle detected involving persona id: {cycle_node}")
 
 
 async def build_structure(session, payload: CasePayload) -> CaseStructure:
@@ -197,7 +197,7 @@ async def fetchCases(session, admin: CurrentAdmin) -> list[Case]:
 async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict:
     normalized_code = normalizeAccessCode(payload.access_code)
     if normalized_code and await accessCodeTaken(session, normalized_code):
-        raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
+        raise AccessCodeConflict(ACCESS_CODE_CONFLICT)
     collaborator_ids = await resolveCollaboratorIds(session, payload.collaborator_admin_ids, owner_admin_id=admin.id)
     case = Case(
         name=payload.case_name,
@@ -217,8 +217,8 @@ async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict
     except Exception as exc:
         await session.rollback()
         if violation(exc):
-            raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT) from exc
-        raise HTTPException(status_code=500, detail="Failed to create case.") from exc
+            raise AccessCodeConflict(ACCESS_CODE_CONFLICT) from exc
+        raise PersistenceError("Failed to create case.") from exc
     return {"case_id": case.id}
 
 
@@ -234,7 +234,7 @@ async def listCases(session, admin: CurrentAdmin) -> dict:
 async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
     case = await session.get(Case, case_id)
     if case is None:
-        raise HTTPException(status_code=404, detail="Case not found.")
+        raise CaseNotFound("Case not found.")
     await caseAccess(session, case, admin)
     collaborator_ids = (
         await session.exec(select(Collaborator.admin_id).where(Collaborator.case_id == case_id))
@@ -248,9 +248,7 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
             "initial_brief": case.brief,
             "common_information": case.common_information,
             "simulation_duration": case.duration,
-            "personas": structure.personas,
-            "referrals": structure.referrals,
-            "roots": structure.roots,
+            **structure.model_dump(mode="json"),
             "version": case.version,
             "owner_admin_id": case.admin,
             "collaborator_admin_ids": list(collaborator_ids),
@@ -267,7 +265,7 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
 async def getDemoCase(session) -> dict:
     case = await session.get(Case, DEMO_CASE_ID)
     if case is None:
-        raise HTTPException(status_code=404, detail="Demo case is not configured.")
+        raise CaseNotFound("Demo case is not configured.")
     structure = CaseStructure.model_validate(case.structure)
     return {
         "case": {
@@ -276,9 +274,7 @@ async def getDemoCase(session) -> dict:
             "initial_brief": case.brief,
             "common_information": case.common_information,
             "simulation_duration": case.duration,
-            "personas": structure.personas,
-            "referrals": structure.referrals,
-            "roots": structure.roots,
+            **structure.model_dump(mode="json"),
         }
     }
 
@@ -286,7 +282,7 @@ async def getDemoCase(session) -> dict:
 async def getCaseVersion(session, case_id: int, admin: CurrentAdmin) -> dict:
     case = await session.get(Case, case_id)
     if case is None:
-        raise HTTPException(status_code=404, detail="Case not found.")
+        raise CaseNotFound("Case not found.")
     await caseAccess(session, case, admin)
     return {"version": case.version}
 
@@ -294,14 +290,14 @@ async def getCaseVersion(session, case_id: int, admin: CurrentAdmin) -> dict:
 async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: CurrentAdmin) -> dict:
     case = await session.get(Case, case_id)
     if case is None:
-        raise HTTPException(status_code=404, detail="Case not found.")
+        raise CaseNotFound("Case not found.")
     await caseAccess(session, case, admin)
 
     # Validate everything before touching the row — an invalid payload should
     # never bump the version or partially write collaborators.
     normalized_code = normalizeAccessCode(payload.access_code)
     if normalized_code and await accessCodeTaken(session, normalized_code, exclude_case_id=case_id):
-        raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT)
+        raise AccessCodeConflict(ACCESS_CODE_CONFLICT)
     collaborator_ids = await resolveCollaboratorIds(session, payload.collaborator_admin_ids, owner_admin_id=case.admin)
     structure = (await build_structure(session, payload)).model_dump(mode="json")
 
@@ -325,7 +321,7 @@ async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: C
     )
     if result.rowcount == 0:
         await session.rollback()
-        raise HTTPException(status_code=409, detail=VERSION_CONFLICT)
+        raise VersionConflict(VERSION_CONFLICT)
 
     # Replace-all, same convention as case.structure — not an incremental diff.
     await session.execute(delete(Collaborator).where(Collaborator.case_id == case_id))
@@ -337,15 +333,15 @@ async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: C
     except Exception as exc:
         await session.rollback()
         if violation(exc):
-            raise HTTPException(status_code=409, detail=ACCESS_CODE_CONFLICT) from exc
-        raise HTTPException(status_code=500, detail="Failed to update case.") from exc
+            raise AccessCodeConflict(ACCESS_CODE_CONFLICT) from exc
+        raise PersistenceError("Failed to update case.") from exc
     return {"case_id": case_id}
 
 
 async def deleteCase(session, case_id: int, admin: CurrentAdmin) -> dict:
     case = await session.get(Case, case_id)
     if case is None:
-        raise HTTPException(status_code=404, detail="Case not found.")
+        raise CaseNotFound("Case not found.")
     await caseAccess(session, case, admin)
     await session.delete(case)
     await session.commit()
