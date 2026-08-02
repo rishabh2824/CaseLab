@@ -126,8 +126,5 @@ export type StreamEvent =
 // --- Persona form validation ------------------------------------------------
 
 export type PersonaFieldErrors = Partial<
-	Record<
-		"name" | "role" | "availability" | "fileCount" | "referralOutCount",
-		string
-	>
+	Record<"name" | "role" | "availability", string>
 >;

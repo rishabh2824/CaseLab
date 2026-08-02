@@ -35,20 +35,16 @@ function handlePhotoChange(event: InputEvent_): void {
 	event.currentTarget.value = "";
 }
 
-function handleFileCountChange(event: InputEvent_): void {
-	const count = parseIntOrNull(event.currentTarget.value);
-	const target = typeof count === "number" && count >= 0 ? count : 0;
-	if (persona.files.length > target) {
-		persona.files.length = target;
-	} else {
-		while (persona.files.length < target) {
-			persona.files.push({
-				file: null,
-				share_conditions: "",
-				perceived_contents: "",
-			});
-		}
-	}
+function addFile(): void {
+	persona.files.push({
+		file: null,
+		share_conditions: "",
+		perceived_contents: "",
+	});
+}
+
+function removeFile(fileIndex: number): void {
+	persona.files.splice(fileIndex, 1);
 }
 
 function handleFileChange(event: InputEvent_, fileIndex: number): void {
@@ -92,23 +88,16 @@ function removeReferralsTo(targetIds: Set<string>): void {
 // UX unchanged from before the flat-graph refactor: this always creates a
 // brand-new referred persona per added referral, never links to an existing
 // one — authoring a second parent for an existing persona isn't exposed here.
-function handleReferralOutCountChange(event: InputEvent_): void {
-	const count = parseIntOrNull(event.currentTarget.value);
-	const target = typeof count === "number" && count >= 0 ? count : 0;
-	const own = referralsFrom(referrals, persona.id);
-	if (own.length > target) {
-		removeReferralsTo(
-			new Set(own.slice(target).map((referral) => referral.to_id)),
-		);
-	} else {
-		while (referralsFrom(referrals, persona.id).length < target) {
-			const referredPersona = createEmptyPersona();
-			personas.push(referredPersona);
-			referrals.push(
-				createEmptyReferral({ from_id: persona.id, to_id: referredPersona.id }),
-			);
-		}
-	}
+function addReferral(): void {
+	const referredPersona = createEmptyPersona();
+	personas.push(referredPersona);
+	referrals.push(
+		createEmptyReferral({ from_id: persona.id, to_id: referredPersona.id }),
+	);
+}
+
+function removeReferral(referral: ReferralEdge): void {
+	removeReferralsTo(new Set([referral.to_id]));
 }
 
 function handleReferralConditionsChange(
@@ -201,26 +190,30 @@ function handleReferralConditionsChange(
 		{#if errors.availability}<p class="text-xs font-medium text-brand">{errors.availability}</p>{/if}
 	</div>
 
-	<div class="flex flex-col gap-1.5">
-		<label for="{uid}-file-count" class="text-xs font-medium text-stone-soft">How many files does this persona have access to?</label>
-		<input
-			id="{uid}-file-count"
-			type="number"
-			min="0"
-			step="1"
-			placeholder="Leave empty for 0"
-			value={persona.files.length}
-			oninput={handleFileCountChange}
-			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-		/>
+	<div class="flex items-center justify-between gap-2">
+		<span class="text-xs font-medium text-stone-soft">Files this persona has access to</span>
+		<button
+			type="button"
+			onclick={addFile}
+			class="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:border-brand hover:text-brand"
+		>
+			+ Add file
+		</button>
 	</div>
 
 	{#if persona.files.length > 0}
 		<div class="flex flex-col gap-3">
 			{#each persona.files as fileEntry, fileIndex (fileIndex)}
 				<details class="rounded-xl border border-line-soft bg-cream/40">
-					<summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-ink">
-						File {fileIndex + 1}
+					<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-2.5 text-sm font-semibold text-ink">
+						<span>File {fileIndex + 1}</span>
+						<button
+							type="button"
+							onclick={(event) => { event.preventDefault(); removeFile(fileIndex); }}
+							class="rounded-md px-2 py-1 text-xs font-semibold text-stone-soft transition hover:text-brand"
+						>
+							Remove
+						</button>
 					</summary>
 					<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
 						<div class="flex flex-col gap-1.5">
@@ -265,18 +258,15 @@ function handleReferralConditionsChange(
 		</div>
 	{/if}
 
-	<div class="flex flex-col gap-1.5">
-		<label for="{uid}-referral-out-count" class="text-xs font-medium text-stone-soft">How many people does this persona refer out?</label>
-		<input
-			id="{uid}-referral-out-count"
-			type="number"
-			min="0"
-			step="1"
-			placeholder="Leave empty for none"
-			value={ownReferrals.length}
-			oninput={handleReferralOutCountChange}
-			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-		/>
+	<div class="flex items-center justify-between gap-2">
+		<span class="text-xs font-medium text-stone-soft">People this persona refers out</span>
+		<button
+			type="button"
+			onclick={addReferral}
+			class="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:border-brand hover:text-brand"
+		>
+			+ Add referral
+		</button>
 	</div>
 
 	{#if ownReferrals.length > 0}
@@ -284,8 +274,15 @@ function handleReferralConditionsChange(
 			{#each ownReferrals as referral (referral.to_id)}
 				{@const referredPersona = personasById.get(referral.to_id) as Persona}
 				<details class="rounded-xl border border-line-soft bg-cream/40">
-					<summary class="cursor-pointer select-none px-4 py-2.5 text-sm font-semibold text-ink">
-						{getPersonaLabel(referredPersona, 'Referred Persona')}
+					<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-2.5 text-sm font-semibold text-ink">
+						<span>{getPersonaLabel(referredPersona, 'Referred Persona')}</span>
+						<button
+							type="button"
+							onclick={(event) => { event.preventDefault(); removeReferral(referral); }}
+							class="rounded-md px-2 py-1 text-xs font-semibold text-stone-soft transition hover:text-brand"
+						>
+							Remove
+						</button>
 					</summary>
 					<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
 						<div class="flex flex-col gap-1.5">

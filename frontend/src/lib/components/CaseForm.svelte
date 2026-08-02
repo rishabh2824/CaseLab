@@ -50,7 +50,6 @@ let initialBrief = $state("");
 let commonInformation = $state("");
 let simulationDurationMinutes = $state<number | null>(null);
 let accessCode = $state("");
-let totalPersonas = $state<number | null>(null);
 let personas = $state<Persona[]>([]);
 let referrals = $state<ReferralEdge[]>([]);
 let roots = $state<string[]>([]);
@@ -78,7 +77,6 @@ function snapshotFields(): string {
 		commonInformation,
 		simulationDurationMinutes,
 		accessCode,
-		totalPersonas,
 		personas,
 		referrals,
 		roots,
@@ -146,7 +144,6 @@ async function loadCase(id: string): Promise<void> {
 		normalizeReferral(referral),
 	);
 	roots = loadedCase.roots ?? [];
-	totalPersonas = roots.length;
 	if (isEditMode) {
 		collaboratorAdminIds = loadedCase.collaborator_admin_ids ?? [];
 		ownerAdminId = loadedCase.owner_admin_id ?? null;
@@ -256,10 +253,6 @@ function parseIntOrNull(raw: string): number | null {
 	return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 }
 
-const showPersonas = $derived(
-	typeof totalPersonas === "number" && totalPersonas >= 1,
-);
-
 const caseNameError = $derived(
 	!caseName.trim() ? "Case name is required." : null,
 );
@@ -269,10 +262,8 @@ const initialBriefError = $derived(
 const accessCodeError = $derived(
 	!accessCode.trim() ? "Access code is required." : null,
 );
-const totalPersonasError = $derived(
-	typeof totalPersonas !== "number" || totalPersonas < 1
-		? "At least 1 persona is required"
-		: null,
+const rootPersonasError = $derived(
+	roots.length < 1 ? "At least 1 persona is required" : null,
 );
 const simulationDurationError = $derived(
 	typeof simulationDurationMinutes === "number" &&
@@ -315,47 +306,36 @@ const hasValidationErrors = $derived(
 	Boolean(caseNameError) ||
 		Boolean(initialBriefError) ||
 		Boolean(accessCodeError) ||
-		Boolean(totalPersonasError) ||
+		Boolean(rootPersonasError) ||
 		Boolean(simulationDurationError) ||
 		hasAnyPersonaError,
 );
 const displayedError = $derived(submitError || loadErrorMessage);
 
-function handleTotalPersonasChange(
-	event: Event & { currentTarget: EventTarget & HTMLInputElement },
-): void {
+function addRoot(): void {
 	revealErrors();
-	const value = parseIntOrNull(event.currentTarget.value);
-	totalPersonas = value;
-	if (typeof value === "number" && value >= 1) {
-		if (roots.length > value) {
-			// Removing a root discards its whole subtree — every persona only
-			// reachable from a removed root, not also reachable from a kept one.
-			const keptRoots = roots.slice(0, value);
-			const removedRoots = roots.slice(value);
-			const stillReachable = reachableFrom(keptRoots, referrals);
-			const toRemove = new Set(
-				[...reachableFrom(removedRoots, referrals)].filter(
-					(id) => !stillReachable.has(id),
-				),
-			);
-			personas = personas.filter((persona) => !toRemove.has(persona.id));
-			referrals = referrals.filter(
-				(referral) =>
-					!toRemove.has(referral.from_id) && !toRemove.has(referral.to_id),
-			);
-			roots = keptRoots;
-		}
-		while (roots.length < value) {
-			const persona = createEmptyPersona();
-			personas = [...personas, persona];
-			roots = [...roots, persona.id];
-		}
-	} else {
-		personas = [];
-		referrals = [];
-		roots = [];
-	}
+	const persona = createEmptyPersona();
+	personas = [...personas, persona];
+	roots = [...roots, persona.id];
+}
+
+// Removing a root discards its whole subtree — every persona only reachable
+// from this root, not also reachable from some other kept root or referral.
+function removeRoot(rootId: string): void {
+	revealErrors();
+	const keptRoots = roots.filter((id) => id !== rootId);
+	const stillReachable = reachableFrom(keptRoots, referrals);
+	const toRemove = new Set(
+		[...reachableFrom([rootId], referrals)].filter(
+			(id) => !stillReachable.has(id),
+		),
+	);
+	personas = personas.filter((persona) => !toRemove.has(persona.id));
+	referrals = referrals.filter(
+		(referral) =>
+			!toRemove.has(referral.from_id) && !toRemove.has(referral.to_id),
+	);
+	roots = keptRoots;
 }
 
 // Builds a .html form from whatever's currently in this form
@@ -412,7 +392,6 @@ async function handleImportFile(
 		personas = data.personas;
 		referrals = data.referrals;
 		roots = data.roots;
-		totalPersonas = data.roots.length;
 		importWarnings = warnings;
 		revealErrors();
 	} catch (err) {
@@ -672,26 +651,6 @@ onDestroy(() => {
 						</div>
 
 						<div class="flex flex-col gap-1.5">
-							<label for="total-personas" class="text-xs font-medium text-stone-soft">
-								Enter the Number of AI personas that are not referred
-							</label>
-							<input
-								id="total-personas"
-								type="number"
-								min="1"
-								step="1"
-								required
-								placeholder="e.g., 5"
-								value={totalPersonas ?? ''}
-								oninput={handleTotalPersonasChange}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-							/>
-							{#if showFieldErrors && totalPersonasError}
-								<p class="text-xs font-medium text-brand">{totalPersonasError}</p>
-							{/if}
-						</div>
-
-						<div class="flex flex-col gap-1.5">
 							<span class="text-xs font-medium text-stone-soft">Add collaborators</span>
 							<p class="text-xs text-stone">
 								Collaborators get full edit access to this case, same as the owner.
@@ -748,44 +707,62 @@ onDestroy(() => {
 					<summary class="cursor-pointer select-none px-5 py-4 font-display text-lg font-semibold text-ink">
 						AI Personas
 					</summary>
-					{#if showPersonas}
-						<div class="flex flex-col gap-3 border-t border-line-soft px-5 py-5">
-							{#each roots as rootId, index (rootId)}
-								{@const persona = personasById.get(rootId) as Persona}
-								{@const personaLabel = getPersonaLabel(persona, `Persona ${index + 1}`)}
-								<details class="rounded-xl border border-line-soft bg-cream/40">
-									<summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink">
-										{personaLabel}
-									</summary>
-									<div class="border-t border-line-soft px-4 py-4">
-										<PersonaFields
-											{persona}
-											{personas}
-											{referrals}
-											{roots}
-											errors={showFieldErrors ? personaErrors[persona.id] : {}}
-										/>
-									</div>
-								</details>
-							{/each}
-							{#each referredPersonas as item (item.persona.id)}
-								<details class="rounded-xl border border-line-soft bg-cream/40">
-									<summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink">
-										{item.label} &larr; {item.parentLabel}
-									</summary>
-									<div class="border-t border-line-soft px-4 py-4">
-										<PersonaFields
-											persona={item.persona}
-											{personas}
-											{referrals}
-											{roots}
-											errors={showFieldErrors ? personaErrors[item.persona.id] : {}}
-										/>
-									</div>
-								</details>
-							{/each}
+					<div class="flex flex-col gap-3 border-t border-line-soft px-5 py-5">
+						<div class="flex items-center justify-between gap-2">
+							<span class="text-xs font-medium text-stone-soft">Personas not referred by anyone else</span>
+							<button
+								type="button"
+								onclick={addRoot}
+								class="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:border-brand hover:text-brand"
+							>
+								+ Add root persona
+							</button>
 						</div>
-					{/if}
+						{#if showFieldErrors && rootPersonasError}
+							<p class="text-xs font-medium text-brand">{rootPersonasError}</p>
+						{/if}
+						{#each roots as rootId, index (rootId)}
+							{@const persona = personasById.get(rootId) as Persona}
+							{@const personaLabel = getPersonaLabel(persona, `Persona ${index + 1}`)}
+							<details class="rounded-xl border border-line-soft bg-cream/40">
+								<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-ink">
+									<span>{personaLabel}</span>
+									<button
+										type="button"
+										onclick={(event) => { event.preventDefault(); removeRoot(rootId); }}
+										class="rounded-md px-2 py-1 text-xs font-semibold text-stone-soft transition hover:text-brand"
+									>
+										Remove
+									</button>
+								</summary>
+								<div class="border-t border-line-soft px-4 py-4">
+									<PersonaFields
+										{persona}
+										{personas}
+										{referrals}
+										{roots}
+										errors={showFieldErrors ? personaErrors[persona.id] : {}}
+									/>
+								</div>
+							</details>
+						{/each}
+						{#each referredPersonas as item (item.persona.id)}
+							<details class="rounded-xl border border-line-soft bg-cream/40">
+								<summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink">
+									{item.label} &larr; {item.parentLabel}
+								</summary>
+								<div class="border-t border-line-soft px-4 py-4">
+									<PersonaFields
+										persona={item.persona}
+										{personas}
+										{referrals}
+										{roots}
+										errors={showFieldErrors ? personaErrors[item.persona.id] : {}}
+									/>
+								</div>
+							</details>
+						{/each}
+					</div>
 				</details>
 
 				{#if displayedError}

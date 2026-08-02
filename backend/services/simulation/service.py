@@ -7,7 +7,7 @@ from models.simulations import NotesPayload, SendMessagePayload, StartSimulation
 from infra.db import get_session
 from infra.llm import classifyHarassment, personaReplyStream
 from infra.rate_limit import messageLimit, simulationLimit
-from services.simulation.run_store import cleanupRuns, insertRun, getRun, updateRun
+from services.simulation.run_store import insertRun, getRun, updateRun
 from services.simulation.prompt import (replyInstructions, systemPrompt, cleanReply, parseReplyMetadata, fileShare, referralUnlock, sanitizeHistory)
 from services.simulation.reads import (buildPersonaGraph, getCase, getRunCase, getPersonaGraph, graphPersonaById, graphReferrals, graphPersonas, hydratePersona)
 from services.simulation.turn_state import (NONSENSE_THRESHOLD, boundaryReply, chatStatePayload, shapeChatState, elapsedMinutes, formatHistory, getChatState, persona_availability, editChatState)

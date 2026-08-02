@@ -2,7 +2,6 @@
 
 from sqlalchemy import case, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlmodel import select
 from infra.db_models import RateLimit
 
 
@@ -16,10 +15,9 @@ async def upsertAndGet(session, key: str, now: float, window_seconds: int) -> di
                 (now - RateLimit.start_time >= window_seconds, now), else_=RateLimit.start_time
             ),
         },
-    )
-    await session.exec(stmt)
+    ).returning(RateLimit.count, RateLimit.start_time)
+    row = (await session.execute(stmt)).one()
     await session.commit()
-    row = (await session.exec(select(RateLimit).where(RateLimit.key == key))).first()
     return {"count": row.count, "start_time": row.start_time}
 
 
