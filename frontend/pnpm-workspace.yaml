@@ -2,3 +2,7 @@ allowBuilds:
   '@tailwindcss/oxide': true
   core-js: true
   esbuild: true
+
+overrides:
+  js-yaml: '>=4.3.0'
+  cookie: '>=0.7.0 <2.0.0'

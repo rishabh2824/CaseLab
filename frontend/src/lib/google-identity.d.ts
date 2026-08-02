@@ -37,7 +37,10 @@ interface Window {
 		accounts?: {
 			id?: {
 				initialize: (config: GoogleIdConfiguration) => void;
-				renderButton: (parent: HTMLElement, options: GoogleButtonConfiguration) => void;
+				renderButton: (
+					parent: HTMLElement,
+					options: GoogleButtonConfiguration,
+				) => void;
 			};
 		};
 	};
