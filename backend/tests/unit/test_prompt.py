@@ -260,38 +260,62 @@ def test_sanitize_history_does_not_mutate_the_callers_list():
 
 
 # --------------------------------------------------------------------------
-# parseReplyMetadata
+# parseReply / jsonExtractor
 # --------------------------------------------------------------------------
 
 
-def test_parse_reply_metadata_none_arguments():
-    assert prompt_module.parseReplyMetadata(None) == ([], [])
+def test_parse_reply_clean_json_object():
+    raw = '{"reply": "Hi there.", "introduce": ["R1"], "send_files": []}'
+    assert prompt_module.parseReply(raw) == {"reply": "Hi there.", "introduce": ["R1"], "send_files": []}
 
 
-def test_parse_reply_metadata_empty_dict():
-    assert prompt_module.parseReplyMetadata({}) == ([], [])
+def test_parse_reply_strips_code_fence():
+    raw = '```json\n{"reply": "Hi.", "introduce": [], "send_files": []}\n```'
+    assert prompt_module.parseReply(raw) == {"reply": "Hi.", "introduce": [], "send_files": []}
 
 
-def test_parse_reply_metadata_valid_handles_are_upper_cased():
-    result = prompt_module.parseReplyMetadata({"introduce": ["r1", "R2"], "send_files": ["f3"]})
-    assert result == (["R1", "R2"], ["F3"])
+def test_parse_reply_extracts_json_object_from_surrounding_prose():
+    raw = 'Sure, here it is: {"reply": "Hi.", "introduce": [], "send_files": []} thanks'
+    assert prompt_module.parseReply(raw) == {"reply": "Hi.", "introduce": [], "send_files": []}
 
 
-def test_parse_reply_metadata_whitespace_only_handles_are_dropped():
-    result = prompt_module.parseReplyMetadata({"introduce": ["   ", "r1"], "send_files": []})
-    assert result == (["R1"], [])
+def test_parse_reply_empty_or_none_returns_none():
+    assert prompt_module.parseReply("") is None
+    assert prompt_module.parseReply(None) is None
 
 
-def test_parse_reply_metadata_wrong_field_type_falls_back():
-    # "introduce" should be a list, not a bare string.
-    result = prompt_module.parseReplyMetadata({"introduce": "R1", "send_files": []})
-    assert result == ([], [])
+def test_parse_reply_unparseable_text_returns_none():
+    assert prompt_module.parseReply("not json at all") is None
 
 
-def test_parse_reply_metadata_non_dict_arguments_falls_back():
-    # A number instead of the whole arguments dict.
-    result = prompt_module.parseReplyMetadata(5)
-    assert result == ([], [])
+def test_parse_reply_json_array_is_not_a_dict_returns_none():
+    assert prompt_module.parseReply("[1, 2, 3]") is None
+
+
+# --------------------------------------------------------------------------
+# coerceHandles
+# --------------------------------------------------------------------------
+
+
+def test_coerce_handles_upper_cases_and_strips():
+    assert prompt_module.coerceHandles(["r1", " R2 "]) == ["R1", "R2"]
+
+
+def test_coerce_handles_drops_whitespace_only_entries():
+    assert prompt_module.coerceHandles(["   ", "r1"]) == ["R1"]
+
+
+def test_coerce_handles_bare_string_is_treated_as_single_item_list():
+    assert prompt_module.coerceHandles("R1") == ["R1"]
+
+
+def test_coerce_handles_non_list_non_string_returns_empty():
+    assert prompt_module.coerceHandles(5) == []
+    assert prompt_module.coerceHandles(None) == []
+
+
+def test_coerce_handles_non_string_non_int_items_are_skipped():
+    assert prompt_module.coerceHandles(["R1", None, ["nested"], 2]) == ["R1", "2"]
 
 
 # --------------------------------------------------------------------------

@@ -1,5 +1,5 @@
+import json
 import re
-from pydantic import BaseModel, ValidationError
 from infra.llm import classifyFileShare, classifyReferral
 
 
@@ -112,14 +112,17 @@ def sanitizeHistory(history: list[dict], locked_names: list[str]) -> list[dict]:
 
 def replyInstructions() -> str:
     return (
-        "Reply in character as plain text only — 1-3 concise sentences, no speaker-name "
-        "prefix, no surrounding quotes, just the words you would say.\n"
-        "Separately, call report_reply_metadata to report which contacts (by handle, "
-        'e.g. "R1") you introduced and which files (by handle, e.g. "F1") you sent in '
-        "this reply, passing empty arrays for either you did not do. Only use handles "
-        "explicitly listed as available to you this turn. Your reply text and these "
-        "arrays MUST agree: if you introduce a contact or send a file in the text, its "
-        "handle must appear in the matching array, and vice versa."
+        "Return ONLY a single JSON object (no code fences, no prose around it) with "
+        "exactly these keys:\n"
+        '  "reply": your in-character reply as plain text, 1-3 concise sentences, with '
+        "no speaker-name prefix and no surrounding quotes;\n"
+        '  "introduce": a JSON array of the contact handles (e.g. "R1") you are '
+        "introducing in this reply, or [] if none;\n"
+        '  "send_files": a JSON array of the file handles (e.g. "F1") you are sending '
+        "with this reply, or [] if none.\n"
+        "Only use handles explicitly listed as available to you this turn. Your reply "
+        "text and these arrays MUST agree: if you introduce a contact or send a file in "
+        "the text, its handle must appear in the matching array, and vice versa."
     )
 
 
@@ -130,22 +133,39 @@ def cleanReply(text: str) -> str:
     return reply
 
 
-class ReplyMetadata(BaseModel):
-    introduce: list[str] = []
-    send_files: list[str] = []
+# Extracts the JSON if the reply is not clean
+def jsonExtractor(text: str) -> str | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return text[start : end + 1]
 
 
-# Normalizes the report_reply_metadata tool call's parsed arguments into (introduce,
-# send_files) handle lists, defaulting to ([], []) if the model never called the tool or
-# its arguments were truncated mid-generation (e.g. by max_tokens) and failed to parse.
-def parseReplyMetadata(arguments: dict | None) -> tuple[list[str], list[str]]:
-    try:
-        metadata = ReplyMetadata.model_validate(arguments or {})
-    except ValidationError:
-        return [], []
-    introduce = [handle.strip().upper() for handle in metadata.introduce if handle.strip()]
-    send_files = [handle.strip().upper() for handle in metadata.send_files if handle.strip()]
-    return introduce, send_files
+# Processes the LLM reply
+def parseReply(raw: str) -> dict | None:
+    text = (raw or "").strip()
+    if not text: return None
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
+    if fence: text = fence.group(1).strip()
+    for candidate in (text, jsonExtractor(text)):
+        if not candidate: continue
+        try: data = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError): continue
+        if isinstance(data, dict): return data
+    return None
+
+
+# normalizes referral/file "handles"
+def coerceHandles(value) -> list[str]:
+    if isinstance(value, str): value = [value]
+    if not isinstance(value, list): return []
+    handles = []
+    for item in value:
+        if isinstance(item, (str, int)):
+            handle = str(item).strip().upper()
+            if handle: handles.append(handle)
+    return handles
 
 
 async def referralUnlock(referral: dict, decision_history: list[dict]) -> bool:

@@ -118,11 +118,11 @@ class StubLlm:
         self.harassment: str | Callable[[str, list[dict]], str] = "normal"
         self.referral: bool | Callable[[str, list[dict]], bool] = False
         self.fileShare: bool | Callable[[str, list[dict]], bool] = False
-        # Events yielded by personaReplyStream, in order. The default is a
-        # plain reply with no tool call.
+        # Events yielded by personaReplyStream, in order. The default is a plain
+        # reply with no referral/file, delivered as a single schema-shaped
+        # JSON-envelope delta (matching the structured-output contract).
         self.replyEvents: list[dict] | Callable[[list[dict]], list[dict]] = [
-            {"type": "delta", "text": "Hello there."},
-            {"type": "tool_call", "arguments": None},
+            {"type": "delta", "text": json.dumps({"reply": "Hello there.", "introduce": [], "send_files": []})},
         ]
         # Raised by personaReplyStream instead of yielding, if set.
         self.replyError: Exception | None = None
@@ -158,14 +158,9 @@ class StubLlm:
     # -- convenience ------------------------------------------------------
 
     def replyWith(self, text: str, *, introduce: list[str] | None = None, send_files: list[str] | None = None) -> None:
-        """Reply `text` and report the given handles via the metadata tool."""
-        arguments = None
-        if introduce is not None or send_files is not None:
-            arguments = {"introduce": introduce or [], "send_files": send_files or []}
-        self.replyEvents = [
-            {"type": "delta", "text": text},
-            {"type": "tool_call", "arguments": arguments},
-        ]
+        """Reply `text` and report the given handles via the structured-output envelope."""
+        envelope = {"reply": text, "introduce": introduce or [], "send_files": send_files or []}
+        self.replyEvents = [{"type": "delta", "text": json.dumps(envelope)}]
 
     @property
     def lastSystemPrompt(self) -> str:

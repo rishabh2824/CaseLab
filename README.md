@@ -128,10 +128,16 @@ All classifier calls run concurrently (`asyncio.gather`); the Sonnet reply
 call runs strictly after, since its prompt depends on the other 3. The 
 system prompt is split into a stable block (common case information) which
 is cached, and a turn-specific block (this turn's eligible referrals/files). 
-The reply text itself streams straight to the client via SSE as plain text. 
-In the same streaming response, the model separately calls a 
-`report_reply_metadata` tool to report which contacts it introduced and which 
-files it sent this turn, driving referral/file unlocking once the stream ends.
+The reply is a single structured-output JSON object (`response_format:
+json_schema`, strict mode) with `reply`/`introduce`/`send_files` keys, so the
+provider's constrained decoding guarantees `introduce`/`send_files` are always
+present and consistent with the same generation that produced `reply` — a
+schema-constrained object, not a separately-decided tool call the model could
+skip or contradict. A small incremental JSON lexer
+(`services/simulation/reply_stream.py`) extracts just the `reply` field's
+characters as they stream, so the client still sees the persona's words
+appear live; the full accumulated JSON is parsed once the stream ends and is
+the authoritative reply of record, driving referral/file unlocking.
 
 
 **File uploads (two-phase, direct-to-Spaces).** The browser never sends file

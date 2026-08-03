@@ -2,14 +2,12 @@
 
 No network calls: `infra.llm.client` is monkeypatched to a fake object built
 from plain classes that mirror the shape the openai SDK streams back
-(`chunk.choices[0].delta.content` / `.tool_calls[i].function.arguments`), and
-`chat` is monkeypatched directly for the classifier tests, which only care
-about how classifyHarassment/classifier interpret the text `chat` returns.
+(`chunk.choices[0].delta.content`), and `chat` is monkeypatched directly for
+the classifier tests, which only care about how classifyHarassment/classifier
+interpret the text `chat` returns.
 """
 
 from __future__ import annotations
-
-import json
 
 import httpx
 import pytest
@@ -23,21 +21,9 @@ from infra import llm as llm_module
 # --------------------------------------------------------------------------
 
 
-class FakeFunction:
-    def __init__(self, arguments):
-        self.arguments = arguments
-
-
-class FakeToolCallDelta:
-    def __init__(self, index, arguments):
-        self.index = index
-        self.function = FakeFunction(arguments)
-
-
 class FakeDelta:
-    def __init__(self, content=None, tool_calls=None):
+    def __init__(self, content=None):
         self.content = content
-        self.tool_calls = tool_calls
 
 
 class FakeChoice:
@@ -150,48 +136,19 @@ def test_format_transcript_all_system_within_window_yields_placeholder():
 
 async def test_persona_reply_stream_yields_text_deltas_in_order(monkeypatch):
     chunks = [
-        FakeChunk([FakeChoice(FakeDelta(content="Hello"))]),
-        FakeChunk([FakeChoice(FakeDelta(content=" there"))]),
-        FakeChunk([FakeChoice(FakeDelta(content=None, tool_calls=None))]),
+        FakeChunk([FakeChoice(FakeDelta(content='{"reply": "Hello'))]),
+        FakeChunk([FakeChoice(FakeDelta(content=' there", "introduce": [], "send_files": []}'))]),
+        FakeChunk([FakeChoice(FakeDelta(content=None))]),
     ]
     completions = FakeCompletions([FakeStream(chunks)])
     monkeypatch.setattr(llm_module, "client", FakeClient(completions))
 
     events = [event async for event in llm_module.personaReplyStream([{"role": "user", "content": "hi"}])]
 
-    assert events[0] == {"type": "delta", "text": "Hello"}
-    assert events[1] == {"type": "delta", "text": " there"}
-    assert events[2] == {"type": "tool_call", "arguments": None}
-
-
-async def test_persona_reply_stream_reassembles_tool_call_fragments_across_chunks_and_indices(monkeypatch):
-    full = json.dumps({"introduce": ["R1"], "send_files": []})
-    mid = len(full) // 2
-    index0_part1, index0_part2 = full[: mid // 2], full[mid // 2 : mid]
-    index1_part = full[mid:]
-    # index 1's fragment arrives BEFORE index 0's second fragment, to prove
-    # reassembly orders by tool-call index, not arrival order.
-    chunks = [
-        FakeChunk([FakeChoice(FakeDelta(tool_calls=[FakeToolCallDelta(0, index0_part1)]))]),
-        FakeChunk([FakeChoice(FakeDelta(tool_calls=[FakeToolCallDelta(1, index1_part)]))]),
-        FakeChunk([FakeChoice(FakeDelta(tool_calls=[FakeToolCallDelta(0, index0_part2)]))]),
+    assert events == [
+        {"type": "delta", "text": '{"reply": "Hello'},
+        {"type": "delta", "text": ' there", "introduce": [], "send_files": []}'},
     ]
-    completions = FakeCompletions([FakeStream(chunks)])
-    monkeypatch.setattr(llm_module, "client", FakeClient(completions))
-
-    events = [event async for event in llm_module.personaReplyStream([])]
-
-    assert events[-1] == {"type": "tool_call", "arguments": {"introduce": ["R1"], "send_files": []}}
-
-
-async def test_persona_reply_stream_malformed_tool_call_json_yields_none_arguments(monkeypatch):
-    chunks = [FakeChunk([FakeChoice(FakeDelta(tool_calls=[FakeToolCallDelta(0, "{not valid json")]))])]
-    completions = FakeCompletions([FakeStream(chunks)])
-    monkeypatch.setattr(llm_module, "client", FakeClient(completions))
-
-    events = [event async for event in llm_module.personaReplyStream([])]
-
-    assert events == [{"type": "tool_call", "arguments": None}]
 
 
 async def test_persona_reply_stream_skips_chunks_with_empty_choices(monkeypatch):
