@@ -48,6 +48,10 @@ async def chat(
     if client is None: raise RuntimeError("LLM client failed to initialize.")
     kwargs = {"model": model, "messages": messages, "max_tokens": max_tokens, "timeout": timeout}
     if temperature is not None: kwargs["temperature"] = temperature
+    # Every caller of chat() is a temperature=0 classification gate (referral/file-share/
+    # harassment) — pin routing to Anthropic directly so identical inputs aren't put through
+    # whatever upstream OpenRouter happens to pick for a given request.
+    kwargs["extra_body"] = {"provider": {"order": ["anthropic"], "allow_fallbacks": False}}
     logger.info("[%s] REQUEST model=%s\n%s", label, model, json.dumps(messages, indent=2))
     response = await client.chat.completions.create(**kwargs)
     content = response.choices[0].message.content or ""
@@ -213,6 +217,11 @@ async def classifyCondition(kind: str, condition: str, conversation: list[dict])
         f"You are a strict classifier deciding whether to {spec['action']} in a case "
         f"simulation. Determine if the {spec['condition_noun']} is satisfied given the "
         "conversation. Use common sense and the overall intent, not exact wording. "
+        "The condition text may also include a note on how to phrase things once acted "
+        "on (e.g. \"when you refer/share, mention/explain...\") — that is guidance "
+        "for the persona's future reply, NOT an additional requirement, and must NOT be "
+        "treated as something that has to already appear in the conversation. Judge "
+        "only whether the actual trigger has been met.\n"
         "Reply with ONLY 'YES' or 'NO'."
     )
     user_prompt = (
