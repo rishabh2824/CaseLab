@@ -68,6 +68,12 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Type check
+        run: uv run mypy .
+
+      - name: Check dependencies
+        run: uv run deptry .
+
       # Running the real migrations to build the test schema means the
       # migrations themselves are under test — a migration that fails to apply
       # to an empty database breaks CI here rather than in production.
@@ -98,7 +104,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version: 26
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
 

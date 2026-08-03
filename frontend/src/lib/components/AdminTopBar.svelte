@@ -3,8 +3,10 @@ import House from "@lucide/svelte/icons/house";
 import LogOut from "@lucide/svelte/icons/log-out";
 import { goto } from "$app/navigation";
 import { signOutAdmin } from "$lib/auth.js";
-import { caseEditState } from "$lib/caseEditState.svelte.js";
+import { useUnsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import UnsavedChangesModal from "./UnsavedChangesModal.svelte";
+
+const unsavedGuard = useUnsavedGuard();
 
 let showUnsavedModal = $state(false);
 let isSaving = $state(false);
@@ -15,7 +17,7 @@ let pendingAction = $state<(() => void | Promise<void>) | null>(null);
 // here so the admin gets a chance to save or discard first, no matter which
 // admin page (and thus which action — home vs. sign out) triggered it.
 function requestNavigation(action: () => void | Promise<void>): void {
-	if (caseEditState.isDirty) {
+	if (unsavedGuard.isDirty) {
 		saveError = "";
 		pendingAction = action;
 		showUnsavedModal = true;
@@ -45,7 +47,7 @@ function handleCancel(): void {
 async function handleDiscard(): Promise<void> {
 	const action = pendingAction;
 	closeModal();
-	caseEditState.setDirty(false);
+	unsavedGuard.unregister();
 	if (action) await action();
 }
 
@@ -53,7 +55,7 @@ async function handleSave(): Promise<void> {
 	isSaving = true;
 	saveError = "";
 	try {
-		const result = await caseEditState.save();
+		const result = await unsavedGuard.save();
 		if (!result.ok) {
 			saveError = result.error;
 			return;

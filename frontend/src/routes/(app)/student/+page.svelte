@@ -4,11 +4,14 @@ import { toast } from "svelte-sonner";
 import { apiFetch } from "$lib/api/client.js";
 import SimulationClock from "$lib/components/SimulationClock.svelte";
 import { MAX_MESSAGE_WORDS } from "$lib/constants.js";
+import { downloadBlob } from "$lib/download.js";
 import { countWords } from "$lib/format.js";
 import { session } from "$lib/session.svelte.js";
 import { getPersonaInitials } from "$lib/student/contacts.js";
-import { run } from "$lib/student/run.svelte.js";
+import { setRunStore } from "$lib/student/run.svelte.js";
 import type { Api } from "$lib/types.js";
+
+const run = setRunStore();
 
 onMount(() => {
 	run.init();
@@ -56,14 +59,10 @@ async function handleExportPdf(): Promise<void> {
 			"$lib/student/pdf.js"
 		);
 		const blob = buildChatPdfBlob(data.personas ?? [], run.notes);
-		const url = window.URL.createObjectURL(blob);
-		const link = document.createElement("a");
-		link.href = url;
-		link.download = `${slugifyFileName(data.case?.case_name)}-chat-history.pdf`;
-		document.body.appendChild(link);
-		link.click();
-		link.remove();
-		window.setTimeout(() => window.URL.revokeObjectURL(url), 1000);
+		downloadBlob(
+			blob,
+			`${slugifyFileName(data.case?.case_name)}-chat-history.pdf`,
+		);
 	} catch (err) {
 		console.error(err);
 		toast("Unable to export PDF. Please try again.");

@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { contact, mockApi, runState, sse, turn } from "./mockApi.js";
+import { contact, mockApi, runState, sseBody, turn } from "./mockApi.js";
 
 test("student enters an access code and messages a persona", async ({
 	page,
 }) => {
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 		"POST /api/simulations/:id/message": ({ body }) => ({
 			sse: turn("Our current vendor is Acme Supplies.", {
 				userMessage: (body as { message: string }).message,
@@ -80,6 +81,7 @@ test("the access code is upper-cased before being sent", async ({ page }) => {
 			sentAccessCode = (body as { access_code: string }).access_code;
 			return { json: runState() };
 		},
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 	});
 
 	await page.goto("/");
@@ -110,31 +112,38 @@ test("a reload mid-run resumes from the persisted runId instead of starting a ne
 	await page.getByPlaceholder("Enter access code").fill("sterling");
 	await page.getByRole("button", { name: "Open Case" }).click();
 	await expect(page).toHaveURL(/\/student$/);
+	// The /student route always resumes via GET (session.runId is already set
+	// by the landing page's own POST /start before it navigates), so the very
+	// first arrival already issues one refresh.
 	expect(startCalls).toBe(1);
-	expect(getCalls).toBe(0);
+	expect(getCalls).toBeGreaterThanOrEqual(1);
+	const callsBeforeReload = getCalls;
 
 	// A fresh page load re-runs run.init(); with session.runId already
 	// persisted to sessionStorage it must resume via GET, not POST /start again.
 	await page.reload();
 	await expect(page.getByText("Reduce office supply costs.")).toBeVisible();
 	expect(startCalls).toBe(1);
-	expect(getCalls).toBeGreaterThanOrEqual(1);
+	expect(getCalls).toBeGreaterThan(callsBeforeReload);
 });
 
 test("an expired run recovers by starting a fresh session from the stored access code", async ({
 	page,
 }) => {
 	let startCalls = 0;
+	let getCalls = 0;
 	await mockApi(page, {
 		"POST /api/simulations/start": () => {
 			startCalls++;
 			return { json: runState() };
 		},
-		// The persisted run is gone server-side — always 404 on resume.
-		"GET /api/simulations/:id": () => ({
-			status: 404,
-			json: { detail: "Run expired." },
-		}),
+		// The run's own eager refresh on first arrival still finds it — only
+		// the persisted run is gone server-side by the time of the reload.
+		"GET /api/simulations/:id": () => {
+			getCalls++;
+			if (getCalls === 1) return { json: runState() };
+			return { status: 404, json: { detail: "Run expired." } };
+		},
 	});
 
 	await page.goto("/");
@@ -157,6 +166,7 @@ test("typing over the word limit blocks Send without sending a message", async (
 	let messageCalls = 0;
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 		"POST /api/simulations/:id/message": () => {
 			messageCalls++;
 			return { sse: turn("reply", { userMessage: "over limit" }) };
@@ -182,6 +192,7 @@ test("a referral unlock adds the new contact and fires a toast", async ({
 }) => {
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 		"POST /api/simulations/:id/message": ({ body }) => ({
 			sse: turn("I'll connect you with Bob.", {
 				userMessage: (body as { message: string }).message,
@@ -215,6 +226,7 @@ test("a shared file appears in the file list and fires a toast", async ({
 }) => {
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 		"POST /api/simulations/:id/message": ({ body }) => ({
 			sse: turn("Here's the vendor contract.", {
 				userMessage: (body as { message: string }).message,
@@ -255,6 +267,7 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 }) => {
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 		"POST /api/simulations/:id/message": ({ body }) => ({
 			sse: turn("I'm done talking to you.", {
 				userMessage: (body as { message: string }).message,
@@ -284,21 +297,21 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 test("an unavailable contact cannot be selected or messaged", async ({
 	page,
 }) => {
-	await mockApi(page, {
-		"POST /api/simulations/start": () => ({
-			json: runState({
-				contacts: [
-					contact(),
-					contact({
-						id: "bob",
-						name: "Bob",
-						role: "Vendor Rep",
-						available: false,
-						available_in: 0,
-					}),
-				],
+	const state = runState({
+		contacts: [
+			contact(),
+			contact({
+				id: "bob",
+				name: "Bob",
+				role: "Vendor Rep",
+				available: false,
+				available_in: 0,
 			}),
-		}),
+		],
+	});
+	await mockApi(page, {
+		"POST /api/simulations/start": () => ({ json: state }),
+		"GET /api/simulations/:id": () => ({ json: state }),
 	});
 
 	await page.goto("/");
@@ -321,10 +334,11 @@ test("a mid-stream error frame keeps the user's message, drops the assistant rep
 }) => {
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 		// Only a partial delta, then an error frame — no `done`. The reducer
 		// must discard the partial streamed text, not commit it as history.
 		"POST /api/simulations/:id/message": () => ({
-			sse: sse([
+			sse: sseBody([
 				{ event: "delta", data: { text: "Let me check on that..." } },
 				{
 					event: "error",
@@ -355,6 +369,7 @@ test("notes autosave issues a debounced PUT after typing", async ({ page }) => {
 	const savedNotes: string[] = [];
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 		"PUT /api/simulations/:id/notes": ({ body }) => {
 			savedNotes.push((body as { notes: string }).notes);
 			return { json: { notes: (body as { notes: string }).notes } };
@@ -379,6 +394,7 @@ test("exporting the PDF requests the export payload and triggers a download", as
 }) => {
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
+		"GET /api/simulations/:id": () => ({ json: runState() }),
 		"GET /api/simulations/:id/export": () => ({
 			json: {
 				case: { id: 1, case_name: "Sterling Industries" },

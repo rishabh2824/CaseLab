@@ -32,8 +32,7 @@
 
 /* shadcn-svelte semantic tokens (drives component variants: bg-primary,
    border-input, ring-ring, etc.) — recolored to the WSB brand rather than
-   shadcn's stone defaults. No .dark block: the app has no dark mode today,
-   see caseLab frontend audit. Revisit during Step 7's styling pass. */
+   shadcn's stone defaults. No .dark block: the app has no dark mode today. */
 :root {
 	--radius: 0.5rem;
 	--background: #faf8f4;

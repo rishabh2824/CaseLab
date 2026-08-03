@@ -2,7 +2,7 @@ import asyncio
 import time
 from math import ceil
 from domain_errors import RateLimited
-from services import rate_limits as repo
+from infra import rate_limits as repo
 from infra.db import getSession
 
 

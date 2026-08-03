@@ -143,8 +143,8 @@ async def test_unlocked_persona_is_messageable_and_state_marks_it_referred(sim):
     assert sim.frame(frames, "error") is None
 
     full_state = await sim_service.getSimulationState(run_id)
-    bob_contact = next(c for c in full_state["contacts"] if c["id"] == "B")
-    assert bob_contact["is_referred"] is True
+    bob_contact = next(c for c in full_state["contacts"] if c.id == "B")
+    assert bob_contact.is_referred is True
 
 
 async def test_persona_referred_by_two_parents_stops_being_pending_for_the_other(sim):
@@ -170,7 +170,7 @@ async def test_persona_referred_by_two_parents_stops_being_pending_for_the_other
     calls_before = len(sim.llm.referralCalls)
     prepared = await sim.prepare(run_id, "D", "hi")
     # B is no longer pending for D — nothing to offer, and nothing to classify.
-    assert prepared["referral_handles"] == {}
+    assert prepared.referral_handles == {}
     assert len(sim.llm.referralCalls) == calls_before
 
 
@@ -196,8 +196,8 @@ async def test_handle_numbering_is_stable_and_one_indexed_across_referrals(sim):
 
     prepared = await sim.prepare(run_id, "A", "hi")
 
-    handles = prepared["referral_handles"]
+    handles = prepared.referral_handles
     assert set(handles) == {"R1", "R2", "R3"}
-    assert handles["R1"]["referred_persona_id"] == "B"
-    assert handles["R2"]["referred_persona_id"] == "C"
-    assert handles["R3"]["referred_persona_id"] == "E"
+    assert handles["R1"].referred_persona_id == "B"
+    assert handles["R2"].referred_persona_id == "C"
+    assert handles["R3"].referred_persona_id == "E"

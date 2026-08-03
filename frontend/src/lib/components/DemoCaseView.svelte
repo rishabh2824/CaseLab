@@ -5,9 +5,10 @@ import {
 	getPersonaLabel,
 	normalizePersona,
 	normalizeReferral,
-	referralsTo,
+	referredWithParents,
+	rootPersonas as rootPersonasOf,
 } from "$lib/case/draft.js";
-import type { Api, Persona } from "$lib/types.js";
+import type { Api } from "$lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
@@ -38,26 +39,9 @@ const referrals = $derived(
 	(caseData?.referrals ?? []).map((referral) => normalizeReferral(referral)),
 );
 const roots = $derived(caseData?.roots ?? []);
-const rootPersonas = $derived(
-	roots
-		.map((id) => personas.find((persona) => persona.id === id))
-		.filter((persona): persona is Persona => Boolean(persona)),
-);
+const rootPersonas = $derived(rootPersonasOf(personas, roots));
 const referredPersonas = $derived(
-	personas
-		.filter((persona) => !roots.includes(persona.id))
-		.map((persona, index) => ({
-			persona,
-			label: getPersonaLabel(persona, `Referred Persona ${index + 1}`),
-			parentLabel: referralsTo(referrals, persona.id)
-				.map((referral) =>
-					getPersonaLabel(
-						personas.find((p) => p.id === referral.from_id) ?? { name: "" },
-						"Unknown",
-					),
-				)
-				.join(", "),
-		})),
+	referredWithParents(personas, referrals, roots),
 );
 </script>
 

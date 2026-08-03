@@ -6,23 +6,9 @@
 // calling a new endpoint fails the test that never knew about it.
 import { setupServer } from "msw/node";
 
+export { type SseFrame, sseBody } from "./sse.js";
+
 export const server = setupServer();
-
-// Serializes SSE frames the way sse-starlette does on the wire, so streamChat's
-// parser is exercised against the real framing rather than a convenient
-// approximation. `event:` is omitted for an unnamed frame, matching a bare
-// `data:`-only message.
-export type SseFrame = { event?: string; data: unknown };
-
-export function sseBody(frames: SseFrame[]): string {
-	return `${frames
-		.map(({ event, data }) =>
-			[event ? `event: ${event}` : null, `data: ${JSON.stringify(data)}`]
-				.filter((line) => line !== null)
-				.join("\n"),
-		)
-		.join("\n\n")}\n\n`;
-}
 
 // An SSE Response whose body arrives in separate chunks with an optional delay
 // between them — the only way to prove incremental rendering and streamChat's

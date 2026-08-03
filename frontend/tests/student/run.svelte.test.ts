@@ -12,8 +12,8 @@ import {
 	makeRunState,
 	makeSharedFile,
 	message,
-} from "../../src/testing/fixtures.js";
-import { server } from "../../src/testing/msw.js";
+} from "../support/fixtures.js";
+import { server } from "../support/msw.js";
 
 // A case with no configured duration keeps #ensureExpiryWatch's early-return
 // branch active, so tests never touch `window.setInterval` incidentally —
@@ -25,19 +25,18 @@ const caseData = {
 	simulation_duration: null as number | null,
 };
 
-// run.svelte.ts's RunStore is a module-level singleton with private fields
-// (#seenContacts, #notesInitialized, etc.) that no public method resets. The
-// suggested fix — vi.resetModules() plus a dynamic re-import — is applied
-// before every test via this helper, so each test gets a genuinely fresh
-// store (and a fresh, empty-call-history `goto`/`toast` mock bound to
-// whatever this fresh instance actually imports).
+// RunStore is created fresh per /student mount via context (setRunStore),
+// not a module singleton — so tests just need a fresh instance, with a
+// fresh, empty-call-history `goto`/`toast` mock bound to whatever this
+// import returns (still re-imported per test since `session` remains a
+// module singleton these tests share/reset).
 async function freshRun() {
-	const { run } = await import("../../src/lib/student/run.svelte.js");
+	const { RunStore } = await import("../../src/lib/student/run.svelte.js");
 	const { session } = await import("../../src/lib/session.svelte.js");
 	const nav = await import("$app/navigation");
 	const sonner = await import("svelte-sonner");
 	return {
-		run,
+		run: new RunStore(),
 		session,
 		goto: vi.mocked(nav.goto),
 		toast: vi.mocked(sonner.toast),

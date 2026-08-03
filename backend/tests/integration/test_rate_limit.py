@@ -1,4 +1,4 @@
-"""DB-backed tests for infra/rate_limit.py + services/rate_limits.py.
+"""DB-backed tests for infra/rate_limit.py + infra/rate_limits.py.
 
 The fixed-window limiter is a single Postgres `INSERT ... ON CONFLICT DO
 UPDATE ... RETURNING` statement — its correctness (pinned start_time within a
@@ -17,18 +17,18 @@ import infra.rate_limit as rate_limit
 from domain_errors import RateLimited
 from infra.db import getSession
 from infra.db_models import RateLimit
-from services import rate_limits as repo
+from infra import rate_limits as repo
 
 
 # upsertAndGet needs the RETURNING clause from a Core INSERT ... ON CONFLICT
 # statement, which session.exec() doesn't support — same reason
 # pyproject.toml's filterwarnings already exempts services.cases and
 # services.admin from "session.execute() is deprecated, use exec()". This
-# file is the first to exercise services.rate_limits directly, so it needs
+# file is the first to exercise infra.rate_limits directly, so it needs
 # the same exemption; added here rather than in pyproject.toml (off-limits
 # per the task rules) since pytest.mark.filterwarnings can scope it per-file
 # just as well.
-pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning:services.rate_limits")
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning:infra.rate_limits")
 
 
 def uniqueKey(prefix: str) -> str:

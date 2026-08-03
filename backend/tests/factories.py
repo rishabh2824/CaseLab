@@ -13,6 +13,7 @@ from typing import Any
 
 from models.admin import AdminRole
 from models.cases import CasePayload, CaseStructure, CaseUpdatePayload
+from models.simulation_runtime import PersonaGraph, Run, RunCaseSnapshot
 from services.auth import CurrentAdmin
 
 
@@ -90,6 +91,21 @@ def fileEntry(
         "share_conditions": share_conditions,
         "perceived_contents": perceived_contents,
     }
+
+
+def run(**overrides: Any) -> Run:
+    """A minimal-but-realistic Run instance, for tests that exercise
+    turn_state/run_store helpers directly against a valid Run shell rather
+    than driving a full turn through the `sim` fixture."""
+    base: dict[str, Any] = dict(
+        case_id=1,
+        case_snapshot=RunCaseSnapshot(id=1, case_name="Case", initial_brief="Brief", simulation_duration=None),
+        persona_graph=PersonaGraph(),
+        start_time=1000.0,
+        active_persona_id="A",
+    )
+    base.update(overrides)
+    return Run(**base)
 
 
 def caseStructure(

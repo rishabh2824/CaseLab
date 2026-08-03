@@ -9,6 +9,9 @@
 // test failure instead of a timeout.
 
 import type { Page, Route } from "@playwright/test";
+import { sseBody } from "../tests/support/sse.js";
+
+export { type SseFrame, sseBody } from "../tests/support/sse.js";
 
 export type JsonBody = unknown;
 
@@ -88,14 +91,6 @@ export async function mockApi(page: Page, handlers: Handlers): Promise<void> {
 
 // --- SSE ------------------------------------------------------------------
 
-export type SseFrame = { event: string; data: unknown };
-
-// Serialized the way sse-starlette writes frames on the wire.
-export const sse = (frames: SseFrame[]): string =>
-	`${frames
-		.map(({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}`)
-		.join("\n\n")}\n\n`;
-
 // One complete, successful turn: the reply split across two `delta` frames (so
 // the incremental renderer is genuinely exercised), then `meta`, then `done`.
 export function turn(
@@ -111,7 +106,7 @@ export function turn(
 	},
 ): string {
 	const split = Math.ceil(reply.length / 2);
-	return sse([
+	return sseBody([
 		{ event: "delta", data: { text: reply.slice(0, split) } },
 		{ event: "delta", data: { text: reply.slice(split) } },
 		{
@@ -143,9 +138,14 @@ export function turn(
 
 export const ADMIN_ROLE = { SUPER: 1, ADMIN: 2 } as const;
 
-// The admin route guards read `session.adminRole` out of sessionStorage
-// (src/lib/auth.ts), so seeding that key is all it takes to enter the admin
-// app — no Google Identity round trip, which E2E cannot perform anyway.
+// The admin route guards (src/lib/auth.ts's requireAdmin/requireSuperAdmin)
+// confirm the session against GET /api/admin/me on every admin route load —
+// no Google Identity round trip, which E2E cannot perform anyway, so this
+// stubs that check directly. Seeding sessionStorage too means a test that
+// renders admin UI before that fetch resolves still sees the right role.
+// Registered as its own page.route (after mockApi's catch-all, so it wins —
+// Playwright runs routes in reverse registration order) rather than folded
+// into the Handlers map, since callers register mockApi() before calling this.
 export async function signInAsAdmin(
 	page: Page,
 	{
@@ -168,6 +168,13 @@ export async function signInAsAdmin(
 		},
 		[role, email] as const,
 	);
+	await page.route("**/api/admin/me", async (route) => {
+		await route.fulfill({
+			status: 200,
+			contentType: "application/json",
+			body: JSON.stringify({ admin_id: 1, role, email, name: null }),
+		});
+	});
 }
 
 export const contact = (overrides: Record<string, unknown> = {}) => ({

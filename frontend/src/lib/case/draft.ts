@@ -1,6 +1,12 @@
 // Pure data-shaping helpers for the case form
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
 
+export function parseIntOrNull(raw: string): number | null {
+	if (raw === "") return null;
+	const parsed = Number(raw);
+	return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+}
+
 export const createEmptyPersona = (
 	overrides: Partial<Persona> = {},
 ): Persona => ({
@@ -83,6 +89,44 @@ export const referralsTo = (
 
 export const isRoot = (roots: string[], personaId: string): boolean =>
 	roots.includes(personaId);
+
+export const personasById = (personas: Persona[]): Map<string, Persona> =>
+	new Map(personas.map((p) => [p.id, p]));
+
+export const rootPersonas = (
+	personas: Persona[],
+	roots: string[],
+): Persona[] => {
+	const byId = personasById(personas);
+	return roots
+		.map((id) => byId.get(id))
+		.filter((persona): persona is Persona => Boolean(persona));
+};
+
+// Personas not in `roots` — i.e. every persona reachable only via a referral,
+// in flat document order. A persona can have more than one referrer under
+// the flat model, so the label shows every parent, not just one.
+export const referredWithParents = (
+	personas: Persona[],
+	referrals: ReferralEdge[],
+	roots: string[],
+): { persona: Persona; label: string; parentLabel: string }[] => {
+	const byId = personasById(personas);
+	return personas
+		.filter((persona) => !roots.includes(persona.id))
+		.map((persona, index) => ({
+			persona,
+			label: getPersonaLabel(persona, `Referred Persona ${index + 1}`),
+			parentLabel: referralsTo(referrals, persona.id)
+				.map((referral) =>
+					getPersonaLabel(
+						byId.get(referral.from_id) ?? { name: "" },
+						"Unknown",
+					),
+				)
+				.join(", "),
+		}));
+};
 
 // Every persona reachable from `startIds` by following referral edges
 // outward, including `startIds` themselves. Used to cascade-delete a

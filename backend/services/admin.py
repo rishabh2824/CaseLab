@@ -1,10 +1,25 @@
 # CRUD for the ``admins`` table. Scale is ~20 admins total, so every function here does the simplest possible
 # query rather than anything batched/paginated.
 
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import delete
 from sqlmodel import select
-from domain_errors import PersistenceError
+from domain_errors import AdminEmailTaken, AdminNotFound, PersistenceError, SuperAdminProtected, Unauthorized
 from infra.db_models import Admin, Case, Collaborator
+from models.admin import AdminRole
+from services.auth import verifyToken
+
+
+async def loginWithGoogleCredential(session, credential: str) -> dict:
+    try:
+        claims = await run_in_threadpool(verifyToken, credential)
+    except ValueError as exc:
+        raise Unauthorized(str(exc)) from exc
+
+    admin = await getByEmail(session, claims["email"])
+    if admin is None:
+        raise Unauthorized("Your account is not authorized")
+    return admin
 
 
 async def getByEmail(session, email: str) -> dict | None:
@@ -23,6 +38,9 @@ async def listAll(session) -> list[dict]:
 
 
 async def create(session, email: str, name: str | None, role: int) -> dict:
+    if await getByEmail(session, email) is not None:
+        raise AdminEmailTaken("An admin with this email already exists.")
+
     admin = Admin(email=email, name=name, role=role)
     session.add(admin)
     await session.commit()
@@ -36,6 +54,12 @@ async def create(session, email: str, name: str | None, role: int) -> dict:
 # only ever gets deleted once no admin has access to it anymore. Atomic: one
 # commit at the end, so a failure partway through leaves nothing persisted.
 async def deleteWithCascade(session, admin_id: int) -> dict:
+    existing = await getById(session, admin_id)
+    if existing is None:
+        raise AdminNotFound("Admin not found.")
+    if existing["role"] == AdminRole.SUPER:
+        raise SuperAdminProtected("Super admins cannot be deleted.")
+
     owned_cases = (await session.exec(select(Case).where(Case.admin == admin_id))).all()
     cases_deleted = 0
     cases_reassigned = 0

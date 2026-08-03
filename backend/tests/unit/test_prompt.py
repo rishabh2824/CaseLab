@@ -8,24 +8,33 @@ NOT via the `sim` fixture, which belongs to another test file.
 
 from __future__ import annotations
 
+from models.cases import FileEntry
+from models.simulation_runtime import PersonaDetail, Referral, RunCaseSnapshot
 from services.simulation import prompt as prompt_module
 
 
-CASE_SNAPSHOT = {
-    "initial_brief": "Reduce office supply costs.",
-    "common_information": "Sterling Industries background.",
-}
+CASE_SNAPSHOT = RunCaseSnapshot(
+    id=1,
+    case_name="Sterling Industries",
+    initial_brief="Reduce office supply costs.",
+    common_information="Sterling Industries background.",
+)
 
 
-def personaDetails(**overrides) -> dict:
+def personaDetails(**overrides) -> PersonaDetail:
     base = dict(
+        id="A",
         name="Mary",
         role="CFO",
         personality_traits="Direct, impatient",
         known_facts="Karen handles all complaint escalations.",
     )
     base.update(overrides)
-    return base
+    return PersonaDetail(**base)
+
+
+def referral(condition_trigger: str) -> Referral:
+    return Referral(parent_persona_id="A", referred_persona_id="B", condition_trigger=condition_trigger, persona=personaDetails(id="B"))
 
 
 # --------------------------------------------------------------------------
@@ -348,7 +357,7 @@ async def test_referral_unlock_false_without_calling_classifier_when_condition_b
         raise AssertionError("classifyReferral should not have been called")
 
     monkeypatch.setattr(prompt_module, "classifyReferral", failIfCalled)
-    result = await prompt_module.referralUnlock({"condition_trigger": "   "}, [])
+    result = await prompt_module.referralUnlock(referral("   "), [])
     assert result is False
 
 
@@ -361,7 +370,7 @@ async def test_referral_unlock_calls_classifier_with_stripped_condition(monkeypa
 
     monkeypatch.setattr(prompt_module, "classifyReferral", stub)
     history = [{"role": "user", "content": "hi"}]
-    result = await prompt_module.referralUnlock({"condition_trigger": "  asks about budget  "}, history)
+    result = await prompt_module.referralUnlock(referral("  asks about budget  "), history)
     assert result is True
     assert calls == [("asks about budget", history)]
 
@@ -371,8 +380,8 @@ async def test_file_share_false_without_calling_classifier_when_share_conditions
         raise AssertionError("classifyFileShare should not have been called")
 
     monkeypatch.setattr(prompt_module, "classifyFileShare", failIfCalled)
-    # share_conditions key absent entirely — must fall back to "" via .get(...).
-    result = await prompt_module.fileShare({}, [])
+    # share_conditions absent entirely (None default) — must fall back to "" via `or ""`.
+    result = await prompt_module.fileShare(FileEntry(), [])
     assert result is False
 
 
@@ -381,7 +390,7 @@ async def test_file_share_false_without_calling_classifier_when_blank(monkeypatc
         raise AssertionError("classifyFileShare should not have been called")
 
     monkeypatch.setattr(prompt_module, "classifyFileShare", failIfCalled)
-    result = await prompt_module.fileShare({"share_conditions": "   "}, [])
+    result = await prompt_module.fileShare(FileEntry(share_conditions="   "), [])
     assert result is False
 
 
@@ -391,5 +400,5 @@ async def test_file_share_calls_classifier_when_condition_present(monkeypatch):
         return False
 
     monkeypatch.setattr(prompt_module, "classifyFileShare", stub)
-    result = await prompt_module.fileShare({"share_conditions": "asks about the budget"}, [])
+    result = await prompt_module.fileShare(FileEntry(share_conditions="asks about the budget"), [])
     assert result is False

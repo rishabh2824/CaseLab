@@ -11,8 +11,8 @@ import {
 	submitCase,
 } from "../../src/lib/case/submitCase.js";
 import type { Api } from "../../src/lib/types.js";
-import { makePersona } from "../../src/testing/fixtures.js";
-import { server } from "../../src/testing/msw.js";
+import { makePersona } from "../support/fixtures.js";
+import { server } from "../support/msw.js";
 
 // Node's built-in fetch (bundled undici) refuses a relative URL outright — it
 // needs a same-origin base to resolve against, which a browser gets for free

@@ -192,7 +192,6 @@ async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict
         brief=payload.initial_brief,
         common_information=payload.common_information,
         duration=payload.simulation_duration,
-        root_personas=len(payload.roots),
         admin=admin.id,
         structure=(await buildStructure(session, payload)).model_dump(mode="json"),
     )
@@ -296,7 +295,6 @@ async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: C
                 brief=payload.initial_brief,
                 common_information=payload.common_information,
                 duration=payload.simulation_duration,
-                root_personas=len(payload.roots),
                 structure=structure,
                 version=Case.version + 1,
             )

@@ -23,7 +23,6 @@ class Case(SQLModel, table=True):
     brief: str
     common_information: str | None = None
     duration: int | None = None
-    root_personas: int
     # CITEXT is for enforcing uniqueness in the access codes
     access_code: str | None = Field(default=None, sa_column=Column(CITEXT))
     admin: int = Field(foreign_key="admins.id", index=True)

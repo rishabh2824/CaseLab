@@ -9,11 +9,11 @@ import userEvent from "@testing-library/user-event";
 import { HttpResponse, http, type JsonBodyType } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
-import { caseEditState } from "../../src/lib/caseEditState.svelte.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
 import type { Api } from "../../src/lib/types.js";
-import { makePersona, makeReferral } from "../../src/testing/fixtures.js";
-import { server } from "../../src/testing/msw.js";
+import { useUnsavedGuard } from "../../src/lib/unsavedGuard.svelte.js";
+import { makePersona, makeReferral } from "../support/fixtures.js";
+import { server } from "../support/msw.js";
 
 function makePersonaOut(
 	overrides: Partial<Api<"PersonaOut">> = {},
@@ -314,13 +314,14 @@ describe("CaseForm", () => {
 
 			// This gates AdminTopBar's unsaved-changes prompt, so it's worth
 			// pinning at each transition rather than just the end state.
-			expect(caseEditState.isDirty).toBe(false);
+			const unsavedGuard = useUnsavedGuard();
+			expect(unsavedGuard.isDirty).toBe(false);
 
 			await user.type(
 				screen.getByLabelText("Case name"),
 				"Sterling Industries",
 			);
-			expect(caseEditState.isDirty).toBe(true);
+			expect(unsavedGuard.isDirty).toBe(true);
 
 			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
 			await user.type(screen.getByLabelText("Access code"), "ABC123");
@@ -332,7 +333,7 @@ describe("CaseForm", () => {
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 
 			await screen.findByText("Case saved successfully.");
-			expect(caseEditState.isDirty).toBe(false);
+			expect(unsavedGuard.isDirty).toBe(false);
 			expect(requests).toHaveLength(1);
 		});
 	});

@@ -153,7 +153,7 @@ async def test_create_case_leaks_a_raw_integrity_error_when_a_race_slips_past_th
         # is held, but the row is invisible to any other session (READ
         # COMMITTED), which is exactly the window accessCodeTaken()'s precheck
         # can't defend against.
-        holder = Case(name="Holder", brief="brief", root_personas=0, access_code=code, admin=owner.id, structure={})
+        holder = Case(name="Holder", brief="brief", access_code=code, admin=owner.id, structure={})
         holder_session.add(holder)
         await holder_session.flush()
         cleanup.track_case(holder.id)

@@ -1,17 +1,18 @@
 import time
+from models.simulation_runtime import ChatState, PersonaDetail, Run
 
 
 # Number of nonsense messages allowed before ending the chat
 NONSENSE_THRESHOLD = 3
 
 
-def elapsedMinutes(run) -> int:
-    return int((time.time() - run["start_time"]) / 60)
+def elapsedMinutes(run: Run) -> int:
+    return int((time.time() - run.start_time) / 60)
 
 
 # Computes if a persona should be currently reachable or not.
-def personaAvailability(persona, available_at_minutes: int, elapsed_minutes: int):
-    availability_duration = persona.get("availability_duration")
+def personaAvailability(persona: PersonaDetail, available_at_minutes: int, elapsed_minutes: int) -> dict:
+    availability_duration = persona.availability_duration
     available_at = available_at_minutes
     if elapsed_minutes < available_at:
         return {
@@ -35,36 +36,35 @@ def personaAvailability(persona, available_at_minutes: int, elapsed_minutes: int
     return {"available": True, "available_in": 0, "expires_in": None}
 
 
-def newChatState() -> dict:
-    return {
-        "warning_count": 0,
-        "ended": False,
-        "end_reason": None,
-        "last_flag_type": None,
-    }
+def newChatState() -> ChatState:
+    return ChatState()
 
 
 # Gets the chat state for one persona
-def getChatState(run: dict, persona_id: str) -> dict:
-    return run.get("persona_chat_state", {}).get(persona_id) or newChatState()
+def getChatState(run: Run, persona_id: str) -> ChatState:
+    return run.persona_chat_state.get(persona_id) or newChatState()
 
 
-# Same but this is an editable version
-def editChatState(run: dict, persona_id: str) -> dict:
-    return run.setdefault("persona_chat_state", {}).setdefault(persona_id, newChatState())
+# Same but this is an editable version. Returns the same object reference stored in
+# run.persona_chat_state (setdefault semantics), so mutating the returned ChatState's
+# attributes in place — never model_copy() — mutates the run itself, exactly like
+# dict-in-place mutation did before. This only works because ChatState has no
+# validate_assignment=True.
+def editChatState(run: Run, persona_id: str) -> ChatState:
+    return run.persona_chat_state.setdefault(persona_id, newChatState())
 
 
-# drops fields from the dict not needed by frontend
-def shapeChatState(state: dict) -> dict:
+# drops fields from the state not needed by frontend
+def shapeChatState(state: ChatState) -> dict:
     return {
-        "chat_ended": state["ended"],
-        "chat_end_reason": state["end_reason"],
-        "warning_count": state["warning_count"],
+        "chat_ended": state.ended,
+        "chat_end_reason": state.end_reason,
+        "warning_count": state.warning_count,
     }
 
 
 # Final thing sent to the frontend
-def chatStatePayload(run: dict, persona_id: str) -> dict:
+def chatStatePayload(run: Run, persona_id: str) -> dict:
     return shapeChatState(getChatState(run, persona_id))
 
 
@@ -83,18 +83,21 @@ def boundaryReply(persona_name: str, should_end: bool) -> str:
     )
 
 
-# takes the run's full history dict and returns only user/assistant turns, trimmed to {role, content}
-def formatHistory(run: dict, persona_ids: set[str] | None = None) -> dict:
+# takes the run's full history dict and returns only user/assistant turns, trimmed to {role, content}.
+# The `role in {"user","assistant"}` filter is now also enforced at the type level
+# (ChatMessage.role: Literal["user","assistant"] — history never holds a "system" entry),
+# but is kept as cheap, defensive belt-and-suspenders.
+def formatHistory(run: Run, persona_ids: set[str] | None = None) -> dict:
     histories = {}
-    for persona_id, messages in run["history"].items():
+    for persona_id, messages in run.history.items():
         if persona_ids is not None and persona_id not in persona_ids:
             continue
         histories[persona_id] = [
             {
-                "role": message.get("role"),
-                "content": message.get("content", ""),
+                "role": message.role,
+                "content": message.content,
             }
             for message in messages
-            if message.get("role") in {"user", "assistant"}
+            if message.role in {"user", "assistant"}
         ]
     return histories

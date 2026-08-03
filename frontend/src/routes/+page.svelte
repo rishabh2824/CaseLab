@@ -1,7 +1,9 @@
 <script lang="ts">
 import { goto } from "$app/navigation";
+import { apiFetch } from "$lib/api/client.js";
 import SignInButton from "$lib/components/SignInButton.svelte";
-import { run } from "$lib/student/run.svelte.js";
+import { session } from "$lib/session.svelte.js";
+import type { Api, RunState } from "$lib/types.js";
 
 let accessCode = $state("");
 let error = $state("");
@@ -10,13 +12,19 @@ let isSubmitting = $state(false);
 async function submit(code: string): Promise<void> {
 	isSubmitting = true;
 	try {
-		await run.startSession(code.toUpperCase());
-		if (run.raw) {
-			error = "";
-			await goto("/student");
-		} else {
-			error = "Invalid access code.";
-		}
+		const fresh = await apiFetch<RunState>("/api/simulations/start", {
+			method: "POST",
+			body: { access_code: code } satisfies Api<"StartSimulationPayload">,
+		});
+		session.startRun({
+			runId: fresh.run_id,
+			accessCode: code,
+			startTime: Date.now(),
+		});
+		error = "";
+		await goto("/student");
+	} catch {
+		error = "Invalid access code.";
 	} finally {
 		isSubmitting = false;
 	}
@@ -29,7 +37,7 @@ function handleSubmit(event: SubmitEvent): void {
 		error = "Invalid access code.";
 		return;
 	}
-	submit(code);
+	submit(code.toUpperCase());
 }
 </script>
 

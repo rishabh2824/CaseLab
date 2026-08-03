@@ -1,3 +1,4 @@
+import { getContext, setContext } from "svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
 import { ApiError, apiFetch, streamChat } from "../api/client.js";
@@ -23,7 +24,7 @@ type StreamingTurn = {
 	messages: Api<"ChatMessage">[];
 };
 
-class RunStore {
+export class RunStore {
 	raw = $state<RunState | null>(null);
 	loadError = $state("");
 	activeContactId = $state<string | null>(null);
@@ -78,14 +79,10 @@ class RunStore {
 	);
 
 	// Establishes a run exactly once: resume a persisted runId, else start
-	// from the access code, else bail home. If raw is already populated (the
-	// landing page called startSession itself before navigating here), that
-	// already ran #afterLoad — nothing left to do, and no need to re-fetch
-	// the state that was just fetched to get here.
+	// from the access code, else bail home.
 	async init(): Promise<void> {
 		if (this.#initialized) return;
 		this.#initialized = true;
-		if (this.raw) return;
 		if (session.runId) {
 			await this.refresh(session.runId);
 		} else if (session.accessCode) {
@@ -367,4 +364,18 @@ class RunStore {
 	}
 }
 
-export const run = new RunStore();
+const RUN_CONTEXT_KEY = Symbol("run-store");
+
+// Scopes a RunStore to the /student route's component lifetime via Svelte
+// context, instead of a module-level singleton — so ending one run and
+// starting another (no reload, since this is an SPA) gets a fresh store
+// with no stale notes, expiry timer, or active contact left over.
+export function setRunStore(): RunStore {
+	const store = new RunStore();
+	setContext(RUN_CONTEXT_KEY, store);
+	return store;
+}
+
+export function getRunStore(): RunStore {
+	return getContext(RUN_CONTEXT_KEY);
+}

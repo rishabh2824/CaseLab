@@ -28,7 +28,7 @@ export type RunState = S["RunStateResponse"];
 // referrals, roots), not a nested tree — a persona has no embedded referrals
 // field, and a referral edge has no embedded persona. A persona being edited
 // holds a browser File for any photo/attachment that hasn't been uploaded
-// yet, and the wire FileRef once it has (see isPendingUpload).
+// yet, and the wire FileRef once it has.
 
 // `file?:` (optional key, not a required key typed `| undefined`) matches
 // FileEntry's own optionality — CaseForm.svelte normalizes raw persona data
@@ -46,10 +46,6 @@ export type Persona = Omit<Api<"PersonaPayload">, "profile_photo" | "files"> & {
 // Identical shape on the wire whether it's a request or a response — a
 // referral edge is just {from_id, to_id, conditions}, nothing to diverge on.
 export type ReferralEdge = Api<"ReferralEdgePayload">;
-
-export const isPendingUpload = (
-	value: File | Api<"FileRef"> | null | undefined,
-): value is File => value instanceof File;
 
 // --- SSE turn events -------------------------------------------------------
 //

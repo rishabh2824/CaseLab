@@ -98,7 +98,7 @@ async def test_get_simulation_state_returns_shared_files_with_fresh_signed_urls(
     full_state = await sim_service.getSimulationState(run_id)
 
     assert len(full_state["shared_files"]) == 1
-    assert full_state["shared_files"][0]["url"] == fake_spaces("cases/1/budget.pdf")
+    assert full_state["shared_files"][0].url == fake_spaces("cases/1/budget.pdf")
 
 
 async def test_unknown_file_handle_from_model_is_ignored(sim):

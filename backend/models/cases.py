@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from infra.settings import SIMULATION_DURATION
+from domain_constants import SIMULATION_DURATION
 
 
 class FileRef(BaseModel):

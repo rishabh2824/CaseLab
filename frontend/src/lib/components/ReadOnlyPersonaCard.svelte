@@ -1,5 +1,9 @@
 <script lang="ts">
-import { getPersonaLabel, referralsFrom } from "$lib/case/draft.js";
+import {
+	getPersonaLabel,
+	personasById as personasByIdOf,
+	referralsFrom,
+} from "$lib/case/draft.js";
 import type { Persona, ReferralEdge } from "$lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 
@@ -11,7 +15,7 @@ type Props = {
 
 let { persona, personas, referrals }: Props = $props();
 
-const personasById = $derived(new Map(personas.map((p) => [p.id, p])));
+const personasById = $derived(personasByIdOf(personas));
 const ownReferrals = $derived(referralsFrom(referrals, persona.id));
 </script>
 

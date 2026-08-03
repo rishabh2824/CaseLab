@@ -13,7 +13,7 @@ import {
 	referralsFrom,
 	referralsTo,
 } from "../../src/lib/case/draft.js";
-import { makeReferral } from "../../src/testing/fixtures.js";
+import { makeReferral } from "../support/fixtures.js";
 
 describe("createEmptyPersona", () => {
 	it("assigns each persona a unique id", () => {

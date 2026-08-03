@@ -1,5 +1,6 @@
 // Exports an empty case form so admins can autofill it with AI
 
+import { downloadBlob } from "../download.js";
 import { slugify } from "../format.js";
 import type { Persona, ReferralEdge } from "../types.js";
 import { createEmptyPersona } from "./draft.js";
@@ -500,13 +501,5 @@ export function buildHTMLForm({
 export function downloadForm(html: string, caseName: string): void {
 	const slug = slugify(caseName);
 	const filename = `${slug || "new-case"}.html`;
-	const file = new Blob([html], { type: "text/html;charset=utf-8" });
-	const url = URL.createObjectURL(file);
-	const link = document.createElement("a");
-	link.href = url;
-	link.download = filename;
-	document.body.appendChild(link);
-	link.click();
-	link.remove();
-	window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+	downloadBlob(new Blob([html], { type: "text/html;charset=utf-8" }), filename);
 }

@@ -83,7 +83,7 @@ async def test_successful_start_returns_trimmed_summary_and_one_contact_per_root
         "simulation_duration": 30,
     }
     assert len(state["contacts"]) == 2
-    assert {c["id"] for c in state["contacts"]} == {"A", "B"}
+    assert {c.id for c in state["contacts"]} == {"A", "B"}
     assert state["histories"] == {}
     assert state["shared_files"] == []
     assert state["notes"] == ""
@@ -107,15 +107,19 @@ async def test_secrets_never_reach_the_browser(sim):
     )
     sim.setCase(structure=structure)
 
+    # ContactOut (models/simulations.py) has no known_facts/personality_traits/
+    # files fields at all — the leak class this test guards against is now
+    # structurally impossible, not just conventionally avoided, but the
+    # runtime check is kept as a concrete regression guard.
     start_state = await sim.start()
     for contact in start_state["contacts"]:
         for field in SECRET_FIELDS:
-            assert field not in contact, f"{field} leaked into startSimulation contact"
+            assert not hasattr(contact, field), f"{field} leaked into startSimulation contact"
 
     state = await sim_service.getSimulationState(start_state["run_id"])
     for contact in state["contacts"]:
         for field in SECRET_FIELDS:
-            assert field not in contact, f"{field} leaked into getSimulationState contact"
+            assert not hasattr(contact, field), f"{field} leaked into getSimulationState contact"
 
 
 async def test_root_with_closed_availability_window_excluded_from_active_persona(sim, monkeypatch):
@@ -134,10 +138,10 @@ async def test_root_with_closed_availability_window_excluded_from_active_persona
 
     state = await sim.start()
 
-    alice = next(c for c in state["contacts"] if c["id"] == "A")
-    bob = next(c for c in state["contacts"] if c["id"] == "B")
-    assert alice["available"] is False
-    assert bob["available"] is True
+    alice = next(c for c in state["contacts"] if c.id == "A")
+    bob = next(c for c in state["contacts"] if c.id == "B")
+    assert alice.available is False
+    assert bob.available is True
     assert state["active_persona_id"] == "B"
 
 
@@ -160,8 +164,8 @@ async def test_profile_photos_are_resigned_via_spaces(sim, fake_spaces):
 
     state = await sim.start()
 
-    photo = state["contacts"][0]["profile_photo"]
-    assert photo["url"] == fake_spaces("cases/1/alice.png")
+    photo = state["contacts"][0].profile_photo
+    assert photo.url == fake_spaces("cases/1/alice.png")
 
 
 async def test_rate_limiter_is_consulted_with_the_trimmed_access_code(sim, monkeypatch):

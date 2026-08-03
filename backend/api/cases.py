@@ -35,7 +35,7 @@ async def listCases(
     return await cases.listCases(session, admin)
 
 
-@router.get("/demo", response_model=DemoCaseResponse)
+@router.get("/demo", response_model=DemoCaseResponse, dependencies=[Depends(getCurrentAdmin)])
 async def getDemoCase(
     session: AsyncSession = Depends(getRequestSession),
 ):

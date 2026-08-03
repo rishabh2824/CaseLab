@@ -32,7 +32,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import domain_errors as de
 import services.admin as admin_repo
-import api.admin as admin_router_module
 from api.dependencies import CurrentAdmin, getCurrentAdmin
 from infra.db import getRequestSession
 from models.admin import AdminRole
@@ -260,38 +259,18 @@ async def test_delete_missing_admin_returns_404(client, as_admin, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-class _NullSession:
-    """Stands in for the AsyncSession returned by infra.db.getSession().
-
-    api/admin.py's login() calls the raw `getSession()` context manager
-    directly (not the getRequestSession FastAPI dependency, which `client`
-    already overrides), so it needs its own patch to stay hermetic.
-    """
-
-    async def __aenter__(self):
-        return None
-
-    async def __aexit__(self, *exc_info):
-        return False
-
-
-def _stub_get_session():
-    return _NullSession()
-
-
 async def test_login_invalid_token_returns_401(client, monkeypatch):
     def bad_token(credential):
         raise ValueError("Token is expired.")
 
-    monkeypatch.setattr(admin_router_module, "verifyToken", bad_token)
+    monkeypatch.setattr(admin_repo, "verifyToken", bad_token)
     resp = await client.post("/api/admin/login", json={"credential": "whatever"})
     assert resp.status_code == 401
     assert resp.json() == {"detail": "Token is expired."}
 
 
 async def test_login_unknown_email_returns_401(client, monkeypatch):
-    monkeypatch.setattr(admin_router_module, "verifyToken", lambda credential: {"email": "ghost@test.invalid"})
-    monkeypatch.setattr(admin_router_module, "getSession", _stub_get_session)
+    monkeypatch.setattr(admin_repo, "verifyToken", lambda credential: {"email": "ghost@test.invalid"})
 
     async def no_admin(session, email):
         return None
@@ -303,8 +282,7 @@ async def test_login_unknown_email_returns_401(client, monkeypatch):
 
 
 async def test_login_success_sets_cookie_and_returns_admin(client, monkeypatch):
-    monkeypatch.setattr(admin_router_module, "verifyToken", lambda credential: {"email": "admin@test.invalid"})
-    monkeypatch.setattr(admin_router_module, "getSession", _stub_get_session)
+    monkeypatch.setattr(admin_repo, "verifyToken", lambda credential: {"email": "admin@test.invalid"})
 
     async def found(session, email):
         return {"id": 7, "email": "admin@test.invalid", "name": "Admin Seven", "role": int(AdminRole.ADMIN)}
@@ -334,6 +312,39 @@ async def test_logout_clears_cookie(client):
     # (empty) value, which is an implementation detail.
     lowered = set_cookie.lower()
     assert "max-age=0" in lowered or "1970" in lowered
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/me
+# ---------------------------------------------------------------------------
+
+
+async def test_me_requires_admin_cookie(client):
+    resp = await client.get("/api/admin/me")
+    assert resp.status_code == 401
+
+
+async def test_me_returns_current_admin(client, as_admin, monkeypatch):
+    as_admin(admin_id=7, role=AdminRole.SUPER)
+
+    async def found(session, admin_id):
+        return {"id": 7, "email": "admin@test.invalid", "name": "Admin Seven", "role": int(AdminRole.SUPER)}
+
+    monkeypatch.setattr(admin_repo, "getById", found)
+    resp = await client.get("/api/admin/me")
+    assert resp.status_code == 200
+    assert resp.json() == {"admin_id": 7, "role": 1, "email": "admin@test.invalid", "name": "Admin Seven"}
+
+
+async def test_me_for_a_deleted_admin_returns_401(client, as_admin, monkeypatch):
+    as_admin(admin_id=7)
+
+    async def missing(session, admin_id):
+        return None
+
+    monkeypatch.setattr(admin_repo, "getById", missing)
+    resp = await client.get("/api/admin/me")
+    assert resp.status_code == 401
 
 
 # ---------------------------------------------------------------------------

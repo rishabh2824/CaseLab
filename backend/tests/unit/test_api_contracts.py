@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-import api.uploads as uploads_module
+import services.uploads as uploads_module
 import services.cases as cases_service
-from infra.settings import SIMULATION_DURATION
+from domain_constants import SIMULATION_DURATION
 from tests import factories
 from tests.unit.test_api_http import as_admin, client  # noqa: F401  (re-exported fixtures)
 

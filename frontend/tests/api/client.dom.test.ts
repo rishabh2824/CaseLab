@@ -6,7 +6,7 @@
 import { delay, HttpResponse, http } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, apiFetch, streamChat } from "../../src/lib/api/client.js";
-import { server, sseBody, sseStreamResponse } from "../../src/testing/msw.js";
+import { server, sseBody, sseStreamResponse } from "../support/msw.js";
 
 function assertApiError(err: unknown): asserts err is ApiError {
 	if (!(err instanceof ApiError)) throw err;

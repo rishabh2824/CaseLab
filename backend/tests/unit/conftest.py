@@ -29,6 +29,7 @@ from collections.abc import Callable
 import pytest
 from infra.db_models import Case
 from models.cases import CaseStructure
+from models.simulation_runtime import Run
 from models.simulations import SendMessagePayload, StartSimulationPayload
 from services.simulation import prompt as prompt_module
 from services.simulation import reads as reads_module
@@ -45,26 +46,28 @@ from tests import factories
 class FakeRunStore:
     """Stands in for services/simulation/run_store.py.
 
-    Stores each run as a JSON round-trip of the real serialized form, which is
-    what catches the class of bug the real store exists to prevent: a set that
-    silently becomes a list, or an int dict key that comes back as a string,
-    once the blob has been through JSONB.
+    Stores each run as a JSON round-trip of the real serialized form (Run's
+    own model_dump(mode="json")/model_validate — the two crossing points the
+    real store also uses), which is what catches the class of bug the real
+    store exists to prevent: a set that silently becomes a list, or an int
+    dict key that comes back as a string, once the blob has been through
+    JSONB.
     """
 
     def __init__(self) -> None:
         self.rows: dict[str, dict] = {}
 
-    async def insert(self, run_id: str, run: dict) -> None:
+    async def insert(self, run_id: str, run: Run) -> None:
         self.rows[run_id] = self._roundTrip(run)
 
-    async def get(self, run_id: str) -> dict:
+    async def get(self, run_id: str) -> Run:
         from domain_errors import RunNotFound
 
         if run_id not in self.rows:
             raise RunNotFound(f"Run {run_id} not found.")
         return self._deserialize(self.rows[run_id])
 
-    async def update(self, run_id: str, fn: Callable[[dict], Any]) -> Any:
+    async def update(self, run_id: str, fn: Callable[[Run], Any]) -> Any:
         from domain_errors import RunNotFound
 
         if run_id not in self.rows:
@@ -77,16 +80,12 @@ class FakeRunStore:
     # -- helpers ----------------------------------------------------------
 
     @staticmethod
-    def _roundTrip(run: dict) -> dict:
-        from services.simulation.run_store import serializeRun
-
-        return json.loads(json.dumps(serializeRun(run)))
+    def _roundTrip(run: Run) -> dict:
+        return json.loads(json.dumps(run.model_dump(mode="json")))
 
     @staticmethod
-    def _deserialize(data: dict) -> dict:
-        from services.simulation.run_store import deserializeRun
-
-        return deserializeRun(data)
+    def _deserialize(data: dict) -> Run:
+        return Run.model_validate(data)
 
     # -- test affordances -------------------------------------------------
 
@@ -201,7 +200,6 @@ class SimHarness:
             brief=brief,
             common_information=common_information,
             duration=duration,
-            root_personas=len(structure.roots),
             access_code=access_code,
             admin=1,
             structure=structure.model_dump(mode="json"),
@@ -275,7 +273,6 @@ def fake_spaces(monkeypatch):
     def getUrl(object_key: str) -> str:
         return f"https://spaces.test/{object_key}?signed=1"
 
-    monkeypatch.setattr(reads_module, "getUrl", getUrl)
     monkeypatch.setattr(sim_service, "getUrl", getUrl)
     return getUrl
 
@@ -304,6 +301,5 @@ def sim(monkeypatch, fake_run_store, stub_llm, no_rate_limit, fake_spaces) -> Si
         return case
 
     monkeypatch.setattr(sim_service, "getSession", noSession)
-    monkeypatch.setattr(reads_module, "getSession", noSession)
     monkeypatch.setattr(reads_module, "fetchCase", fetchCase)
     return harness

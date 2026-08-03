@@ -22,8 +22,16 @@ class RunNotFound(NotFoundError):
     pass
 
 
+class Unauthorized(DomainError):
+    status_code = 401
+
+
 class AccessDenied(DomainError):
     status_code = 403
+
+
+class SuperAdminProtected(AccessDenied):
+    pass
 
 
 class InvalidRequest(DomainError):
@@ -39,6 +47,14 @@ class VersionConflict(ConflictError):
 
 
 class AccessCodeConflict(ConflictError):
+    pass
+
+
+class AdminEmailTaken(ConflictError):
+    pass
+
+
+class AdminNotFound(NotFoundError):
     pass
 
 

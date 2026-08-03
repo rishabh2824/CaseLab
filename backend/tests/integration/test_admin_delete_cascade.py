@@ -1,8 +1,7 @@
 import pytest
-from fastapi import HTTPException
 from sqlmodel import select
 from api.admin import deleteAdmin as deleteAdminRoute
-from domain_errors import PersistenceError
+from domain_errors import PersistenceError, SuperAdminProtected
 from infra.db_models import Admin, Case, Collaborator
 from models.admin import AdminRole
 from services import admin as admin_service
@@ -119,6 +118,6 @@ async def test_delete_with_cascade_is_atomic_on_failure(session, cleanup, monkey
 
 async def test_deleting_a_super_admin_still_403s(session, cleanup):
     super_admin = await cleanup.make_admin(role=AdminRole.SUPER)
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(SuperAdminProtected) as exc_info:
         await deleteAdminRoute(super_admin.id, session)
     assert exc_info.value.status_code == 403

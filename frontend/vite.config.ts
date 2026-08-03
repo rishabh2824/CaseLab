@@ -61,7 +61,7 @@ export default defineConfig({
 						"tests/**/*.svelte.{test,spec}.{js,ts}",
 						"tests/**/*.dom.{test,spec}.{js,ts}",
 					],
-					setupFiles: ["./src/testing/setup.node.ts"],
+					setupFiles: ["./tests/support/setup.node.ts"],
 				},
 			},
 			{
@@ -81,7 +81,7 @@ export default defineConfig({
 						"tests/**/*.svelte.{test,spec}.{js,ts}",
 						"tests/**/*.dom.{test,spec}.{js,ts}",
 					],
-					setupFiles: ["./src/testing/setup.client.ts"],
+					setupFiles: ["./tests/support/setup.client.ts"],
 				},
 			},
 		],

@@ -13,7 +13,7 @@ import type {
 	RunState,
 	SharedFile,
 	TurnMeta,
-} from "../lib/types.js";
+} from "../../src/lib/types.js";
 
 let personaSeq = 0;
 

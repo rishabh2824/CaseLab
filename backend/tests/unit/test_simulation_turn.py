@@ -20,8 +20,8 @@ async def test_message_prepares_a_normal_turn_with_cached_system_prompt(sim):
 
     prepared = await sim.prepare(run_id, "A", "What vendor do we use?")
 
-    assert prepared["kind"] == "normal"
-    system = prepared["messages"][0]
+    assert prepared.kind == "normal"
+    system = prepared.messages[0]
     assert system["role"] == "system"
     # The stable half (case + persona facts) is cached; the per-turn half
     # (referral/file offers, which change every message) is not.
@@ -29,7 +29,7 @@ async def test_message_prepares_a_normal_turn_with_cached_system_prompt(sim):
     assert "cache_control" not in system["content"][1]
     # The rest of the payload is the recent history, which for a first
     # message is just the user's own turn.
-    assert prepared["messages"][1:] == [{"role": "user", "content": "What vendor do we use?"}]
+    assert prepared.messages[1:] == [{"role": "user", "content": "What vendor do we use?"}]
 
 
 async def test_send_streams_delta_then_meta_then_done_and_persists_reply(sim):

@@ -15,3 +15,4 @@ overrides:
   # schema. ^4.3.0 still satisfies the security floor this override exists for.
   js-yaml: ^4.3.0
   cookie: '>=0.7.0 <2.0.0'
+  brace-expansion: '>=2.1.4'

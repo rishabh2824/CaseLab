@@ -2,7 +2,7 @@
 // (DOMParser output, download anchors), so this needs jsdom.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm, downloadForm } from "../../src/lib/case/exportCase.js";
-import { makePersona, makeReferral } from "../../src/testing/fixtures.js";
+import { makePersona, makeReferral } from "../support/fixtures.js";
 
 // Parses buildHTMLForm's output the same way a browser (or parseHTMLForm)
 // would, so assertions inspect real elements rather than the raw template

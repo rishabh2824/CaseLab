@@ -18,6 +18,8 @@ import json
 
 import domain_errors as de
 import services.simulation.service as sim_service
+from models.simulation_runtime import PreparedBoundaryTurn, TurnMeta
+from models.simulations import ChatMessage
 from tests.unit.test_api_http import client  # noqa: F401  (re-exported fixture)
 
 
@@ -77,14 +79,13 @@ async def test_send_message_boundary_reply_still_streams_over_sse(client, monkey
     covered."""
 
     async def fake_message(run_id, payload):
-        return {
-            "kind": "boundary",
-            "run_id": run_id,
-            "persona_id": payload.persona_id,
-            "reply": "Let's keep this professional.",
-            "history": [{"role": "assistant", "content": "Let's keep this professional."}],
-            "meta": {"new_contacts": [], "shared_files": [], "warning_count": 1, "ended": False, "chat_end_reason": None},
-        }
+        return PreparedBoundaryTurn(
+            run_id=run_id,
+            persona_id=payload.persona_id,
+            reply="Let's keep this professional.",
+            history=[ChatMessage(role="assistant", content="Let's keep this professional.")],
+            meta=TurnMeta(new_contacts=[], shared_files=[], chat_ended=False, chat_end_reason=None, warning_count=1),
+        )
 
     monkeypatch.setattr(sim_service, "message", fake_message)
     monkeypatch.setattr(sim_service, "streamMessage", sim_service.streamMessage)  # exercise the real generator

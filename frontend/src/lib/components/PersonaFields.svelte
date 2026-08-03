@@ -1,22 +1,19 @@
 <script lang="ts">
 import {
-	createEmptyPersona,
-	createEmptyReferral,
 	getPersonaLabel,
-	reachableFrom,
+	parseIntOrNull,
 	referralsFrom,
 } from "$lib/case/draft.js";
+import type { CaseGraph } from "$lib/case/graph.svelte.js";
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "$lib/types.js";
 
 type Props = {
 	persona: Persona;
-	personas: Persona[];
-	referrals: ReferralEdge[];
-	roots: string[];
+	graph: CaseGraph;
 	errors?: PersonaFieldErrors;
 };
 
-let { persona, personas, referrals, roots, errors = {} }: Props = $props();
+let { persona, graph, errors = {} }: Props = $props();
 const uid = $props.id();
 
 type InputEvent_ = Event & { currentTarget: EventTarget & HTMLInputElement };
@@ -24,15 +21,10 @@ type TextAreaEvent = Event & {
 	currentTarget: EventTarget & HTMLTextAreaElement;
 };
 
-function parseIntOrNull(raw: string): number | null {
-	if (raw === "") return null;
-	const parsed = Number(raw);
-	return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
-}
-
 function handlePhotoChange(event: InputEvent_): void {
 	persona.profile_photo = event.currentTarget.files?.[0] ?? null;
 	event.currentTarget.value = "";
+	graph.touch();
 }
 
 function addFile(): void {
@@ -41,10 +33,12 @@ function addFile(): void {
 		share_conditions: "",
 		perceived_contents: "",
 	});
+	graph.touch();
 }
 
 function removeFile(fileIndex: number): void {
 	persona.files.splice(fileIndex, 1);
+	graph.touch();
 }
 
 function handleFileChange(event: InputEvent_, fileIndex: number): void {
@@ -52,55 +46,20 @@ function handleFileChange(event: InputEvent_, fileIndex: number): void {
 	if (!entry) return;
 	entry.file = event.currentTarget.files?.[0] ?? null;
 	event.currentTarget.value = "";
+	graph.touch();
 }
 
-const personasById = $derived(new Map(personas.map((p) => [p.id, p])));
-const ownReferrals = $derived(referralsFrom(referrals, persona.id));
-
-// Removes this persona's referral edges into `targetIds`, then cascade-deletes
-// each removed target's own subtree — unless a target is still reachable some
-// other way once those edges are gone (e.g. a second parent).
-function removeReferralsTo(targetIds: Set<string>): void {
-	for (let i = referrals.length - 1; i >= 0; i--) {
-		const referral = referrals[i];
-		if (!referral) continue;
-		if (referral.from_id === persona.id && targetIds.has(referral.to_id)) {
-			referrals.splice(i, 1);
-		}
-	}
-	const stillReachable = reachableFrom(roots, referrals);
-	const toDelete = new Set(
-		[...reachableFrom([...targetIds], referrals)].filter(
-			(id) => !stillReachable.has(id),
-		),
-	);
-	if (toDelete.size === 0) return;
-	for (let i = personas.length - 1; i >= 0; i--) {
-		const p = personas[i];
-		if (p && toDelete.has(p.id)) personas.splice(i, 1);
-	}
-	for (let i = referrals.length - 1; i >= 0; i--) {
-		const referral = referrals[i];
-		if (!referral) continue;
-		if (toDelete.has(referral.from_id) || toDelete.has(referral.to_id)) {
-			referrals.splice(i, 1);
-		}
-	}
-}
+const ownReferrals = $derived(referralsFrom(graph.referrals, persona.id));
 
 // UX unchanged from before the flat-graph refactor: this always creates a
 // brand-new referred persona per added referral, never links to an existing
 // one — authoring a second parent for an existing persona isn't exposed here.
 function addReferral(): void {
-	const referredPersona = createEmptyPersona();
-	personas.push(referredPersona);
-	referrals.push(
-		createEmptyReferral({ from_id: persona.id, to_id: referredPersona.id }),
-	);
+	graph.addReferral(persona.id);
 }
 
 function removeReferral(referral: ReferralEdge): void {
-	removeReferralsTo(new Set([referral.to_id]));
+	graph.removeReferralsFrom(persona.id, [referral.to_id]);
 }
 
 function handleReferralConditionsChange(
@@ -108,6 +67,7 @@ function handleReferralConditionsChange(
 	referral: ReferralEdge,
 ): void {
 	referral.conditions = event.currentTarget.value;
+	graph.touch();
 }
 </script>
 
@@ -120,6 +80,7 @@ function handleReferralConditionsChange(
 			required
 			placeholder="Enter persona name"
 			bind:value={persona.name}
+			oninput={graph.touch}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		/>
 		{#if errors.name}<p class="text-xs font-medium text-brand">{errors.name}</p>{/if}
@@ -133,6 +94,7 @@ function handleReferralConditionsChange(
 			required
 			placeholder="Enter title or role"
 			bind:value={persona.role}
+			oninput={graph.touch}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		/>
 		{#if errors.role}<p class="text-xs font-medium text-brand">{errors.role}</p>{/if}
@@ -161,6 +123,7 @@ function handleReferralConditionsChange(
 			rows="3"
 			placeholder="Describe the persona's background, facts, and any other relevant information"
 			bind:value={persona.known_facts}
+			oninput={graph.touch}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		></textarea>
 	</div>
@@ -172,6 +135,7 @@ function handleReferralConditionsChange(
 			rows="3"
 			placeholder="Describe personality traits"
 			bind:value={persona.personality_traits}
+			oninput={graph.touch}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		></textarea>
 	</div>
@@ -187,6 +151,7 @@ function handleReferralConditionsChange(
 			value={persona.availability_minutes ?? ''}
 			oninput={(event) => {
 				persona.availability_minutes = parseIntOrNull(event.currentTarget.value)
+				graph.touch()
 			}}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		/>
@@ -242,6 +207,7 @@ function handleReferralConditionsChange(
 								rows="2"
 								placeholder="Describe the conditions"
 								bind:value={fileEntry.share_conditions}
+								oninput={graph.touch}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							></textarea>
 						</div>
@@ -252,6 +218,7 @@ function handleReferralConditionsChange(
 								rows="2"
 								placeholder="Describe perceived contents"
 								bind:value={fileEntry.perceived_contents}
+								oninput={graph.touch}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							></textarea>
 						</div>
@@ -275,7 +242,7 @@ function handleReferralConditionsChange(
 	{#if ownReferrals.length > 0}
 		<div class="flex flex-col gap-3">
 			{#each ownReferrals as referral (referral.to_id)}
-				{@const referredPersona = personasById.get(referral.to_id) as Persona}
+				{@const referredPersona = graph.byId.get(referral.to_id) as Persona}
 				<details class="rounded-xl border border-line-soft bg-cream/40">
 					<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-2.5 text-sm font-semibold text-ink">
 						<span>{getPersonaLabel(referredPersona, 'Referred Persona')}</span>
@@ -295,6 +262,7 @@ function handleReferralConditionsChange(
 								type="text"
 								placeholder="Enter name"
 								bind:value={referredPersona.name}
+								oninput={graph.touch}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							/>
 						</div>

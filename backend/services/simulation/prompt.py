@@ -1,18 +1,20 @@
 import json
 import re
 from infra.llm import classifyFileShare, classifyReferral
+from models.cases import FileEntry
+from models.simulation_runtime import PersonaDetail, Referral, RunCaseSnapshot
 
 
 def systemPrompt(
-    case_snapshot,
-    persona_details,
+    case_snapshot: RunCaseSnapshot,
+    persona_details: PersonaDetail,
     *,
     forbidden_referral_names,
     eligible_referrals,
     eligible_files,
     withheld_file_names,
 ):
-    known_facts = persona_details.get("known_facts") or "None"
+    known_facts = persona_details.known_facts or "None"
     # Redact still-forbidden contacts from the facts the model sees
     if forbidden_referral_names and known_facts != "None":
         for name in forbidden_referral_names:
@@ -76,11 +78,11 @@ def systemPrompt(
     stable = (
         "You are a persona in a case simulation. Stay in character.\n"
         "Respond naturally and conversationally in 1-3 concise sentences.\n"
-        f"Case summary: {case_snapshot['initial_brief']}\n"
-        f"Common information: {case_snapshot.get('common_information') or 'None'}\n"
-        f"Persona name: {persona_details['name']}\n"
-        f"Role/title: {persona_details['role']}\n"
-        f"Personality traits: {persona_details.get('personality_traits') or 'None'}\n"
+        f"Case summary: {case_snapshot.initial_brief}\n"
+        f"Common information: {case_snapshot.common_information or 'None'}\n"
+        f"Persona name: {persona_details.name}\n"
+        f"Role/title: {persona_details.role}\n"
+        f"Personality traits: {persona_details.personality_traits or 'None'}\n"
         f"Persona information: {known_facts}\n"
         "Never fabricate details outside your known facts. If asked about unknown facts, say you do not know.\n"
     )
@@ -168,13 +170,13 @@ def coerceHandles(value) -> list[str]:
     return handles
 
 
-async def referralUnlock(referral: dict, decision_history: list[dict]) -> bool:
-    condition = referral["condition_trigger"].strip()
+async def referralUnlock(referral: Referral, decision_history: list[dict]) -> bool:
+    condition = referral.condition_trigger.strip()
     if not condition: return False
     return await classifyReferral(condition, decision_history)
 
 
-async def fileShare(file_entry: dict, decision_history: list[dict]) -> bool:
-    condition = (file_entry.get("share_conditions") or "").strip()
+async def fileShare(file_entry: FileEntry, decision_history: list[dict]) -> bool:
+    condition = (file_entry.share_conditions or "").strip()
     if not condition: return False
     return await classifyFileShare(condition, decision_history)

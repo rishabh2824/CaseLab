@@ -3,10 +3,10 @@ from pathlib import Path
 from typing import ClassVar
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from domain_constants import SIMULATION_DURATION
 
 JWT_EXPIRY = 24 * 60 * 60  # 24h
 JWT_ALGORITHM = "HS256"
-SIMULATION_DURATION = 120
 
 
 class Settings(BaseSettings):

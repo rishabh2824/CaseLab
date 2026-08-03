@@ -3,24 +3,21 @@ import { Popover } from "bits-ui";
 import { onDestroy, onMount, untrack } from "svelte";
 import { ApiError, apiFetch } from "$lib/api/client.js";
 import {
-	createEmptyPersona,
-	getPersonaFieldErrors,
-	getPersonaLabel,
-	hasFieldErrors,
 	normalizePersona,
 	normalizeReferral,
-	reachableFrom,
-	referralsTo,
+	parseIntOrNull,
 } from "$lib/case/draft.js";
 import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
+import { createCaseGraph } from "$lib/case/graph.svelte.js";
 import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
 import { submitCase } from "$lib/case/submitCase.js";
-import { caseEditState, type SaveResult } from "$lib/caseEditState.svelte.js";
+import { useCaseVersionPoll } from "$lib/case/useCaseVersionPoll.svelte.js";
 import { ADMIN_ROLE } from "$lib/constants.js";
 import { session } from "$lib/session.svelte.js";
-import type { Api, Persona, ReferralEdge } from "$lib/types.js";
+import type { Api } from "$lib/types.js";
+import { type SaveResult, useUnsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import CaseConflictModal from "./CaseConflictModal.svelte";
-import PersonaFields from "./PersonaFields.svelte";
+import CaseGraphEditor from "./CaseGraphEditor.svelte";
 
 const MAX_SIMULATION_DURATION = 120;
 
@@ -44,9 +41,7 @@ let initialBrief = $state("");
 let commonInformation = $state("");
 let simulationDurationMinutes = $state<number | null>(null);
 let accessCode = $state("");
-let personas = $state<Persona[]>([]);
-let referrals = $state<ReferralEdge[]>([]);
-let roots = $state<string[]>([]);
+const graph = createCaseGraph();
 
 // Collaborators: access-control metadata, not case content — only ever
 // populated in edit mode (see loadCase). A new case (blank or from a
@@ -56,30 +51,33 @@ let isAdminsLoaded = $state(false);
 let isLoadingAdmins = $state(false);
 let collaboratorAdminIds = $state<number[]>([]);
 let ownerAdminId = $state<number | null>(null);
-let loadedVersion = $state<number | null>(null);
-let showConflictModal = $state(false);
+
+const versionPoll = useCaseVersionPoll({
+	caseId: () => (isEditMode ? editCaseId : null),
+	isLoadingSource: () => isLoadingSource,
+});
 
 // Tracks unsaved edits so AdminTopBar can gate home/logout navigation behind
 // a save-or-discard prompt. null baseline means "nothing loaded to compare
-// against yet" (edit/template mode before loadCase resolves).
-let baselineSnapshot = $state<string | null>(null);
+// against yet" (edit/template mode before loadCase resolves). The persona
+// graph tracks its own dirty state (see graph.svelte.ts); this snapshot only
+// covers the handful of scalar case fields.
+let baselineScalarSnapshot = $state<string | null>(null);
 
-function snapshotFields(): string {
+function snapshotScalars(): string {
 	return JSON.stringify({
 		caseName,
 		initialBrief,
 		commonInformation,
 		simulationDurationMinutes,
 		accessCode,
-		personas,
-		referrals,
-		roots,
 		collaboratorAdminIds,
 	});
 }
 
 function markSaved(): void {
-	baselineSnapshot = snapshotFields();
+	baselineScalarSnapshot = snapshotScalars();
+	graph.markSaved();
 }
 
 // A brand-new case (no source to load) has nothing to wait on — the empty
@@ -87,7 +85,9 @@ function markSaved(): void {
 if (!sourceCaseId) markSaved();
 
 const isDirty = $derived(
-	baselineSnapshot !== null && snapshotFields() !== baselineSnapshot,
+	graph.isDirty ||
+		(baselineScalarSnapshot !== null &&
+			snapshotScalars() !== baselineScalarSnapshot),
 );
 
 let showFieldErrors = $state(false);
@@ -131,17 +131,19 @@ async function loadCase(id: string): Promise<void> {
 	commonInformation = loadedCase.common_information ?? "";
 	simulationDurationMinutes = loadedCase.simulation_duration ?? null;
 	accessCode = loadedCase.access_code ?? "";
-	personas = (loadedCase.personas ?? []).map((persona) =>
-		normalizePersona(persona),
-	);
-	referrals = (loadedCase.referrals ?? []).map((referral) =>
-		normalizeReferral(referral),
-	);
-	roots = loadedCase.roots ?? [];
+	graph.load({
+		personas: (loadedCase.personas ?? []).map((persona) =>
+			normalizePersona(persona),
+		),
+		referrals: (loadedCase.referrals ?? []).map((referral) =>
+			normalizeReferral(referral),
+		),
+		roots: loadedCase.roots ?? [],
+	});
 	if (isEditMode) {
 		collaboratorAdminIds = loadedCase.collaborator_admin_ids ?? [];
 		ownerAdminId = loadedCase.owner_admin_id ?? null;
-		loadedVersion = loadedCase.version ?? null;
+		versionPoll.setLoadedVersion(loadedCase.version ?? null);
 	}
 	revealErrors();
 	markSaved();
@@ -180,39 +182,10 @@ const selectableAdmins = $derived(
 	),
 );
 
-// Polls for a concurrent save while this case is open for editing (no
-// WebSocket/live-push exists in this app — see services/cases.py's
-// getCaseVersion). Only active once the case has actually finished loading,
-// so it never fires against a not-yet-populated loadedVersion.
-$effect(() => {
-	if (!isEditMode || !editCaseId || isLoadingSource) return;
-	const currentCaseId = editCaseId;
-	const intervalId = window.setInterval(async () => {
-		if (showConflictModal) return;
-		try {
-			const { version } = await apiFetch<Api<"CaseVersionResponse">>(
-				`/api/cases/${currentCaseId}/version`,
-			);
-			if (loadedVersion !== null && version !== loadedVersion) {
-				showConflictModal = true;
-			}
-		} catch (err) {
-			// A 401 means the session is gone (logged out / expired elsewhere) —
-			// retrying every 12s forever would just spam the backend with an
-			// admin who's never coming back to this tab. Stop polling; anything
-			// else (network blip, 5xx) is transient, so keep retrying.
-			if (err instanceof ApiError && err.status === 401) {
-				window.clearInterval(intervalId);
-			}
-		}
-	}, 12000);
-	return () => window.clearInterval(intervalId);
-});
-
 // "Reload" — discards in-progress edits and refetches everything, including
 // the current version.
 async function handleReloadFromConflict(): Promise<void> {
-	showConflictModal = false;
+	versionPoll.showConflictModal = false;
 	if (!editCaseId) return;
 	isLoadingSource = true;
 	try {
@@ -225,28 +198,6 @@ async function handleReloadFromConflict(): Promise<void> {
 	}
 }
 
-// "Keep editing" — leaves every form field untouched, just quietly adopts
-// the current version so the next save's optimistic-lock check succeeds
-// instead of 409ing again. Not an auto-resubmit; the admin saves manually.
-async function handleKeepEditingFromConflict(): Promise<void> {
-	showConflictModal = false;
-	if (!editCaseId) return;
-	try {
-		const { version } = await apiFetch<Api<"CaseVersionResponse">>(
-			`/api/cases/${editCaseId}/version`,
-		);
-		loadedVersion = version;
-	} catch {
-		// If this fails, the next save just 409s again and re-shows the modal.
-	}
-}
-
-function parseIntOrNull(raw: string): number | null {
-	if (raw === "") return null;
-	const parsed = Number(raw);
-	return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
-}
-
 const caseNameError = $derived(
 	!caseName.trim() ? "Case name is required." : null,
 );
@@ -256,9 +207,6 @@ const initialBriefError = $derived(
 const accessCodeError = $derived(
 	!accessCode.trim() ? "Access code is required." : null,
 );
-const rootPersonasError = $derived(
-	roots.length < 1 ? "At least 1 persona is required" : null,
-);
 const simulationDurationError = $derived(
 	typeof simulationDurationMinutes === "number" &&
 		(simulationDurationMinutes > MAX_SIMULATION_DURATION ||
@@ -267,70 +215,15 @@ const simulationDurationError = $derived(
 		: null,
 );
 
-const personasById = $derived(new Map(personas.map((p) => [p.id, p])));
-
-// Personas not in `roots` — i.e. every persona reachable only via a referral,
-// in flat document order. A persona can have more than one referrer under
-// the flat model, so the header shows every parent, not just one.
-const referredPersonas = $derived(
-	personas
-		.filter((persona) => !roots.includes(persona.id))
-		.map((persona, index) => ({
-			persona,
-			label: getPersonaLabel(persona, `Referred Persona ${index + 1}`),
-			parentLabel: referralsTo(referrals, persona.id)
-				.map((referral) =>
-					getPersonaLabel(
-						personasById.get(referral.from_id) ?? { name: "" },
-						"Unknown",
-					),
-				)
-				.join(", "),
-		})),
-);
-const personaErrors = $derived(
-	Object.fromEntries(
-		personas.map((persona) => [persona.id, getPersonaFieldErrors(persona)]),
-	),
-);
-const hasAnyPersonaError = $derived(
-	Object.values(personaErrors).some(hasFieldErrors),
-);
+const graphValidation = $derived(graph.validate());
 const hasValidationErrors = $derived(
 	Boolean(caseNameError) ||
 		Boolean(initialBriefError) ||
 		Boolean(accessCodeError) ||
-		Boolean(rootPersonasError) ||
 		Boolean(simulationDurationError) ||
-		hasAnyPersonaError,
+		graphValidation.hasErrors,
 );
 const displayedError = $derived(submitError || loadErrorMessage);
-
-function addRoot(): void {
-	revealErrors();
-	const persona = createEmptyPersona();
-	personas = [...personas, persona];
-	roots = [...roots, persona.id];
-}
-
-// Removing a root discards its whole subtree — every persona only reachable
-// from this root, not also reachable from some other kept root or referral.
-function removeRoot(rootId: string): void {
-	revealErrors();
-	const keptRoots = roots.filter((id) => id !== rootId);
-	const stillReachable = reachableFrom(keptRoots, referrals);
-	const toRemove = new Set(
-		[...reachableFrom([rootId], referrals)].filter(
-			(id) => !stillReachable.has(id),
-		),
-	);
-	personas = personas.filter((persona) => !toRemove.has(persona.id));
-	referrals = referrals.filter(
-		(referral) =>
-			!toRemove.has(referral.from_id) && !toRemove.has(referral.to_id),
-	);
-	roots = keptRoots;
-}
 
 // Builds a .html form from whatever's currently in this form
 function handleExportTemplate(): void {
@@ -340,9 +233,9 @@ function handleExportTemplate(): void {
 		simulationDurationMinutes,
 		initialBrief,
 		commonInformation,
-		personas,
-		referrals,
-		roots,
+		personas: graph.personas,
+		referrals: graph.referrals,
+		roots: graph.roots,
 	});
 	downloadForm(html, caseName);
 }
@@ -363,7 +256,7 @@ async function handleImportFile(
 		caseName.trim() ||
 		initialBrief.trim() ||
 		accessCode.trim() ||
-		personas.length > 0;
+		graph.personas.length > 0;
 	if (
 		hasExistingData &&
 		!window.confirm(
@@ -383,9 +276,11 @@ async function handleImportFile(
 		initialBrief = data.initialBrief;
 		commonInformation = data.commonInformation;
 		simulationDurationMinutes = data.simulationDurationMinutes;
-		personas = data.personas;
-		referrals = data.referrals;
-		roots = data.roots;
+		graph.applyImport({
+			personas: data.personas,
+			referrals: data.referrals,
+			roots: data.roots,
+		});
 		importWarnings = warnings;
 		revealErrors();
 	} catch (err) {
@@ -397,7 +292,7 @@ async function handleImportFile(
 }
 
 // Single source of truth for saving: used by the form's own Submit button
-// and by AdminTopBar's "Save changes" action (via caseEditState), so both
+// and by AdminTopBar's "Save changes" action (via unsavedGuard), so both
 // paths get the same validation gate and version-conflict handling.
 async function performSave(): Promise<SaveResult> {
 	revealErrors();
@@ -419,29 +314,24 @@ async function performSave(): Promise<SaveResult> {
 			commonInformation,
 			simulationDurationMinutes,
 			accessCode,
-			personas,
-			referrals,
-			roots,
+			personas: graph.personas,
+			referrals: graph.referrals,
+			roots: graph.roots,
 			collaboratorAdminIds,
 			// Populated by loadCase before isLoadingSource clears in edit mode
 			// (the submit button stays disabled until then), so this is always
 			// a number by the time an edit-mode submit can actually run.
-			expectedVersion: loadedVersion ?? undefined,
+			expectedVersion: versionPoll.loadedVersion ?? undefined,
 		});
 		submitSuccess = isEditMode
 			? "Case updated successfully."
 			: "Case saved successfully.";
-		// A successful edit-mode save just incremented the row's version by
-		// exactly 1 server-side (that's the whole optimistic-lock mechanism —
-		// see services/cases.py::updateCase). Without this, loadedVersion stays
-		// stale and the next version-poll tick falsely detects a "conflict"
-		// against the admin's own save.
-		if (isEditMode && loadedVersion !== null) loadedVersion += 1;
+		if (isEditMode) versionPoll.bumpVersion();
 		markSaved();
 		return { ok: true };
 	} catch (err) {
 		if (err instanceof ApiError && err.code === "version_conflict") {
-			showConflictModal = true;
+			versionPoll.showConflictModal = true;
 			const message =
 				"This case was updated by someone else. Resolve the conflict, then save again.";
 			return { ok: false, error: message };
@@ -459,17 +349,14 @@ async function handleSubmit(event: SubmitEvent): Promise<void> {
 	await performSave();
 }
 
-$effect(() => {
-	caseEditState.setDirty(isDirty);
-});
+const unsavedGuard = useUnsavedGuard();
 
 onMount(() => {
-	caseEditState.registerSaveHandler(performSave);
+	unsavedGuard.register(() => isDirty, performSave);
 });
 
 onDestroy(() => {
-	caseEditState.registerSaveHandler(null);
-	caseEditState.setDirty(false);
+	unsavedGuard.unregister();
 });
 </script>
 
@@ -697,67 +584,7 @@ onDestroy(() => {
 					</div>
 				</details>
 
-				<details class="rounded-2xl border border-line bg-white" open>
-					<summary class="cursor-pointer select-none px-5 py-4 font-display text-lg font-semibold text-ink">
-						AI Personas
-					</summary>
-					<div class="flex flex-col gap-3 border-t border-line-soft px-5 py-5">
-						<div class="flex items-center justify-between gap-2">
-							<span class="text-xs font-medium text-stone-soft">Personas not referred by anyone else</span>
-							<button
-								type="button"
-								onclick={addRoot}
-								class="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:border-brand hover:text-brand"
-							>
-								+ Add root persona
-							</button>
-						</div>
-						{#if showFieldErrors && rootPersonasError}
-							<p class="text-xs font-medium text-brand">{rootPersonasError}</p>
-						{/if}
-						{#each roots as rootId, index (rootId)}
-							{@const persona = personasById.get(rootId) as Persona}
-							{@const personaLabel = getPersonaLabel(persona, `Persona ${index + 1}`)}
-							<details class="rounded-xl border border-line-soft bg-cream/40">
-								<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-ink">
-									<span>{personaLabel}</span>
-									<button
-										type="button"
-										onclick={(event) => { event.preventDefault(); removeRoot(rootId); }}
-										class="rounded-md px-2 py-1 text-xs font-semibold text-stone-soft transition hover:text-brand"
-									>
-										Remove
-									</button>
-								</summary>
-								<div class="border-t border-line-soft px-4 py-4">
-									<PersonaFields
-										{persona}
-										{personas}
-										{referrals}
-										{roots}
-										errors={showFieldErrors ? personaErrors[persona.id] : {}}
-									/>
-								</div>
-							</details>
-						{/each}
-						{#each referredPersonas as item (item.persona.id)}
-							<details class="rounded-xl border border-line-soft bg-cream/40">
-								<summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ink">
-									{item.label} &larr; {item.parentLabel}
-								</summary>
-								<div class="border-t border-line-soft px-4 py-4">
-									<PersonaFields
-										persona={item.persona}
-										{personas}
-										{referrals}
-										{roots}
-										errors={showFieldErrors ? personaErrors[item.persona.id] : {}}
-									/>
-								</div>
-							</details>
-						{/each}
-					</div>
-				</details>
+				<CaseGraphEditor {graph} {showFieldErrors} {revealErrors} />
 
 				{#if displayedError}
 					<p class="text-sm font-medium text-brand">{displayedError}</p>
@@ -783,7 +610,7 @@ onDestroy(() => {
 	</div>
 </div>
 <CaseConflictModal
-	bind:open={showConflictModal}
+	bind:open={versionPoll.showConflictModal}
 	onReload={handleReloadFromConflict}
-	onKeepEditing={handleKeepEditingFromConflict}
+	onKeepEditing={() => versionPoll.handleKeepEditing()}
 />

@@ -5,7 +5,7 @@ import {
 	CaseImportError,
 	parseHTMLForm,
 } from "../../src/lib/case/importCase.js";
-import { makePersona, makeReferral } from "../../src/testing/fixtures.js";
+import { makePersona, makeReferral } from "../support/fixtures.js";
 
 // Serializes a mutated Document back into the string parseHTMLForm expects.
 // Mutating the parsed Document (rather than string-splicing the template) is
