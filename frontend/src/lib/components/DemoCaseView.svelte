@@ -1,6 +1,5 @@
 <script lang="ts">
 import { onMount } from "svelte";
-import { goto } from "$app/navigation";
 import { apiFetch } from "$lib/api/client.js";
 import {
 	getPersonaLabel,
@@ -86,8 +85,7 @@ const referredPersonas = $derived(
 					class="mt-6 rounded-xl border border-line-soft bg-cream/60 px-4 py-3 text-sm leading-6 text-ink-soft"
 				>
 					This is a fully built-out example case, kept here so new admins can see what a
-					complete case looks like. It's read-only — there's nothing to save or edit on this
-					screen.
+					complete case looks like.
 				</div>
 
 				<details class="mt-6 rounded-2xl border border-line bg-white" open>
@@ -153,16 +151,6 @@ const referredPersonas = $derived(
 						{/each}
 					</div>
 				</details>
-
-				<div class="mt-8 flex justify-center">
-					<button
-						type="button"
-						onclick={() => goto('/admin/new')}
-						class="rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95"
-					>
-						Ready to build your own? Start a new case
-					</button>
-				</div>
 			</div>
 		{/if}
 	</div>

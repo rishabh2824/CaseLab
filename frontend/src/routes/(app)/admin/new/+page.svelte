@@ -52,7 +52,7 @@ import { goto } from "$app/navigation";
 				onclick={() => goto('/admin/new/template')}
 				class="group rounded-3xl border border-line bg-cream p-8 text-left shadow-soft transition hover:-translate-y-1 hover:border-brand hover:shadow-premium"
 			>
-				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">
+				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
 					Option 2
 				</p>
 				<h2 class="mt-4 font-display text-2xl font-semibold text-ink">
@@ -73,18 +73,15 @@ import { goto } from "$app/navigation";
 		<button
 			type="button"
 			onclick={() => goto('/admin/new/demo')}
-			class="group mt-6 flex w-full items-center justify-between gap-4 rounded-2xl border border-line-soft bg-cream/40 px-6 py-5 text-left transition hover:border-brand hover:bg-cream/70"
+			class="group mt-6 flex w-full items-center justify-between gap-4 rounded-2xl border border-line-soft bg-white px-6 py-5 text-left transition hover:border-brand hover:bg-cream/70"
 		>
 			<div>
-				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">
-					Option 3 &middot; Just Looking?
+				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
+					Option 3
 				</p>
-				<h2 class="mt-2 font-display text-lg font-semibold text-ink">
-					View the Sterling Industries demo case
-				</h2>
+				<h2 class="mt-2 font-display text-lg font-semibold text-ink">View a demo case</h2>
 				<p class="mt-1 text-sm leading-6 text-stone">
-					See a fully built-out example case before you start your own — it's read-only, so
-					there's nothing to save or break.
+					See a fully built-out example case before you start your own.
 				</p>
 			</div>
 			<span
