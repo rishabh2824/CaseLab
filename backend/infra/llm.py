@@ -1,7 +1,20 @@
 import json
+import logging
 import httpx
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, RateLimitError, InternalServerError
 from infra.settings import getSettings
+
+# Temporary diagnostic logging for the persona-reply/classifier workflow — logs the exact
+# prompt sent to and response received from every LLM call, to rule out structural issues
+# (e.g. classifier context windowing, text/tool-call mismatches) independent of app-wide
+# logging config. Explicit handler so this shows up regardless of uvicorn's root logger setup.
+logger = logging.getLogger("simulation_llm")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(message)s"))
+    logger.addHandler(_handler)
+    logger.propagate = False
 
 # Shared client so the 4-6 LLM calls a single student message can fan out to reuse one connection pool
 client: AsyncOpenAI | None = None
@@ -29,13 +42,17 @@ async def closeClient() -> None:
 
 # Call the chat completions endpoint and return the reply text.
 async def chat(
-    *, model: str, messages: list[dict], max_tokens: int, timeout: float, temperature: float | None = None
+    *, model: str, messages: list[dict], max_tokens: int, timeout: float, temperature: float | None = None,
+    label: str = "chat",
 ) -> str:
     if client is None: raise RuntimeError("LLM client failed to initialize.")
     kwargs = {"model": model, "messages": messages, "max_tokens": max_tokens, "timeout": timeout}
     if temperature is not None: kwargs["temperature"] = temperature
+    logger.info("[%s] REQUEST model=%s\n%s", label, model, json.dumps(messages, indent=2))
     response = await client.chat.completions.create(**kwargs)
-    return response.choices[0].message.content or ""
+    content = response.choices[0].message.content or ""
+    logger.info("[%s] RESPONSE model=%s\n%s", label, model, content)
+    return content
 
 
 # Tool the persona reply call uses to report contacts/files touched this turn — the reply
@@ -94,6 +111,11 @@ async def personaReplyStream(messages: list[dict]):
         attempt += 1
         yielded_any = False
         tool_call_parts: dict[int, str] = {}
+        full_text_parts: list[str] = []
+        logger.info(
+            "[persona_reply] REQUEST model=%s attempt=%d\n%s",
+            settings.llm_model, attempt, json.dumps(messages, indent=2),
+        )
         try:
             stream = await client.chat.completions.create(
                 model=settings.llm_model,
@@ -109,6 +131,7 @@ async def personaReplyStream(messages: list[dict]):
                 delta = chunk.choices[0].delta
                 if delta.content:
                     yielded_any = True
+                    full_text_parts.append(delta.content)
                     yield {"type": "delta", "text": delta.content}
                 if delta.tool_calls:
                     for tool_call_delta in delta.tool_calls:
@@ -122,9 +145,14 @@ async def personaReplyStream(messages: list[dict]):
                     arguments = json.loads(raw_arguments)
                 except json.JSONDecodeError:
                     arguments = None
+            logger.info(
+                "[persona_reply] RESPONSE model=%s attempt=%d\nreply_text=%s\ntool_call_arguments=%s",
+                settings.llm_model, attempt, "".join(full_text_parts), arguments,
+            )
             yield {"type": "tool_call", "arguments": arguments}
             return
         except Exception as exc:
+            logger.info("[persona_reply] ERROR model=%s attempt=%d exc=%r", settings.llm_model, attempt, exc)
             if not yielded_any and attempt < retries and isinstance(exc, RETRYABLE_EXCEPTIONS):
                 continue
             raise
@@ -150,7 +178,7 @@ def formatTranscript(conversation: list[dict], limit: int = CLASSIFIER_HISTORY_L
 
 
 # YES / NO Classifier for below methods
-async def classifier(system_prompt: str, user_prompt: str) -> bool:
+async def classifier(system_prompt: str, user_prompt: str, *, label: str = "classifier") -> bool:
     settings = getSettings()
     raw = await chat(
         model=settings.llm_classifier_model,
@@ -158,6 +186,7 @@ async def classifier(system_prompt: str, user_prompt: str) -> bool:
         temperature=0,
         max_tokens=10,
         timeout=20,
+        label=label,
     )
     return raw.strip().upper().startswith("YES")
 
@@ -191,7 +220,7 @@ async def classifyCondition(kind: str, condition: str, conversation: list[dict])
         f"Conversation (most recent last):\n{transcript}\n\n"
         f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
     )
-    return await classifier(system_prompt, user_prompt)
+    return await classifier(system_prompt, user_prompt, label=kind)
 
 
 async def classifyReferral(condition: str, conversation: list[dict]) -> bool:
@@ -225,6 +254,7 @@ async def classifyHarassment(user_message: str, conversation: list[dict]) -> str
             temperature=0,
             max_tokens=10,
             timeout=30,
+            label="harassment",
         )
     except Exception: return "normal"
     label = raw.strip().upper()
