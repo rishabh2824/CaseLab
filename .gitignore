@@ -1,5 +1,8 @@
+# Whitelist: everything at the repo root is ignored unless re-included below.
 /*
 !/backend/
 !/frontend/
 !/README.md
 !/.gitignore
+# The CI workflow has to be tracked or GitHub Actions never sees it.
+!/.github/

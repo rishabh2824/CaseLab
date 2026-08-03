@@ -247,7 +247,6 @@ export interface paths {
 		trace?: never;
 	};
 }
-
 export type webhooks = Record<string, never>;
 export interface components {
 	schemas: {
@@ -408,10 +407,6 @@ export interface components {
 			profile_photo?: components["schemas"]["PersonaPhotoOut"] | null;
 			/** Availability Duration */
 			availability_duration?: number | null;
-			/** Known Facts */
-			known_facts?: string | null;
-			/** Personality Traits */
-			personality_traits?: string | null;
 			/** Is Referred */
 			is_referred: boolean;
 			/** Available */
@@ -484,6 +479,8 @@ export interface components {
 		};
 		/** FileRef */
 		FileRef: {
+			/** File Id */
+			file_id?: string | null;
 			/** Object Key */
 			object_key: string;
 			/** File Name */
@@ -598,8 +595,8 @@ export interface components {
 			/** Expires In */
 			expires_in: number;
 		};
-		/** ReferralOut */
-		ReferralOut: {
+		/** ReferralEdgePayload */
+		ReferralEdgePayload: {
 			/** From Id */
 			from_id: string;
 			/** To Id */
@@ -607,8 +604,8 @@ export interface components {
 			/** Conditions */
 			conditions?: string | null;
 		};
-		/** ReferralEdgePayload */
-		ReferralEdgePayload: {
+		/** ReferralOut */
+		ReferralOut: {
 			/** From Id */
 			from_id: string;
 			/** To Id */
@@ -688,7 +685,6 @@ export interface components {
 	headers: never;
 	pathItems: never;
 }
-
 export type $defs = Record<string, never>;
 export interface operations {
 	login_api_admin_login_post: {

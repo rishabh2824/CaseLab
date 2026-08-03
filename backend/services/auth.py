@@ -1,6 +1,7 @@
 from __future__ import annotations
 import time
-from typing import NamedTuple, TypedDict, Any, Mapping
+from typing import NamedTuple, TypedDict, Any
+from collections.abc import Mapping
 import cachecontrol
 import jwt
 import requests

@@ -4,7 +4,12 @@ from botocore.config import Config
 from infra.settings import get_settings
 
 SPACES_REGION = "sfo3"
-SPACES_ENDPOINT = "https://case-file.sfo3.digitaloceanspaces.com"
+# Regional endpoint only — must NOT include the bucket name. boto3 falls back to
+# path-style addressing for custom endpoint_urls, so a bucket-in-hostname endpoint
+# (e.g. "https://case-file.sfo3.digitaloceanspaces.com") gets the bucket appended
+# a second time as a literal path segment ("/case-file/{key}"), silently writing
+# and reading objects under a spurious "case-file/" folder inside the bucket.
+SPACES_ENDPOINT = "https://sfo3.digitaloceanspaces.com"
 SPACES_BUCKET = "case-file"
 
 

@@ -1,6 +1,6 @@
 import { browser } from "$app/environment";
 import { ADMIN_ROLE } from "./constants.js";
-import type { AdminRole } from "./types.js";
+import type { Api } from "./types.js";
 
 // Centralized session state Persisted to sessionStorage so a student run survives reload
 const STORAGE_KEY = "caseLabSession";
@@ -10,7 +10,7 @@ const STORAGE_KEY = "caseLabSession";
 // trusting whatever happens to be sitting in storage (e.g. left over from a
 // previous, incompatible version of this app).
 export interface PersistedSession {
-	adminRole: AdminRole | null;
+	adminRole: Api<"AdminRole"> | null;
 	adminEmail: string;
 	runId: string;
 	accessCode: string;
@@ -25,7 +25,7 @@ const defaults: PersistedSession = Object.freeze({
 	startTime: null,
 });
 
-const isAdminRole = (value: unknown): value is AdminRole =>
+const isAdminRole = (value: unknown): value is Api<"AdminRole"> =>
 	value === ADMIN_ROLE.SUPER || value === ADMIN_ROLE.ADMIN;
 
 // Validates an `unknown` parsed blob against PersistedSession, falling back
@@ -61,7 +61,7 @@ function readPersisted(): PersistedSession {
 const initial = readPersisted();
 
 class SessionStore {
-	adminRole = $state<AdminRole | null>(initial.adminRole);
+	adminRole = $state<Api<"AdminRole"> | null>(initial.adminRole);
 	adminEmail = $state<string>(initial.adminEmail);
 	runId = $state<string>(initial.runId);
 	accessCode = $state<string>(initial.accessCode);
@@ -83,7 +83,7 @@ class SessionStore {
 		adminRole,
 		adminEmail,
 	}: {
-		adminRole: AdminRole | null;
+		adminRole: Api<"AdminRole"> | null;
 		adminEmail: string;
 	}) {
 		this.adminRole = adminRole ?? null;

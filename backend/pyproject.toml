@@ -24,14 +24,30 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.165.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.16.1",
+    "time-machine>=3.3.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Without this, pytest's legacy prepend import mode derives a module name from
+# the file's basename alone, so tests/unit/test_run_store.py and
+# tests/integration/test_run_store.py collide and collection fails outright.
+# importlib mode keys modules by full path, which is what lets the unit and
+# integration suites name a file after the module it covers, in both places.
+addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
+# tests/integration/** is auto-marked `db` by tests/conftest.py, so the fast,
+# hermetic suite is `pytest -m "not db"` and needs no database at all.
+markers = [
+    "db: hits a real Postgres; creates and deletes rows. Excluded by -m 'not db'.",
+]
 # infra/db.py's engine/session-factory are process-lifetime @lru_cache singletons
 # (correct in the real app, which has one event loop for its whole life) — tests
 # need to share that same single event loop too, or asyncpg connections created
@@ -48,6 +64,37 @@ filterwarnings = [
     "ignore::DeprecationWarning:services.cases",
     "ignore::DeprecationWarning:services.admin",
 ]
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+# Correctness-focused, not style-focused: this gate exists to catch real
+# defects (undefined names, shadowed loop variables, mutable defaults, blocking
+# calls in async code), not to relitigate the codebase's formatting.
+select = ["E4", "E7", "E9", "F", "W", "B", "ASYNC", "UP", "RUF"]
+ignore = [
+    # `if not x: raise ...` on one line is this codebase's deliberate,
+    # consistently-applied style.
+    "E701",
+    # FastAPI's whole dependency system is `= Depends(...)` in a default.
+    "B008",
+    # zip() over pending_referrals/referral_results, which asyncio.gather
+    # guarantees are the same length.
+    "B905",
+    # `timeout` is a real parameter of the LLM wrappers, forwarded to the
+    # OpenAI client rather than implemented with asyncio.timeout.
+    "ASYNC109",
+    # Pydantic/SQLModel class attributes are declarations, not mutable
+    # class-level defaults.
+    "RUF012",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures legitimately shadow the names they patch, and assert is the point.
+"tests/**" = ["S101", "B011"]
 
 [tool.deptry.package_module_name_map]
 pyjwt = ["jwt"]

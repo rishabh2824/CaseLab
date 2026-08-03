@@ -4,10 +4,11 @@ import { toast } from "svelte-sonner";
 import { apiFetch } from "$lib/api/client.js";
 import SimulationClock from "$lib/components/SimulationClock.svelte";
 import { MAX_MESSAGE_WORDS } from "$lib/constants.js";
+import { countWords } from "$lib/format.js";
 import { session } from "$lib/session.svelte.js";
-import { countWords } from "$lib/student/Helpers.js";
+import { getPersonaInitials } from "$lib/student/contacts.js";
 import { run } from "$lib/student/run.svelte.js";
-import type { ExportResponse } from "$lib/types.js";
+import type { Api } from "$lib/types.js";
 
 onMount(() => {
 	run.init();
@@ -48,7 +49,7 @@ async function handleExportPdf(): Promise<void> {
 	if (!session.runId || isExporting) return;
 	isExporting = true;
 	try {
-		const data = await apiFetch<ExportResponse>(
+		const data = await apiFetch<Api<"ExportResponse">>(
 			`/api/simulations/${session.runId}/export`,
 		);
 		const { buildChatPdfBlob, slugifyFileName } = await import(
@@ -112,9 +113,9 @@ async function handleExportPdf(): Promise<void> {
 								? 'border-brand bg-white shadow-soft'
 								: 'border-line bg-white/70 hover:border-stone-soft hover:bg-white'}"
 						>
-							{#if contact.profilePhotoUrl}
+							{#if contact.profile_photo?.url}
 								<img
-									src={contact.profilePhotoUrl}
+									src={contact.profile_photo.url}
 									alt="{contact.name} profile"
 									class="h-9 w-9 rounded-full object-cover"
 								/>
@@ -125,29 +126,29 @@ async function handleExportPdf(): Promise<void> {
 										? 'bg-brand text-white'
 										: 'bg-line-soft text-stone'}"
 								>
-									{contact.initials}
+									{getPersonaInitials(contact.name)}
 								</div>
 							{/if}
 							<div class="flex-1">
-								<p class="font-semibold text-ink">{contact.name}</p>
-								<p class="text-xs text-stone">{contact.title}</p>
+								<p class="font-semibold text-ink">{contact.name || 'Unnamed'}</p>
+								<p class="text-xs text-stone">{contact.role || 'Role'}</p>
 								<p class="text-[11px] font-medium {contact.available ? 'text-success' : 'text-stone-soft'}">
 									{contact.available
 										? 'Available'
-										: contact.availableIn
-											? `Available in ${contact.availableIn} min`
+										: contact.available_in
+											? `Available in ${contact.available_in} min`
 											: 'Unavailable'}
 								</p>
-								{#if typeof contact.availability === 'number'}
-									<p class="text-[11px] text-stone-soft">Available for {contact.availability} min</p>
+								{#if typeof contact.availability_duration === 'number'}
+									<p class="text-[11px] text-stone-soft">Available for {contact.availability_duration} min</p>
 								{/if}
-								{#if typeof contact.expiresIn === 'number' && contact.expiresIn > 0}
-									<p class="text-[11px] text-stone-soft">Expires in {contact.expiresIn} min</p>
+								{#if typeof contact.expires_in === 'number' && contact.expires_in > 0}
+									<p class="text-[11px] text-stone-soft">Expires in {contact.expires_in} min</p>
 								{/if}
-								{#if contact.chatEnded}
+								{#if contact.chat_ended}
 									<p class="text-[11px] text-brand">Conversation ended</p>
 								{/if}
-								{#if contact.isReferred}
+								{#if contact.is_referred}
 									<p class="text-[11px] text-stone-soft">Referred contact</p>
 								{/if}
 							</div>
@@ -186,9 +187,9 @@ async function handleExportPdf(): Promise<void> {
 					<p class="font-display text-lg font-semibold tracking-tight text-ink">
 						{run.activeContact?.name ?? 'Select a contact'}
 					</p>
-					<p class="text-sm text-stone">{run.activeContact?.title ?? ''}</p>
+					<p class="text-sm text-stone">{run.activeContact?.role ?? ''}</p>
 				</div>
-				{#if run.activeContact?.chatEnded}
+				{#if run.activeContact?.chat_ended}
 					<span class="inline-flex items-center gap-2 rounded-full bg-brand-tint px-3 py-1 text-xs font-medium text-brand">
 						<span class="h-2 w-2 rounded-full bg-brand"></span>
 						Conversation ended
@@ -203,7 +204,7 @@ async function handleExportPdf(): Promise<void> {
 				{/if}
 			</div>
 
-			{#if run.activeContact?.chatEnded}
+			{#if run.activeContact?.chat_ended}
 				<div class="mt-4 rounded-xl border border-brand/20 bg-brand-tint px-4 py-3 text-sm text-brand">
 					This persona has ended the conversation for this chat.
 				</div>
@@ -234,7 +235,7 @@ async function handleExportPdf(): Promise<void> {
 				<div class="flex-1">
 					<textarea
 						bind:this={chatInputEl}
-						placeholder={run.activeContact?.chatEnded ? 'This conversation has ended.' : 'Type your message...'}
+						placeholder={run.activeContact?.chat_ended ? 'This conversation has ended.' : 'Type your message...'}
 						disabled={!run.activePersonaAvailable || run.isSending}
 						class="w-full resize-none rounded-xl border px-4 py-3 text-sm transition focus:outline-none focus:ring-4 {overWordLimit
 							? 'border-brand focus:border-brand focus:ring-brand/12'

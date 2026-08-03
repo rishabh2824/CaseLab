@@ -1,9 +1,7 @@
 <script lang="ts">
 import { goto } from "$app/navigation";
-import { apiFetch } from "$lib/api/client.js";
 import SignInButton from "$lib/components/SignInButton.svelte";
-import { session } from "$lib/session.svelte.js";
-import type { RunState, StartSimulationPayload } from "$lib/types.js";
+import { run } from "$lib/student/run.svelte.js";
 
 let accessCode = $state("");
 let error = $state("");
@@ -12,20 +10,13 @@ let isSubmitting = $state(false);
 async function submit(code: string): Promise<void> {
 	isSubmitting = true;
 	try {
-		const normalized = code.toUpperCase();
-		const data = await apiFetch<RunState>("/api/simulations/start", {
-			method: "POST",
-			body: { access_code: normalized } satisfies StartSimulationPayload,
-		});
-		error = "";
-		session.startRun({
-			runId: data.run_id,
-			accessCode: normalized,
-			startTime: Date.now(),
-		});
-		await goto("/student");
-	} catch {
-		error = "Invalid access code.";
+		await run.startSession(code.toUpperCase());
+		if (run.raw) {
+			error = "";
+			await goto("/student");
+		} else {
+			error = "Invalid access code.";
+		}
 	} finally {
 		isSubmitting = false;
 	}

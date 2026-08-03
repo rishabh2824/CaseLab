@@ -5,7 +5,7 @@ import {
 	getPersonaLabel,
 	reachableFrom,
 	referralsFrom,
-} from "$lib/case/Helpers.js";
+} from "$lib/case/draft.js";
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "$lib/types.js";
 
 type Props = {

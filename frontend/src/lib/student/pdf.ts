@@ -1,8 +1,8 @@
 // PDF export of a student's chat transcript, built with jsPDF.
 
 import jsPDF from "jspdf";
-import type { ExportPersonaOut } from "../types.js";
-import { slugify } from "./Helpers.js";
+import { slugify } from "../format.js";
+import type { Api } from "../types.js";
 
 const PAGE_MARGIN = 54;
 const BODY_FONT_SIZE = 10;
@@ -47,7 +47,10 @@ const writeSection = (doc: jsPDF, title: string, bodyLines: string[]): void => {
 // (rather than the full ExportPersonaOut, which also carries an id nothing
 // in this file needs) is also what lets the "no unlocked personas" fallback
 // below satisfy the type without inventing a placeholder id.
-type PrintablePersona = Pick<ExportPersonaOut, "name" | "role" | "messages">;
+type PrintablePersona = Pick<
+	Api<"ExportPersonaOut">,
+	"name" | "role" | "messages"
+>;
 
 export const buildChatPdfBlob = (
 	personas: PrintablePersona[],

@@ -1,0 +1,148 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push to the same branch makes the in-flight run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # A throwaway Postgres for the tests marked `db`. Deliberately a real
+    # Postgres and not SQLite: the schema leans on JSONB, CITEXT, INSERT ...
+    # ON CONFLICT and SELECT ... FOR UPDATE, none of which SQLite can stand in
+    # for — a suite that passed on SQLite would say nothing about production.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: caselab_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # infra/db.py turns TLS off for loopback hosts, which is what makes this
+      # container usable; every real deployment is remote and keeps TLS on.
+      POOLING: postgresql://postgres:postgres@localhost:5432/caselab_test
+      DIRECT: postgresql://postgres:postgres@localhost:5432/caselab_test
+      # Settings are required fields, so every one needs a value even where the
+      # tests never reach the service behind it. None of these are real: Spaces
+      # URL signing is offline arithmetic, and no test calls Google or the LLM.
+      SPACES_KEY: ci-spaces-key
+      SPACES_SECRET: ci-spaces-secret
+      JWT_SECRET: ci-jwt-secret-that-is-long-enough-32
+      GOOGLE_CLIENT_ID: ci-client-id.apps.googleusercontent.com
+      LLM_KEY: ci-llm-key
+      FRONTEND_URLS: ""
+      ENABLE_OPENAPI: "true"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Lint
+        run: uv run ruff check .
+
+      # Running the real migrations to build the test schema means the
+      # migrations themselves are under test — a migration that fails to apply
+      # to an empty database breaks CI here rather than in production.
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+
+      # Fast, hermetic suite first: no database, no network, seconds to run, so
+      # the common failure is reported without waiting on the slow suite.
+      - name: Unit tests
+        run: uv run pytest -m "not db" -q
+
+      - name: Integration tests
+        run: uv run pytest -m db -q
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      # Advisory for now, and on a short leash. `pnpm run check` used to crash on
+      # startup (svelte-check needs TypeScript 5/6, the project is on 7), so type
+      # errors went unreported for as long as that was true. It runs again now
+      # via a pinned TypeScript, and every error in the test suite has been
+      # fixed — what remains is 7 pre-existing `possibly undefined` findings in
+      # src/lib/components/PersonaFields.svelte and src/lib/student/run.svelte.ts.
+      # Fix those and delete this continue-on-error line to make it blocking.
+      - name: Type check
+        run: pnpm run check
+        continue-on-error: true
+
+      - name: Unit tests
+        run: pnpm exec vitest run
+
+      # Cached separately from node_modules: the browser binaries are large and
+      # change only when @playwright/test does.
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      # The E2E suite mocks every backend call (see the *Spec.ts files), so it
+      # needs no API, database or LLM credentials.
+      - name: E2E tests
+        run: pnpm exec playwright test
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          retention-days: 7

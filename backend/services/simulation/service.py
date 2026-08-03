@@ -256,8 +256,8 @@ async def message(run_id: str, payload: SendMessagePayload) -> dict:
             classifyHarassment(user_message, decision_history),
             resolveDecisions(persona_id, decision_history, run),
         )
-    except Exception:
-        raise UpstreamError("Something went wrong. Please resend your message.")
+    except Exception as exc:
+        raise UpstreamError("Something went wrong. Please resend your message.") from exc
     persona_details = decisions["persona_details"]
 
     if message_label != "normal":

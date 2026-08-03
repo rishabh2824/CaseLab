@@ -51,11 +51,10 @@ type ApiFetchInit = {
 	headers?: Record<string, string>;
 };
 
-// Fetch a JSON endpoint under the API base. T defaults to `any` (rather than
-// `unknown`) so call sites not yet converted to TypeScript keep their prior
-// implicit-any behavior — pass an explicit type argument from converted code.
-// biome-ignore lint/suspicious/noExplicitAny: intentional default, see comment above
-export async function apiFetch<T = any>(
+// Fetch a JSON endpoint under the API base. T defaults to `unknown` — pass an
+// explicit type argument at the call site; a forgotten one now surfaces as a
+// compile error instead of silently disabling type checking on the response.
+export async function apiFetch<T = unknown>(
 	path: string,
 	{ method = "GET", body, headers }: ApiFetchInit = {},
 ): Promise<T> {

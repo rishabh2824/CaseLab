@@ -2,7 +2,6 @@
 import { Popover } from "bits-ui";
 import { onDestroy, onMount, untrack } from "svelte";
 import { ApiError, apiFetch } from "$lib/api/client.js";
-import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
 import {
 	createEmptyPersona,
 	getPersonaFieldErrors,
@@ -12,19 +11,14 @@ import {
 	normalizeReferral,
 	reachableFrom,
 	referralsTo,
-} from "$lib/case/Helpers.js";
+} from "$lib/case/draft.js";
+import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
 import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
 import { submitCase } from "$lib/case/submitCase.js";
 import { caseEditState, type SaveResult } from "$lib/caseEditState.svelte.js";
 import { ADMIN_ROLE } from "$lib/constants.js";
 import { session } from "$lib/session.svelte.js";
-import type {
-	AdminOut,
-	CaseDetailResponse,
-	CaseVersionResponse,
-	Persona,
-	ReferralEdge,
-} from "$lib/types.js";
+import type { Api, Persona, ReferralEdge } from "$lib/types.js";
 import CaseConflictModal from "./CaseConflictModal.svelte";
 import PersonaFields from "./PersonaFields.svelte";
 
@@ -57,7 +51,7 @@ let roots = $state<string[]>([]);
 // Collaborators: access-control metadata, not case content — only ever
 // populated in edit mode (see loadCase). A new case (blank or from a
 // template) always starts with none.
-let allAdmins = $state<AdminOut[]>([]);
+let allAdmins = $state<Api<"AdminOut">[]>([]);
 let isAdminsLoaded = $state(false);
 let isLoadingAdmins = $state(false);
 let collaboratorAdminIds = $state<number[]>([]);
@@ -119,7 +113,7 @@ async function ensureAdminsLoaded(): Promise<void> {
 	if (isAdminsLoaded || isLoadingAdmins) return;
 	isLoadingAdmins = true;
 	try {
-		allAdmins = await apiFetch<AdminOut[]>("/api/admin/admins");
+		allAdmins = await apiFetch<Api<"AdminOut">[]>("/api/admin/admins");
 		isAdminsLoaded = true;
 	} catch {
 		// Leave isAdminsLoaded false — next open just retries.
@@ -130,7 +124,7 @@ async function ensureAdminsLoaded(): Promise<void> {
 
 // Shared by the initial load and the conflict modal's "Reload" action.
 async function loadCase(id: string): Promise<void> {
-	const data = await apiFetch<CaseDetailResponse>(`/api/cases/${id}`);
+	const data = await apiFetch<Api<"CaseDetailResponse">>(`/api/cases/${id}`);
 	const loadedCase = data.case;
 	caseName = loadedCase.case_name ?? "";
 	initialBrief = loadedCase.initial_brief ?? "";
@@ -196,7 +190,7 @@ $effect(() => {
 	const intervalId = window.setInterval(async () => {
 		if (showConflictModal) return;
 		try {
-			const { version } = await apiFetch<CaseVersionResponse>(
+			const { version } = await apiFetch<Api<"CaseVersionResponse">>(
 				`/api/cases/${currentCaseId}/version`,
 			);
 			if (loadedVersion !== null && version !== loadedVersion) {
@@ -238,7 +232,7 @@ async function handleKeepEditingFromConflict(): Promise<void> {
 	showConflictModal = false;
 	if (!editCaseId) return;
 	try {
-		const { version } = await apiFetch<CaseVersionResponse>(
+		const { version } = await apiFetch<Api<"CaseVersionResponse">>(
 			`/api/cases/${editCaseId}/version`,
 		);
 		loadedVersion = version;

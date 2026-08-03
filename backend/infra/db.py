@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -13,6 +13,19 @@ def asyncpgUrl(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, "", parts.fragment))
 
 
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1", ""}
+
+
+# Every managed Postgres (Neon included) requires TLS, and asyncpg fails the
+# connection outright rather than downgrading — so ssl stays on by default. A
+# loopback database is the CI service container or a local dev instance, which
+# serves no certificate at all; asking for TLS there fails before the first
+# query. Host-based rather than a flag, so no environment can accidentally
+# turn TLS off against a real remote database.
+def requiresSsl(url: str) -> bool:
+    return (urlsplit(url).hostname or "") not in LOOPBACK_HOSTS
+
+
 # @lru_cache(maxsize=1) ensures only a single engine is created.
 @lru_cache(maxsize=1)
 def getEngine() -> AsyncEngine:
@@ -20,10 +33,12 @@ def getEngine() -> AsyncEngine:
 
     # Doesn't immediately connect to the db, does it lazily when first needed.
     return create_async_engine(
-        # "ssl": True - Forces a secure, encrypted connection to Neon
+        # "ssl" - Forces a secure, encrypted connection to Neon
         # statement_cache_size=0 - turns off asyncpg's internal caching of SQL queries to avoid weird crashes
         # pool_pre_ping=True - Ensures the db is alive before handing over a connection to a request
-        asyncpgUrl(settings.pooling_url), connect_args={"ssl": True, "statement_cache_size": 0}, pool_pre_ping=True
+        asyncpgUrl(settings.pooling_url),
+        connect_args={"ssl": requiresSsl(settings.pooling_url), "statement_cache_size": 0},
+        pool_pre_ping=True,
     )
 
 

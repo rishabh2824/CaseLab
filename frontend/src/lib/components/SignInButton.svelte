@@ -3,7 +3,7 @@ import type { Snippet } from "svelte";
 import { goto } from "$app/navigation";
 import { apiFetch } from "$lib/api/client.js";
 import { session } from "$lib/session.svelte.js";
-import type { LoginRequest, LoginResponse } from "$lib/types.js";
+import type { Api } from "$lib/types.js";
 
 // window.google is typed ambiently in $lib/google-identity.d.ts (Google
 // Identity Services loads it at runtime — see loadGsiScript below; no
@@ -52,9 +52,9 @@ function loadGsiScript(): Promise<void> {
 async function login(credential: string): Promise<void> {
 	isPending = true;
 	try {
-		const data = await apiFetch<LoginResponse>("/api/admin/login", {
+		const data = await apiFetch<Api<"LoginResponse">>("/api/admin/login", {
 			method: "POST",
-			body: { credential } satisfies LoginRequest,
+			body: { credential } satisfies Api<"LoginRequest">,
 		});
 		error = "";
 		session.setAdmin({ adminRole: data.role, adminEmail: data.email });

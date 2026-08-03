@@ -7,11 +7,12 @@ venv/
 __pycache__/
 *.pyc
 
-tests/
 .pytest_cache/
 .ruff_cache/
-
-alembic/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # OS junk
 .DS_Store

@@ -33,14 +33,55 @@ export default defineConfig({
 	},
 	test: {
 		expect: { requireAssertions: true },
+		coverage: {
+			provider: "v8",
+			reporter: ["text", "lcov"],
+			include: ["src/lib/**/*.{ts,svelte}"],
+			// Generated wire types, the Google Identity ambient declaration, and
+			// the barrel file contain no behavior to cover.
+			exclude: [
+				"src/lib/api/schema.d.ts",
+				"src/lib/*.d.ts",
+				"src/lib/index.ts",
+			],
+		},
 		projects: [
 			{
+				// Pure logic: prompt/graph/format helpers, the API client, and the
+				// student run store. No DOM — these must keep working under SSR too.
 				extends: "./vite.config.ts",
 				test: {
 					name: "server",
 					environment: "node",
 					include: ["src/**/*.{test,spec}.{js,ts}"],
-					exclude: ["src/**/*.svelte.{test,spec}.{js,ts}"],
+					// `*.dom.test.ts` and `*.svelte.test.ts` belong to the client
+					// project below; without excluding them here they would run
+					// twice, and fail in node for want of a document.
+					exclude: [
+						"src/**/*.svelte.{test,spec}.{js,ts}",
+						"src/**/*.dom.{test,spec}.{js,ts}",
+					],
+					setupFiles: ["./src/testing/setup.node.ts"],
+				},
+			},
+			{
+				// Anything that needs a document: Svelte components, and the
+				// DOMParser-based case importer.
+				extends: "./vite.config.ts",
+				// Without this, vitest resolves svelte's node/SSR export condition
+				// even under jsdom, and mounting a real component throws
+				// "mount(...) is not available on the server". Scoped to this
+				// project so the actual build is untouched.
+				resolve: { conditions: ["browser"] },
+				test: {
+					name: "client",
+					environment: "jsdom",
+					clearMocks: true,
+					include: [
+						"src/**/*.svelte.{test,spec}.{js,ts}",
+						"src/**/*.dom.{test,spec}.{js,ts}",
+					],
+					setupFiles: ["./src/testing/setup.client.ts"],
 				},
 			},
 		],

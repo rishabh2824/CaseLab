@@ -3,25 +3,20 @@ import { onMount } from "svelte";
 import { toast } from "svelte-sonner";
 import { apiFetch } from "$lib/api/client.js";
 import { ADMIN_ROLE } from "$lib/constants.js";
-import type {
-	AddAdminRequest,
-	AdminDeletedResponse,
-	AdminOut,
-	AdminRole,
-} from "$lib/types.js";
+import type { Api } from "$lib/types.js";
 
-const ROLE_LABELS: Record<AdminRole, string> = {
+const ROLE_LABELS: Record<Api<"AdminRole">, string> = {
 	[ADMIN_ROLE.SUPER]: "Super Admin",
 	[ADMIN_ROLE.ADMIN]: "Admin",
 };
 
-let admins = $state<AdminOut[]>([]);
+let admins = $state<Api<"AdminOut">[]>([]);
 let isLoading = $state(true);
 let listError = $state("");
 
 let email = $state("");
 let name = $state("");
-let role = $state<AdminRole>(ADMIN_ROLE.ADMIN);
+let role = $state<Api<"AdminRole">>(ADMIN_ROLE.ADMIN);
 let formError = $state("");
 let isAdding = $state(false);
 let deletingId = $state<number | null>(null);
@@ -31,7 +26,7 @@ async function loadAdmins(): Promise<void> {
 	isLoading = true;
 	listError = "";
 	try {
-		admins = await apiFetch<AdminOut[]>("/api/admin/admins");
+		admins = await apiFetch<Api<"AdminOut">[]>("/api/admin/admins");
 	} catch (err) {
 		listError =
 			(err instanceof Error && err.message) || "Failed to load admins.";
@@ -57,7 +52,7 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 				email: trimmedEmail,
 				name: name.trim() || null,
 				role,
-			} satisfies AddAdminRequest,
+			} satisfies Api<"AddAdminRequest">,
 		});
 		formError = "";
 		email = "";
@@ -71,7 +66,7 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 	}
 }
 
-async function handleDelete(admin: AdminOut): Promise<void> {
+async function handleDelete(admin: Api<"AdminOut">): Promise<void> {
 	const confirmed = window.confirm(
 		`Delete ${admin.email}? This cannot be undone. Any case they own with no collaborators is deleted; a case they own that has collaborators is reassigned to the longest-standing collaborator.`,
 	);
@@ -79,7 +74,7 @@ async function handleDelete(admin: AdminOut): Promise<void> {
 	deleteError = "";
 	deletingId = admin.id;
 	try {
-		const result = await apiFetch<AdminDeletedResponse>(
+		const result = await apiFetch<Api<"AdminDeletedResponse">>(
 			`/api/admin/admins/${admin.id}`,
 			{ method: "DELETE" },
 		);

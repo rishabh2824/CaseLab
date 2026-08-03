@@ -7,18 +7,18 @@ import {
 	normalizePersona,
 	normalizeReferral,
 	referralsTo,
-} from "$lib/case/Helpers.js";
-import type { DemoCaseDetail, DemoCaseResponse, Persona } from "$lib/types.js";
+} from "$lib/case/draft.js";
+import type { Api, Persona } from "$lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
-let caseData = $state<DemoCaseDetail | null>(null);
+let caseData = $state<Api<"DemoCaseDetail"> | null>(null);
 let isLoading = $state(true);
 let loadError = $state("");
 
 onMount(async () => {
 	try {
-		const data = await apiFetch<DemoCaseResponse>("/api/cases/demo");
+		const data = await apiFetch<Api<"DemoCaseResponse">>("/api/cases/demo");
 		caseData = data.case;
 	} catch (err) {
 		loadError =
@@ -29,8 +29,9 @@ onMount(async () => {
 });
 
 // normalizePersona/normalizeReferral are the same helpers CaseForm.svelte uses
-// on live PersonaOut/ReferralOut data — reused here so the demo view's persona
-// graph (root personas + referred personas) matches the real editor exactly.
+// on live persona/referral data from the API — reused here so the demo view's
+// persona graph (root personas + referred personas) matches the real editor
+// exactly.
 const personas = $derived(
 	(caseData?.personas ?? []).map((persona) => normalizePersona(persona)),
 );

@@ -3,21 +3,14 @@ import { goto } from "$app/navigation";
 import { ApiError, apiFetch, streamChat } from "../api/client.js";
 import { session } from "../session.svelte.js";
 import type {
-	ChatMessage,
+	Api,
 	Contact,
-	NotesPayload,
 	RunState,
-	SendMessagePayload,
 	SharedFile,
-	StartSimulationPayload,
 	StreamEvent,
 	TurnMeta,
 } from "../types.js";
-import {
-	type MappedContact,
-	mapContact,
-	normalizeHistories,
-} from "./Helpers.js";
+import { normalizeHistories } from "./contacts.js";
 
 const notify = (message: string) => toast(message, { duration: 4000 });
 
@@ -27,7 +20,7 @@ const NOTES_SAVE_DEBOUNCE_MS = 800;
 
 type StreamingTurn = {
 	personaId: string;
-	messages: ChatMessage[];
+	messages: Api<"ChatMessage">[];
 };
 
 class RunStore {
@@ -47,14 +40,12 @@ class RunStore {
 	#expiryInterval: ReturnType<typeof setInterval> | null = null;
 
 	caseData = $derived(this.raw?.case ?? null);
-	contacts = $derived<MappedContact[]>(
-		(this.raw?.contacts ?? []).map(mapContact),
-	);
+	contacts = $derived<Contact[]>(this.raw?.contacts ?? []);
 	sharedFiles = $derived<SharedFile[]>(this.raw?.shared_files ?? []);
-	serverHistories = $derived<Record<string, ChatMessage[]>>(
+	serverHistories = $derived<Record<string, Api<"ChatMessage">[]>>(
 		normalizeHistories(this.raw?.histories ?? {}),
 	);
-	messagesByPersona = $derived<Record<string, ChatMessage[]>>(
+	messagesByPersona = $derived<Record<string, Api<"ChatMessage">[]>>(
 		this.streamingTurn
 			? {
 					...this.serverHistories,
@@ -72,7 +63,7 @@ class RunStore {
 	);
 	activePersonaAvailable = $derived(
 		Boolean(
-			this.selectedContact?.available && !this.selectedContact?.chatEnded,
+			this.selectedContact?.available && !this.selectedContact?.chat_ended,
 		),
 	);
 	totalDurationSeconds = $derived(
@@ -82,10 +73,14 @@ class RunStore {
 	);
 
 	// Establishes a run exactly once: resume a persisted runId, else start
-	// from the access code, else bail home.
+	// from the access code, else bail home. If raw is already populated (the
+	// landing page called startSession itself before navigating here), that
+	// already ran #afterLoad — nothing left to do, and no need to re-fetch
+	// the state that was just fetched to get here.
 	async init(): Promise<void> {
 		if (this.#initialized) return;
 		this.#initialized = true;
+		if (this.raw) return;
 		if (session.runId) {
 			await this.refresh(session.runId);
 		} else if (session.accessCode) {
@@ -99,7 +94,7 @@ class RunStore {
 		try {
 			const fresh = await apiFetch<RunState>("/api/simulations/start", {
 				method: "POST",
-				body: { access_code: code } satisfies StartSimulationPayload,
+				body: { access_code: code } satisfies Api<"StartSimulationPayload">,
 			});
 			this.raw = fresh;
 			session.startRun({
@@ -221,7 +216,7 @@ class RunStore {
 		try {
 			await apiFetch(`/api/simulations/${id}/notes`, {
 				method: "PUT",
-				body: { notes: this.notes } satisfies NotesPayload,
+				body: { notes: this.notes } satisfies Api<"NotesPayload">,
 			});
 		} catch (err) {
 			console.error(err);
@@ -267,7 +262,7 @@ class RunStore {
 	}
 
 	// Overwrites a persona's history — used to commit a completed turn.
-	commitHistory(personaId: string, messages: ChatMessage[]): void {
+	commitHistory(personaId: string, messages: Api<"ChatMessage">[]): void {
 		if (!this.raw) return;
 		if (!this.raw.histories) this.raw.histories = {};
 		this.raw.histories[personaId] = messages;
@@ -288,7 +283,7 @@ class RunStore {
 
 	async #runSend(personaId: string, message: string): Promise<void> {
 		const priorMessages = this.serverHistories[personaId] ?? [];
-		const overlayMessages = (streamedText: string): ChatMessage[] => [
+		const overlayMessages = (streamedText: string): Api<"ChatMessage">[] => [
 			...priorMessages,
 			{ role: "user", content: message },
 			{ role: "assistant", content: streamedText },
@@ -301,7 +296,10 @@ class RunStore {
 		let streamError: Error | null = null;
 		try {
 			await streamChat(`/api/simulations/${session.runId}/message`, {
-				body: { persona_id: personaId, message } satisfies SendMessagePayload,
+				body: {
+					persona_id: personaId,
+					message,
+				} satisfies Api<"SendMessagePayload">,
 				onEvent: (event: StreamEvent) => {
 					switch (event.type) {
 						case "meta":

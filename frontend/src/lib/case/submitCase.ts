@@ -1,22 +1,10 @@
 import { apiFetch } from "../api/client.js";
-import { slugify } from "../student/Helpers.js";
-import type {
-	CaseCreatedResponse,
-	CasePayload,
-	CaseUpdatePayload,
-	DraftFileEntry,
-	FileEntry,
-	FileRef,
-	Persona,
-	PersonaPayload,
-	PresignUploadRequest,
-	PresignUploadResponse,
-	ReferralEdge,
-} from "../types.js";
-import { normalizePersona } from "./Helpers.js";
+import { slugify } from "../format.js";
+import type { Api, DraftFileEntry, Persona, ReferralEdge } from "../types.js";
+import { normalizePersona } from "./draft.js";
 
-async function uploadFile(file: File, prefix: string): Promise<FileRef> {
-	const presign = await apiFetch<PresignUploadResponse>(
+async function uploadFile(file: File, prefix: string): Promise<Api<"FileRef">> {
+	const presign = await apiFetch<Api<"PresignUploadResponse">>(
 		"/api/uploads/presign",
 		{
 			method: "POST",
@@ -24,7 +12,7 @@ async function uploadFile(file: File, prefix: string): Promise<FileRef> {
 				file_name: file.name,
 				content_type: file.type || null,
 				prefix,
-			} satisfies PresignUploadRequest,
+			} satisfies Api<"PresignUploadRequest">,
 		},
 	);
 
@@ -48,7 +36,7 @@ async function uploadFile(file: File, prefix: string): Promise<FileRef> {
 async function normalizeFileEntry(
 	entry: DraftFileEntry,
 	prefix: string,
-): Promise<FileEntry> {
+): Promise<Api<"FileEntry">> {
 	if (!entry.file) return { ...entry, file: null };
 	if (entry.file instanceof File)
 		return { ...entry, file: await uploadFile(entry.file, prefix) };
@@ -56,9 +44,9 @@ async function normalizeFileEntry(
 }
 
 async function normalizeProfilePhoto(
-	profilePhoto: File | FileRef | null,
+	profilePhoto: File | Api<"FileRef"> | null,
 	prefix: string,
-): Promise<FileRef | null> {
+): Promise<Api<"FileRef"> | null> {
 	if (!profilePhoto) return null;
 	if (profilePhoto instanceof File) return uploadFile(profilePhoto, prefix);
 	return profilePhoto;
@@ -67,7 +55,7 @@ async function normalizeProfilePhoto(
 async function buildPersonaPayload(
 	persona: Partial<Persona>,
 	prefix: string,
-): Promise<PersonaPayload> {
+): Promise<Api<"PersonaPayload">> {
 	const normalized = normalizePersona(persona);
 	const profile_photo = await normalizeProfilePhoto(
 		normalized.profile_photo,
@@ -119,7 +107,7 @@ export async function submitCase({
 	roots,
 	collaboratorAdminIds,
 	expectedVersion,
-}: SubmitCaseInput): Promise<CaseCreatedResponse> {
+}: SubmitCaseInput): Promise<Api<"CaseCreatedResponse">> {
 	const slug = slugify(caseName);
 	const prefix = slug ? `cases/${slug}` : "cases";
 	const personasPayload = await Promise.all(
@@ -140,16 +128,16 @@ export async function submitCase({
 		roots,
 		collaborator_admin_ids: collaboratorAdminIds,
 	};
-	const payload: CasePayload | CaseUpdatePayload = isEditMode
+	const payload: Api<"CasePayload"> | Api<"CaseUpdatePayload"> = isEditMode
 		? ({
 				...basePayload,
 				// The submit button is disabled while isEditMode is true and
 				// expectedVersion hasn't loaded yet (see CaseForm.svelte), so
 				// this is always a number by the time submitCase can run.
 				expected_version: expectedVersion as number,
-			} satisfies CaseUpdatePayload)
-		: (basePayload satisfies CasePayload);
-	return apiFetch<CaseCreatedResponse>(
+			} satisfies Api<"CaseUpdatePayload">)
+		: (basePayload satisfies Api<"CasePayload">);
+	return apiFetch<Api<"CaseCreatedResponse">>(
 		isEditMode ? `/api/cases/${editCaseId}` : "/api/cases",
 		{
 			method: isEditMode ? "PUT" : "POST",

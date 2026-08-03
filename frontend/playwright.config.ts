@@ -21,7 +21,9 @@ export default defineConfig({
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
 	retries: process.env.CI ? 2 : 0,
-	reporter: "list",
+	// On CI the HTML report is uploaded as an artifact when the run fails, so a
+	// failure can be diagnosed (including traces) without re-running locally.
+	reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
 	use: {
 		baseURL: BASE_URL,
 		trace: "on-first-retry",

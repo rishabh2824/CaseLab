@@ -1,8 +1,8 @@
 // Exports an empty case form so admins can autofill it with AI
 
-import { slugify } from "../student/Helpers.js";
+import { slugify } from "../format.js";
 import type { Persona, ReferralEdge } from "../types.js";
-import { createEmptyPersona } from "./Helpers.js";
+import { createEmptyPersona } from "./draft.js";
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")

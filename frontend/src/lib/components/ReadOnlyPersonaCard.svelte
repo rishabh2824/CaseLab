@@ -1,5 +1,5 @@
 <script lang="ts">
-import { getPersonaLabel, referralsFrom } from "$lib/case/Helpers.js";
+import { getPersonaLabel, referralsFrom } from "$lib/case/draft.js";
 import type { Persona, ReferralEdge } from "$lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 

@@ -57,6 +57,49 @@ pnpm run dev
 The frontend's dev server proxies `/api` to `127.0.0.1:8000`
 (`/api` → backend, everything else → the static frontend, one domain).
 
+## Testing
+
+Everything below runs in CI on every push and pull request
+(`.github/workflows/ci.yml`).
+
+```bash
+# backend — fast suite: no database, no network, runs in ~1s
+cd backend
+uv run pytest -m "not db"
+
+# backend — everything, including the Postgres-backed tests
+uv run pytest
+uv run ruff check .
+
+# frontend
+cd frontend
+pnpm exec vitest run     # unit (node + jsdom projects)
+pnpm run check           # svelte-check
+pnpm run lint            # biome
+pnpm run test:e2e        # Playwright, against a fully-mocked backend
+```
+
+**Backend layout.** `tests/unit/` never touches a database, the network, or the
+LLM — the simulation runtime is driven through a hermetic harness
+(`tests/unit/conftest.py`) that fakes only the run store, `reads.fetchCase`, the
+LLM and Spaces, so the real service/prompt/turn-state code is under test.
+`tests/integration/` is auto-marked `db` and hits a real Postgres, which is the
+point: the schema depends on JSONB, CITEXT, `INSERT … ON CONFLICT` and
+`SELECT … FOR UPDATE`, none of which SQLite can stand in for. Shared payload
+builders live in `tests/factories.py`.
+
+**Which database?** The DB-backed tests connect to `POOLING` and create and
+delete real rows, so point it at a throwaway database — `pytest` prints the host
+it is about to use in its header. CI runs them against a disposable `postgres:17`
+service container, with the schema built by `alembic upgrade head` so the
+migrations are exercised too.
+
+**Frontend layout.** Two vitest projects: `*.test.ts` runs in node, while
+`*.dom.test.ts` and `*.svelte.test.ts` run in jsdom. Backend calls are
+intercepted by [MSW](https://mswjs.io) with `onUnhandledRequest: "error"`, so an
+unstubbed request fails the test instead of reaching the network. Shared
+fixtures and the MSW server live in `src/testing/`.
+
 ## API types
 
 `frontend/src/lib/api/schema.d.ts` is generated from the backend's OpenAPI
@@ -70,6 +113,15 @@ uv run uvicorn main:app --port 8000
 # frontend
 pnpm gen:api
 ```
+
+Forgetting this step used to go unnoticed until something broke at runtime;
+`backend/tests/unit/test_openapi_contract.py` now compares the checked-in
+`.d.ts` against the live OpenAPI schema and fails CI on drift.
+
+`gen:api` runs openapi-typescript through `npm exec` with a pinned TypeScript
+rather than the workspace install: openapi-typescript builds its output with
+TypeScript's `ts.factory` AST API, which this project's TypeScript 7 no longer
+exposes, so the locally-installed binary crashes on import.
 
 ## Workflows
 
