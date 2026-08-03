@@ -10,7 +10,7 @@ def elapsedMinutes(run) -> int:
 
 
 # Computes if a persona should be currently reachable or not.
-def persona_availability(persona, available_at_minutes: int, elapsed_minutes: int):
+def personaAvailability(persona, available_at_minutes: int, elapsed_minutes: int):
     availability_duration = persona.get("availability_duration")
     available_at = available_at_minutes
     if elapsed_minutes < available_at:
@@ -19,7 +19,7 @@ def persona_availability(persona, available_at_minutes: int, elapsed_minutes: in
             "available_in": available_at - elapsed_minutes,
             "expires_in": None,
         }
-    if availability_duration:
+    if availability_duration is not None:
         expires_at = available_at + availability_duration
         if elapsed_minutes > expires_at:
             return {

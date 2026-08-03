@@ -8,9 +8,6 @@ class AdminRole(IntEnum):
 
 
 class LoginRequest(BaseModel):
-    # The ID token JWT from google.accounts.id's CredentialResponse
-    # (SignInButton.svelte) — verified locally via services.auth.verifyToken,
-    # no server-side call to Google needed.
     credential: str
 
 
@@ -34,8 +31,6 @@ class AdminOut(BaseModel):
     role: AdminRole
 
 
-# DELETE /admin/admins/{id} — deleteWithCascade's per-case delete-or-reassign
-# counts, surfaced so the frontend can summarize the cascade in a toast.
 class AdminDeletedResponse(BaseModel):
     ok: bool
     cases_deleted: int

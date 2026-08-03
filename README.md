@@ -33,9 +33,7 @@ Each app reads its config from a git-ignored `.env` file in its own folder:
 - `backend/.env` — `SPACES_KEY`, `SPACES_SECRET`, `POOLING`/`DIRECT` (Neon
   Postgres), `FRONTEND_URLS`, `LLM_KEY` (an [OpenRouter](https://openrouter.ai)
   API key), `GOOGLE_CLIENT_ID`, `JWT_SECRET`. See `backend/infra/settings.py`
-  for the full list and defaults. No client secret is needed — admin auth only
-  verifies ID tokens locally, it never calls Google to exchange one (see
-  Workflows below).
+  for the full list and defaults.
 - `frontend/.env` — `VITE_GOOGLE_CLIENT_ID`.
 
 Set `ENABLE_OPENAPI=true` in `backend/.env` to serve `/openapi.json` locally
@@ -79,27 +77,6 @@ pnpm run lint            # biome
 pnpm run test:e2e        # Playwright, against a fully-mocked backend
 ```
 
-**Backend layout.** `tests/unit/` never touches a database, the network, or the
-LLM — the simulation runtime is driven through a hermetic harness
-(`tests/unit/conftest.py`) that fakes only the run store, `reads.fetchCase`, the
-LLM and Spaces, so the real service/prompt/turn-state code is under test.
-`tests/integration/` is auto-marked `db` and hits a real Postgres, which is the
-point: the schema depends on JSONB, CITEXT, `INSERT … ON CONFLICT` and
-`SELECT … FOR UPDATE`, none of which SQLite can stand in for. Shared payload
-builders live in `tests/factories.py`.
-
-**Which database?** The DB-backed tests connect to `POOLING` and create and
-delete real rows, so point it at a throwaway database — `pytest` prints the host
-it is about to use in its header. CI runs them against a disposable `postgres:17`
-service container, with the schema built by `alembic upgrade head` so the
-migrations are exercised too.
-
-**Frontend layout.** Two vitest projects: `*.test.ts` runs in node, while
-`*.dom.test.ts` and `*.svelte.test.ts` run in jsdom. Backend calls are
-intercepted by [MSW](https://mswjs.io) with `onUnhandledRequest: "error"`, so an
-unstubbed request fails the test instead of reaching the network. Shared
-fixtures and the MSW server live in `src/testing/`.
-
 ## API types
 
 `frontend/src/lib/api/schema.d.ts` is generated from the backend's OpenAPI
@@ -114,26 +91,14 @@ uv run uvicorn main:app --port 8000
 pnpm gen:api
 ```
 
-Forgetting this step used to go unnoticed until something broke at runtime;
-`backend/tests/unit/test_openapi_contract.py` now compares the checked-in
-`.d.ts` against the live OpenAPI schema and fails CI on drift.
-
-`gen:api` runs openapi-typescript through `npm exec` with a pinned TypeScript
-rather than the workspace install: openapi-typescript builds its output with
-TypeScript's `ts.factory` AST API, which this project's TypeScript 7 no longer
-exposes, so the locally-installed binary crashes on import.
-
 ## Workflows
 
-**Auth (admins only).** GIS (`accounts.google.com/gsi/client`) is loaded lazily
-— only on the first click of "Admin Login". That click opens a small popover 
-and renders Google's own Sign In With Google button into it 
-(`accounts.id.renderButton`, not `.prompt()`/One Tap — One Tap only works via 
-FedCM, which Safari and Firefox don't support. It has to be Google's actual 
-rendered element, not a custom-styled one — Google's branding guidelines 
-require their button be shown unmodified and unobscured, and a custom 
-trigger can only invoke `.prompt()` (i.e. the FedCM-only path). Clicking it 
-hands the frontend a signed ID token (a JWT) directly, which gets POSTed as 
+**Auth (admins only).** GIS is loaded lazily only on the first click of 
+"Admin Login". The click opens a small popover and renders Google's own Sign 
+In With Google button. (`accounts.id.renderButton`, not `.prompt()`/One Tap — 
+One Tap only works via FedCM, which Safari and Firefox don't support. It also 
+has to be Google's actual rendered element, not a custom-styled one. Clicking 
+it hands the frontend a signed ID token (a JWT) directly, which gets POSTed as 
 `credential` to `/api/admin/login`. The backend verifies its signature against 
 Google's cached public keys locally. Once verified, the backend checks the 
 token's email against the `admins` table and — if found — signs its own JWT 
@@ -153,25 +118,20 @@ completes.
 
 
 **Persona reply generation (LLM pipeline).** Each student message triggers
-four kinds of OpenRouter calls (`anthropic/claude-sonnet-5` and
-`anthropic/claude-haiku-4.5`, both through OpenRouter's OpenAI-compatible
-`/chat/completions` endpoint): one Claude Sonnet call that generates the
-reply, and up to three kinds of Claude Haiku classifier calls — a
-harassment/nonsense check on the message, one referral-unlock check per
-still-locked referral the active persona could introduce, and one
-file-share check per still-withheld file they could send. All classifier
-calls run concurrently (`asyncio.gather`); the Sonnet reply call runs
-strictly after, since its system prompt depends on which referrals/files
-the classifiers just deemed eligible. The system prompt is split into a
-stable block (case brief, common information, and the active persona's own
-traits/known facts) marked with a one-hour ephemeral `cache_control`, and a
-turn-specific block (this turn's eligible referrals/files). The reply text
-itself streams straight to the client via SSE as plain text, with no
-wrapping or parsing in between; in the same streaming response, the model
-separately calls a `report_reply_metadata` tool (via `tool_choice: "auto"`,
-which — confirmed empirically — still returns the reply text alongside the
-tool call) to report which contacts it introduced and which files it sent
-this turn, which drives referral/file unlocking once the stream ends.
+four kinds of OpenRouter calls. One Claude Sonnet call generates the reply, 
+and up to three kinds of Claude Haiku classifier calls run concurrently:
+1. A harassment/nonsense check on the message
+2. One referral-unlock check for each still-locked referral the current persona could introduce
+3. One file-share check for each still-withheld file the current persona could send
+
+All classifier calls run concurrently (`asyncio.gather`); the Sonnet reply 
+call runs strictly after, since its prompt depends on the other 3. The 
+system prompt is split into a stable block (common case information) which
+is cached, and a turn-specific block (this turn's eligible referrals/files). 
+The reply text itself streams straight to the client via SSE as plain text. 
+In the same streaming response, the model separately calls a 
+`report_reply_metadata` tool to report which contacts it introduced and which 
+files it sent this turn, driving referral/file unlocking once the stream ends.
 
 
 **File uploads (two-phase, direct-to-Spaces).** The browser never sends file

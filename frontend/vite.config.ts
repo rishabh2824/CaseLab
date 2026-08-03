@@ -53,13 +53,13 @@ export default defineConfig({
 				test: {
 					name: "server",
 					environment: "node",
-					include: ["src/**/*.{test,spec}.{js,ts}"],
+					include: ["tests/**/*.{test,spec}.{js,ts}"],
 					// `*.dom.test.ts` and `*.svelte.test.ts` belong to the client
 					// project below; without excluding them here they would run
 					// twice, and fail in node for want of a document.
 					exclude: [
-						"src/**/*.svelte.{test,spec}.{js,ts}",
-						"src/**/*.dom.{test,spec}.{js,ts}",
+						"tests/**/*.svelte.{test,spec}.{js,ts}",
+						"tests/**/*.dom.{test,spec}.{js,ts}",
 					],
 					setupFiles: ["./src/testing/setup.node.ts"],
 				},
@@ -78,8 +78,8 @@ export default defineConfig({
 					environment: "jsdom",
 					clearMocks: true,
 					include: [
-						"src/**/*.svelte.{test,spec}.{js,ts}",
-						"src/**/*.dom.{test,spec}.{js,ts}",
+						"tests/**/*.svelte.{test,spec}.{js,ts}",
+						"tests/**/*.dom.{test,spec}.{js,ts}",
 					],
 					setupFiles: ["./src/testing/setup.client.ts"],
 				},

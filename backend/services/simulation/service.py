@@ -4,13 +4,13 @@ import time
 import uuid
 from domain_errors import InvalidRequest, NotFoundError, UpstreamError
 from models.simulations import NotesPayload, SendMessagePayload, StartSimulationPayload
-from infra.db import get_session
+from infra.db import getSession
 from infra.llm import classifyHarassment, personaReplyStream
 from infra.rate_limit import messageLimit, simulationLimit
 from services.simulation.run_store import insertRun, getRun, updateRun
 from services.simulation.prompt import (replyInstructions, systemPrompt, cleanReply, parseReplyMetadata, fileShare, referralUnlock, sanitizeHistory)
 from services.simulation.reads import (buildPersonaGraph, getCase, getRunCase, getPersonaGraph, graphPersonaById, graphReferrals, graphPersonas, hydratePersona)
-from services.simulation.turn_state import (NONSENSE_THRESHOLD, boundaryReply, chatStatePayload, shapeChatState, elapsedMinutes, formatHistory, getChatState, persona_availability, editChatState)
+from services.simulation.turn_state import (NONSENSE_THRESHOLD, boundaryReply, chatStatePayload, shapeChatState, elapsedMinutes, formatHistory, getChatState, personaAvailability, editChatState)
 from infra.spaces import getUrl
 
 
@@ -27,7 +27,7 @@ def sse(event: str, data: dict) -> dict:
 
 # One contact-list entry: persona fields + computed availability + chat state.
 def buildContact(run, persona, available_at_minutes, elapsed_minutes, *, is_referred):
-    availability = persona_availability(persona, available_at_minutes, elapsed_minutes)
+    availability = personaAvailability(persona, available_at_minutes, elapsed_minutes)
     contact = {**persona, **availability, "is_referred": is_referred, **chatStatePayload(run, persona["id"])}
     # Each file's share_conditions/perceived_contents are the unlock secret/answer key,
     # and known_facts/personality_traits are the LLM prompt's persona secrets — all fine
@@ -56,7 +56,7 @@ async def startSimulation(payload: StartSimulationPayload):
     if not access_code:
         raise InvalidRequest("Access code is required.")
     await simulationLimit(access_code)
-    async with get_session() as session:
+    async with getSession() as session:
         case_snapshot = await getCase(session, access_code=access_code)
         persona_graph = await buildPersonaGraph(session, case_snapshot["id"])
     if not persona_graph["root_personas"]:
@@ -224,13 +224,13 @@ async def message(run_id: str, payload: SendMessagePayload) -> dict:
         raise InvalidRequest("This simulation has ended.")
     root_map = {p["id"]: p for p in graph["root_personas"]}
     if persona_id in root_map:
-        availability = persona_availability(root_map[persona_id], 0, elapsed)
+        availability = personaAvailability(root_map[persona_id], 0, elapsed)
     elif persona_id in run["unlocked_referred_ids"]:
         persona = graphPersonaById(graph, persona_id)
         if persona is None:
             raise NotFoundError("Persona not found.")
         available_at = run["unlocked_at"].get(persona_id, elapsed)
-        availability = persona_availability(persona, available_at, elapsed)
+        availability = personaAvailability(persona, available_at, elapsed)
     else:
         raise InvalidRequest("Persona is not available yet.")
     if not availability["available"]:

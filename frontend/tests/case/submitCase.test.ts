@@ -5,11 +5,14 @@
 // would corrupt a saved case without ever throwing.
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
-import { makePersona } from "../../testing/fixtures.js";
-import { server } from "../../testing/msw.js";
-import { ApiError } from "../api/client.js";
-import type { Api } from "../types.js";
-import { type SubmitCaseInput, submitCase } from "./submitCase.js";
+import { ApiError } from "../../src/lib/api/client.js";
+import {
+	type SubmitCaseInput,
+	submitCase,
+} from "../../src/lib/case/submitCase.js";
+import type { Api } from "../../src/lib/types.js";
+import { makePersona } from "../../src/testing/fixtures.js";
+import { server } from "../../src/testing/msw.js";
 
 // Node's built-in fetch (bundled undici) refuses a relative URL outright — it
 // needs a same-origin base to resolve against, which a browser gets for free

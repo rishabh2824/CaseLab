@@ -2,8 +2,8 @@
 // session.svelte.ts's sessionStorage branch is live and this file can
 // observe read/write round-trips for real.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ADMIN_ROLE } from "./constants.js";
-import { session } from "./session.svelte.js";
+import { ADMIN_ROLE } from "../src/lib/constants.js";
+import { session } from "../src/lib/session.svelte.js";
 
 // Mirrors the private STORAGE_KEY in session.svelte.ts (not exported) — the
 // only way to seed/inspect the raw persisted blob from outside the module.
@@ -20,7 +20,7 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 
 	it("falls back to defaults on invalid JSON", async () => {
 		sessionStorage.setItem(STORAGE_KEY, "not valid json {{{");
-		const { session: fresh } = await import("./session.svelte.js");
+		const { session: fresh } = await import("../src/lib/session.svelte.js");
 		expect(fresh.runId).toBe("");
 		expect(fresh.accessCode).toBe("");
 		expect(fresh.adminRole).toBeNull();
@@ -30,21 +30,21 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 
 	it("falls back to defaults when the stored value is JSON null", async () => {
 		sessionStorage.setItem(STORAGE_KEY, "null");
-		const { session: fresh } = await import("./session.svelte.js");
+		const { session: fresh } = await import("../src/lib/session.svelte.js");
 		expect(fresh.runId).toBe("");
 		expect(fresh.startTime).toBeNull();
 	});
 
 	it("falls back to defaults when the stored value is a JSON string", async () => {
 		sessionStorage.setItem(STORAGE_KEY, JSON.stringify("just a string"));
-		const { session: fresh } = await import("./session.svelte.js");
+		const { session: fresh } = await import("../src/lib/session.svelte.js");
 		expect(fresh.runId).toBe("");
 		expect(fresh.accessCode).toBe("");
 	});
 
 	it("falls back to defaults when the stored value is a JSON array", async () => {
 		sessionStorage.setItem(STORAGE_KEY, JSON.stringify(["run-1", "code-1"]));
-		const { session: fresh } = await import("./session.svelte.js");
+		const { session: fresh } = await import("../src/lib/session.svelte.js");
 		expect(fresh.runId).toBe("");
 		expect(fresh.accessCode).toBe("");
 		expect(fresh.adminRole).toBeNull();
@@ -58,7 +58,7 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 			STORAGE_KEY,
 			JSON.stringify({ runId: 42, accessCode: "ABC123" }),
 		);
-		const { session: fresh } = await import("./session.svelte.js");
+		const { session: fresh } = await import("../src/lib/session.svelte.js");
 		expect(fresh.runId).toBe(""); // numeric runId is invalid -> default
 		expect(fresh.accessCode).toBe("ABC123"); // valid string -> kept
 	});
@@ -70,7 +70,7 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 		[ADMIN_ROLE.ADMIN, ADMIN_ROLE.ADMIN],
 	])("adminRole %j normalizes to %j", async (stored, expected) => {
 		sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ adminRole: stored }));
-		const { session: fresh } = await import("./session.svelte.js");
+		const { session: fresh } = await import("../src/lib/session.svelte.js");
 		expect(fresh.adminRole).toBe(expected);
 	});
 });

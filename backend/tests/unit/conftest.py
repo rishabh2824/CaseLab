@@ -12,7 +12,7 @@ What is faked, and why:
   `updateRun`'s read-modify-write contract is preserved, so the mutate
   functions in service.py run exactly as they do in production.
 * `reads.fetchCase` — returns a `Case` built in memory. Deliberately patched
-  *below* `getCase`/`buildPersonaGraph` so `case_snapshot`, `CaseStructure`
+  *below* `getCase`/`buildPersonaGraph` so `caseSnapshot`, `CaseStructure`
   validation and `flattenPersonas` are all still under test.
 * the LLM — `StubLlm` below, which is programmable per test and records every
   call, so a test can assert on what the classifier was actually asked.
@@ -308,7 +308,7 @@ def sim(monkeypatch, fake_run_store, stub_llm, no_rate_limit, fake_spaces) -> Si
             return None
         return case
 
-    monkeypatch.setattr(sim_service, "get_session", noSession)
-    monkeypatch.setattr(reads_module, "get_session", noSession)
+    monkeypatch.setattr(sim_service, "getSession", noSession)
+    monkeypatch.setattr(reads_module, "getSession", noSession)
     monkeypatch.setattr(reads_module, "fetchCase", fetchCase)
     return harness

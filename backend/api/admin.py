@@ -4,7 +4,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from models.admin import AddAdminRequest, AdminDeletedResponse, AdminOut, AdminRole, LoginRequest, LoginResponse
 from services import admin as admin_repository
 from services.auth import (clearCookie, createJwt, setCookie, verifyToken)
-from infra.db import get_session, getRequestSession
+from infra.db import getSession, getRequestSession
 from .dependencies import getCurrentAdmin, requireSuperAdmin
 
 
@@ -18,7 +18,7 @@ async def login(payload: LoginRequest, response: Response) -> LoginResponse:
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-    async with get_session() as session:
+    async with getSession() as session:
         admin = await admin_repository.getByEmail(session, claims["email"])
     if admin is None:
         raise HTTPException(status_code=401, detail="Your account is not authorized")

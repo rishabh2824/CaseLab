@@ -1,7 +1,7 @@
 """services/simulation/turn_state.py — pure state-shaping helpers.
 
 No DB, no LLM, no network: every function here is a straight dict-in/dict-out
-transform, which is exactly what makes the persona_availability boundary and
+transform, which is exactly what makes the personaAvailability boundary and
 the getChatState/editChatState mutation contract worth pinning down with unit
 tests instead of only exercising them indirectly through a full turn.
 """
@@ -14,28 +14,28 @@ from services.simulation import turn_state
 
 
 # --------------------------------------------------------------------------
-# persona_availability
+# personaAvailability
 # --------------------------------------------------------------------------
 
 
 def test_persona_availability_not_yet_available():
     # elapsed (5) < available_at (10): still waiting.
     persona = {"availability_duration": None}
-    result = turn_state.persona_availability(persona, 10, 5)
+    result = turn_state.personaAvailability(persona, 10, 5)
     assert result == {"available": False, "available_in": 5, "expires_in": None}
 
 
 def test_persona_availability_no_duration_never_expires():
     # No availability_duration set at all -> available forever once reached.
     persona = {"availability_duration": None}
-    result = turn_state.persona_availability(persona, 10, 50)
+    result = turn_state.personaAvailability(persona, 10, 50)
     assert result == {"available": True, "available_in": 0, "expires_in": None}
 
 
 def test_persona_availability_with_duration_remaining():
     # available_at=10, duration=20 -> expires_at=30. elapsed=15 leaves 15 left.
     persona = {"availability_duration": 20}
-    result = turn_state.persona_availability(persona, 10, 15)
+    result = turn_state.personaAvailability(persona, 10, 15)
     assert result == {"available": True, "available_in": 0, "expires_in": 15}
 
 
@@ -44,26 +44,32 @@ def test_persona_availability_exactly_at_expiry_boundary_is_still_available():
     # exactly on the boundary (elapsed == expires_at) is still available,
     # just with zero time left. This is the boundary the task calls out.
     persona = {"availability_duration": 20}
-    result = turn_state.persona_availability(persona, 10, 30)
+    result = turn_state.personaAvailability(persona, 10, 30)
     assert result == {"available": True, "available_in": 0, "expires_in": 0}
 
 
 def test_persona_availability_past_expiry_is_expired():
     # One minute past the boundary flips to expired.
     persona = {"availability_duration": 20}
-    result = turn_state.persona_availability(persona, 10, 31)
+    result = turn_state.personaAvailability(persona, 10, 31)
     assert result == {"available": False, "available_in": None, "expires_in": 0}
 
 
-def test_persona_availability_zero_duration_is_treated_as_no_duration():
-    # `if availability_duration:` is falsy for 0, so a persona configured with
-    # availability_duration=0 falls through to the "no duration" branch and is
-    # treated as available indefinitely rather than "available for zero
-    # minutes". Documented here as the actual behaviour, not asserted as
-    # correct or incorrect product intent.
+def test_persona_availability_zero_duration_expires_immediately():
+    # availability_duration=0 means "available for zero minutes": the persona
+    # is available for the instant it becomes reachable and expired from then
+    # on, distinct from availability_duration=None (available forever).
     persona = {"availability_duration": 0}
-    result = turn_state.persona_availability(persona, 10, 1000)
-    assert result == {"available": True, "available_in": 0, "expires_in": None}
+    result = turn_state.personaAvailability(persona, 10, 1000)
+    assert result == {"available": False, "available_in": None, "expires_in": 0}
+
+
+def test_persona_availability_zero_duration_at_available_at_is_available_for_the_instant():
+    # elapsed == available_at == expires_at: still within the (zero-width)
+    # window, so it reports available with zero time left, not expired.
+    persona = {"availability_duration": 0}
+    result = turn_state.personaAvailability(persona, 10, 10)
+    assert result == {"available": True, "available_in": 0, "expires_in": 0}
 
 
 @given(
@@ -73,7 +79,7 @@ def test_persona_availability_zero_duration_is_treated_as_no_duration():
 )
 def test_persona_availability_invariants_always_hold(available_at, duration, elapsed):
     persona = {"availability_duration": duration}
-    result = turn_state.persona_availability(persona, available_at, elapsed)
+    result = turn_state.personaAvailability(persona, available_at, elapsed)
 
     # available_in/expires_in are either None or non-negative, never negative.
     assert result["available_in"] is None or result["available_in"] >= 0

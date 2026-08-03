@@ -1,7 +1,7 @@
 import json
 import httpx
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, RateLimitError, InternalServerError
-from infra.settings import get_settings
+from infra.settings import getSettings
 
 # Shared client so the 4-6 LLM calls a single student message can fan out to reuse one connection pool
 client: AsyncOpenAI | None = None
@@ -11,7 +11,7 @@ CLIENT_LIMITS = httpx.Limits(max_connections=1000, max_keepalive_connections=200
 def initClient() -> None:
     global client
     if client is None:
-        settings = get_settings()
+        settings = getSettings()
         client = AsyncOpenAI(
             base_url=settings.llm_base_url,
             api_key=settings.llm_key,
@@ -76,7 +76,7 @@ REPLY_METADATA_TOOL = {
 }
 
 
-# Only connection/timeout/rate-limit/server errors are worth retrying
+# Only these errors are worth retrying
 RETRYABLE_EXCEPTIONS = (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)
 
 
@@ -86,7 +86,7 @@ RETRYABLE_EXCEPTIONS = (APIConnectionError, APITimeoutError, RateLimitError, Int
 # arguments were truncated mid-generation and failed to parse as JSON).
 async def personaReplyStream(messages: list[dict]):
     if client is None: raise RuntimeError("LLM client failed to initialize.")
-    settings = get_settings()
+    settings = getSettings()
     retries = 2
 
     attempt = 0
@@ -130,9 +130,7 @@ async def personaReplyStream(messages: list[dict]):
             raise
 
 
-# Shared "last N turns" window for every classifier prompt (harassment + referral/file
-# conditions) — one number, so batching them into a single call later doesn't require
-# reconciling mismatched windows.
+# Share the last few messages only instead of the full chat history
 CLASSIFIER_HISTORY_LIMIT = 8
 
 
@@ -153,7 +151,7 @@ def formatTranscript(conversation: list[dict], limit: int = CLASSIFIER_HISTORY_L
 
 # YES / NO Classifier for below methods
 async def classifier(system_prompt: str, user_prompt: str) -> bool:
-    settings = get_settings()
+    settings = getSettings()
     raw = await chat(
         model=settings.llm_classifier_model,
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
@@ -205,7 +203,7 @@ async def classifyFileShare(condition: str, conversation: list[dict]) -> bool:
 
 
 async def classifyHarassment(user_message: str, conversation: list[dict]) -> str:
-    settings = get_settings()
+    settings = getSettings()
     transcript, _, _ = formatTranscript(conversation)
 
     system_prompt = (

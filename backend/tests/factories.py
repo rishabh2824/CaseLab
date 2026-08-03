@@ -79,7 +79,7 @@ def fileEntry(
     perceived_contents: str | None = "last quarter's budget",
 ) -> dict:
     """A persona-attached file in the *stored* shape (i.e. after
-    services.cases.resolve_file_ref has assigned a file_id)."""
+    services.cases.resolveFileRef has assigned a file_id)."""
     return {
         "file": {
             "file_id": file_id,

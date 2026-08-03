@@ -15,14 +15,11 @@ class NotesPayload(BaseModel):
     notes: str
 
 
-# --- Response models, mirroring services/simulation/service.py's return shapes exactly ----
-
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
 
 
-# The trimmed case shape embedded in RunStateResponse (startSimulation / getSimulationState).
 class RunCaseSummary(BaseModel):
     id: int
     case_name: str
@@ -30,8 +27,6 @@ class RunCaseSummary(BaseModel):
     simulation_duration: int | None = None
 
 
-# hydratePersona()'s re-signed photo shape — distinct from cases.FileRef, which
-# is the admin-facing shape with no file_id/url.
 class PersonaPhotoOut(BaseModel):
     file_id: str | None = None
     object_key: str
@@ -40,7 +35,6 @@ class PersonaPhotoOut(BaseModel):
     url: str
 
 
-# buildContact()'s shape after stripping secrets (files, known_facts, personality_traits).
 class ContactOut(BaseModel):
     id: str
     name: str
@@ -63,7 +57,6 @@ class SharedFileOut(BaseModel):
     url: str
 
 
-# Shared by startSimulation and getSimulationState, which return the same shape.
 class RunStateResponse(BaseModel):
     run_id: str
     case: RunCaseSummary

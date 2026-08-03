@@ -4,8 +4,11 @@
 import { Buffer } from "node:buffer";
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import type { Api } from "../types.js";
-import { buildChatPdfBlob, slugifyFileName } from "./pdf.js";
+import {
+	buildChatPdfBlob,
+	slugifyFileName,
+} from "../../src/lib/student/pdf.js";
+import type { Api } from "../../src/lib/types.js";
 
 type PrintablePersona = Pick<
 	Api<"ExportPersonaOut">,

@@ -5,13 +5,6 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
 		<title>Wisconsin Case Lab | Wisconsin School of Business</title>
-		<!-- Google's GSI script (loaded by SignInButton.svelte on first click of
-			 "Admin Login," not on mount — most visitors are students who never
-			 touch it) is the one cross-origin contact — preconnect early so that
-			 click's fetch isn't cold. No crossorigin attribute: the actual
-			 request (a classic <script> tag, not fetch/XHR) is same-mode
-			 non-CORS, so a CORS-mode preconnect opens a connection the browser
-			 can't reuse. -->
 		<link rel="preconnect" href="https://accounts.google.com" />
 		%sveltekit.head%
 	</head>

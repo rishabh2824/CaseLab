@@ -13,7 +13,7 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import infra.db_models  # noqa: F401 - registers tables on SQLModel.metadata
 from infra.db import asyncpgUrl
-from infra.settings import get_settings
+from infra.settings import getSettings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -21,7 +21,7 @@ config = context.config
 
 # Migrations run against the *direct* (unpooled) endpoint, not the PgBouncer-pooled
 # one the app uses at runtime - DDL and PgBouncer transaction pooling don't mix.
-config.set_main_option("sqlalchemy.url", asyncpgUrl(get_settings().direct_url))
+config.set_main_option("sqlalchemy.url", asyncpgUrl(getSettings().direct_url))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

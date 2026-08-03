@@ -261,9 +261,9 @@ async def test_delete_missing_admin_returns_404(client, as_admin, monkeypatch):
 
 
 class _NullSession:
-    """Stands in for the AsyncSession returned by infra.db.get_session().
+    """Stands in for the AsyncSession returned by infra.db.getSession().
 
-    api/admin.py's login() calls the raw `get_session()` context manager
+    api/admin.py's login() calls the raw `getSession()` context manager
     directly (not the getRequestSession FastAPI dependency, which `client`
     already overrides), so it needs its own patch to stay hermetic.
     """
@@ -291,7 +291,7 @@ async def test_login_invalid_token_returns_401(client, monkeypatch):
 
 async def test_login_unknown_email_returns_401(client, monkeypatch):
     monkeypatch.setattr(admin_router_module, "verifyToken", lambda credential: {"email": "ghost@test.invalid"})
-    monkeypatch.setattr(admin_router_module, "get_session", _stub_get_session)
+    monkeypatch.setattr(admin_router_module, "getSession", _stub_get_session)
 
     async def no_admin(session, email):
         return None
@@ -304,7 +304,7 @@ async def test_login_unknown_email_returns_401(client, monkeypatch):
 
 async def test_login_success_sets_cookie_and_returns_admin(client, monkeypatch):
     monkeypatch.setattr(admin_router_module, "verifyToken", lambda credential: {"email": "admin@test.invalid"})
-    monkeypatch.setattr(admin_router_module, "get_session", _stub_get_session)
+    monkeypatch.setattr(admin_router_module, "getSession", _stub_get_session)
 
     async def found(session, email):
         return {"id": 7, "email": "admin@test.invalid", "name": "Admin Seven", "role": int(AdminRole.ADMIN)}
@@ -430,10 +430,10 @@ def test_cors_installed_iff_frontend_urls_configured():
     boolean -- FRONTEND_URLS varies across environments/.env files and
     asserting a specific value here would make the test flaky/environment-
     dependent."""
-    from infra.settings import get_settings
+    from infra.settings import getSettings
 
     installed = any(m.cls is CORSMiddleware for m in app.user_middleware)
-    assert installed == bool(get_settings().frontendUrls)
+    assert installed == bool(getSettings().frontendUrls)
 
 
 def test_cors_middleware_configuration_matches_main_py_logic():

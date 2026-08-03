@@ -1,6 +1,6 @@
 from sqlmodel import select
 from domain_errors import CaseNotFound
-from infra.db import get_session
+from infra.db import getSession
 from infra.db_models import Case
 from infra.spaces import getUrl
 from models.cases import CaseStructure, FileEntry, PersonaOut
@@ -24,7 +24,7 @@ def hydratePersona(persona: dict) -> dict:
     return {**persona, "profile_photo": {**photo, "url": getUrl(photo["object_key"])}}
 
 
-def case_snapshot(case) -> dict:
+def caseSnapshot(case) -> dict:
     return {
         "id": case.id,
         "case_name": case.name,
@@ -38,7 +38,7 @@ def case_snapshot(case) -> dict:
 async def getCase(session, access_code: str | None = None, case_id: int | None = None):
     case = await fetchCase(session, access_code=access_code, case_id=case_id)
     if case is None: raise CaseNotFound("No case found.")
-    return case_snapshot(case)
+    return caseSnapshot(case)
 
 
 # startSimulation always seeds run["case_snapshot"] at creation, so this only ever opens
@@ -47,7 +47,7 @@ async def getCase(session, access_code: str | None = None, case_id: int | None =
 async def getRunCase(run: dict):
     cached = run.get("case_snapshot")
     if cached is not None: return cached
-    async with get_session() as session:
+    async with getSession() as session:
         snapshot = await getCase(session, case_id=run["case_id"])
     run["case_snapshot"] = snapshot
     return snapshot
@@ -121,7 +121,7 @@ async def getPersonaGraph(run: dict) -> dict:
     cached = run.get("persona_graph")
     if cached is not None:
         return cached
-    async with get_session() as session:
+    async with getSession() as session:
         graph = await buildPersonaGraph(session, run["case_id"])
     run["persona_graph"] = graph
     return graph

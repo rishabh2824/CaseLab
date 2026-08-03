@@ -8,12 +8,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http, type JsonBodyType } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makePersona, makeReferral } from "../../testing/fixtures.js";
-import { server } from "../../testing/msw.js";
-import { buildHTMLForm } from "../case/exportCase.js";
-import { caseEditState } from "../caseEditState.svelte.js";
-import type { Api } from "../types.js";
-import CaseForm from "./CaseForm.svelte";
+import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
+import { caseEditState } from "../../src/lib/caseEditState.svelte.js";
+import CaseForm from "../../src/lib/components/CaseForm.svelte";
+import type { Api } from "../../src/lib/types.js";
+import { makePersona, makeReferral } from "../../src/testing/fixtures.js";
+import { server } from "../../src/testing/msw.js";
 
 function makePersonaOut(
 	overrides: Partial<Api<"PersonaOut">> = {},

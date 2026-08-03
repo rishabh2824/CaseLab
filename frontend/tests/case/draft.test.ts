@@ -1,6 +1,5 @@
 // Node project: pure data-shaping helpers, no DOM required.
 import { describe, expect, it } from "vitest";
-import { makeReferral } from "../../testing/fixtures.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
@@ -13,7 +12,8 @@ import {
 	reachableFrom,
 	referralsFrom,
 	referralsTo,
-} from "./draft.js";
+} from "../../src/lib/case/draft.js";
+import { makeReferral } from "../../src/testing/fixtures.js";
 
 describe("createEmptyPersona", () => {
 	it("assigns each persona a unique id", () => {

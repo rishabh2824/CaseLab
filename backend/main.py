@@ -9,14 +9,14 @@ from infra.db import closeDb
 from infra.llm import closeClient, initClient
 from infra.rate_limit import cleanStaleLimits
 from services.simulation.run_store import cleanupRuns
-from infra.settings import get_settings
+from infra.settings import getSettings
 
 
-settings = get_settings()
+settings = getSettings()
 
 
-# Shared httpx client for all LLM calls, so that the several requests from one student message reuses pooled
-    # connections instead of a fresh TLS handshake.
+# Shared httpx client for all LLM calls, so that the several requests from one student message reuses pooled instead of
+# a fresh TLS handshake.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initClient()
@@ -56,12 +56,9 @@ if settings.frontendUrls:
 
 
 
-# Single mapping from a domain exception (raised by services/infra, no FastAPI
-# import needed on their side) to an HTTP response. Registering the base
-# DomainError class alone covers every subclass — Starlette resolves handlers
-# by walking the raised exception's MRO.
+# Single mapping from a domain exception to an HTTP response
 @app.exception_handler(DomainError)
-async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+async def domainErrorHandler(request: Request, exc: DomainError) -> JSONResponse:
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers)
 
 

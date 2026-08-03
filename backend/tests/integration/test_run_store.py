@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 from domain_errors import RunNotFound
-from infra.db import get_session
+from infra.db import getSession
 from infra.db_models import SimulationRun
 from services.simulation import run_store
 
@@ -48,7 +48,7 @@ async def runIds():
     afterward — this table is shared with the running application."""
     ids: list[str] = []
     yield ids
-    async with get_session() as session:
+    async with getSession() as session:
         for run_id in ids:
             row = await session.get(SimulationRun, run_id)
             if row is not None:
@@ -78,7 +78,7 @@ async def test_insert_then_get_round_trips_through_jsonb(runIds):
     # A file id used as a dict key must still be a string after the round
     # trip — run["shared_files"] is keyed by file_id elsewhere in the app
     # (services/simulation/service.py), and JSON silently stringifies dict
-    # keys, which is exactly why resolve_file_ref keeps file_id a string
+    # keys, which is exactly why resolveFileRef keeps file_id a string
     # from the start.
     (only_key,) = fetched["shared_files"].keys()
     assert only_key == "7"
@@ -103,7 +103,7 @@ async def test_expired_run_is_deleted_on_read_and_raises_run_not_found(runIds):
         await run_store.getRun(run_id)
 
     # getRun deletes the expired row itself, not merely treats it as absent.
-    async with get_session() as session:
+    async with getSession() as session:
         assert await session.get(SimulationRun, run_id) is None
 
 
@@ -162,7 +162,7 @@ async def test_update_run_expired_raises_run_not_found_and_deletes_it(runIds):
     with pytest.raises(RunNotFound):
         await run_store.updateRun(run_id, lambda run: run)
 
-    async with get_session() as session:
+    async with getSession() as session:
         assert await session.get(SimulationRun, run_id) is None
 
 
@@ -178,6 +178,6 @@ async def test_delete_runs_removes_only_expired_rows_and_returns_a_count(runIds)
     # legitimately exist alongside ours — just require ours was counted.
     assert deleted >= 1
 
-    async with get_session() as session:
+    async with getSession() as session:
         assert await session.get(SimulationRun, stale_id) is None
         assert await session.get(SimulationRun, fresh_id) is not None

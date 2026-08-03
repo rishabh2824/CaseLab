@@ -1,8 +1,11 @@
 // Client project: parseHTMLForm is a DOMParser-based parser, needs jsdom.
 import { describe, expect, it } from "vitest";
-import { makePersona, makeReferral } from "../../testing/fixtures.js";
-import { buildHTMLForm } from "./exportCase.js";
-import { CaseImportError, parseHTMLForm } from "./importCase.js";
+import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
+import {
+	CaseImportError,
+	parseHTMLForm,
+} from "../../src/lib/case/importCase.js";
+import { makePersona, makeReferral } from "../../src/testing/fixtures.js";
 
 // Serializes a mutated Document back into the string parseHTMLForm expects.
 // Mutating the parsed Document (rather than string-splicing the template) is

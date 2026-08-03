@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 from domain_errors import AccessDenied, CaseNotFound, VersionConflict
-from infra.db import get_session
+from infra.db import getSession
 from services import cases as case_service
 from tests.factories import asCurrentAdmin, createPayload, updatePayload
 
@@ -47,13 +47,13 @@ async def test_concurrent_saves_against_real_postgres_only_one_wins(cleanup):
     owner_admin = await cleanup.make_admin()
     owner = asCurrentAdmin(owner_admin)
 
-    async with get_session() as setup_session:
+    async with getSession() as setup_session:
         created = await case_service.createCase(setup_session, createPayload(), owner)
     case_id = created["case_id"]
     cleanup.track_case(case_id)
 
     async def attempt(case_name: str):
-        async with get_session() as session:
+        async with getSession() as session:
             try:
                 await case_service.updateCase(session, case_id, updatePayload(1, case_name=case_name), owner)
                 return "ok"
@@ -63,7 +63,7 @@ async def test_concurrent_saves_against_real_postgres_only_one_wins(cleanup):
     results = await asyncio.gather(attempt("Admin A wins"), attempt("Admin B loses"))
     assert sorted(results, key=str) == sorted(["ok", 409], key=str)
 
-    async with get_session() as verify_session:
+    async with getSession() as verify_session:
         detail = await case_service.getCase(verify_session, case_id, owner)
     assert detail["case"]["version"] == 2
     assert detail["case"]["case_name"] in ("Admin A wins", "Admin B loses")

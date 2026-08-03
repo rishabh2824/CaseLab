@@ -3,7 +3,7 @@ from infra.settings import SIMULATION_DURATION
 
 
 class FileRef(BaseModel):
-    # file_id is never sent by the client — resolve_file_ref (services/cases.py)
+    # file_id is never sent by the client — resolveFileRef (services/cases.py)
     # fills it in server-side on save, and it must round-trip through
     # CaseStructure on every later read since services/simulation/service.py
     # keys run["shared_files"] by it.

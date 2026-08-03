@@ -9,7 +9,7 @@ from fastapi import Response
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from models.admin import AdminRole
-from infra.settings import JWT_ALGORITHM, JWT_EXPIRY, get_settings
+from infra.settings import JWT_ALGORITHM, JWT_EXPIRY, getSettings
 
 
 COOKIE_NAME = "admin_session"
@@ -29,7 +29,7 @@ class AdminTokenPayload(TypedDict):
 
 
 def createJwt(admin_id: int, role: AdminRole) -> str:
-    settings = get_settings()
+    settings = getSettings()
     now = int(time.time())
     payload = {"admin_id": admin_id, "role": role, "iat": now, "exp": now + JWT_EXPIRY}
     return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
@@ -57,7 +57,7 @@ def clearCookie(response: Response) -> None:
 
 
 def decodeJwt(token: str) -> AdminTokenPayload:
-    settings = get_settings()
+    settings = getSettings()
     try:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError as exc:
@@ -71,10 +71,9 @@ def decodeJwt(token: str) -> AdminTokenPayload:
 
 
 # Verifies the ID token from the frontend's google.accounts.id CredentialResponse
-# (SignInButton.svelte) locally against Google's cached public signing keys — no
-# outbound call to Google needed, unlike the old code-exchange flow this replaced.
+# (SignInButton.svelte) locally against Google's cached public signing keys
 def verifyToken(id_token_str: str) -> Mapping[str, Any]:
-    settings = get_settings()
+    settings = getSettings()
     claims = google_id_token.verify_oauth2_token(
         id_token_str, google_request, settings.google_client_id # type: ignore
     )

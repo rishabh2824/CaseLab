@@ -9,9 +9,9 @@
 // than a handful of examples.
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import type { Persona, ReferralEdge } from "../types.js";
-import { buildHTMLForm } from "./exportCase.js";
-import { parseHTMLForm } from "./importCase.js";
+import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
+import { parseHTMLForm } from "../../src/lib/case/importCase.js";
+import type { Persona, ReferralEdge } from "../../src/lib/types.js";
 
 // A fixed seed makes a shrunk failure reproducible: re-running the suite
 // after a code change will explore the exact same case space.

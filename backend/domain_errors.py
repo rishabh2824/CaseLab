@@ -1,12 +1,4 @@
-# Exceptions raised by services/ and infra/ to signal a business-rule
-# violation. Deliberately has no FastAPI import — services stay testable with
-# plain `pytest.raises(CaseNotFound)` instead of importing HTTPException and
-# asserting on `.status_code`. main.py registers one exception handler
-# (`domain_error_handler`) that maps every subclass here to an HTTP response
-# by walking this hierarchy — see _lookup_exception_handler in Starlette,
-# which resolves a registered handler through the exception's MRO, so
-# registering the base `DomainError` class alone is enough to catch all of
-# these.
+# Exceptions raised by services/ and infra/ to signal a business-rule violation.
 
 
 class DomainError(Exception):

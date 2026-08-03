@@ -1,11 +1,11 @@
 // Node project: pure data-shaping helpers, no DOM required.
 import { describe, expect, it } from "vitest";
-import type { Api } from "../types.js";
 import {
 	getPersonaInitials,
 	normalizeHistories,
 	normalizeMessages,
-} from "./contacts.js";
+} from "../../src/lib/student/contacts.js";
+import type { Api } from "../../src/lib/types.js";
 
 describe("normalizeMessages", () => {
 	it("keeps user and assistant messages", () => {

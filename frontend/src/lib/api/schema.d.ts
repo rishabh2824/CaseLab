@@ -82,8 +82,8 @@ export interface paths {
 		};
 		get?: never;
 		put?: never;
-		/** Presign Upload */
-		post: operations["presign_upload_api_uploads_presign_post"];
+		/** Presignupload */
+		post: operations["presignUpload_api_uploads_presign_post"];
 		delete?: never;
 		options?: never;
 		head?: never;
@@ -841,7 +841,7 @@ export interface operations {
 			};
 		};
 	};
-	presign_upload_api_uploads_presign_post: {
+	presignUpload_api_uploads_presign_post: {
 		parameters: {
 			query?: never;
 			header?: never;

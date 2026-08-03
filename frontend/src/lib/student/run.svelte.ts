@@ -33,11 +33,16 @@ class RunStore {
 
 	#initialized = false;
 	#notesInitialized = false;
-	#notesSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	// Typed `number`, not `ReturnType<typeof window.setInterval>`: with
+	// @types/node in scope, `window`'s type is `Window & typeof globalThis`,
+	// and TS resolves that intersection to Node's ambient setInterval/
+	// setTimeout overload (returning NodeJS.Timeout) instead of the DOM one
+	// (returning number) — even though this code only ever runs in a browser.
+	#notesSaveTimer: number | null = null;
 	#seenContacts = new Set<string>();
 	#seenFiles = new Set<string>();
 	#seenInitialized = false;
-	#expiryInterval: ReturnType<typeof setInterval> | null = null;
+	#expiryInterval: number | null = null;
 
 	caseData = $derived(this.raw?.case ?? null);
 	contacts = $derived<Contact[]>(this.raw?.contacts ?? []);

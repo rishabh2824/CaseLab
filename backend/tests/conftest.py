@@ -15,9 +15,9 @@ import uuid
 from urllib.parse import urlsplit
 
 import pytest
-from infra.db import get_session
+from infra.db import getSession
 from infra.db_models import Admin, Case
-from infra.settings import get_settings
+from infra.settings import getSettings
 from models.admin import AdminRole
 
 
@@ -35,7 +35,7 @@ def pytest_report_header(config):
     and delete real rows, so 'which host' is not a detail worth guessing at —
     point POOLING at a throwaway database, not the production one."""
     try:
-        host = urlsplit(get_settings().pooling_url).hostname or "unset"
+        host = urlsplit(getSettings().pooling_url).hostname or "unset"
     except Exception as exc:  # settings are incomplete — unit tests may still run
         return f"database: unavailable ({type(exc).__name__})"
     return f"database: {host}"
@@ -47,7 +47,7 @@ def uniqueEmail(prefix: str) -> str:
 
 @pytest.fixture
 async def session():
-    async with get_session() as s:
+    async with getSession() as s:
         yield s
 
 
@@ -83,7 +83,7 @@ async def cleanup(session):
     registry = Cleanup(session)
     yield registry
 
-    async with get_session() as teardown_session:
+    async with getSession() as teardown_session:
         for case_id in registry.case_ids:
             case = await teardown_session.get(Case, case_id)
             if case is not None:

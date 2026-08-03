@@ -130,20 +130,6 @@ async def test_presign_strips_leading_and_trailing_slashes_from_prefix(client, a
     assert not object_key.startswith("/")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "GENUINE BUG (not fixed here per task instructions): api/uploads.py's "
-        "presign_upload does `safe_prefix = payload.prefix.strip('/')`, which "
-        "only trims leading/trailing slash CHARACTERS -- it does not neutralize "
-        "'..' path segments. A prefix of '../../etc/passwd' round-trips through "
-        "unchanged, so the resulting object_key ('../../etc/passwd/<uuid>.ext') "
-        "escapes the intended upload folder entirely. This test documents the "
-        "escape with strict xfail so a future fix (e.g. rejecting/collapsing '..' "
-        "segments) turns it into a visible XPASS failure instead of silently "
-        "leaving the hole unverified."
-    ),
-)
 async def test_presign_prefix_cannot_escape_intended_folder(client, as_admin, monkeypatch):  # noqa: F811
     as_admin()
     monkeypatch.setattr(uploads_module, "putUrl", lambda object_key, content_type=None: "https://signed.test/put")

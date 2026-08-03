@@ -1,7 +1,7 @@
-"""DB-backed tests for services/cases.py::resolve_file_ref and the
+"""DB-backed tests for services/cases.py::resolveFileRef and the
 access-code uniqueness Postgres actually enforces.
 
-Both are genuinely Postgres-specific: resolve_file_ref's dedup only works
+Both are genuinely Postgres-specific: resolveFileRef's dedup only works
 because of the `uq_files_object_key` unique constraint (get-or-create over a
 real unique index, not application-level bookkeeping), and access-code
 collisions are ultimately caught via a CITEXT unique index
@@ -14,7 +14,7 @@ import uuid
 import pytest
 from sqlmodel import select
 from domain_errors import AccessCodeConflict
-from infra.db import get_session
+from infra.db import getSession
 from infra.db_models import Case, File
 from services import cases as case_service
 from tests.factories import asCurrentAdmin, createPayload, fileEntry, persona, updatePayload
@@ -42,7 +42,7 @@ async def test_two_personas_sharing_an_object_key_dedupe_to_one_file_row(session
     detail = await case_service.getCase(session, case_id, owner)
     file_ids = {p["files"][0]["file"]["file_id"] for p in detail["case"]["personas"]}
     # Both personas reference the same object_key, so the get-or-create in
-    # resolve_file_ref must resolve them to the exact same files row.
+    # resolveFileRef must resolve them to the exact same files row.
     assert len(file_ids) == 1
 
     rows = (await session.exec(select(File).where(File.object_key == object_key))).all()
@@ -63,7 +63,7 @@ async def test_saving_the_same_object_key_again_on_update_reuses_the_existing_ro
     original_file_id = detail["case"]["personas"][0]["files"][0]["file"]["file_id"]
 
     # A later update references the same object_key from a different (new)
-    # persona. If resolve_file_ref inserted instead of reusing, this would
+    # persona. If resolveFileRef inserted instead of reusing, this would
     # either duplicate the row or trip uq_files_object_key.
     await case_service.updateCase(
         session,
@@ -105,7 +105,7 @@ async def test_stored_file_id_is_a_string_even_though_the_column_is_an_int(sessi
     # files.id is a plain int column, but the JSONB structure stores it
     # stringified — run["shared_files"] elsewhere keys off this value, and
     # JSON always stringifies dict keys, so keeping it a string from the
-    # start (see resolve_file_ref's comment) avoids an int-vs-str mismatch.
+    # start (see resolveFileRef's comment) avoids an int-vs-str mismatch.
     assert isinstance(file_row.id, int)
     assert stored_file_id == str(file_row.id)
     assert isinstance(stored_file_id, str)
@@ -135,34 +135,20 @@ async def test_access_codes_are_case_insensitive_because_the_column_is_citext(se
         await case_service.createCase(session, createPayload(access_code=code.lower()), owner)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "BUG: createCase's except-IntegrityError branch (services/cases.py, "
-        "~line 217) only wraps `await session.commit()`. The actual INSERT "
-        "happens a few lines earlier in an unwrapped `await session.flush()` "
-        "(needed to assign case.id before the collaborator rows). "
-        "accessCodeTaken()'s precheck is a plain SELECT under READ COMMITTED, "
-        "so it can't see another session's uncommitted row -- two concurrent "
-        "creates with the same access_code can both pass it. When Postgres's "
-        "real unique index (idx_cases_access_code_unique) then rejects the "
-        "second INSERT, the resulting IntegrityError comes out of the "
-        "unwrapped flush() call and is never translated to AccessCodeConflict "
-        "-- it propagates as a raw sqlalchemy.exc.IntegrityError, which main.py "
-        "has no handler for, i.e. a generic 500 instead of the intended 409. "
-        "updateCase has the same shape of bug: its access_code-bearing "
-        "`await session.execute(sa_update(Case)...)` is likewise not wrapped "
-        "in the try/except around commit(). Reproduced deterministically here "
-        "(not left to asyncio scheduling luck) by holding one transaction's "
-        "INSERT open so the second create's precheck can't see it and is "
-        "forced into the real DB-level race."
-    ),
-    strict=True,
-)
+# Regression test for a race where two concurrent creates with the same
+# access_code could both pass accessCodeTaken()'s READ COMMITTED precheck
+# and then race into the real unique-index-enforced INSERT. createCase (and
+# updateCase, which has the same shape) now wrap that write in exception
+# handling too, so the loser gets a proper AccessCodeConflict (409) instead
+# of a raw sqlalchemy.exc.IntegrityError leaking out as a 500. Reproduced
+# deterministically here (not left to asyncio scheduling luck) by holding one
+# transaction's INSERT open so the second create's precheck can't see it and
+# is forced into the real DB-level race.
 async def test_create_case_leaks_a_raw_integrity_error_when_a_race_slips_past_the_precheck(cleanup):
     owner = asCurrentAdmin(await cleanup.make_admin())
     code = f"race-{uuid.uuid4().hex[:8]}"
 
-    async with get_session() as holder_session:
+    async with getSession() as holder_session:
         # Insert-but-don't-commit a case with this access code: the row lock
         # is held, but the row is invisible to any other session (READ
         # COMMITTED), which is exactly the window accessCodeTaken()'s precheck
@@ -173,7 +159,7 @@ async def test_create_case_leaks_a_raw_integrity_error_when_a_race_slips_past_th
         cleanup.track_case(holder.id)
 
         async def loserCreate():
-            async with get_session() as session:
+            async with getSession() as session:
                 try:
                     created = await case_service.createCase(session, createPayload(access_code=code), owner)
                     return "ok", created["case_id"]

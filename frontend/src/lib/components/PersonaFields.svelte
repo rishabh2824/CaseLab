@@ -63,6 +63,7 @@ const ownReferrals = $derived(referralsFrom(referrals, persona.id));
 function removeReferralsTo(targetIds: Set<string>): void {
 	for (let i = referrals.length - 1; i >= 0; i--) {
 		const referral = referrals[i];
+		if (!referral) continue;
 		if (referral.from_id === persona.id && targetIds.has(referral.to_id)) {
 			referrals.splice(i, 1);
 		}
@@ -75,10 +76,12 @@ function removeReferralsTo(targetIds: Set<string>): void {
 	);
 	if (toDelete.size === 0) return;
 	for (let i = personas.length - 1; i >= 0; i--) {
-		if (toDelete.has(personas[i].id)) personas.splice(i, 1);
+		const p = personas[i];
+		if (p && toDelete.has(p.id)) personas.splice(i, 1);
 	}
 	for (let i = referrals.length - 1; i >= 0; i--) {
 		const referral = referrals[i];
+		if (!referral) continue;
 		if (toDelete.has(referral.from_id) || toDelete.has(referral.to_id)) {
 			referrals.splice(i, 1);
 		}

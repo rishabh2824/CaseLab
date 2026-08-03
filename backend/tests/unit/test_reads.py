@@ -53,7 +53,7 @@ def test_hydrate_persona_does_not_mutate_input(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# case_snapshot
+# caseSnapshot
 # --------------------------------------------------------------------------
 
 
@@ -66,7 +66,7 @@ def test_case_snapshot_shapes_the_case_row():
         duration=45,
         access_code="STERLING",
     )
-    assert reads_module.case_snapshot(case) == {
+    assert reads_module.caseSnapshot(case) == {
         "id": 1,
         "case_name": "Sterling Industries",
         "initial_brief": "Reduce office supply costs.",

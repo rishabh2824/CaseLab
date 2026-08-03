@@ -5,8 +5,8 @@
 // server-side caller to cover.
 import { delay, HttpResponse, http } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { server, sseBody, sseStreamResponse } from "../../testing/msw.js";
-import { ApiError, apiFetch, streamChat } from "./client.js";
+import { ApiError, apiFetch, streamChat } from "../../src/lib/api/client.js";
+import { server, sseBody, sseStreamResponse } from "../../src/testing/msw.js";
 
 function assertApiError(err: unknown): asserts err is ApiError {
 	if (!(err instanceof ApiError)) throw err;

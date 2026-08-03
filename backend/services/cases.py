@@ -16,14 +16,11 @@ VERSION_CONFLICT = {
     "code": "version_conflict",
 }
 
-# Hardcoded stand-in until a dedicated demo case exists (Sterling Industries,
-# id 1, is just the most complete case on hand today) — swap this constant
-# once that case is built. getDemoCase() below is the only thing that reads it.
+# Hardcoded stand-in until a dedicated demo case exists
 DEMO_CASE_ID = 1
 
 
-# Authorize access to a case: SUPER admins bypass everything, otherwise the
-# caller must be the owner or a collaborator.
+# Authorize access to a case: SUPER admins bypass everything
 async def caseAccess(session, case: Case, admin: CurrentAdmin) -> None:
     if admin.role == AdminRole.SUPER: return
     if case.admin == admin.id: return
@@ -34,10 +31,8 @@ async def caseAccess(session, case: Case, admin: CurrentAdmin) -> None:
         raise AccessDenied("You do not have access to this case.")
 
 
-# Validates + normalizes a collaborator id list for create/update: dedupes,
-# rejects the case owner appearing in their own collaborator list, rejects
-# unknown admin ids, and rejects SUPER admins (who already have full access
-# everywhere, so explicitly granting it is meaningless).
+# Validates + normalizes a collaborator id list for create/update: dedupes, rejects the case owner appearing in their own
+# collaborator list, rejects unknown admin ids, and rejects SUPER admins (they already have full access everywhere).
 async def resolveCollaboratorIds(session, ids: list[int] | None, owner_admin_id: int) -> list[int]:
     ids = list(dict.fromkeys(ids or []))  # dedupe, preserve order
     if not ids: return []
@@ -72,8 +67,8 @@ async def accessCodeTaken(session, access_code: str, exclude_case_id: int | None
     return result.first() is not None
 
 
-# --- file dedup: get-or-create by object_key, same as the old get_file_id ----
-async def resolve_file_ref(session, file_ref: FileRef | None) -> dict | None:
+# --- file dedup: get-or-create by object_key
+async def resolveFileRef(session, file_ref: FileRef | None) -> dict | None:
     if file_ref is None:
         return None
     file_row = (
@@ -88,11 +83,9 @@ async def resolve_file_ref(session, file_ref: FileRef | None) -> dict | None:
         session.add(file_row)
         await session.flush()  # assigns file_row.id without committing the outer transaction
     return {
-        # Stringified even though the column is now a plain int id — this dict lands
-        # inside the JSONB structure/run blobs, where file_id also serves as a dict
-        # key (see run["shared_files"][file_id] in services/simulation/service.py);
-        # JSON silently stringifies int dict keys on serialization, so keeping it a
-        # string from the start avoids an int-vs-str mismatch after a round-trip.
+        # Stringified even though the column is now a plain int id — this dict lands inside the JSONB structure/run blobs,
+        # where file_id also serves as a dict key. JSON silently stringifies int dict keys on serialization, so keeping it
+        # a string from the start avoids an int-vs-str mismatch after a round-trip.
         "file_id": str(file_row.id),
         "object_key": file_row.object_key,
         "file_name": file_row.name,
@@ -100,10 +93,7 @@ async def resolve_file_ref(session, file_ref: FileRef | None) -> dict | None:
     }
 
 
-# Validates the flat persona/referral graph a save is about to write: duplicate
-# ids, dangling from_id/to_id/roots references, and referral cycles are all things
-# a nested tree ruled out by construction — flat JSONB storage doesn't, so this is
-# the graph's referential-integrity check now that nothing else provides one.
+# Validates the flat persona/referral graph a save is about to write
 def validateGraph(payload: CasePayload) -> None:
     persona_ids = [p.id for p in payload.personas]
     duplicates = sorted(pid for pid, count in Counter(persona_ids).items() if count > 1)
@@ -144,7 +134,7 @@ def validateGraph(payload: CasePayload) -> None:
                 raise InvalidRequest(f"Referral cycle detected involving persona id: {cycle_node}")
 
 
-async def build_structure(session, payload: CasePayload) -> CaseStructure:
+async def buildStructure(session, payload: CasePayload) -> CaseStructure:
     validateGraph(payload)
     personas = []
     for persona in payload.personas:
@@ -154,20 +144,17 @@ async def build_structure(session, payload: CasePayload) -> CaseStructure:
                 continue
             files.append(
                 {
-                    "file": await resolve_file_ref(session, entry.file),
+                    "file": await resolveFileRef(session, entry.file),
                     "share_conditions": entry.share_conditions,
                     "perceived_contents": entry.perceived_contents,
                 }
             )
         personas.append(
             {
-                # Trusted as given, never regenerated — the frontend is the sole id-issuing
-                # authority (assigned once via crypto.randomUUID() when a persona is first
-                # added), which is what makes ids stable across saves.
                 "id": persona.id,
                 "name": persona.name,
                 "role": persona.role,
-                "profile_photo": await resolve_file_ref(session, persona.profile_photo),
+                "profile_photo": await resolveFileRef(session, persona.profile_photo),
                 "known_facts": persona.known_facts,
                 "personality_traits": persona.personality_traits,
                 "availability_minutes": persona.availability_minutes,
@@ -207,10 +194,16 @@ async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict
         duration=payload.simulation_duration,
         root_personas=len(payload.roots),
         admin=admin.id,
-        structure=(await build_structure(session, payload)).model_dump(mode="json"),
+        structure=(await buildStructure(session, payload)).model_dump(mode="json"),
     )
     session.add(case)
-    await session.flush()  # assigns case.id without committing, needed for the collaborator rows below
+    try:
+        await session.flush()  # assigns case.id without committing, needed for the collaborator rows below
+    except Exception as exc:
+        await session.rollback()
+        if violation(exc):
+            raise AccessCodeConflict(ACCESS_CODE_CONFLICT) from exc
+        raise PersistenceError("Failed to create case.") from exc
     session.add_all([Collaborator(case_id=case.id, admin_id=aid) for aid in collaborator_ids])
     try:
         await session.commit()
@@ -256,12 +249,6 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
     }
 
 
-
-# Read-only and deliberately skips caseAccess: every signed-in admin — not
-# just DEMO_CASE_ID's owner/collaborators — gets to see a fully filled-out
-# example case. Safe to leave wide open because there's no matching write
-# path; the response also drops version/owner/collaborator fields, which are
-# meaningless for a case the viewer doesn't actually have access to.
 async def getDemoCase(session) -> dict:
     case = await session.get(Case, DEMO_CASE_ID)
     if case is None:
@@ -293,32 +280,32 @@ async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: C
         raise CaseNotFound("Case not found.")
     await caseAccess(session, case, admin)
 
-    # Validate everything before touching the row — an invalid payload should
-    # never bump the version or partially write collaborators.
     normalized_code = normalizeAccessCode(payload.access_code)
     if normalized_code and await accessCodeTaken(session, normalized_code, exclude_case_id=case_id):
         raise AccessCodeConflict(ACCESS_CODE_CONFLICT)
     collaborator_ids = await resolveCollaboratorIds(session, payload.collaborator_admin_ids, owner_admin_id=case.admin)
-    structure = (await build_structure(session, payload)).model_dump(mode="json")
+    structure = (await buildStructure(session, payload)).model_dump(mode="json")
 
-    # Optimistic lock: a plain ORM mutate-then-commit can't distinguish "row
-    # updated" from "someone else already updated it", so this is a conditional
-    # bulk UPDATE instead — 0 rows affected means payload.expected_version is
-    # stale, i.e. another admin saved this case first.
-    result = await session.execute(
-        sa_update(Case)
-        .where(Case.id == case_id, Case.version == payload.expected_version)
-        .values(
-            name=payload.case_name,
-            access_code=normalized_code,
-            brief=payload.initial_brief,
-            common_information=payload.common_information,
-            duration=payload.simulation_duration,
-            root_personas=len(payload.roots),
-            structure=structure,
-            version=Case.version + 1,
+    try:
+        result = await session.execute(
+            sa_update(Case)
+            .where(Case.id == case_id, Case.version == payload.expected_version)
+            .values(
+                name=payload.case_name,
+                access_code=normalized_code,
+                brief=payload.initial_brief,
+                common_information=payload.common_information,
+                duration=payload.simulation_duration,
+                root_personas=len(payload.roots),
+                structure=structure,
+                version=Case.version + 1,
+            )
         )
-    )
+    except Exception as exc:
+        await session.rollback()
+        if violation(exc):
+            raise AccessCodeConflict(ACCESS_CODE_CONFLICT) from exc
+        raise PersistenceError("Failed to update case.") from exc
     if result.rowcount == 0:
         await session.rollback()
         raise VersionConflict(VERSION_CONFLICT)

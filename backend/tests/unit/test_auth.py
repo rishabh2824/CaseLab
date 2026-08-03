@@ -13,13 +13,13 @@ import jwt
 import pytest
 from fastapi import Response
 
-from infra.settings import JWT_ALGORITHM, get_settings
+from infra.settings import JWT_ALGORITHM, getSettings
 from models.admin import AdminRole
 from services import auth as auth_module
 
 
 def realSecret() -> str:
-    return get_settings().jwt_secret
+    return getSettings().jwt_secret
 
 
 # --------------------------------------------------------------------------

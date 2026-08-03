@@ -12,8 +12,8 @@ import {
 	makeRunState,
 	makeSharedFile,
 	message,
-} from "../../testing/fixtures.js";
-import { server } from "../../testing/msw.js";
+} from "../../src/testing/fixtures.js";
+import { server } from "../../src/testing/msw.js";
 
 // A case with no configured duration keeps #ensureExpiryWatch's early-return
 // branch active, so tests never touch `window.setInterval` incidentally —
@@ -32,8 +32,8 @@ const caseData = {
 // store (and a fresh, empty-call-history `goto`/`toast` mock bound to
 // whatever this fresh instance actually imports).
 async function freshRun() {
-	const { run } = await import("./run.svelte.js");
-	const { session } = await import("../session.svelte.js");
+	const { run } = await import("../../src/lib/student/run.svelte.js");
+	const { session } = await import("../../src/lib/session.svelte.js");
 	const nav = await import("$app/navigation");
 	const sonner = await import("svelte-sonner");
 	return {

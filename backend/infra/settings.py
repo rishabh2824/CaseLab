@@ -17,9 +17,7 @@ class Settings(BaseSettings):
     llm_classifier_model: ClassVar[str] = "anthropic/claude-haiku-4.5"
     spaces_key: str
     spaces_secret: str
-    spaces_upload_expiry: int = 900  # short-lived: covers a single browser->Spaces PUT
-    # Long-lived: covers a full simulation run (SIMULATION_DURATION cap + run_store's
-    # grace period) so shared files/photos signed early in a run don't 403 later on.
+    spaces_upload_expiry: int = 900
     spaces_download_expiry: int = (SIMULATION_DURATION + 30) * 60
     pooling_url: str = Field(default="", validation_alias="POOLING")
     direct_url: str = Field(default="", validation_alias="DIRECT")
@@ -38,4 +36,4 @@ class Settings(BaseSettings):
 
 
 @lru_cache(maxsize=1)
-def get_settings() -> Settings: return Settings()
+def getSettings() -> Settings: return Settings()

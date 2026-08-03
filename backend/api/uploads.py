@@ -3,19 +3,20 @@ import uuid
 from fastapi import APIRouter
 from models.uploads import PresignUploadRequest, PresignUploadResponse
 from infra.spaces import putUrl
-from infra.settings import get_settings
+from infra.settings import getSettings
 
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
 
 @router.post("/presign", response_model=PresignUploadResponse)
-def presign_upload(payload: PresignUploadRequest) -> PresignUploadResponse:
-    settings = get_settings()
+def presignUpload(payload: PresignUploadRequest) -> PresignUploadResponse:
+    settings = getSettings()
 
     _, ext = os.path.splitext(payload.file_name)
     extension = ext.lower()
-    safe_prefix = payload.prefix.strip("/") if payload.prefix else ""
+    segments = payload.prefix.split("/") if payload.prefix else []
+    safe_prefix = "/".join(s for s in segments if s not in ("", ".", ".."))
     key_base = f"{uuid.uuid4().hex}{extension}"
     object_key = f"{safe_prefix}/{key_base}" if safe_prefix else key_base
 

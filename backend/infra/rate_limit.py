@@ -3,7 +3,7 @@ import time
 from math import ceil
 from domain_errors import RateLimited
 from services import rate_limits as repo
-from infra.db import get_session
+from infra.db import getSession
 
 
 MESSAGE_LIMIT = 15 # Number of messages a single student can send in one minute
@@ -14,7 +14,7 @@ CLEANUP_INTERVAL = 300  # how often the stale-row sweeper runs
 async def messageLimit(run_id: str) -> None:
     key = f"message:{run_id}"
     now = time.time()
-    async with get_session() as session:
+    async with getSession() as session:
         row = await repo.upsertAndGet(session, key, now, 60)
 
     if row["count"] > MESSAGE_LIMIT:
@@ -25,7 +25,7 @@ async def messageLimit(run_id: str) -> None:
 async def simulationLimit(access_code: str) -> None:
     key = f"start:{access_code.strip().upper()}"
     now = time.time()
-    async with get_session() as session:
+    async with getSession() as session:
         row = await repo.upsertAndGet(session, key, now, 60)
     if row["count"] > START_LIMIT:
         retry_after = max(
@@ -40,7 +40,7 @@ async def simulationLimit(access_code: str) -> None:
 # Deletes all rate-limit rows in the rate_limits table whose window started more than 60 seconds ago
 async def purgeStaleLimits() -> int:
     cutoff = time.time() - 60
-    async with get_session() as session:
+    async with getSession() as session:
         return await repo.deleteStale(session, cutoff)
 
 

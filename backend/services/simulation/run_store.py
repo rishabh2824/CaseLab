@@ -5,7 +5,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import select
 from domain_errors import RunNotFound
-from infra.db import get_session
+from infra.db import getSession
 from infra.db_models import SimulationRun
 from infra.settings import SIMULATION_DURATION
 
@@ -40,13 +40,13 @@ def deserializeRun(data: dict) -> dict:
 
 # Insert a freshly-built run under ``run_id``
 async def insertRun(run_id: str, run: dict) -> None:
-    async with get_session() as session:
+    async with getSession() as session:
         session.add(SimulationRun(run_id=run_id, expires_at=expiry(run), data=serializeRun(run)))
         await session.commit()
 
 
 async def getRun(run_id: str) -> dict:
-    async with get_session() as session:
+    async with getSession() as session:
         row = await session.get(SimulationRun, run_id)
         if row is None: raise RunNotFound(f"Run {run_id} not found.")
         if time.time() > row.expires_at:
@@ -57,7 +57,7 @@ async def getRun(run_id: str) -> dict:
 
 
 async def updateRun(run_id: str, fn):
-    async with get_session() as session:
+    async with getSession() as session:
         row = (
             await session.exec(
                 select(SimulationRun).where(SimulationRun.run_id == run_id).with_for_update()
@@ -79,7 +79,7 @@ async def updateRun(run_id: str, fn):
 
 # Delete every run past its ``expires_at``
 async def deleteRuns() -> int:
-    async with get_session() as session:
+    async with getSession() as session:
         result = await session.exec(delete(SimulationRun).where(SimulationRun.expires_at < time.time()))
         await session.commit()
         return result.rowcount

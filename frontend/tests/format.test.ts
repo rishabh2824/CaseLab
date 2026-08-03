@@ -1,6 +1,6 @@
 // Node project: pure string helpers, no DOM required.
 import { describe, expect, it } from "vitest";
-import { countWords, slugify } from "./format.js";
+import { countWords, slugify } from "../src/lib/format.js";
 
 describe("slugify", () => {
 	it("collapses a run of unicode/punctuation into a single '-'", () => {

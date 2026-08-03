@@ -108,16 +108,8 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
-      # Advisory for now, and on a short leash. `pnpm run check` used to crash on
-      # startup (svelte-check needs TypeScript 5/6, the project is on 7), so type
-      # errors went unreported for as long as that was true. It runs again now
-      # via a pinned TypeScript, and every error in the test suite has been
-      # fixed — what remains is 7 pre-existing `possibly undefined` findings in
-      # src/lib/components/PersonaFields.svelte and src/lib/student/run.svelte.ts.
-      # Fix those and delete this continue-on-error line to make it blocking.
       - name: Type check
         run: pnpm run check
-        continue-on-error: true
 
       - name: Unit tests
         run: pnpm exec vitest run
