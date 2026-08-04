@@ -70,15 +70,6 @@ describe("apiFetch", () => {
 		expect(result).toEqual({ id: 7, name: "budget" });
 	});
 
-	it("returns null for an empty 200 body", async () => {
-		server.use(
-			http.get("*/api/empty", () => new HttpResponse(null, { status: 200 })),
-		);
-
-		const result = await apiFetch("/api/empty");
-
-		expect(result).toBeNull();
-	});
 });
 
 describe("ApiError", () => {

@@ -3,10 +3,23 @@ import time
 import uuid
 from pydantic import BaseModel
 from domain_errors import InvalidRequest, NotFoundError, UpstreamError
-from models.simulations import ChatMessage, ContactOut, NotesPayload, SendMessagePayload, SharedFileOut, StartSimulationPayload
+from models.simulations import (
+    ChatMessage,
+    ContactOut,
+    ExportCaseSummary,
+    ExportPersonaOut,
+    ExportResponse,
+    NotesPayload,
+    NotesResponse,
+    RunCaseSummary,
+    RunStateResponse,
+    SendMessagePayload,
+    SharedFileOut,
+    StartSimulationPayload,
+)
 from models.simulation_runtime import (
-    DeltaFrame, DoneFrame, ErrorFrame, PersonaDetail, PreparedBoundaryTurn, PreparedNormalTurn, PreparedTurn,
-    Run, SharedFileRecord, TurnMeta,
+    DecisionBundle, DeltaFrame, DoneFrame, ErrorFrame, PersonaDetail, PreparedBoundaryTurn, PreparedNormalTurn,
+    PreparedTurn, Run, SharedFileRecord, TurnMeta,
 )
 from infra.db import getSession
 from infra.llm import classifyHarassment, personaReplyStream
@@ -65,7 +78,7 @@ def buildContacts(
     return contacts
 
 
-async def startSimulation(payload: StartSimulationPayload):
+async def startSimulation(payload: StartSimulationPayload) -> RunStateResponse:
     access_code = payload.access_code.strip()
     if not access_code:
         raise InvalidRequest("Access code is required.")
@@ -73,9 +86,9 @@ async def startSimulation(payload: StartSimulationPayload):
     async with getSession() as session:
         case_snapshot = await getCase(session, access_code=access_code)
         persona_graph = await buildPersonaGraph(session, case_snapshot.id)
-    if not persona_graph.root_personas:
+    if not persona_graph.roots:
         raise InvalidRequest("No root personas found.")
-    root_personas = [hydratePersona(p) for p in persona_graph.root_personas]
+    root_personas = [hydratePersona(persona_graph.personas[pid]) for pid in persona_graph.roots]
     run_id = uuid.uuid4().hex
     run = Run(
         case_id=case_snapshot.id,
@@ -90,49 +103,49 @@ async def startSimulation(payload: StartSimulationPayload):
     if active_candidates:
         run.active_persona_id = active_candidates[0].id
     await insertRun(run_id, run)
-    return {
-        "run_id": run_id,
-        "case": {
-            "id": case_snapshot.id,
-            "case_name": case_snapshot.case_name,
-            "initial_brief": case_snapshot.initial_brief,
-            "simulation_duration": case_snapshot.simulation_duration,
-        },
-        "contacts": contacts,
-        "active_persona_id": run.active_persona_id,
-        "shared_files": [],
-        "histories": {},
-        "notes": run.notes,
-    }
+    return RunStateResponse(
+        run_id=run_id,
+        case=RunCaseSummary(
+            id=case_snapshot.id,
+            case_name=case_snapshot.case_name,
+            brief=case_snapshot.brief,
+            simulation_duration=case_snapshot.simulation_duration,
+        ),
+        contacts=contacts,
+        active_persona_id=run.active_persona_id,
+        shared_files=[],
+        histories={},
+        notes=run.notes,
+    )
 
 
-async def getSimulationState(run_id: str):
+async def getSimulationState(run_id: str) -> RunStateResponse:
     run = await getRun(run_id)
     case_snapshot = await getRunCase(run)
     graph = await getPersonaGraph(run)
-    root_personas = [hydratePersona(p) for p in graph.root_personas]
+    root_personas = [hydratePersona(graph.personas[pid]) for pid in graph.roots]
     unlocked_ids = run.unlocked_referred_ids
     elapsed = elapsedMinutes(run)
     referred_personas = [hydratePersona(p) for p in graphPersonas(graph, unlocked_ids)]
     contacts = buildContacts(run, root_personas, elapsed, referred_personas)
     visible_persona_ids = {persona.id for persona in contacts}
-    return {
-        "run_id": run_id,
-        "case": {
-            "id": case_snapshot.id,
-            "case_name": case_snapshot.case_name,
-            "initial_brief": case_snapshot.initial_brief,
-            "simulation_duration": case_snapshot.simulation_duration,
-        },
-        "contacts": contacts,
-        "active_persona_id": run.active_persona_id,
-        "shared_files": [toSharedFileOut(info) for info in run.shared_files.values()],
-        "histories": formatHistory(run, visible_persona_ids),
-        "notes": run.notes,
-    }
+    return RunStateResponse(
+        run_id=run_id,
+        case=RunCaseSummary(
+            id=case_snapshot.id,
+            case_name=case_snapshot.case_name,
+            brief=case_snapshot.brief,
+            simulation_duration=case_snapshot.simulation_duration,
+        ),
+        contacts=contacts,
+        active_persona_id=run.active_persona_id,
+        shared_files=[toSharedFileOut(info) for info in run.shared_files.values()],
+        histories=formatHistory(run, visible_persona_ids),
+        notes=run.notes,
+    )
 
 
-async def updateNotes(run_id: str, payload: NotesPayload) -> dict:
+async def updateNotes(run_id: str, payload: NotesPayload) -> NotesResponse:
     if len(payload.notes) > NOTES_CHARS:
         raise InvalidRequest(f"Notes are too long ({NOTES_CHARS} characters max).")
 
@@ -141,10 +154,10 @@ async def updateNotes(run_id: str, payload: NotesPayload) -> dict:
         return run.notes
 
     notes = await updateRun(run_id, set_notes)
-    return {"notes": notes}
+    return NotesResponse(notes=notes)
 
 
-async def exportSimulation(run_id: str):
+async def exportSimulation(run_id: str) -> ExportResponse:
     run = await getRun(run_id)
     case_snapshot = await getRunCase(run)
     graph = await getPersonaGraph(run)
@@ -152,7 +165,7 @@ async def exportSimulation(run_id: str):
     # is_referred is already False on every root persona (PersonaDetail's default,
     # set by getPersonaDetails) — no need to force it the way the old dict-spread did
     # when the key could simply be absent.
-    personas = list(graph.root_personas)
+    personas = [graph.personas[pid] for pid in graph.roots]
 
     if unlocked_ids:
         referred_personas = graphPersonas(graph, unlocked_ids)
@@ -161,32 +174,26 @@ async def exportSimulation(run_id: str):
         )
         personas.extend(referred_personas)
 
-    return {
-        "case": {
-            "id": case_snapshot.id,
-            "case_name": case_snapshot.case_name,
-        },
-        "personas": [
-            {
-                "id": persona.id,
-                "name": persona.name,
-                "role": persona.role,
-                "messages": [
-                    {
-                        "role": message.role,
-                        "content": message.content,
-                    }
+    return ExportResponse(
+        case=ExportCaseSummary(id=case_snapshot.id, case_name=case_snapshot.case_name),
+        personas=[
+            ExportPersonaOut(
+                id=persona.id,
+                name=persona.name,
+                role=persona.role,
+                messages=[
+                    ChatMessage(role=message.role, content=message.content)
                     for message in run.history.get(persona.id, [])
                     if message.role in {"user", "assistant"}
                 ],
-            }
+            )
             for persona in personas
         ],
-    }
+    )
 
 
 # Fetch the persona's referrals + details and resolve every unlock/share eligibility for this turn
-async def resolveDecisions(persona_id, decision_history, run: Run) -> dict:
+async def resolveDecisions(persona_id, decision_history, run: Run) -> DecisionBundle:
     graph = run.persona_graph
     referrals = graphReferrals(graph, persona_id)
     persona_details = graphPersonaById(graph, persona_id)
@@ -208,14 +215,14 @@ async def resolveDecisions(persona_id, decision_history, run: Run) -> dict:
         asyncio.gather(*(referralUnlock(referral, decision_history) for referral in pending_referrals)),
         asyncio.gather(*(fileShare(file_entry, decision_history) for file_entry in pending_files)),
     )
-    return {
-        "referrals": referrals,
-        "persona_details": persona_details,
-        "pending_referrals": pending_referrals,
-        "pending_files": pending_files,
-        "referral_results": referral_results,
-        "file_results": file_results,
-    }
+    return DecisionBundle(
+        referrals=referrals,
+        persona_details=persona_details,
+        pending_referrals=pending_referrals,
+        pending_files=pending_files,
+        referral_results=referral_results,
+        file_results=file_results,
+    )
 
 
 # Prepares the message for final response generation
@@ -233,9 +240,8 @@ async def message(run_id: str, payload: SendMessagePayload) -> PreparedTurn:
     simulation_duration = case_snapshot.simulation_duration
     if simulation_duration and elapsed >= simulation_duration:
         raise InvalidRequest("This simulation has ended.")
-    root_map = {p.id: p for p in graph.root_personas}
-    if persona_id in root_map:
-        availability = personaAvailability(root_map[persona_id], 0, elapsed)
+    if persona_id in graph.roots:
+        availability = personaAvailability(graph.personas[persona_id], 0, elapsed)
     elif persona_id in run.unlocked_referred_ids:
         persona = graphPersonaById(graph, persona_id)
         if persona is None:
@@ -262,10 +268,8 @@ async def message(run_id: str, payload: SendMessagePayload) -> PreparedTurn:
     history = await updateRun(run_id, start_turn)
     # Downstream (prompt.py, infra/llm.py) still speaks plain {"role","content"} dicts —
     # that layer is untyped by design (it formats/classifies untrusted LLM-facing text,
-    # not our own internal state) — so convert back to dicts at this boundary. The
-    # role != "system" filter is dead code today (ChatMessage.role excludes "system"
-    # at the type level) but kept for parity/defensiveness, same as formatHistory's.
-    decision_history = [{"role": msg.role, "content": msg.content} for msg in history if msg.role != "system"]
+    # not our own internal state) — so convert back to dicts at this boundary.
+    decision_history = [{"role": msg.role, "content": msg.content} for msg in history]
 
     try:
         message_label, decisions = await asyncio.gather(
@@ -274,7 +278,7 @@ async def message(run_id: str, payload: SendMessagePayload) -> PreparedTurn:
         )
     except Exception as exc:
         raise UpstreamError("Something went wrong. Please resend your message.") from exc
-    persona_details = decisions["persona_details"]
+    persona_details = decisions.persona_details
 
     if message_label != "normal":
         def flag_and_append(r: Run):
@@ -303,10 +307,10 @@ async def message(run_id: str, payload: SendMessagePayload) -> PreparedTurn:
             ),
         )
 
-    pending_referrals = decisions["pending_referrals"]
-    pending_files = decisions["pending_files"]
-    referral_results = decisions["referral_results"]
-    file_results = decisions["file_results"]
+    pending_referrals = decisions.pending_referrals
+    pending_files = decisions.pending_files
+    referral_results = decisions.referral_results
+    file_results = decisions.file_results
 
     eligible_referrals = []
     forbidden_referral_names = []
@@ -314,13 +318,13 @@ async def message(run_id: str, payload: SendMessagePayload) -> PreparedTurn:
     for referral, is_eligible in zip(pending_referrals, referral_results):
         if is_eligible:
             handle = f"R{len(eligible_referrals) + 1}"
-            persona = referral.persona
+            persona = graph.personas[referral.referred_persona_id]
             eligible_referrals.append(
                 {"handle": handle, "name": persona.name, "role": persona.role}
             )
             referral_handles[handle] = referral
         else:
-            forbidden_referral_names.append(referral.persona.name)
+            forbidden_referral_names.append(graph.personas[referral.referred_persona_id].name)
 
     eligible_files = []
     file_handles = {}
@@ -408,15 +412,14 @@ async def applyDecisions(run_id, prepared: PreparedNormalTurn, unlock_handles, s
                 continue
             run.unlocked_referred_ids.add(referred_id)
             run.unlocked_at[referred_id] = elapsed
-            # referral.persona is raw (graphReferrals/resolveDecisions never hydrates —
-            # see reads.py), so it's hydrated here, at the point this response is built.
-            # Unlike the old dict-spread (which omitted available/available_in/expires_in
-            # entirely), compute real availability — a newly-unlocked referred persona can
-            # itself have a bounded availability_duration, which the old shape silently
-            # dropped.
+            # The graph's persona copy is raw (graphReferrals/resolveDecisions never
+            # hydrates — see reads.py), so it's hydrated here, at the point this response
+            # is built. Compute real availability — a newly-unlocked referred persona can
+            # itself have a bounded availability_duration.
+            referred_persona = run.persona_graph.personas[referred_id]
             contact = ContactOut.from_persona_detail(
-                hydratePersona(referral.persona), is_referred=True, chat_state=getChatState(run, referred_id),
-                **personaAvailability(referral.persona, elapsed, elapsed),
+                hydratePersona(referred_persona), is_referred=True, chat_state=getChatState(run, referred_id),
+                **personaAvailability(referred_persona, elapsed, elapsed),
             )
             new_contacts.append(contact)
 

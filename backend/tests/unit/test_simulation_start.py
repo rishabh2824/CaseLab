@@ -4,6 +4,7 @@ contract that nothing persona-secret ever reaches the browser.
 
 import pytest
 from domain_errors import CaseNotFound, InvalidRequest
+from models.simulations import RunCaseSummary
 from services.simulation import service as sim_service
 
 from tests import factories
@@ -76,18 +77,18 @@ async def test_successful_start_returns_trimmed_summary_and_one_contact_per_root
     state = await sim.start("ACME")
 
     # Case summary is trimmed: no access_code, no common_information.
-    assert state["case"] == {
-        "id": 7,
-        "case_name": "Acme Case",
-        "initial_brief": "Do the thing.",
-        "simulation_duration": 30,
-    }
-    assert len(state["contacts"]) == 2
-    assert {c.id for c in state["contacts"]} == {"A", "B"}
-    assert state["histories"] == {}
-    assert state["shared_files"] == []
-    assert state["notes"] == ""
-    assert state["run_id"] in sim.store.rows
+    assert state.case == RunCaseSummary(
+        id=7,
+        case_name="Acme Case",
+        brief="Do the thing.",
+        simulation_duration=30,
+    )
+    assert len(state.contacts) == 2
+    assert {c.id for c in state.contacts} == {"A", "B"}
+    assert state.histories == {}
+    assert state.shared_files == []
+    assert state.notes == ""
+    assert state.run_id in sim.store.rows
 
 
 async def test_secrets_never_reach_the_browser(sim):
@@ -112,12 +113,12 @@ async def test_secrets_never_reach_the_browser(sim):
     # structurally impossible, not just conventionally avoided, but the
     # runtime check is kept as a concrete regression guard.
     start_state = await sim.start()
-    for contact in start_state["contacts"]:
+    for contact in start_state.contacts:
         for field in SECRET_FIELDS:
             assert not hasattr(contact, field), f"{field} leaked into startSimulation contact"
 
-    state = await sim_service.getSimulationState(start_state["run_id"])
-    for contact in state["contacts"]:
+    state = await sim_service.getSimulationState(start_state.run_id)
+    for contact in state.contacts:
         for field in SECRET_FIELDS:
             assert not hasattr(contact, field), f"{field} leaked into getSimulationState contact"
 
@@ -138,11 +139,11 @@ async def test_root_with_closed_availability_window_excluded_from_active_persona
 
     state = await sim.start()
 
-    alice = next(c for c in state["contacts"] if c.id == "A")
-    bob = next(c for c in state["contacts"] if c.id == "B")
+    alice = next(c for c in state.contacts if c.id == "A")
+    bob = next(c for c in state.contacts if c.id == "B")
     assert alice.available is False
     assert bob.available is True
-    assert state["active_persona_id"] == "B"
+    assert state.active_persona_id == "B"
 
 
 async def test_profile_photos_are_resigned_via_spaces(sim, fake_spaces):
@@ -164,7 +165,7 @@ async def test_profile_photos_are_resigned_via_spaces(sim, fake_spaces):
 
     state = await sim.start()
 
-    photo = state["contacts"][0].profile_photo
+    photo = state.contacts[0].profile_photo
     assert photo.url == fake_spaces("cases/1/alice.png")
 
 

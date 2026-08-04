@@ -198,7 +198,7 @@ export const runState = (overrides: Record<string, unknown> = {}) => ({
 	case: {
 		id: 1,
 		case_name: "Sterling Industries",
-		initial_brief: "Reduce office supply costs.",
+		brief: "Reduce office supply costs.",
 		simulation_duration: 45,
 	},
 	contacts: [contact()],
@@ -213,7 +213,7 @@ export const caseDetail = (overrides: Record<string, unknown> = {}) => ({
 	id: 1,
 	case_name: "Sterling Industries",
 	access_code: "STERLING",
-	initial_brief: "Reduce office supply costs.",
+	brief: "Reduce office supply costs.",
 	common_information: "Company background.",
 	simulation_duration: 45,
 	personas: [
@@ -258,7 +258,7 @@ export const adminOut = (overrides: Record<string, unknown> = {}) => ({
 export const demoCaseDetail = (overrides: Record<string, unknown> = {}) => ({
 	case_name: "Sterling Industries",
 	access_code: "STERLING",
-	initial_brief: "Reduce office supply costs.",
+	brief: "Reduce office supply costs.",
 	common_information: "Company background.",
 	simulation_duration: 45,
 	personas: [

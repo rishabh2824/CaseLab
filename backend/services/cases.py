@@ -5,7 +5,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from domain_errors import AccessCodeConflict, AccessDenied, CaseNotFound, InvalidRequest, PersistenceError, VersionConflict
 from models.admin import AdminRole
-from models.cases import CasePayload, CaseStructure, CaseUpdatePayload, FileRef
+from models.cases import (
+    CaseCreatedResponse,
+    CaseDeletedResponse,
+    CaseDetail,
+    CaseDetailResponse,
+    CaseListResponse,
+    CasePayload,
+    CaseStructure,
+    CaseSummary,
+    CaseUpdatePayload,
+    CaseVersionResponse,
+    FileRef,
+)
 from services.auth import CurrentAdmin
 from infra.db_models import Admin, Case, Collaborator, File
 
@@ -181,7 +193,7 @@ async def fetchCases(session, admin: CurrentAdmin) -> list[Case]:
     return (await session.exec(stmt)).all()
 
 
-async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict:
+async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> CaseCreatedResponse:
     normalized_code = normalizeAccessCode(payload.access_code)
     if normalized_code and await accessCodeTaken(session, normalized_code):
         raise AccessCodeConflict(ACCESS_CODE_CONFLICT)
@@ -189,7 +201,7 @@ async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict
     case = Case(
         name=payload.case_name,
         access_code=normalized_code,
-        brief=payload.initial_brief,
+        brief=payload.brief,
         common_information=payload.common_information,
         duration=payload.simulation_duration,
         admin=admin.id,
@@ -211,19 +223,17 @@ async def createCase(session, payload: CasePayload, admin: CurrentAdmin) -> dict
         if violation(exc):
             raise AccessCodeConflict(ACCESS_CODE_CONFLICT) from exc
         raise PersistenceError("Failed to create case.") from exc
-    return {"case_id": case.id}
+    return CaseCreatedResponse(case_id=case.id)
 
 
-async def listCases(session, admin: CurrentAdmin) -> dict:
+async def listCases(session, admin: CurrentAdmin) -> CaseListResponse:
     cases = await fetchCases(session, admin)
-    return {
-        "cases": [
-            {"id": case.id, "case_name": case.name, "access_code": case.access_code} for case in cases
-        ]
-    }
+    return CaseListResponse(
+        cases=[CaseSummary(id=case.id, case_name=case.name, access_code=case.access_code) for case in cases]
+    )
 
 
-async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
+async def getCase(session, case_id: int, admin: CurrentAdmin) -> CaseDetailResponse:
     case = await session.get(Case, case_id)
     if case is None:
         raise CaseNotFound("Case not found.")
@@ -232,48 +242,52 @@ async def getCase(session, case_id: int, admin: CurrentAdmin) -> dict:
         await session.exec(select(Collaborator.admin_id).where(Collaborator.case_id == case_id))
     ).all()
     structure = CaseStructure.model_validate(case.structure)
-    return {
-        "case": {
-            "id": case.id,
-            "case_name": case.name,
-            "access_code": case.access_code,
-            "initial_brief": case.brief,
-            "common_information": case.common_information,
-            "simulation_duration": case.duration,
-            **structure.model_dump(mode="json"),
-            "version": case.version,
-            "owner_admin_id": case.admin,
-            "collaborator_admin_ids": list(collaborator_ids),
-        }
-    }
+    return CaseDetailResponse(
+        case=CaseDetail(
+            id=case.id,
+            case_name=case.name,
+            access_code=case.access_code,
+            brief=case.brief,
+            common_information=case.common_information,
+            simulation_duration=case.duration,
+            personas=structure.personas,
+            referrals=structure.referrals,
+            roots=structure.roots,
+            version=case.version,
+            owner_admin_id=case.admin,
+            collaborator_admin_ids=list(collaborator_ids),
+        )
+    )
 
 
-async def getDemoCase(session) -> dict:
+async def getDemoCase(session) -> CaseDetailResponse:
     case = await session.get(Case, DEMO_CASE_ID)
     if case is None:
         raise CaseNotFound("Demo case is not configured.")
     structure = CaseStructure.model_validate(case.structure)
-    return {
-        "case": {
-            "case_name": case.name,
-            "access_code": case.access_code,
-            "initial_brief": case.brief,
-            "common_information": case.common_information,
-            "simulation_duration": case.duration,
-            **structure.model_dump(mode="json"),
-        }
-    }
+    return CaseDetailResponse(
+        case=CaseDetail(
+            case_name=case.name,
+            access_code=case.access_code,
+            brief=case.brief,
+            common_information=case.common_information,
+            simulation_duration=case.duration,
+            personas=structure.personas,
+            referrals=structure.referrals,
+            roots=structure.roots,
+        )
+    )
 
 
-async def getCaseVersion(session, case_id: int, admin: CurrentAdmin) -> dict:
+async def getCaseVersion(session, case_id: int, admin: CurrentAdmin) -> CaseVersionResponse:
     case = await session.get(Case, case_id)
     if case is None:
         raise CaseNotFound("Case not found.")
     await caseAccess(session, case, admin)
-    return {"version": case.version}
+    return CaseVersionResponse(version=case.version)
 
 
-async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: CurrentAdmin) -> dict:
+async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: CurrentAdmin) -> CaseCreatedResponse:
     case = await session.get(Case, case_id)
     if case is None:
         raise CaseNotFound("Case not found.")
@@ -292,7 +306,7 @@ async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: C
             .values(
                 name=payload.case_name,
                 access_code=normalized_code,
-                brief=payload.initial_brief,
+                brief=payload.brief,
                 common_information=payload.common_information,
                 duration=payload.simulation_duration,
                 structure=structure,
@@ -320,14 +334,14 @@ async def updateCase(session, case_id: int, payload: CaseUpdatePayload, admin: C
         if violation(exc):
             raise AccessCodeConflict(ACCESS_CODE_CONFLICT) from exc
         raise PersistenceError("Failed to update case.") from exc
-    return {"case_id": case_id}
+    return CaseCreatedResponse(case_id=case_id)
 
 
-async def deleteCase(session, case_id: int, admin: CurrentAdmin) -> dict:
+async def deleteCase(session, case_id: int, admin: CurrentAdmin) -> CaseDeletedResponse:
     case = await session.get(Case, case_id)
     if case is None:
         raise CaseNotFound("Case not found.")
     await caseAccess(session, case, admin)
     await session.delete(case)
     await session.commit()
-    return {"ok": True}
+    return CaseDeletedResponse(ok=True)

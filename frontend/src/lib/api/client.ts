@@ -70,10 +70,7 @@ export async function apiFetch<T = unknown>(
 
 	if (!response.ok) throw await errorFromResponse(response);
 
-	const text = await response.text();
-	// No route actually returns an empty 200 body today, but the guard is
-	// historical defensive code — kept as-is, cast since T can't prove null.
-	return text ? JSON.parse(text) : (null as T);
+	return (await response.json()) as T;
 }
 
 const TIMEOUT_ERROR_MESSAGE =
@@ -104,9 +101,9 @@ export async function streamChat(
 			controller.abort(new DOMException("Idle timeout", "TimeoutError"));
 		}, idleTimeoutMs);
 	};
-	// Duck-typed on purpose (not `instanceof DOMException`) — matches the
-	// pre-TypeScript behavior of checking `.name` on whatever the fetch
-	// implementation actually throws, rather than narrowing to one class.
+	// Duck-typed on purpose (not `instanceof DOMException`): the fetch
+	// implementation's thrown error type isn't guaranteed, so this checks
+	// `.name` on whatever comes through instead of narrowing to one class.
 	const errorName = (error: unknown): unknown =>
 		error && typeof error === "object" && "name" in error
 			? (error as { name: unknown }).name

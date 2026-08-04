@@ -7,6 +7,6 @@ from .dependencies import getCurrentAdmin
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
 
-@router.post("/presign", response_model=PresignUploadResponse, dependencies=[Depends(getCurrentAdmin)])
+@router.post("/presign", dependencies=[Depends(getCurrentAdmin)])
 def presignUpload(payload: PresignUploadRequest) -> PresignUploadResponse:
     return upload_service.presignUpload(payload.file_name, payload.content_type, payload.prefix)

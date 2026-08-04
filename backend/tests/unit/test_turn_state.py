@@ -211,15 +211,6 @@ def test_boundary_reply_empty_name_falls_back_to_i():
 
 
 def test_format_history_trims_to_role_and_content():
-    # The old dict-based history could (in principle) hold a stray "system"
-    # entry or one missing "content", which is why formatHistory used to
-    # filter/default defensively. Now that Run.history is typed as
-    # dict[str, list[ChatMessage]] (ChatMessage.role: Literal["user",
-    # "assistant"], .content: str required), that malformed shape can no
-    # longer be constructed at all — Run.model_validate rejects it at the
-    # JSONB-load boundary, one layer above this function. The role-filter in
-    # formatHistory is kept as cheap defensive belt-and-suspenders (see the
-    # source comment) but is no longer independently testable here.
     run = factories.run(
         history={"A": [ChatMessage(role="user", content="hi"), ChatMessage(role="assistant", content="hello")]}
     )

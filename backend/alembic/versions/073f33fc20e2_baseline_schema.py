@@ -65,8 +65,8 @@ def upgrade() -> None:
     # ### end Alembic commands ###
 
     # citext is case-insensitive on equality/comparison by itself, so this partial
-    # unique index (no upper() needed, unlike the old SQLite expression index)
-    # enforces "one case per access code" case-insensitively, same as before.
+    # unique index (no upper() needed) enforces "one case per access code"
+    # case-insensitively.
     op.execute(
         "CREATE UNIQUE INDEX idx_cases_access_code_unique ON cases (access_code) "
         "WHERE access_code IS NOT NULL AND access_code != ''"

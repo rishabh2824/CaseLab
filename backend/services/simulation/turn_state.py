@@ -83,10 +83,7 @@ def boundaryReply(persona_name: str, should_end: bool) -> str:
     )
 
 
-# takes the run's full history dict and returns only user/assistant turns, trimmed to {role, content}.
-# The `role in {"user","assistant"}` filter is now also enforced at the type level
-# (ChatMessage.role: Literal["user","assistant"] — history never holds a "system" entry),
-# but is kept as cheap, defensive belt-and-suspenders.
+# takes the run's full history dict and returns each persona's turns, trimmed to {role, content}.
 def formatHistory(run: Run, persona_ids: set[str] | None = None) -> dict:
     histories = {}
     for persona_id, messages in run.history.items():
@@ -98,6 +95,5 @@ def formatHistory(run: Run, persona_ids: set[str] | None = None) -> dict:
                 "content": message.content,
             }
             for message in messages
-            if message.role in {"user", "assistant"}
         ]
     return histories

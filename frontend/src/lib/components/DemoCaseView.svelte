@@ -12,13 +12,13 @@ import type { Api } from "$lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
-let caseData = $state<Api<"DemoCaseDetail"> | null>(null);
+let caseData = $state<Api<"CaseDetail"> | null>(null);
 let isLoading = $state(true);
 let loadError = $state("");
 
 onMount(async () => {
 	try {
-		const data = await apiFetch<Api<"DemoCaseResponse">>("/api/cases/demo");
+		const data = await apiFetch<Api<"CaseDetailResponse">>("/api/cases/demo");
 		caseData = data.case;
 	} catch (err) {
 		loadError =
@@ -86,7 +86,7 @@ const referredPersonas = $derived(
 							placeholder="Unlimited"
 						/>
 						<div class="sm:col-span-2">
-							<ReadOnlyField label="Initial brief" value={caseData.initial_brief} />
+							<ReadOnlyField label="Initial brief" value={caseData.brief} />
 						</div>
 						<div class="sm:col-span-2">
 							<ReadOnlyField label="Case background" value={caseData.common_information} />

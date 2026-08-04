@@ -1,10 +1,7 @@
 """Payload/graph builders shared by every test.
 
-These used to be copy-pasted into each integration test file (four identical
-copies of makePayload/createPayload/updatePayload/asCurrentAdmin), which meant
-a change to CasePayload's required fields broke four files and, worse, let a
-file drift silently. Everything now builds off `casePayload` below, so a new
-required field is one edit.
+Everything builds off `casePayload` below, so a new required field on
+CasePayload is one edit instead of updating every call site.
 """
 
 from __future__ import annotations
@@ -21,7 +18,7 @@ def casePayload(**overrides: Any) -> dict:
     """The minimum valid case body, as a plain dict, before model validation."""
     base: dict[str, Any] = dict(
         case_name="Test Case",
-        initial_brief="brief",
+        brief="brief",
         common_information=None,
         simulation_duration=None,
         access_code=None,
@@ -99,7 +96,7 @@ def run(**overrides: Any) -> Run:
     than driving a full turn through the `sim` fixture."""
     base: dict[str, Any] = dict(
         case_id=1,
-        case_snapshot=RunCaseSnapshot(id=1, case_name="Case", initial_brief="Brief", simulation_duration=None),
+        case_snapshot=RunCaseSnapshot(id=1, case_name="Case", brief="Brief", simulation_duration=None),
         persona_graph=PersonaGraph(),
         start_time=1000.0,
         active_persona_id="A",

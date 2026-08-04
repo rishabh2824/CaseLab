@@ -14,7 +14,7 @@ from tests import factories
 
 
 def test_expiry_uses_duration_plus_grace_period():
-    run = factories.run(case_snapshot=RunCaseSnapshot(id=1, case_name="C", initial_brief="B", simulation_duration=10))
+    run = factories.run(case_snapshot=RunCaseSnapshot(id=1, case_name="C", brief="B", simulation_duration=10))
     expected = 1000.0 + (10 + run_store.GRACE_PERIOD) * 60
     assert run_store.expiry(run) == expected
 
@@ -22,7 +22,7 @@ def test_expiry_uses_duration_plus_grace_period():
 def test_expiry_caps_at_run_lifetime_for_a_long_duration():
     run = factories.run(
         case_snapshot=RunCaseSnapshot(
-            id=1, case_name="C", initial_brief="B", simulation_duration=run_store.RUN_LIFETIME * 10
+            id=1, case_name="C", brief="B", simulation_duration=run_store.RUN_LIFETIME * 10
         )
     )
     expected = 1000.0 + run_store.RUN_LIFETIME * 60
@@ -30,5 +30,5 @@ def test_expiry_caps_at_run_lifetime_for_a_long_duration():
 
 
 def test_expiry_falls_back_to_the_cap_when_case_has_no_duration():
-    run = factories.run(case_snapshot=RunCaseSnapshot(id=1, case_name="C", initial_brief="B", simulation_duration=None))
+    run = factories.run(case_snapshot=RunCaseSnapshot(id=1, case_name="C", brief="B", simulation_duration=None))
     assert run_store.expiry(run) == 1000.0 + run_store.RUN_LIFETIME * 60

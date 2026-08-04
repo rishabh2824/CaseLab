@@ -395,7 +395,7 @@ describe("submitCase — payload shaping", () => {
 		const [body] = createRequests;
 		if (!body) throw new Error("expected a captured create request");
 		expect(body.case_name).toBe("Sterling Industries");
-		expect(body.initial_brief).toBe("Reduce office supply costs.");
+		expect(body.brief).toBe("Reduce office supply costs.");
 		expect(body.common_information).toBe("Background context.");
 		expect(body.access_code).toBe("ABC123");
 		// Reduced to exactly {from_id, to_id, conditions} — conditions itself is

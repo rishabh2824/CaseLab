@@ -78,7 +78,7 @@ def systemPrompt(
     stable = (
         "You are a persona in a case simulation. Stay in character.\n"
         "Respond naturally and conversationally in 1-3 concise sentences.\n"
-        f"Case summary: {case_snapshot.initial_brief}\n"
+        f"Case summary: {case_snapshot.brief}\n"
         f"Common information: {case_snapshot.common_information or 'None'}\n"
         f"Persona name: {persona_details.name}\n"
         f"Role/title: {persona_details.role}\n"

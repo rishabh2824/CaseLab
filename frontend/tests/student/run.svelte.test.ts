@@ -21,7 +21,7 @@ import { server } from "../support/msw.js";
 const caseData = {
 	id: 1,
 	case_name: "Sterling Industries",
-	initial_brief: "Reduce office supply costs.",
+	brief: "Reduce office supply costs.",
 	simulation_duration: null as number | null,
 };
 

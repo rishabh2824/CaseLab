@@ -36,11 +36,11 @@ async def test_two_personas_sharing_an_object_key_dedupe_to_one_file_row(session
         roots=["A", "B"],
     )
     created = await case_service.createCase(session, payload, owner)
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     detail = await case_service.getCase(session, case_id, owner)
-    file_ids = {p["files"][0]["file"]["file_id"] for p in detail["case"]["personas"]}
+    file_ids = {p.files[0].file.file_id for p in detail.case.personas}
     # Both personas reference the same object_key, so the get-or-create in
     # resolveFileRef must resolve them to the exact same files row.
     assert len(file_ids) == 1
@@ -56,11 +56,11 @@ async def test_saving_the_same_object_key_again_on_update_reuses_the_existing_ro
     created = await case_service.createCase(
         session, createPayload(personas=[persona("A", files=[fileEntry(object_key=object_key)])], roots=["A"]), owner
     )
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     detail = await case_service.getCase(session, case_id, owner)
-    original_file_id = detail["case"]["personas"][0]["files"][0]["file"]["file_id"]
+    original_file_id = detail.case.personas[0].files[0].file.file_id
 
     # A later update references the same object_key from a different (new)
     # persona. If resolveFileRef inserted instead of reusing, this would
@@ -80,7 +80,7 @@ async def test_saving_the_same_object_key_again_on_update_reuses_the_existing_ro
     )
 
     detail2 = await case_service.getCase(session, case_id, owner)
-    file_ids = {p["files"][0]["file"]["file_id"] for p in detail2["case"]["personas"]}
+    file_ids = {p.files[0].file.file_id for p in detail2.case.personas}
     assert file_ids == {original_file_id}
 
     rows = (await session.exec(select(File).where(File.object_key == object_key))).all()
@@ -94,13 +94,13 @@ async def test_stored_file_id_is_a_string_even_though_the_column_is_an_int(sessi
     created = await case_service.createCase(
         session, createPayload(personas=[persona("A", files=[fileEntry(object_key=object_key)])], roots=["A"]), owner
     )
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     file_row = (await session.exec(select(File).where(File.object_key == object_key))).one()
 
     detail = await case_service.getCase(session, case_id, owner)
-    stored_file_id = detail["case"]["personas"][0]["files"][0]["file"]["file_id"]
+    stored_file_id = detail.case.personas[0].files[0].file.file_id
 
     # files.id is a plain int column, but the JSONB structure stores it
     # stringified — run["shared_files"] elsewhere keys off this value, and
@@ -116,7 +116,7 @@ async def test_duplicate_access_code_on_a_second_case_raises_access_code_conflic
     code = f"code-{uuid.uuid4().hex[:8]}"
 
     first = await case_service.createCase(session, createPayload(access_code=code), owner)
-    cleanup.track_case(first["case_id"])
+    cleanup.track_case(first.case_id)
 
     with pytest.raises(AccessCodeConflict):
         await case_service.createCase(session, createPayload(access_code=code), owner)
@@ -127,7 +127,7 @@ async def test_access_codes_are_case_insensitive_because_the_column_is_citext(se
     code = f"sterling-{uuid.uuid4().hex[:8]}"
 
     first = await case_service.createCase(session, createPayload(access_code=code.upper()), owner)
-    cleanup.track_case(first["case_id"])
+    cleanup.track_case(first.case_id)
 
     # "STERLING" and "sterling" must collide — access_code is backed by
     # Postgres's CITEXT type, not a plain varchar with app-side lowercasing.
@@ -162,7 +162,7 @@ async def test_create_case_leaks_a_raw_integrity_error_when_a_race_slips_past_th
             async with getSession() as session:
                 try:
                     created = await case_service.createCase(session, createPayload(access_code=code), owner)
-                    return "ok", created["case_id"]
+                    return "ok", created.case_id
                 except AccessCodeConflict:
                     return "conflict", None
                 except Exception as exc:  # broad on purpose -- this IS the bug under test

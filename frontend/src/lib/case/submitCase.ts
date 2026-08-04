@@ -115,7 +115,7 @@ export async function submitCase({
 	);
 	const basePayload = {
 		case_name: caseName.trim(),
-		initial_brief: initialBrief.trim(),
+		brief: initialBrief.trim(),
 		common_information: commonInformation.trim(),
 		simulation_duration: simulationDurationMinutes,
 		access_code: accessCode.trim(),

@@ -26,7 +26,7 @@ class ChatMessage(BaseModel):
 class RunCaseSummary(BaseModel):
     id: int
     case_name: str
-    initial_brief: str
+    brief: str
     simulation_duration: int | None = None
 
 

@@ -87,7 +87,7 @@ export function makeRunState(overrides: Partial<RunState> = {}): RunState {
 		case: {
 			id: 1,
 			case_name: "Sterling Industries",
-			initial_brief: "Reduce office supply costs.",
+			brief: "Reduce office supply costs.",
 			simulation_duration: 45,
 		},
 		contacts: [makeContact()],

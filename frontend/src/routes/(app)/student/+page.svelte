@@ -278,7 +278,7 @@ async function handleExportPdf(): Promise<void> {
 		<aside class="space-y-4">
 			<div class="rounded-2xl border border-line bg-white p-4 shadow-soft">
 				<h3 class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">Case Brief</h3>
-				<p class="mt-2 text-sm leading-relaxed text-stone">{run.caseData?.initial_brief ?? 'Loading brief...'}</p>
+				<p class="mt-2 text-sm leading-relaxed text-stone">{run.caseData?.brief ?? 'Loading brief...'}</p>
 			</div>
 
 			<SimulationClock startTime={session.startTime} totalDurationSeconds={run.totalDurationSeconds} />

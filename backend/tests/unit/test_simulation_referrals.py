@@ -18,7 +18,7 @@ def caseWithOneReferral(**referral_overrides):
 async def test_eligible_referral_is_offered_and_introducing_it_unlocks_the_contact(sim):
     sim.setCase(structure=caseWithOneReferral())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.referral = True
     sim.llm.replyWith("I'll connect you with Bob.", introduce=["R1"])
 
@@ -51,7 +51,7 @@ async def test_rejected_referral_is_withheld_and_redacted_from_prompt_and_histor
     )
     sim.setCase(structure=structure)
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.referral = False  # classifier never approves this referral
 
     # Turn 1: the model mentions Bob by name in its reply (nothing stops it
@@ -81,7 +81,7 @@ async def test_rejected_referral_is_withheld_and_redacted_from_prompt_and_histor
 async def test_unoffered_handle_from_model_unlocks_nothing_and_does_not_crash(sim):
     sim.setCase(structure=caseWithOneReferral())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.referral = False  # so no handle is ever offered this turn
     sim.llm.replyWith("Sure.", introduce=["R9"])  # model hallucinates a handle
 
@@ -96,7 +96,7 @@ async def test_unoffered_handle_from_model_unlocks_nothing_and_does_not_crash(si
 async def test_duplicate_handles_in_one_reply_unlock_the_persona_exactly_once(sim):
     sim.setCase(structure=caseWithOneReferral())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.referral = True
     sim.llm.replyWith("Meet Bob.", introduce=["R1", "R1"])
 
@@ -113,7 +113,7 @@ async def test_reunlocking_an_already_unlocked_persona_is_a_noop(sim):
     # move its unlock time.
     sim.setCase(structure=caseWithOneReferral())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.referral = True
 
     prepared = await sim.prepare(run_id, "A", "Connect me with Bob please.")
@@ -133,7 +133,7 @@ async def test_reunlocking_an_already_unlocked_persona_is_a_noop(sim):
 async def test_unlocked_persona_is_messageable_and_state_marks_it_referred(sim):
     sim.setCase(structure=caseWithOneReferral())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.referral = True
     sim.llm.replyWith("Meet Bob.", introduce=["R1"])
     await sim.send(run_id, "A", "hi")
@@ -143,7 +143,7 @@ async def test_unlocked_persona_is_messageable_and_state_marks_it_referred(sim):
     assert sim.frame(frames, "error") is None
 
     full_state = await sim_service.getSimulationState(run_id)
-    bob_contact = next(c for c in full_state["contacts"] if c.id == "B")
+    bob_contact = next(c for c in full_state.contacts if c.id == "B")
     assert bob_contact.is_referred is True
 
 
@@ -162,7 +162,7 @@ async def test_persona_referred_by_two_parents_stops_being_pending_for_the_other
     )
     sim.setCase(structure=structure)
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.referral = True
     sim.llm.replyWith("Meet Bob.", introduce=["R1"])
     await sim.send(run_id, "A", "hi")  # unlocks B via A
@@ -191,7 +191,7 @@ async def test_handle_numbering_is_stable_and_one_indexed_across_referrals(sim):
     )
     sim.setCase(structure=structure)
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.referral = True
 
     prepared = await sim.prepare(run_id, "A", "hi")

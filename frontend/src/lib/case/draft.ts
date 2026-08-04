@@ -30,7 +30,7 @@ export const createEmptyReferral = (
 	...overrides,
 });
 
-// Accepts anything shaped like a partial Persona — including the PersonaOut
+// Accepts anything shaped like a partial Persona — including the PersonaPayload
 // the API returns when loading a template/edit source. Only this persona's
 // own (flat) fields are defaulted; there's nothing nested left to normalize.
 export const normalizePersona = (

@@ -16,7 +16,7 @@ from services.simulation import prompt as prompt_module
 CASE_SNAPSHOT = RunCaseSnapshot(
     id=1,
     case_name="Sterling Industries",
-    initial_brief="Reduce office supply costs.",
+    brief="Reduce office supply costs.",
     common_information="Sterling Industries background.",
 )
 
@@ -34,7 +34,7 @@ def personaDetails(**overrides) -> PersonaDetail:
 
 
 def referral(condition_trigger: str) -> Referral:
-    return Referral(parent_persona_id="A", referred_persona_id="B", condition_trigger=condition_trigger, persona=personaDetails(id="B"))
+    return Referral(parent_persona_id="A", referred_persona_id="B", condition_trigger=condition_trigger)
 
 
 # --------------------------------------------------------------------------

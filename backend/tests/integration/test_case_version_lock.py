@@ -9,20 +9,20 @@ from tests.factories import asCurrentAdmin, createPayload, updatePayload
 async def test_correct_version_succeeds_and_increments(session, cleanup):
     owner = asCurrentAdmin(await cleanup.make_admin())
     created = await case_service.createCase(session, createPayload(), owner)
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     await case_service.updateCase(session, case_id, updatePayload(1, case_name="Renamed"), owner)
 
     detail = await case_service.getCase(session, case_id, owner)
-    assert detail["case"]["version"] == 2
-    assert detail["case"]["case_name"] == "Renamed"
+    assert detail.case.version == 2
+    assert detail.case.case_name == "Renamed"
 
 
 async def test_stale_version_is_rejected_and_row_is_unchanged(session, cleanup):
     owner = asCurrentAdmin(await cleanup.make_admin())
     created = await case_service.createCase(session, createPayload(), owner)
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     # First save succeeds and bumps the row to version 2.
@@ -35,8 +35,8 @@ async def test_stale_version_is_rejected_and_row_is_unchanged(session, cleanup):
     assert exc_info.value.detail["code"] == "version_conflict"
 
     detail = await case_service.getCase(session, case_id, owner)
-    assert detail["case"]["case_name"] == "First Save"
-    assert detail["case"]["version"] == 2
+    assert detail.case.case_name == "First Save"
+    assert detail.case.version == 2
 
 
 async def test_concurrent_saves_against_real_postgres_only_one_wins(cleanup):
@@ -49,7 +49,7 @@ async def test_concurrent_saves_against_real_postgres_only_one_wins(cleanup):
 
     async with getSession() as setup_session:
         created = await case_service.createCase(setup_session, createPayload(), owner)
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     async def attempt(case_name: str):
@@ -65,8 +65,8 @@ async def test_concurrent_saves_against_real_postgres_only_one_wins(cleanup):
 
     async with getSession() as verify_session:
         detail = await case_service.getCase(verify_session, case_id, owner)
-    assert detail["case"]["version"] == 2
-    assert detail["case"]["case_name"] in ("Admin A wins", "Admin B loses")
+    assert detail.case.version == 2
+    assert detail.case.case_name in ("Admin A wins", "Admin B loses")
 
 
 async def test_get_case_version_respects_access_control(session, cleanup):
@@ -74,11 +74,11 @@ async def test_get_case_version_respects_access_control(session, cleanup):
     stranger = asCurrentAdmin(await cleanup.make_admin())
 
     created = await case_service.createCase(session, createPayload(), owner)
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     result = await case_service.getCaseVersion(session, case_id, owner)
-    assert result["version"] == 1
+    assert result.version == 1
 
     with pytest.raises(AccessDenied):
         await case_service.getCaseVersion(session, case_id, stranger)

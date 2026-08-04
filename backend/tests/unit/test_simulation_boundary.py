@@ -18,7 +18,7 @@ def twoRootsCase():
 async def test_one_flagged_message_returns_boundary_kind_without_calling_the_llm(sim):
     sim.setCase(structure=twoRootsCase())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.harassment = "harassment"
 
     frames = await sim.send(run_id, "A", "bad message")
@@ -34,7 +34,7 @@ async def test_one_flagged_message_returns_boundary_kind_without_calling_the_llm
 async def test_escalation_ends_the_chat_at_the_nonsense_threshold(sim):
     sim.setCase(structure=twoRootsCase())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.harassment = "harassment"
 
     frames = None
@@ -51,7 +51,7 @@ async def test_escalation_ends_the_chat_at_the_nonsense_threshold(sim):
 async def test_message_to_an_ended_chat_is_rejected(sim):
     sim.setCase(structure=twoRootsCase())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.harassment = "harassment"
     for _ in range(NONSENSE_THRESHOLD):
         await sim.send(run_id, "A", "bad message")
@@ -64,7 +64,7 @@ async def test_message_to_an_ended_chat_is_rejected(sim):
 async def test_ending_one_personas_chat_does_not_end_another_persona(sim):
     sim.setCase(structure=twoRootsCase())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.harassment = "harassment"
     for _ in range(NONSENSE_THRESHOLD):
         await sim.send(run_id, "A", "bad message")
@@ -78,7 +78,7 @@ async def test_ending_one_personas_chat_does_not_end_another_persona(sim):
 async def test_normal_message_after_a_warning_does_not_reset_the_count(sim):
     sim.setCase(structure=twoRootsCase())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.harassment = "harassment"
     await sim.send(run_id, "A", "bad message")  # warning_count -> 1
 

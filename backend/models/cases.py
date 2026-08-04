@@ -38,7 +38,7 @@ class ReferralEdgePayload(BaseModel):
 
 class CasePayload(BaseModel):
     case_name: str
-    initial_brief: str
+    brief: str
     common_information: str | None = None
     simulation_duration: int | None = Field(default=None, ge=1, le=SIMULATION_DURATION)
     access_code: str | None = None
@@ -54,33 +54,16 @@ class CaseUpdatePayload(CasePayload):
     expected_version: int
 
 
-# --- Response models. getCase/getDemoCase build their responses out of actual
-# instances of these (via CaseStructure below), not hand-built dicts kept in
-# sync by convention. -----------------------------------------------------
-
-class ReferralOut(BaseModel):
-    from_id: str
-    to_id: str
-    conditions: str | None = None
-
-
-class PersonaOut(BaseModel):
-    id: str
-    name: str
-    role: str
-    profile_photo: FileRef | None = None
-    known_facts: str | None = None
-    personality_traits: str | None = None
-    availability_minutes: int | None = None
-    files: list[FileEntry] = Field(default_factory=list)
-
+# getCase/getDemoCase build their responses out of actual instances of PersonaPayload/
+# ReferralEdgePayload (via CaseStructure below), not hand-built dicts kept in sync by
+# convention. Response and request share the same shape — nothing diverges between them.
 
 # The single parsed shape of Case.structure/DemoCase's structure — every reader
 # of the JSONB blob parses into this once at the read boundary instead of
 # re-deriving its own defensive .get(x) or default shaping.
 class CaseStructure(BaseModel):
-    personas: list[PersonaOut] = Field(default_factory=list)
-    referrals: list[ReferralOut] = Field(default_factory=list)
+    personas: list[PersonaPayload] = Field(default_factory=list)
+    referrals: list[ReferralEdgePayload] = Field(default_factory=list)
     roots: list[str] = Field(default_factory=list)
 
 
@@ -94,41 +77,27 @@ class CaseListResponse(BaseModel):
     cases: list[CaseSummary]
 
 
+# id/version/owner_admin_id/collaborator_admin_ids are None for the demo case (see
+# services/cases.py::getDemoCase) — meaningless to a viewer who isn't actually the demo
+# case's owner/collaborator. The /demo route serializes with response_model_exclude_none
+# so those keys are absent from the JSON entirely, not just null (see api/cases.py).
 class CaseDetail(BaseModel):
-    id: int
+    id: int | None = None
     case_name: str
     access_code: str | None = None
-    initial_brief: str
+    brief: str
     common_information: str | None = None
     simulation_duration: int | None = None
-    personas: list[PersonaOut] = Field(default_factory=list)
-    referrals: list[ReferralOut] = Field(default_factory=list)
+    personas: list[PersonaPayload] = Field(default_factory=list)
+    referrals: list[ReferralEdgePayload] = Field(default_factory=list)
     roots: list[str] = Field(default_factory=list)
-    version: int
-    owner_admin_id: int
-    collaborator_admin_ids: list[int] = Field(default_factory=list)
+    version: int | None = None
+    owner_admin_id: int | None = None
+    collaborator_admin_ids: list[int] | None = None
 
 
 class CaseDetailResponse(BaseModel):
     case: CaseDetail
-
-
-# GET /api/cases/demo — deliberately narrower than CaseDetail: no id, version,
-# owner, or collaborators, since those are meaningless to a viewer who isn't
-# actually the demo case's owner/collaborator (see services/cases.py::getDemoCase).
-class DemoCaseDetail(BaseModel):
-    case_name: str
-    access_code: str | None = None
-    initial_brief: str
-    common_information: str | None = None
-    simulation_duration: int | None = None
-    personas: list[PersonaOut] = Field(default_factory=list)
-    referrals: list[ReferralOut] = Field(default_factory=list)
-    roots: list[str] = Field(default_factory=list)
-
-
-class DemoCaseResponse(BaseModel):
-    case: DemoCaseDetail
 
 
 # Shared by createCase and updateCase, both of which return only {"case_id": ...}.

@@ -26,7 +26,7 @@ async def getCurrentAdmin(
     admin = await admin_repository.getById(session, payload["admin_id"])
     if admin is None:
         raise Unauthorized("Admin account no longer exists.")
-    return CurrentAdmin(id=admin["id"], role=AdminRole(admin["role"]))
+    return CurrentAdmin(id=admin.id, role=admin.role)
 
 
 async def requireSuperAdmin(admin: CurrentAdmin = Depends(getCurrentAdmin)) -> CurrentAdmin:

@@ -76,7 +76,7 @@ async def test_response_model_strips_extra_fields_the_service_returns(client, as
                 "id": case_id,
                 "case_name": "Sterling Industries",
                 "access_code": None,
-                "initial_brief": "brief",
+                "brief": "brief",
                 "common_information": None,
                 "simulation_duration": None,
                 "personas": [],
@@ -97,6 +97,42 @@ async def test_response_model_strips_extra_fields_the_service_returns(client, as
     assert "debug_note" not in body
     assert "secret_field" not in body["case"]
     assert body["case"]["case_name"] == "Sterling Industries"
+
+
+async def test_demo_case_response_omits_null_fields(client, as_admin, monkeypatch):  # noqa: F811
+    """GET /api/cases/demo reuses CaseDetail (id/version/owner_admin_id/
+    collaborator_admin_ids are all Optional, None for a demo case) rather than
+    a narrower type, so the "these fields must not reach the browser" guarantee
+    is enforced by response_model_exclude_none on the route (api/cases.py),
+    not by the type shape. This pins that the None values are actually
+    stripped from the JSON, not serialized as nulls."""
+    as_admin()
+
+    async def fake_get_demo_case(session):
+        return {
+            "case": {
+                "id": None,
+                "case_name": "Demo Case",
+                "access_code": None,
+                "brief": "brief",
+                "common_information": None,
+                "simulation_duration": None,
+                "personas": [],
+                "referrals": [],
+                "roots": [],
+                "version": None,
+                "owner_admin_id": None,
+                "collaborator_admin_ids": None,
+            }
+        }
+
+    monkeypatch.setattr(cases_service, "getDemoCase", fake_get_demo_case)
+    resp = await client.get("/api/cases/demo")
+    assert resp.status_code == 200
+    case = resp.json()["case"]
+    for field in ("id", "version", "owner_admin_id", "collaborator_admin_ids"):
+        assert field not in case, f"{field} must not be exposed by the demo endpoint"
+    assert case["case_name"] == "Demo Case"
 
 
 # ---------------------------------------------------------------------------

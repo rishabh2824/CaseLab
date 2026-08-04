@@ -38,6 +38,23 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
+	"/api/admin/me": {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: never;
+		};
+		/** Me */
+		get: operations["me_api_admin_me_get"];
+		put?: never;
+		post?: never;
+		delete?: never;
+		options?: never;
+		head?: never;
+		patch?: never;
+		trace?: never;
+	};
 	"/api/admin/admins": {
 		parameters: {
 			query?: never;
@@ -295,29 +312,29 @@ export interface components {
 		/** CaseDetail */
 		CaseDetail: {
 			/** Id */
-			id: number;
+			id?: number | null;
 			/** Case Name */
 			case_name: string;
 			/** Access Code */
 			access_code?: string | null;
-			/** Initial Brief */
-			initial_brief: string;
+			/** Brief */
+			brief: string;
 			/** Common Information */
 			common_information?: string | null;
 			/** Simulation Duration */
 			simulation_duration?: number | null;
 			/** Personas */
-			personas?: components["schemas"]["PersonaOut"][];
+			personas?: components["schemas"]["PersonaPayload"][];
 			/** Referrals */
-			referrals?: components["schemas"]["ReferralOut"][];
+			referrals?: components["schemas"]["ReferralEdgePayload"][];
 			/** Roots */
 			roots?: string[];
 			/** Version */
-			version: number;
+			version?: number | null;
 			/** Owner Admin Id */
-			owner_admin_id: number;
+			owner_admin_id?: number | null;
 			/** Collaborator Admin Ids */
-			collaborator_admin_ids?: number[];
+			collaborator_admin_ids?: number[] | null;
 		};
 		/** CaseDetailResponse */
 		CaseDetailResponse: {
@@ -332,8 +349,8 @@ export interface components {
 		CasePayload: {
 			/** Case Name */
 			case_name: string;
-			/** Initial Brief */
-			initial_brief: string;
+			/** Brief */
+			brief: string;
 			/** Common Information */
 			common_information?: string | null;
 			/** Simulation Duration */
@@ -362,8 +379,8 @@ export interface components {
 		CaseUpdatePayload: {
 			/** Case Name */
 			case_name: string;
-			/** Initial Brief */
-			initial_brief: string;
+			/** Brief */
+			brief: string;
 			/** Common Information */
 			common_information?: string | null;
 			/** Simulation Duration */
@@ -421,29 +438,6 @@ export interface components {
 			chat_end_reason?: string | null;
 			/** Warning Count */
 			warning_count: number;
-		};
-		/** DemoCaseDetail */
-		DemoCaseDetail: {
-			/** Case Name */
-			case_name: string;
-			/** Access Code */
-			access_code?: string | null;
-			/** Initial Brief */
-			initial_brief: string;
-			/** Common Information */
-			common_information?: string | null;
-			/** Simulation Duration */
-			simulation_duration?: number | null;
-			/** Personas */
-			personas?: components["schemas"]["PersonaOut"][];
-			/** Referrals */
-			referrals?: components["schemas"]["ReferralOut"][];
-			/** Roots */
-			roots?: string[];
-		};
-		/** DemoCaseResponse */
-		DemoCaseResponse: {
-			case: components["schemas"]["DemoCaseDetail"];
 		};
 		/** ExportCaseSummary */
 		ExportCaseSummary: {
@@ -518,24 +512,6 @@ export interface components {
 			/** Notes */
 			notes: string;
 		};
-		/** PersonaOut */
-		PersonaOut: {
-			/** Id */
-			id: string;
-			/** Name */
-			name: string;
-			/** Role */
-			role: string;
-			profile_photo?: components["schemas"]["FileRef"] | null;
-			/** Known Facts */
-			known_facts?: string | null;
-			/** Personality Traits */
-			personality_traits?: string | null;
-			/** Availability Minutes */
-			availability_minutes?: number | null;
-			/** Files */
-			files?: components["schemas"]["FileEntry"][];
-		};
 		/** PersonaPayload */
 		PersonaPayload: {
 			/** Id */
@@ -604,23 +580,14 @@ export interface components {
 			/** Conditions */
 			conditions?: string | null;
 		};
-		/** ReferralOut */
-		ReferralOut: {
-			/** From Id */
-			from_id: string;
-			/** To Id */
-			to_id: string;
-			/** Conditions */
-			conditions?: string | null;
-		};
 		/** RunCaseSummary */
 		RunCaseSummary: {
 			/** Id */
 			id: number;
 			/** Case Name */
 			case_name: string;
-			/** Initial Brief */
-			initial_brief: string;
+			/** Brief */
+			brief: string;
 			/** Simulation Duration */
 			simulation_duration?: number | null;
 		};
@@ -738,6 +705,37 @@ export interface operations {
 					"application/json": {
 						[key: string]: unknown;
 					};
+				};
+			};
+		};
+	};
+	me_api_admin_me_get: {
+		parameters: {
+			query?: never;
+			header?: never;
+			path?: never;
+			cookie?: {
+				admin_session?: string | null;
+			};
+		};
+		requestBody?: never;
+		responses: {
+			/** @description Successful Response */
+			200: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["LoginResponse"];
+				};
+			};
+			/** @description Validation Error */
+			422: {
+				headers: {
+					[name: string]: unknown;
+				};
+				content: {
+					"application/json": components["schemas"]["HTTPValidationError"];
 				};
 			};
 		};
@@ -959,7 +957,7 @@ export interface operations {
 					[name: string]: unknown;
 				};
 				content: {
-					"application/json": components["schemas"]["DemoCaseResponse"];
+					"application/json": components["schemas"]["CaseDetailResponse"];
 				};
 			};
 			/** @description Validation Error */

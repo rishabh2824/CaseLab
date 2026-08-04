@@ -15,13 +15,13 @@ async def test_multi_parent_referral_saves_and_round_trips(session, cleanup):
         roots=["A", "B"],
     )
     created = await case_service.createCase(session, payload, owner)
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     detail = await case_service.getCase(session, case_id, owner)
-    stored_referrals = {(r["from_id"], r["to_id"]) for r in detail["case"]["referrals"]}
+    stored_referrals = {(r.from_id, r.to_id) for r in detail.case.referrals}
     assert stored_referrals == {("A", "C"), ("B", "C")}
-    assert set(detail["case"]["roots"]) == {"A", "B"}
+    assert set(detail.case.roots) == {"A", "B"}
 
 
 async def test_cyclic_referral_graph_is_rejected(session, cleanup):
@@ -71,11 +71,11 @@ async def test_persona_ids_are_stable_across_create_then_update(session, cleanup
     created = await case_service.createCase(
         session, createPayload(personas=[persona("A")], referrals=[], roots=["A"]), owner
     )
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     detail = await case_service.getCase(session, case_id, owner)
-    assert [p["id"] for p in detail["case"]["personas"]] == ["A"]
+    assert [p.id for p in detail.case.personas] == ["A"]
 
     await case_service.updateCase(
         session,
@@ -85,5 +85,5 @@ async def test_persona_ids_are_stable_across_create_then_update(session, cleanup
     )
 
     detail2 = await case_service.getCase(session, case_id, owner)
-    assert [p["id"] for p in detail2["case"]["personas"]] == ["A"]
-    assert detail2["case"]["personas"][0]["name"] == "Renamed"
+    assert [p.id for p in detail2.case.personas] == ["A"]
+    assert detail2.case.personas[0].name == "Renamed"

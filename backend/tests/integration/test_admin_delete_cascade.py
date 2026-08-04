@@ -12,12 +12,12 @@ from tests.factories import asCurrentAdmin, createPayload
 async def test_zero_collaborator_case_is_deleted(session, cleanup):
     owner = await cleanup.make_admin()
     created = await case_service.createCase(session, createPayload(), asCurrentAdmin(owner))
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)  # no-op at teardown if already gone
 
     result = await admin_service.deleteWithCascade(session, owner.id)
-    assert result["cases_deleted"] == 1
-    assert result["cases_reassigned"] == 0
+    assert result.cases_deleted == 1
+    assert result.cases_reassigned == 0
 
     assert await session.get(Case, case_id) is None
     assert await session.get(Admin, owner.id) is None
@@ -33,7 +33,7 @@ async def test_case_with_collaborators_is_reassigned_to_the_oldest(session, clea
         createPayload(collaborator_admin_ids=[older_collaborator.id, newer_collaborator.id]),
         asCurrentAdmin(owner),
     )
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     # createCase inserts both collaborator rows at ~the same instant — force a
@@ -50,8 +50,8 @@ async def test_case_with_collaborators_is_reassigned_to_the_oldest(session, clea
     await session.commit()
 
     result = await admin_service.deleteWithCascade(session, owner.id)
-    assert result["cases_deleted"] == 0
-    assert result["cases_reassigned"] == 1
+    assert result.cases_deleted == 0
+    assert result.cases_reassigned == 1
 
     refreshed_case = await session.get(Case, case_id)
     assert refreshed_case is not None
@@ -71,12 +71,12 @@ async def test_deleting_a_collaborator_elsewhere_only_removes_that_grant(session
     created = await case_service.createCase(
         session, createPayload(collaborator_admin_ids=[collaborator.id]), asCurrentAdmin(owner)
     )
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     result = await admin_service.deleteWithCascade(session, collaborator.id)
-    assert result["cases_deleted"] == 0
-    assert result["cases_reassigned"] == 0
+    assert result.cases_deleted == 0
+    assert result.cases_reassigned == 0
 
     refreshed_case = await session.get(Case, case_id)
     assert refreshed_case is not None
@@ -92,7 +92,7 @@ async def test_delete_with_cascade_is_atomic_on_failure(session, cleanup, monkey
     owner = await cleanup.make_admin()
     owner_id = owner.id  # captured before deleteWithCascade — see note below
     created = await case_service.createCase(session, createPayload(), asCurrentAdmin(owner))
-    case_id = created["case_id"]
+    case_id = created.case_id
     cleanup.track_case(case_id)
 
     async def failingCommit():

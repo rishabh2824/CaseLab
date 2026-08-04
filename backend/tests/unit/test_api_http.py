@@ -34,7 +34,7 @@ import domain_errors as de
 import services.admin as admin_repo
 from api.dependencies import CurrentAdmin, getCurrentAdmin
 from infra.db import getRequestSession
-from models.admin import AdminRole
+from models.admin import AdminOut, AdminRole
 from services.auth import COOKIE_NAME, createJwt
 
 import httpx
@@ -236,7 +236,7 @@ async def test_delete_super_admin_returns_403(client, as_admin, monkeypatch):
     as_admin(role=AdminRole.SUPER)
 
     async def existing(session, admin_id):
-        return {"id": admin_id, "email": "s@test.invalid", "name": "S", "role": int(AdminRole.SUPER)}
+        return AdminOut(id=admin_id, email="s@test.invalid", name="S", role=AdminRole.SUPER)
 
     monkeypatch.setattr(admin_repo, "getById", existing)
     resp = await client.delete("/api/admin/admins/3")
@@ -285,7 +285,7 @@ async def test_login_success_sets_cookie_and_returns_admin(client, monkeypatch):
     monkeypatch.setattr(admin_repo, "verifyToken", lambda credential: {"email": "admin@test.invalid"})
 
     async def found(session, email):
-        return {"id": 7, "email": "admin@test.invalid", "name": "Admin Seven", "role": int(AdminRole.ADMIN)}
+        return AdminOut(id=7, email="admin@test.invalid", name="Admin Seven", role=AdminRole.ADMIN)
 
     monkeypatch.setattr(admin_repo, "getByEmail", found)
     resp = await client.post("/api/admin/login", json={"credential": "whatever"})
@@ -328,7 +328,7 @@ async def test_me_returns_current_admin(client, as_admin, monkeypatch):
     as_admin(admin_id=7, role=AdminRole.SUPER)
 
     async def found(session, admin_id):
-        return {"id": 7, "email": "admin@test.invalid", "name": "Admin Seven", "role": int(AdminRole.SUPER)}
+        return AdminOut(id=7, email="admin@test.invalid", name="Admin Seven", role=AdminRole.SUPER)
 
     monkeypatch.setattr(admin_repo, "getById", found)
     resp = await client.get("/api/admin/me")

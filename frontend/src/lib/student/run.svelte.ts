@@ -11,7 +11,6 @@ import type {
 	StreamEvent,
 	TurnMeta,
 } from "../types.js";
-import { normalizeHistories } from "./contacts.js";
 
 const notify = (message: string) => toast(message, { duration: 4000 });
 
@@ -49,7 +48,7 @@ export class RunStore {
 	contacts = $derived<Contact[]>(this.raw?.contacts ?? []);
 	sharedFiles = $derived<SharedFile[]>(this.raw?.shared_files ?? []);
 	serverHistories = $derived<Record<string, Api<"ChatMessage">[]>>(
-		normalizeHistories(this.raw?.histories ?? {}),
+		this.raw?.histories ?? {},
 	);
 	messagesByPersona = $derived<Record<string, Api<"ChatMessage">[]>>(
 		this.streamingTurn

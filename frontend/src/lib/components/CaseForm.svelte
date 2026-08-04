@@ -127,7 +127,7 @@ async function loadCase(id: string): Promise<void> {
 	const data = await apiFetch<Api<"CaseDetailResponse">>(`/api/cases/${id}`);
 	const loadedCase = data.case;
 	caseName = loadedCase.case_name ?? "";
-	initialBrief = loadedCase.initial_brief ?? "";
+	initialBrief = loadedCase.brief ?? "";
 	commonInformation = loadedCase.common_information ?? "";
 	simulationDurationMinutes = loadedCase.simulation_duration ?? null;
 	accessCode = loadedCase.access_code ?? "";

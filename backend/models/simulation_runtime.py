@@ -25,7 +25,7 @@ class PersonaDetail(BaseModel):
     id: str
     name: str
     role: str
-    # Matches PersonaOut.profile_photo exactly (no url) — the persona graph is
+    # Matches PersonaPayload.profile_photo exactly (no url) — the persona graph is
     # cached in the run blob with a raw file reference, never a signed URL, so
     # hydratePersona can re-derive a fresh one at read time instead of a
     # persisted URL going stale. profile_photo_url is set only by
@@ -40,30 +40,38 @@ class PersonaDetail(BaseModel):
 
 
 class Referral(BaseModel):
-    # Field names deliberately diverge from the wire ReferralEdgePayload/ReferralOut
+    # Field names deliberately diverge from the wire ReferralEdgePayload
     # (from_id/to_id/conditions) — this is an internal run-blob cache shape, not
-    # the case storage/wire contract.
+    # the case storage/wire contract. No embedded persona: look it up via
+    # PersonaGraph.personas[referred_persona_id].
     parent_persona_id: str
     referred_persona_id: str
     condition_trigger: str
-    persona: PersonaDetail
+
+
+class DecisionBundle(BaseModel):
+    referrals: list[Referral]
+    persona_details: PersonaDetail
+    pending_referrals: list[Referral]
+    pending_files: list[FileEntry]
+    referral_results: list[bool]
+    file_results: list[bool]
 
 
 class PersonaGraph(BaseModel):
-    # root_personas here (list[PersonaDetail]) shares a name with Case.root_personas
-    # (an int row-count column, infra/db_models.py) purely as a historical dict-key
-    # coincidence — they're unrelated fields on unrelated classes, not a namespace
-    # collision, so the name is kept rather than renamed to `roots` (which would
-    # collide in meaning, if not in Python identity, with CaseStructure.roots:
-    # list[str], a list of persona IDs, not PersonaDetail objects).
-    root_personas: list[PersonaDetail] = Field(default_factory=list)
+    # Every persona in the case, keyed by id, stored once regardless of how many
+    # referral edges point at it (a persona referred by N parents used to be
+    # embedded N times via Referral.persona). roots is a list of persona ids,
+    # sorted by name at build time (flattenPersonas), matching CaseStructure.roots.
+    personas: dict[str, PersonaDetail] = Field(default_factory=dict)
     referrals: list[Referral] = Field(default_factory=list)
+    roots: list[str] = Field(default_factory=list)
 
 
 class RunCaseSnapshot(BaseModel):
     id: int
     case_name: str
-    initial_brief: str
+    brief: str
     simulation_duration: int | None = None
     common_information: str | None = None
     access_code: str | None = None

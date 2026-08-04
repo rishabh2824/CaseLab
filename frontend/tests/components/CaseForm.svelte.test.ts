@@ -15,9 +15,9 @@ import { useUnsavedGuard } from "../../src/lib/unsavedGuard.svelte.js";
 import { makePersona, makeReferral } from "../support/fixtures.js";
 import { server } from "../support/msw.js";
 
-function makePersonaOut(
-	overrides: Partial<Api<"PersonaOut">> = {},
-): Api<"PersonaOut"> {
+function makePersonaPayload(
+	overrides: Partial<Api<"PersonaPayload">> = {},
+): Api<"PersonaPayload"> {
 	return {
 		id: "p1",
 		name: "Mary",
@@ -38,10 +38,10 @@ function makeCaseDetail(
 		id: 7,
 		case_name: "Sterling Industries",
 		access_code: "ABC123",
-		initial_brief: "Reduce costs.",
+		brief: "Reduce costs.",
 		common_information: "Background.",
 		simulation_duration: 45,
-		personas: [makePersonaOut()],
+		personas: [makePersonaPayload()],
 		referrals: [],
 		roots: ["p1"],
 		version: 3,
@@ -196,7 +196,7 @@ describe("CaseForm", () => {
 		it("loads the case into the form and its submit includes the loaded expected_version", async () => {
 			const detail = makeCaseDetail();
 			stubGetCase(detail);
-			const updateRequests = stubUpdate(detail.id);
+			const updateRequests = stubUpdate(detail.id as number);
 			const user = userEvent.setup();
 			renderForm({ editCaseId: String(detail.id) });
 
@@ -270,7 +270,7 @@ describe("CaseForm", () => {
 			// response updates the DOM — unaffected by the fake clock above.
 			await screen.findByDisplayValue("Sterling Industries");
 
-			stubVersion(detail.id, detail.version + 1);
+			stubVersion(detail.id as number, (detail.version as number) + 1);
 			await vi.advanceTimersByTimeAsync(12000);
 
 			expect(

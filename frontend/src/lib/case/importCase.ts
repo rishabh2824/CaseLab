@@ -84,9 +84,8 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 		// data-persona-root is the admin's explicit root/referred choice — kept
 		// live-accurate by the exported file's own type-select toggle (see
 		// exportCase.ts's inline script). Trusted directly here instead of
-		// re-derived from the edge list, which is what used to require the
-		// data-fixed-root marker plus a document-order fallback just to stop
-		// the one mandatory root from silently losing its root-ness.
+		// re-derived from the edge list, so the one mandatory root can't
+		// silently lose its root-ness.
 		if (card.getAttribute("data-persona-root") === "true") roots.push(id);
 	}
 

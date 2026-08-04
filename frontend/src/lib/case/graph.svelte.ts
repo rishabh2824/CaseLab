@@ -1,6 +1,5 @@
 // Owns the in-memory persona/referral graph a case form edits — personas and
-// referral edges as sibling arrays (see types.ts), plus the dirty-tracking
-// that used to be a whole-document JSON.stringify snapshot in CaseForm.svelte.
+// referral edges as sibling arrays (see types.ts), plus dirty-tracking.
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
 import {
 	createEmptyPersona,

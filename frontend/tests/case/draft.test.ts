@@ -42,8 +42,8 @@ describe("createEmptyReferral", () => {
 });
 
 describe("normalizePersona", () => {
-	it("normalizes a PersonaOut-shaped object from the API cleanly", () => {
-		// Simulates the API's PersonaOut: same flat fields as Persona, nothing
+	it("normalizes a PersonaPayload-shaped object from the API cleanly", () => {
+		// Simulates the API's PersonaPayload: same flat fields as Persona, nothing
 		// nested to normalize further (see the comment above normalizePersona).
 		const apiPersona = {
 			id: "p1",

@@ -21,7 +21,7 @@ def caseWithOneFile(**file_overrides):
 async def test_eligible_file_is_offered_and_sending_it_shares_a_signed_url(sim, fake_spaces):
     sim.setCase(structure=caseWithOneFile())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.fileShare = True
     sim.llm.replyWith("Here's the budget.", send_files=["F1"])
 
@@ -40,7 +40,7 @@ async def test_file_entry_with_no_file_id_is_never_offered_but_is_withheld(sim):
     structure = caseWithOneFile(file_id=None)
     sim.setCase(structure=structure)
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.fileShare = True  # would approve if ever asked
     sim.llm.replyWith("Sure.")
 
@@ -55,7 +55,7 @@ async def test_file_entry_with_no_file_id_is_never_offered_but_is_withheld(sim):
 async def test_file_rejected_by_classifier_is_withheld_and_not_offered(sim):
     sim.setCase(structure=caseWithOneFile())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.fileShare = False
     sim.llm.replyWith("I can't share that.")
 
@@ -70,7 +70,7 @@ async def test_file_rejected_by_classifier_is_withheld_and_not_offered(sim):
 async def test_already_shared_file_is_not_reoffered_or_duplicated(sim):
     sim.setCase(structure=caseWithOneFile())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.fileShare = True
     sim.llm.replyWith("Here's the budget.", send_files=["F1"])
     await sim.send(run_id, "A", "Can I see the budget?")
@@ -90,22 +90,22 @@ async def test_already_shared_file_is_not_reoffered_or_duplicated(sim):
 async def test_get_simulation_state_returns_shared_files_with_fresh_signed_urls(sim, fake_spaces):
     sim.setCase(structure=caseWithOneFile())
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.fileShare = True
     sim.llm.replyWith("Here's the budget.", send_files=["F1"])
     await sim.send(run_id, "A", "Can I see the budget?")
 
     full_state = await sim_service.getSimulationState(run_id)
 
-    assert len(full_state["shared_files"]) == 1
-    assert full_state["shared_files"][0].url == fake_spaces("cases/1/budget.pdf")
+    assert len(full_state.shared_files) == 1
+    assert full_state.shared_files[0].url == fake_spaces("cases/1/budget.pdf")
 
 
 async def test_unknown_file_handle_from_model_is_ignored(sim):
     structure = factories.caseStructure(personas=[factories.persona("A", files=[])], roots=["A"])
     sim.setCase(structure=structure)
     state = await sim.start()
-    run_id = state["run_id"]
+    run_id = state.run_id
     sim.llm.replyWith("Sure.", send_files=["F9"])
 
     frames = await sim.send(run_id, "A", "hi")

@@ -44,9 +44,9 @@ async def getRun(run_id: str) -> Run:
 
 
 # fn mutates the already-validated Run in place (attribute/dict/set mutation) — no
-# re-validation happens between the load and save below, matching the old dict-mutation
-# performance profile (Pydantic v2 doesn't intercept attribute reassignment or
-# nested-container mutation unless validate_assignment=True, which Run doesn't set).
+# re-validation happens between the load and save below (Pydantic v2 doesn't intercept
+# attribute reassignment or nested-container mutation unless validate_assignment=True,
+# which Run doesn't set).
 async def updateRun[T](run_id: str, fn: Callable[[Run], T]) -> T:
     async with getSession() as session:
         row = (
@@ -64,9 +64,8 @@ async def updateRun[T](run_id: str, fn: Callable[[Run], T]) -> T:
         row.data = run.model_dump(mode="json")
         # row.data is a fresh dict object on every assignment above (never mutated
         # in place), which SQLAlchemy's ordinary attribute-history tracking already
-        # detects — flag_modified is therefore redundant here, both before and after
-        # this migration. Kept anyway as cheap, harmless insurance against a future
-        # change accidentally introducing in-place mutation of row.data instead.
+        # detects on its own; flag_modified is a no-op safeguard in case that ever
+        # changes to in-place mutation of row.data instead.
         flag_modified(row, "data")
         session.add(row)
         await session.commit()
