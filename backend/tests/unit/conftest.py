@@ -52,6 +52,14 @@ class FakeRunStore:
     store exists to prevent: a set that silently becomes a list, or an int
     dict key that comes back as a string, once the blob has been through
     JSONB.
+
+    The real store (run_store.py) splits persistence across a snapshot/state/
+    notes row plus a separate run_messages table; this fake deliberately
+    keeps everything as one blob instead of mirroring that split, since Run's
+    public shape (what service.py/turn_state.py actually read) didn't change
+    and tests only ever observe that shape or `raw()`'s flattened dict below.
+    pending_messages is cleared after every round-trip, same as the real
+    store's post-flush `.clear()` — it's scratch, never itself a stored field.
     """
 
     def __init__(self) -> None:
@@ -81,6 +89,7 @@ class FakeRunStore:
 
     @staticmethod
     def _roundTrip(run: Run) -> dict:
+        run.pending_messages.clear()
         return json.loads(json.dumps(run.model_dump(mode="json")))
 
     @staticmethod

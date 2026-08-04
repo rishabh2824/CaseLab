@@ -6,12 +6,15 @@ from models.simulations import ChatMessage, ContactOut, SharedFileOut
 # Internal simulation-runtime record types.
 #
 # None of these set `model_config = ConfigDict(validate_assignment=True)`.
-# Run is validated at exactly two points: Run.model_validate(row.data) on load
-# from JSONB, and run.model_dump(mode="json") on save. Between those points,
-# inside one updateRun(run_id, fn) transaction, mutate these objects in place
-# (attribute assignment, dict/set mutation) — never re-validate or
-# model_copy() a Run/ChatState/etc. mid-transaction; model_copy() is reserved
-# for the one legitimate non-transactional case (hydratePersona in reads.py).
+# Run itself is not a stored row shape — run_store.py composes it from a
+# SimulationRun row's snapshot/state/notes columns plus a separately-loaded
+# run_messages table (see run_store._compose/_stateOf), and decomposes it the
+# same way on save via RunSnapshot/RunState. Between those points, inside one
+# updateRun(run_id, fn) transaction, mutate these objects in place (attribute
+# assignment, dict/set mutation, or turn_state.appendMessage for history) —
+# never re-validate or model_copy() a Run/ChatState/etc. mid-transaction;
+# model_copy() is reserved for the one legitimate non-transactional case
+# (hydratePersona in reads.py).
 
 
 class ChatState(BaseModel):
@@ -84,6 +87,26 @@ class SharedFileRecord(BaseModel):
     object_key: str
 
 
+class RunSnapshot(BaseModel):
+    # The write-once half of a run's storage — set at insertRun, never
+    # updated again. Mirrors Run.case_snapshot/persona_graph exactly; exists
+    # so run_store.py can shape the `simulations.snapshot` JSONB column
+    # without touching state/notes/history.
+    case_snapshot: RunCaseSnapshot
+    persona_graph: PersonaGraph
+
+
+class RunState(BaseModel):
+    # The small mutable bag — rewritten in full on every updateRun, but
+    # cheap to, unlike snapshot/history. Mirrors the matching Run fields;
+    # exists so run_store.py can shape the `simulations.state` JSONB column.
+    active_persona_id: str
+    unlocked_referred_ids: set[str] = Field(default_factory=set)
+    unlocked_at: dict[str, int] = Field(default_factory=dict)
+    shared_files: dict[str, SharedFileRecord] = Field(default_factory=dict)
+    persona_chat_state: dict[str, ChatState] = Field(default_factory=dict)
+
+
 class Run(BaseModel):
     case_id: int
     case_snapshot: RunCaseSnapshot
@@ -96,6 +119,10 @@ class Run(BaseModel):
     history: dict[str, list[ChatMessage]] = Field(default_factory=dict)
     persona_chat_state: dict[str, ChatState] = Field(default_factory=dict)
     notes: str = ""
+    # In-memory scratch buffer, not persisted as its own column — appendMessage
+    # (turn_state.py) pushes onto it, run_store.updateRun drains it into
+    # run_messages INSERTs after fn(run) runs, then clears it.
+    pending_messages: list[tuple[str, ChatMessage]] = Field(default_factory=list)
 
 
 class PreparedNormalTurn(BaseModel):

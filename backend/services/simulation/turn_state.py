@@ -1,5 +1,7 @@
 import time
+from typing import Literal
 from models.simulation_runtime import ChatState, PersonaDetail, Run
+from models.simulations import ChatMessage
 
 
 # Number of nonsense messages allowed before ending the chat
@@ -81,6 +83,15 @@ def boundaryReply(persona_name: str, should_end: bool) -> str:
         "I am not able to follow that. Please send a clear, respectful, case-related "
         "question if you want to continue."
     )
+
+
+# The single mutation point for run.history — also buffers onto run.pending_messages,
+# which run_store.updateRun drains into run_messages INSERTs after fn(run) returns.
+def appendMessage(run: Run, persona_id: str, role: Literal["user", "assistant"], content: str) -> ChatMessage:
+    message = ChatMessage(role=role, content=content)
+    run.history.setdefault(persona_id, []).append(message)
+    run.pending_messages.append((persona_id, message))
+    return message
 
 
 # takes the run's full history dict and returns each persona's turns, trimmed to {role, content}.

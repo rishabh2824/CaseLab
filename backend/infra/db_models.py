@@ -58,8 +58,26 @@ class SimulationRun(SQLModel, table=True):
     __tablename__ = "simulations"
 
     run_id: str = Field(primary_key=True)
+    case_id: int
+    start_time: float
     expires_at: float = Field(index=True)
-    data: dict = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False))
+    # Write-once: {case_snapshot, persona_graph}. Set at insertRun, never
+    # rewritten by updateRun (see run_store.py).
+    snapshot: dict = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False))
+    # Small mutable bag: {active_persona_id, unlocked_referred_ids, unlocked_at,
+    # shared_files, persona_chat_state}. Rewritten in full on every updateRun.
+    state: dict = Field(default_factory=dict, sa_column=Column(JSONB, nullable=False))
+    notes: str = Field(default="", sa_column_kwargs={"server_default": ""})
+
+
+class RunMessage(SQLModel, table=True):
+    __tablename__ = "run_messages"
+
+    id: int | None = Field(default=None, primary_key=True)
+    run_id: str = Field(foreign_key="simulations.run_id", ondelete="CASCADE", index=True)
+    persona_id: str
+    role: str
+    content: str
 
 
 class RateLimit(SQLModel, table=True):

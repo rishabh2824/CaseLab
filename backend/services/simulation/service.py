@@ -28,7 +28,7 @@ from services.simulation.run_store import insertRun, getRun, updateRun
 from services.simulation.prompt import (replyInstructions, systemPrompt, cleanReply, coerceHandles, parseReply, fileShare, referralUnlock, sanitizeHistory)
 from services.simulation.reply_stream import ReplyExtractor
 from services.simulation.reads import (buildPersonaGraph, getCase, getRunCase, getPersonaGraph, graphPersonaById, graphReferrals, graphPersonas)
-from services.simulation.turn_state import (NONSENSE_THRESHOLD, boundaryReply, chatStatePayload, shapeChatState, elapsedMinutes, formatHistory, getChatState, personaAvailability, editChatState)
+from services.simulation.turn_state import (NONSENSE_THRESHOLD, appendMessage, boundaryReply, chatStatePayload, shapeChatState, elapsedMinutes, formatHistory, getChatState, personaAvailability, editChatState)
 from infra.spaces import getUrl
 
 
@@ -261,9 +261,8 @@ async def message(run_id: str, payload: SendMessagePayload) -> PreparedTurn:
         if getChatState(r, persona_id).ended:
             raise InvalidRequest("This conversation has ended.")
         r.active_persona_id = persona_id
-        turns = r.history.setdefault(persona_id, [])
-        turns.append(ChatMessage(role="user", content=user_message))
-        return turns
+        appendMessage(r, persona_id, "user", user_message)
+        return r.history[persona_id]
 
     history = await updateRun(run_id, start_turn)
     # Downstream (prompt.py, infra/llm.py) still speaks plain {"role","content"} dicts —
@@ -289,7 +288,8 @@ async def message(run_id: str, payload: SendMessagePayload) -> PreparedTurn:
                 state.ended = True
                 state.end_reason = message_label
             reply = boundaryReply(persona_details.name, state.ended)
-            history = appendToTurn(r, persona_id, reply)
+            appendMessage(r, persona_id, "assistant", reply)
+            history = formatHistory(r, {persona_id}).get(persona_id, [])
             return state, reply, history
 
         chat_state, assistant_reply, boundary_history = await updateRun(
@@ -440,19 +440,12 @@ async def applyDecisions(run_id, prepared: PreparedNormalTurn, unlock_handles, s
             run.shared_files[file_id] = shared_info
             shared_files.append(toSharedFileOut(shared_info))
 
-        history = appendToTurn(run, persona_id, reply)
+        appendMessage(run, persona_id, "assistant", reply)
+        history = formatHistory(run, {persona_id}).get(persona_id, [])
         chat_state = chatStatePayload(run, persona_id)
         return new_contacts, shared_files, history, chat_state
 
     return await updateRun(run_id, applyAppend)
-
-
-# Append {"role": "assistant", "content": reply} to the persona's history list and return that persona's formatted history
-def appendToTurn(run: Run, persona_id, reply):
-    run.history.setdefault(persona_id, []).append(
-        ChatMessage(role="assistant", content=reply)
-    )
-    return formatHistory(run, {persona_id}).get(persona_id, [])
 
 
 # Strong references to in-flight generations, just a set so asyncio doesn't garbage-collect a task mid-flight
