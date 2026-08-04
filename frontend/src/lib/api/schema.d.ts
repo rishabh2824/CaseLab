@@ -645,6 +645,36 @@ export interface components {
 			/** Context */
 			ctx?: Record<string, never>;
 		};
+		/** TurnMeta */
+		TurnMeta: {
+			/** New Contacts */
+			new_contacts?: components["schemas"]["ContactOut"][];
+			/** Shared Files */
+			shared_files?: components["schemas"]["SharedFileOut"][];
+			/** Chat Ended */
+			chat_ended: boolean;
+			/** Chat End Reason */
+			chat_end_reason: string | null;
+			/** Warning Count */
+			warning_count: number;
+		};
+		/** DeltaFrame */
+		DeltaFrame: {
+			/** Text */
+			text: string;
+		};
+		/** DoneFrame */
+		DoneFrame: {
+			/** Reply */
+			reply: string;
+			/** History */
+			history: components["schemas"]["ChatMessage"][];
+		};
+		/** ErrorFrame */
+		ErrorFrame: {
+			/** Detail */
+			detail: string;
+		};
 	};
 	responses: never;
 	parameters: never;
@@ -1252,13 +1282,17 @@ export interface operations {
 			};
 		};
 		responses: {
-			/** @description Successful Response */
+			/** @description Server-Sent Events stream of turn frames (event: meta|delta|done|error). */
 			200: {
 				headers: {
 					[name: string]: unknown;
 				};
 				content: {
-					"application/json": unknown;
+					"text/event-stream":
+						| components["schemas"]["TurnMeta"]
+						| components["schemas"]["DeltaFrame"]
+						| components["schemas"]["DoneFrame"]
+						| components["schemas"]["ErrorFrame"];
 				};
 			};
 			/** @description Validation Error */

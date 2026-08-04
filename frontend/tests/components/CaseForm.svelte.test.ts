@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
 import type { Api } from "../../src/lib/types.js";
-import { useUnsavedGuard } from "../../src/lib/unsavedGuard.svelte.js";
+import { unsavedGuard } from "../../src/lib/unsavedGuard.svelte.js";
 import { makePersona, makeReferral } from "../support/fixtures.js";
 import { server } from "../support/msw.js";
 
@@ -314,7 +314,6 @@ describe("CaseForm", () => {
 
 			// This gates AdminTopBar's unsaved-changes prompt, so it's worth
 			// pinning at each transition rather than just the end state.
-			const unsavedGuard = useUnsavedGuard();
 			expect(unsavedGuard.isDirty).toBe(false);
 
 			await user.type(

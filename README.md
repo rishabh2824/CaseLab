@@ -12,8 +12,8 @@ Alembic over Neon Postgres (`asyncpg`), DigitalOcean Spaces for file storage,
 Claude (via [OpenRouter](https://openrouter.ai)) for persona replies, Google
 Identity Services (FedCM ID-token sign-in) + hand-rolled JWT for admin auth.
 
-**Frontend** — SvelteKit (Svelte 5 runes) in SPA mode, Tailwind 4, shadcn-svelte
-(Bits UI) + svelte-sonner, built with `adapter-static` and served from
+**Frontend** — SvelteKit (Svelte 5 runes) in SPA mode, Tailwind 4, Bits UI
+(headless) + svelte-sonner, built with `adapter-static` and served from
 DigitalOcean App Platform alongside the API under one domain.
 
 ## Installation

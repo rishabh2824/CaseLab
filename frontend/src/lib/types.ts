@@ -49,29 +49,26 @@ export type ReferralEdge = Api<"ReferralEdgePayload">;
 
 // --- SSE turn events -------------------------------------------------------
 //
-// Hand-maintained: POST /api/simulations/{run_id}/message is an
-// EventSourceResponse (services/simulation/service.py's reply()/
-// streamMessage()), invisible to OpenAPI. Keep these in sync with that
-// file's `sse(...)` calls if the payload shapes change.
+// POST /api/simulations/{run_id}/message streams these frames over SSE
+// (services/simulation/service.py's `sse(...)` calls). The frame shapes
+// themselves come off the generated schema — main.py's custom openapi()
+// (api/simulations.py's describeMessageStream) hand-registers them there,
+// since EventSourceResponse has no response_model for FastAPI to see. Only
+// the SSE event-name -> frame mapping below stays hand-maintained; a oneOf
+// response body can't express that association on its own.
 
 // A newly-unlocked referred persona, as sent inside meta.new_contacts.
 // Same shape as Contact (both via ContactOut, which strips secrets before
 // browser delivery). applyMeta patches in `available: true` for the newly-unlocked contact.
 export type NewContact = Contact;
 
-export type TurnMeta = {
-	new_contacts: NewContact[];
-	shared_files: SharedFile[];
-	chat_ended: boolean;
-	chat_end_reason: string | null;
-	warning_count: number;
-};
+export type TurnMeta = Api<"TurnMeta">;
 
 export type StreamEvent =
 	| { type: "meta"; data: TurnMeta }
-	| { type: "delta"; data: { text?: string } }
-	| { type: "done"; data: { reply?: string; history?: Api<"ChatMessage">[] } }
-	| { type: "error"; data: { detail?: string } };
+	| { type: "delta"; data: Api<"DeltaFrame"> }
+	| { type: "done"; data: Api<"DoneFrame"> }
+	| { type: "error"; data: Api<"ErrorFrame"> };
 
 // --- Persona form validation ------------------------------------------------
 

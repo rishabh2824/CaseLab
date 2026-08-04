@@ -69,7 +69,6 @@ describe("apiFetch", () => {
 
 		expect(result).toEqual({ id: 7, name: "budget" });
 	});
-
 });
 
 describe("ApiError", () => {

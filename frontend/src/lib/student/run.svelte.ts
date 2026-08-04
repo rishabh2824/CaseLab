@@ -341,10 +341,7 @@ export class RunStore {
 				...priorMessages,
 				{ role: "user", content: message },
 			]);
-			if (
-				err instanceof Error &&
-				err.message === "This conversation has ended."
-			) {
+			if (err instanceof ApiError && err.code === "conversation_ended") {
 				const target = this.raw?.contacts?.find((c) => c.id === personaId);
 				if (target) {
 					target.chat_ended = true;

@@ -1,5 +1,6 @@
 // Owns the in-memory persona/referral graph a case form edits — personas and
-// referral edges as sibling arrays (see types.ts), plus dirty-tracking.
+// referral edges as sibling arrays (see types.ts). Dirty-tracking lives in
+// CaseForm's snapshot comparison, not here (see CaseForm.svelte).
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
 import {
 	createEmptyPersona,
@@ -27,11 +28,6 @@ export class CaseGraph {
 	personas = $state<Persona[]>([]);
 	referrals = $state<ReferralEdge[]>([]);
 	roots = $state<string[]>([]);
-
-	#dirty = $state(false);
-	get isDirty(): boolean {
-		return this.#dirty;
-	}
 
 	get byId(): Map<string, Persona> {
 		return personasById(this.personas);
@@ -61,32 +57,16 @@ export class CaseGraph {
 		this.personas = input.personas;
 		this.referrals = input.referrals;
 		this.roots = input.roots;
-		this.#dirty = false;
 	}
 
 	applyImport(input: GraphInput): void {
-		this.personas = input.personas;
-		this.referrals = input.referrals;
-		this.roots = input.roots;
-		this.#dirty = true;
+		this.load(input);
 	}
-
-	markSaved(): void {
-		this.#dirty = false;
-	}
-
-	// Passed by bare reference into PersonaFields, so field-level edits that
-	// never go through a mutator below (bind:value, files.push, etc.) still
-	// register as dirty.
-	touch = (): void => {
-		this.#dirty = true;
-	};
 
 	addRoot(overrides?: Partial<Persona>): Persona {
 		const persona = createEmptyPersona(overrides);
 		this.personas = [...this.personas, persona];
 		this.roots = [...this.roots, persona.id];
-		this.#dirty = true;
 		return persona;
 	}
 
@@ -102,7 +82,6 @@ export class CaseGraph {
 		);
 		this.#applyRemoval(toRemove);
 		this.roots = keptRoots;
-		this.#dirty = true;
 	}
 
 	addReferral(fromPersonaId: string): {
@@ -116,7 +95,6 @@ export class CaseGraph {
 		});
 		this.personas = [...this.personas, persona];
 		this.referrals = [...this.referrals, referral];
-		this.#dirty = true;
 		return { persona, referral };
 	}
 
@@ -136,7 +114,6 @@ export class CaseGraph {
 			),
 		);
 		this.#applyRemoval(toRemove);
-		this.#dirty = true;
 	}
 
 	removeReferral(referral: ReferralEdge): void {
@@ -153,8 +130,4 @@ export class CaseGraph {
 				!toRemove.has(referral.from_id) && !toRemove.has(referral.to_id),
 		);
 	}
-}
-
-export function createCaseGraph(): CaseGraph {
-	return new CaseGraph();
 }

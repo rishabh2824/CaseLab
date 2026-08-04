@@ -2,8 +2,10 @@ import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from api.router import api_router
+from api.simulations import describeMessageStream
 from domain_errors import DomainError
 from infra.db import closeDb
 from infra.llm import closeClient, initClient
@@ -63,3 +65,20 @@ async def domainErrorHandler(request: Request, exc: DomainError) -> JSONResponse
 
 
 app.include_router(api_router, prefix="/api")
+
+
+# FastAPI's default generator has no way to see the SSE frame shapes streamed by
+# POST /api/simulations/{run_id}/message (api/simulations.py) -- it returns a raw
+# EventSourceResponse, not a response_model. describeMessageStream hand-registers
+# those frame shapes into the generated schema so `pnpm gen:api` (frontend) picks
+# them up like any other endpoint.
+def customOpenapi() -> dict:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
+    describeMessageStream(schema)
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = customOpenapi  # type: ignore[method-assign]  # FastAPI's own documented override pattern

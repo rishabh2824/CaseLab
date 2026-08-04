@@ -8,14 +8,14 @@ import {
 	parseIntOrNull,
 } from "$lib/case/draft.js";
 import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
-import { createCaseGraph } from "$lib/case/graph.svelte.js";
+import { CaseGraph } from "$lib/case/graph.svelte.js";
 import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
 import { submitCase } from "$lib/case/submitCase.js";
 import { useCaseVersionPoll } from "$lib/case/useCaseVersionPoll.svelte.js";
 import { ADMIN_ROLE } from "$lib/constants.js";
 import { session } from "$lib/session.svelte.js";
 import type { Api } from "$lib/types.js";
-import { type SaveResult, useUnsavedGuard } from "$lib/unsavedGuard.svelte.js";
+import { type SaveResult, unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import CaseConflictModal from "./CaseConflictModal.svelte";
 import CaseGraphEditor from "./CaseGraphEditor.svelte";
 
@@ -41,7 +41,7 @@ let initialBrief = $state("");
 let commonInformation = $state("");
 let simulationDurationMinutes = $state<number | null>(null);
 let accessCode = $state("");
-const graph = createCaseGraph();
+const graph = new CaseGraph();
 
 // Collaborators: access-control metadata, not case content — only ever
 // populated in edit mode (see loadCase). A new case (blank or from a
@@ -59,25 +59,44 @@ const versionPoll = useCaseVersionPoll({
 
 // Tracks unsaved edits so AdminTopBar can gate home/logout navigation behind
 // a save-or-discard prompt. null baseline means "nothing loaded to compare
-// against yet" (edit/template mode before loadCase resolves). The persona
-// graph tracks its own dirty state (see graph.svelte.ts); this snapshot only
-// covers the handful of scalar case fields.
-let baselineScalarSnapshot = $state<string | null>(null);
+// against yet" (edit/template mode before loadCase resolves). Covers both the
+// scalar case fields and the persona graph, so there's one dirty mechanism
+// instead of a flag to remember to set on every field-level edit.
+let baselineSnapshot = $state<string | null>(null);
 
-function snapshotScalars(): string {
-	return JSON.stringify({
-		caseName,
-		initialBrief,
-		commonInformation,
-		simulationDurationMinutes,
-		accessCode,
-		collaboratorAdminIds,
-	});
+// File objects serialize to "{}" under plain JSON.stringify (none of their
+// properties are own-enumerable), which would make two different selected
+// files compare equal — replace them with a value that actually changes.
+function jsonReplacer(_key: string, value: unknown): unknown {
+	if (value instanceof File) {
+		return {
+			name: value.name,
+			size: value.size,
+			lastModified: value.lastModified,
+		};
+	}
+	return value;
+}
+
+function snapshotState(): string {
+	return JSON.stringify(
+		{
+			caseName,
+			initialBrief,
+			commonInformation,
+			simulationDurationMinutes,
+			accessCode,
+			collaboratorAdminIds,
+			personas: graph.personas,
+			referrals: graph.referrals,
+			roots: graph.roots,
+		},
+		jsonReplacer,
+	);
 }
 
 function markSaved(): void {
-	baselineScalarSnapshot = snapshotScalars();
-	graph.markSaved();
+	baselineSnapshot = snapshotState();
 }
 
 // A brand-new case (no source to load) has nothing to wait on — the empty
@@ -85,9 +104,7 @@ function markSaved(): void {
 if (!sourceCaseId) markSaved();
 
 const isDirty = $derived(
-	graph.isDirty ||
-		(baselineScalarSnapshot !== null &&
-			snapshotScalars() !== baselineScalarSnapshot),
+	baselineSnapshot !== null && snapshotState() !== baselineSnapshot,
 );
 
 let showFieldErrors = $state(false);
@@ -348,8 +365,6 @@ async function handleSubmit(event: SubmitEvent): Promise<void> {
 	event.preventDefault();
 	await performSave();
 }
-
-const unsavedGuard = useUnsavedGuard();
 
 onMount(() => {
 	unsavedGuard.register(() => isDirty, performSave);

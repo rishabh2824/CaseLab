@@ -37,8 +37,4 @@ class UnsavedGuard {
 	}
 }
 
-const unsavedGuard = new UnsavedGuard();
-
-export function useUnsavedGuard(): UnsavedGuard {
-	return unsavedGuard;
-}
+export const unsavedGuard = new UnsavedGuard();

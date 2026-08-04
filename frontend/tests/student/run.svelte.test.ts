@@ -510,13 +510,18 @@ describe("streaming reconciliation", () => {
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 	});
 
-	it('marks the contact chat_ended, without a generic toast, when the send fails with "This conversation has ended."', async () => {
+	it('marks the contact chat_ended, without a generic toast, when the send fails with code "conversation_ended"', async () => {
 		const { run, session, toast } = await freshRun();
 		await setupTwoContacts(run, session);
 		server.use(
 			http.post("*/api/simulations/run-1/message", () =>
 				HttpResponse.json(
-					{ detail: "This conversation has ended." },
+					{
+						detail: {
+							message: "This conversation has ended.",
+							code: "conversation_ended",
+						},
+					},
 					{ status: 409 },
 				),
 			),

@@ -3,10 +3,8 @@ import House from "@lucide/svelte/icons/house";
 import LogOut from "@lucide/svelte/icons/log-out";
 import { goto } from "$app/navigation";
 import { signOutAdmin } from "$lib/auth.js";
-import { useUnsavedGuard } from "$lib/unsavedGuard.svelte.js";
+import { unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import UnsavedChangesModal from "./UnsavedChangesModal.svelte";
-
-const unsavedGuard = useUnsavedGuard();
 
 let showUnsavedModal = $state(false);
 let isSaving = $state(false);

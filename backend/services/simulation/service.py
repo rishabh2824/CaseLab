@@ -37,6 +37,14 @@ MESSAGE_WORDS = 50
 NOTES_CHARS = 20000
 GENERATION_TIMEOUT = 120 # Wall-clock cap on a single reply stream.
 
+# Structured like services/cases.py's VERSION_CONFLICT: a {message, code} dict
+# so the frontend (run.svelte.ts) can branch on `code` instead of string-matching
+# the message.
+CONVERSATION_ENDED = {
+    "message": "This conversation has ended.",
+    "code": "conversation_ended",
+}
+
 
 # One Server-Sent Event as a sse-starlette dict; the response class handles the wire framing
 def sse(event: str, data: BaseModel) -> dict:
@@ -259,7 +267,7 @@ async def message(run_id: str, payload: SendMessagePayload) -> PreparedTurn:
 
     def start_turn(r: Run):
         if getChatState(r, persona_id).ended:
-            raise InvalidRequest("This conversation has ended.")
+            raise InvalidRequest(CONVERSATION_ENDED)
         r.active_persona_id = persona_id
         appendMessage(r, persona_id, "user", user_message)
         return r.history[persona_id]

@@ -12,7 +12,7 @@ from alembic import context
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import infra.db_models  # noqa: F401 - registers tables on SQLModel.metadata
-from infra.db import asyncpgUrl
+from infra.db import asyncpgUrl, requiresSsl
 from infra.settings import getSettings
 
 # this is the Alembic Config object, which provides
@@ -21,7 +21,8 @@ config = context.config
 
 # Migrations run against the *direct* (unpooled) endpoint, not the PgBouncer-pooled
 # one the app uses at runtime - DDL and PgBouncer transaction pooling don't mix.
-config.set_main_option("sqlalchemy.url", asyncpgUrl(getSettings().direct_url))
+DIRECT_URL = getSettings().direct_url
+config.set_main_option("sqlalchemy.url", asyncpgUrl(DIRECT_URL))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
@@ -62,7 +63,9 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        connect_args={"ssl": True},
+        # Same rule the app's own runtime engine uses (infra/db.py::getEngine) —
+        # SSL on for real Postgres hosts, off for a loopback one (CI, local dev).
+        connect_args={"ssl": requiresSsl(DIRECT_URL)},
     )
 
     async with connectable.connect() as connection:

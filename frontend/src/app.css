@@ -30,30 +30,13 @@
 		0 1px 2px rgba(18, 18, 18, 0.04), 0 14px 30px -22px rgba(18, 18, 18, 0.28);
 }
 
-/* shadcn-svelte semantic tokens (drives component variants: bg-primary,
-   border-input, ring-ring, etc.) — recolored to the WSB brand rather than
-   shadcn's stone defaults. No .dark block: the app has no dark mode today. */
+/* --muted/--muted-foreground are the only shadcn-style semantic tokens this
+   app actually uses (student/+page.svelte's disabled state) — recolored to
+   the WSB brand. No .dark block: the app has no dark mode today. */
 :root {
 	--radius: 0.5rem;
-	--background: #faf8f4;
-	--foreground: #1a1a1a;
-	--card: #ffffff;
-	--card-foreground: #1a1a1a;
-	--popover: #ffffff;
-	--popover-foreground: #1a1a1a;
-	--primary: #c5050c;
-	--primary-foreground: #fdecec;
-	--secondary: #f4f1ea;
-	--secondary-foreground: #1a1a1a;
 	--muted: #efeae0;
 	--muted-foreground: #57534b;
-	--accent: #f4f1ea;
-	--accent-foreground: #1a1a1a;
-	--destructive: #9c0409;
-	--destructive-foreground: #fdecec;
-	--border: #e4dfd5;
-	--input: #e4dfd5;
-	--ring: #c5050c;
 }
 
 @theme inline {
@@ -62,38 +45,15 @@
 	--radius-lg: var(--radius);
 	--radius-xl: calc(var(--radius) + 4px);
 
-	--color-background: var(--background);
-	--color-foreground: var(--foreground);
-	--color-card: var(--card);
-	--color-card-foreground: var(--card-foreground);
-	--color-popover: var(--popover);
-	--color-popover-foreground: var(--popover-foreground);
-	--color-primary: var(--primary);
-	--color-primary-foreground: var(--primary-foreground);
-	--color-secondary: var(--secondary);
-	--color-secondary-foreground: var(--secondary-foreground);
 	--color-muted: var(--muted);
 	--color-muted-foreground: var(--muted-foreground);
-	--color-accent: var(--accent);
-	--color-accent-foreground: var(--accent-foreground);
-	--color-destructive: var(--destructive);
-	--color-destructive-foreground: var(--destructive-foreground);
-	--color-border: var(--border);
-	--color-input: var(--input);
-	--color-ring: var(--ring);
-}
-
-@layer base {
-	* {
-		@apply border-border;
-	}
 }
 
 body {
 	margin: 0;
 	min-height: 100vh;
 	background-color: #f4f1ea;
-	color: var(--foreground);
+	color: var(--color-ink);
 	font-family: var(--font-body);
 }
 
