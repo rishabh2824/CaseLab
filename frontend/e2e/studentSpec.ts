@@ -7,10 +7,8 @@ test("student enters an access code and messages a persona", async ({
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
 		"GET /api/simulations/:id": () => ({ json: runState() }),
-		"POST /api/simulations/:id/message": ({ body }) => ({
-			sse: turn("Our current vendor is Acme Supplies.", {
-				userMessage: (body as { message: string }).message,
-			}),
+		"POST /api/simulations/:id/message": () => ({
+			sse: turn("Our current vendor is Acme Supplies."),
 		}),
 	});
 
@@ -112,38 +110,40 @@ test("a reload mid-run resumes from the persisted runId instead of starting a ne
 	await page.getByPlaceholder("Enter access code").fill("sterling");
 	await page.getByRole("button", { name: "Open Case" }).click();
 	await expect(page).toHaveURL(/\/student$/);
-	// The /student route always resumes via GET (session.runId is already set
-	// by the landing page's own POST /start before it navigates), so the very
-	// first arrival already issues one refresh.
+	// The landing page's POST /start already returns the full RunState, and
+	// stashPendingRunState() (run.svelte.ts) hands it straight to the
+	// /student route's run.init() — so the very first arrival reuses that
+	// response instead of firing a redundant GET.
 	expect(startCalls).toBe(1);
-	expect(getCalls).toBeGreaterThanOrEqual(1);
-	const callsBeforeReload = getCalls;
+	expect(getCalls).toBe(0);
 
-	// A fresh page load re-runs run.init(); with session.runId already
-	// persisted to sessionStorage it must resume via GET, not POST /start again.
+	// A fresh page load re-runs run.init(); the in-memory pendingRunState is
+	// gone (a full reload resets all JS module state), but session.runId is
+	// still persisted to sessionStorage — so this time it must resume via
+	// GET, not POST /start again.
 	await page.reload();
 	await expect(page.getByText("Reduce office supply costs.")).toBeVisible();
 	expect(startCalls).toBe(1);
-	expect(getCalls).toBeGreaterThan(callsBeforeReload);
+	expect(getCalls).toBe(1);
 });
 
 test("an expired run recovers by starting a fresh session from the stored access code", async ({
 	page,
 }) => {
 	let startCalls = 0;
-	let getCalls = 0;
 	await mockApi(page, {
 		"POST /api/simulations/start": () => {
 			startCalls++;
 			return { json: runState() };
 		},
-		// The run's own eager refresh on first arrival still finds it — only
-		// the persisted run is gone server-side by the time of the reload.
-		"GET /api/simulations/:id": () => {
-			getCalls++;
-			if (getCalls === 1) return { json: runState() };
-			return { status: 404, json: { detail: "Run expired." } };
-		},
+		// The landing page's POST /start already stashes the full RunState for
+		// run.init() to reuse (stashPendingRunState) — so the first arrival
+		// never issues a real GET, and the only one that happens (the
+		// reload's) is what stands in for "the run expired while away."
+		"GET /api/simulations/:id": () => ({
+			status: 404,
+			json: { detail: "Run expired." },
+		}),
 	});
 
 	await page.goto("/");
@@ -169,7 +169,7 @@ test("typing over the word limit blocks Send without sending a message", async (
 		"GET /api/simulations/:id": () => ({ json: runState() }),
 		"POST /api/simulations/:id/message": () => {
 			messageCalls++;
-			return { sse: turn("reply", { userMessage: "over limit" }) };
+			return { sse: turn("reply") };
 		},
 	});
 
@@ -193,9 +193,8 @@ test("a referral unlock adds the new contact and fires a toast", async ({
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
 		"GET /api/simulations/:id": () => ({ json: runState() }),
-		"POST /api/simulations/:id/message": ({ body }) => ({
+		"POST /api/simulations/:id/message": () => ({
 			sse: turn("I'll connect you with Bob.", {
-				userMessage: (body as { message: string }).message,
 				meta: {
 					new_contacts: [
 						contact({ id: "bob", name: "Bob", role: "Vendor Rep" }),
@@ -227,9 +226,8 @@ test("a shared file appears in the file list and fires a toast", async ({
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
 		"GET /api/simulations/:id": () => ({ json: runState() }),
-		"POST /api/simulations/:id/message": ({ body }) => ({
+		"POST /api/simulations/:id/message": () => ({
 			sse: turn("Here's the vendor contract.", {
-				userMessage: (body as { message: string }).message,
 				meta: {
 					shared_files: [
 						{
@@ -268,9 +266,8 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
 		"GET /api/simulations/:id": () => ({ json: runState() }),
-		"POST /api/simulations/:id/message": ({ body }) => ({
+		"POST /api/simulations/:id/message": () => ({
 			sse: turn("I'm done talking to you.", {
-				userMessage: (body as { message: string }).message,
 				meta: { chat_ended: true, chat_end_reason: "harassment" },
 			}),
 		}),
@@ -365,15 +362,12 @@ test("a mid-stream error frame keeps the user's message, drops the assistant rep
 	await expect(page.getByText("Let me check on that...")).not.toBeVisible();
 });
 
-test("notes autosave issues a debounced PUT after typing", async ({ page }) => {
-	const savedNotes: string[] = [];
+test("notes autosave writes to sessionStorage after a debounce, never to the backend", async ({
+	page,
+}) => {
 	await mockApi(page, {
 		"POST /api/simulations/start": () => ({ json: runState() }),
 		"GET /api/simulations/:id": () => ({ json: runState() }),
-		"PUT /api/simulations/:id/notes": ({ body }) => {
-			savedNotes.push((body as { notes: string }).notes);
-			return { json: { notes: (body as { notes: string }).notes } };
-		},
 	});
 
 	await page.goto("/");
@@ -386,7 +380,15 @@ test("notes autosave issues a debounced PUT after typing", async ({ page }) => {
 		.fill("Vendor is Acme.");
 
 	// The store debounces ~800ms before persisting — poll instead of a fixed sleep.
-	await expect.poll(() => savedNotes.at(-1)).toBe("Vendor is Acme.");
+	// Notes are client-side only now (sessionStorage, keyed by run id) — see
+	// run.svelte.ts's comment on NOTES_STORAGE_PREFIX — so there's no PUT
+	// .../notes route left to mock; a request to one would 404 through
+	// mockApi's catch-all and fail the test anyway.
+	await expect
+		.poll(() =>
+			page.evaluate(() => sessionStorage.getItem("caselab:notes:testrun123")),
+		)
+		.toBe("Vendor is Acme.");
 });
 
 test("exporting the PDF requests the export payload and triggers a download", async ({

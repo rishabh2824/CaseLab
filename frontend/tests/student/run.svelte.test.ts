@@ -315,7 +315,7 @@ describe("sendMessage guards", () => {
 			http.post(
 				"*/api/simulations/run-1/message",
 				() =>
-					new HttpResponse('event: done\ndata: {"history":[]}\n\n', {
+					new HttpResponse('event: done\ndata: {"reply":"hi"}\n\n', {
 						status: 200,
 						headers: { "Content-Type": "text/event-stream" },
 					}),
@@ -369,12 +369,18 @@ describe("streaming reconciliation", () => {
 			{ role: "assistant", content: "Hel" },
 		]);
 
-		stream.push('event: done\ndata: {"history":[]}\n\n');
+		stream.push('event: done\ndata: {"reply":"Hel"}\n\n');
 		stream.close();
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 	});
 
-	it("a done frame with a history array replaces that persona's history with the server's copy", async () => {
+	it("a done frame's reply becomes the final assistant message, appended to the persona's prior history", async () => {
+		// DoneFrame carries only `reply`, not a full history array (see
+		// simulation_runtime.py's DoneFrame) -- the client appends it to the
+		// prior history it already had, rather than trusting a server-sent
+		// blob. This also covers `reply` differing from what streamed (e.g.
+		// the backend's cleanReply stripping a leading speaker tag) -- the
+		// committed text must be `reply`, not the raw streamed preview.
 		const { run, session } = await freshRun();
 		await setupTwoContacts(run, session);
 		const stream = manualSseStream();
@@ -383,22 +389,21 @@ describe("streaming reconciliation", () => {
 		);
 
 		run.sendMessage("New question");
-		stream.push('event: delta\ndata: {"text":"draft"}\n\n');
+		stream.push('event: delta\ndata: {"text":"[Mary] draft"}\n\n');
 		await vi.waitFor(() => expect(run.streamingTurn).not.toBeNull());
 
-		const serverHistory = [
-			message("user", "prior q"),
-			message("assistant", "prior a"),
-			message("user", "New question"),
-			message("assistant", "the canonical server reply"),
-		];
 		stream.push(
-			`event: done\ndata: ${JSON.stringify({ history: serverHistory })}\n\n`,
+			'event: done\ndata: {"reply":"the canonical server reply"}\n\n',
 		);
 		stream.close();
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(run.serverHistories.mary).toEqual(serverHistory);
+		expect(run.serverHistories.mary).toEqual([
+			message("user", "prior q"),
+			message("assistant", "prior a"),
+			message("user", "New question"),
+			message("assistant", "the canonical server reply"),
+		]);
 	});
 
 	it("commits the streamed text when the stream closes cleanly with no done frame", async () => {
@@ -453,12 +458,42 @@ describe("streaming reconciliation", () => {
 		});
 	});
 
-	it("a thrown/aborted stream behaves the same as an error frame", async () => {
+	// A mid-stream break (as opposed to a pre-stream rejection, covered by the
+	// error-frame/ApiError tests elsewhere in this file) only happens after the
+	// backend has already 200'd the request -- prepareTurn already persisted
+	// the user's message, and its producer task keeps generating and
+	// persisting the reply after a client disconnect regardless of whether
+	// this stream is still being read (see services/simulation/stream.py).
+	// So #runSend refetches instead of assuming the reply was lost: this pins
+	// that recovery, not the old drop-the-reply fallback.
+	it("recovers a stream break by refetching the run instead of dropping the reply", async () => {
 		const { run, session, toast } = await freshRun();
 		await setupTwoContacts(run, session);
 		const stream = manualSseStream();
 		server.use(
 			http.post("*/api/simulations/run-1/message", () => stream.response),
+		);
+		const recovered = makeRunState({
+			case: caseData,
+			contacts: [
+				makeContact({ id: "mary", name: "Mary", available: true }),
+				makeContact({ id: "bob", name: "Bob", available: true }),
+			],
+			active_persona_id: "mary",
+			histories: {
+				// The producer finished and persisted the full turn server-side
+				// during the disconnect, unseen by this client until the refetch.
+				mary: [
+					message("user", "prior q"),
+					message("assistant", "prior a"),
+					message("user", "New question"),
+					message("assistant", "Recovered reply"),
+				],
+				bob: [message("user", "bob q"), message("assistant", "bob a")],
+			},
+		});
+		server.use(
+			http.get("*/api/simulations/run-1", () => HttpResponse.json(recovered)),
 		);
 
 		run.sendMessage("New question");
@@ -471,9 +506,13 @@ describe("streaming reconciliation", () => {
 			message("user", "prior q"),
 			message("assistant", "prior a"),
 			message("user", "New question"),
+			message("assistant", "Recovered reply"),
 		]);
 		expect(run.streamingTurn).toBeNull();
-		expect(toast).toHaveBeenCalledWith("connection reset", { duration: 4000 });
+		expect(toast).toHaveBeenCalledWith(
+			"Connection interrupted. Reconnected to check for a reply.",
+			{ duration: 4000 },
+		);
 	});
 
 	it("does not let deltas for a persona switched away from overwrite the newly active persona's view", async () => {
@@ -505,25 +544,25 @@ describe("streaming reconciliation", () => {
 		expect(run.messagesByPersona.bob).toEqual(bobViewBeforeSwitch);
 		expect(run.messagesByPersona.bob).toEqual(run.serverHistories.bob);
 
-		stream.push('event: done\ndata: {"history":[]}\n\n');
+		stream.push('event: done\ndata: {"reply":"first chunk, more"}\n\n');
 		stream.close();
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 	});
 
 	it('marks the contact chat_ended, without a generic toast, when the send fails with code "conversation_ended"', async () => {
+		// prepareTurn runs inside the SSE generator (services/simulation/stream.py's
+		// streamMessage), so this arrives as a 200 + an "error" frame carrying
+		// `code: "conversation_ended"` -- never a rejected fetch/JSON error response.
 		const { run, session, toast } = await freshRun();
 		await setupTwoContacts(run, session);
 		server.use(
-			http.post("*/api/simulations/run-1/message", () =>
-				HttpResponse.json(
-					{
-						detail: {
-							message: "This conversation has ended.",
-							code: "conversation_ended",
-						},
-					},
-					{ status: 409 },
-				),
+			http.post(
+				"*/api/simulations/run-1/message",
+				() =>
+					new HttpResponse(
+						'event: error\ndata: {"detail":"This conversation has ended.","code":"conversation_ended"}\n\n',
+						{ status: 200, headers: { "Content-Type": "text/event-stream" } },
+					),
 			),
 		);
 
@@ -693,100 +732,98 @@ describe("notification diffing (#diffAndNotify, observed via the mocked toast)",
 	});
 });
 
+// Notes are client-side only (sessionStorage, keyed by run id) — see
+// run.svelte.ts's comment on NOTES_STORAGE_PREFIX for why: autosaving them
+// through the backend used to take the simulations row's write lock on every
+// debounced keystroke, contending with reply persistence.
+const notesKey = (runId: string) => `caselab:notes:${runId}`;
+
 describe("notes", () => {
-	it("setNotes debounces: no request before the debounce elapses, exactly one after", async () => {
+	// jsdom's Storage implementation doesn't go through overridable prototype
+	// methods (vi.spyOn(Storage.prototype/sessionStorage, "setItem") silently
+	// never fires here), so these observe the actually-stored value instead
+	// of counting calls.
+	it("setNotes debounces: no write before the debounce elapses, written after", async () => {
 		vi.useFakeTimers();
 		try {
 			const { run, session } = await freshRun();
 			session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
-			let calls = 0;
-			server.use(
-				http.put("*/api/simulations/run-1/notes", async () => {
-					calls++;
-					return HttpResponse.json(null);
-				}),
-			);
 
 			run.setNotes("draft text");
 			await vi.advanceTimersByTimeAsync(700);
-			expect(calls).toBe(0);
+			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
 			await vi.advanceTimersByTimeAsync(150); // crosses the 800ms debounce
-			expect(calls).toBe(1);
+			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft text");
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	it("flushNotes bypasses the debounce and cancels the pending timer so only one request is made", async () => {
+	it("flushNotes bypasses the debounce and cancels the pending timer so it does not fire again later", async () => {
 		vi.useFakeTimers();
 		try {
 			const { run, session } = await freshRun();
 			session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
-			let calls = 0;
-			server.use(
-				http.put("*/api/simulations/run-1/notes", async () => {
-					calls++;
-					return HttpResponse.json(null);
-				}),
-			);
 
 			run.setNotes("draft 1");
 			run.setNotes("draft 2");
 			run.flushNotes();
-			await vi.advanceTimersByTimeAsync(0);
-			expect(calls).toBe(1);
+			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft 2");
 
-			// If the original debounce timer weren't cancelled, this would fire
-			// a second, stale request for "draft 2" a second time.
+			// Mutate the in-memory value directly, bypassing setNotes (so no new
+			// timer gets scheduled) — if the original debounce timer from
+			// setNotes("draft 2") weren't cancelled by flushNotes, it would fire
+			// here and write this stale value to storage.
+			run.notes = "mutated after flush";
 			await vi.advanceTimersByTimeAsync(1000);
-			expect(calls).toBe(1);
+			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft 2");
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	it("a failed notes save shows a toast and does not throw", async () => {
+	it("a storage write failure does not throw or show a toast", async () => {
 		const { run, session, toast } = await freshRun();
 		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
-		server.use(
-			http.put("*/api/simulations/run-1/notes", () =>
-				HttpResponse.json({ detail: "Server error." }, { status: 500 }),
-			),
-		);
+		vi.stubGlobal("sessionStorage", {
+			setItem: () => {
+				throw new DOMException("Quota exceeded.");
+			},
+			getItem: () => null,
+			removeItem: () => {},
+		});
 
+		run.setNotes("draft text");
 		expect(() => run.flushNotes()).not.toThrow();
-		await vi.waitFor(() =>
-			expect(toast).toHaveBeenCalledWith(
-				"Could not save your notes. Please try again.",
-				{
-					duration: 4000,
-				},
-			),
-		);
+		expect(toast).not.toHaveBeenCalled();
+
+		vi.unstubAllGlobals();
 	});
 });
 
 describe("endSimulation", () => {
-	it("flushes notes, clears the run, and navigates home", async () => {
-		const { run, session, goto } = await freshRun();
-		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
-		let savedBody: unknown = null;
-		server.use(
-			http.put("*/api/simulations/run-1/notes", async ({ request }) => {
-				savedBody = await request.json();
-				return HttpResponse.json(null);
-			}),
-		);
+	it("cancels any pending save, clears stored notes, clears the run, and navigates home", async () => {
+		vi.useFakeTimers();
+		try {
+			const { run, session, goto } = await freshRun();
+			session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+			sessionStorage.setItem(notesKey("run-1"), "earlier session");
 
-		run.setNotes("final thoughts");
-		run.endSimulation();
+			run.setNotes("final thoughts"); // schedules a debounced write, never flushed
+			run.endSimulation();
 
-		// clearRun()/goto() run synchronously inside endSimulation, before the
-		// flushed save's fetch has necessarily resolved.
-		expect(session.runId).toBe("");
-		expect(goto).toHaveBeenCalledWith("/");
-		await vi.waitFor(() =>
-			expect(savedBody).toEqual({ notes: "final thoughts" }),
-		);
+			expect(session.runId).toBe("");
+			expect(goto).toHaveBeenCalledWith("/");
+			// A finished run has nothing left to read its notes back — cleared
+			// outright rather than flushed first.
+			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
+
+			// If the pending debounced write from setNotes() above weren't
+			// cancelled, it would fire here and resurrect the just-cleared entry.
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 });

@@ -1,6 +1,3 @@
-// Generic string-formatting utilities, shared across the case and student domains.
-
-// Lowercase, replace runs of non-alphanumerics with a single '-', trim '-'.
 export const slugify = (value: unknown) =>
 	String(value ?? "")
 		.trim()

@@ -7,36 +7,39 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http, type JsonBodyType } from "msw";
+import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
+import { ADMIN_ROLE } from "../../src/lib/constants.js";
+import { session } from "../../src/lib/session.svelte.js";
 import type { Api } from "../../src/lib/types.js";
 import { unsavedGuard } from "../../src/lib/unsavedGuard.svelte.js";
-import { makePersona, makeReferral } from "../support/fixtures.js";
+import {
+	makeAdminOut,
+	makeCaseDetail as makeBaseCaseDetail,
+	makePersonaPayload as makeBasePersonaPayload,
+	makePersona,
+	makeReferral,
+} from "../support/fixtures.js";
 import { server } from "../support/msw.js";
 
 function makePersonaPayload(
 	overrides: Partial<Api<"PersonaPayload">> = {},
 ): Api<"PersonaPayload"> {
-	return {
+	return makeBasePersonaPayload({
 		id: "p1",
 		name: "Mary",
 		role: "CFO",
-		profile_photo: null,
-		known_facts: "",
-		personality_traits: "",
-		availability_minutes: null,
-		files: [],
 		...overrides,
-	};
+	});
 }
 
 function makeCaseDetail(
 	overrides: Partial<Api<"CaseDetail">> = {},
 ): Api<"CaseDetail"> {
-	return {
+	return makeBaseCaseDetail({
 		id: 7,
-		case_name: "Sterling Industries",
 		access_code: "ABC123",
 		brief: "Reduce costs.",
 		common_information: "Background.",
@@ -48,7 +51,7 @@ function makeCaseDetail(
 		owner_admin_id: 1,
 		collaborator_admin_ids: [],
 		...overrides,
-	};
+	});
 }
 
 function stubGetCase(detail: Api<"CaseDetail">) {
@@ -107,10 +110,19 @@ function stubUpdate(
 	return requests;
 }
 
+// Mirrors what the /admin/cases/new and /admin/cases/[id]/edit route files
+// pass CaseForm — editCaseId here stands in for those routes' page.params.id.
 function renderForm(
 	props: { editCaseId?: string | null; templateId?: string | null } = {},
 ) {
-	return render(CaseForm, { props });
+	const { editCaseId = null, templateId = null } = props;
+	return render(CaseForm, {
+		props: {
+			mode: editCaseId ? "edit" : "create",
+			caseId: editCaseId,
+			templateId,
+		},
+	});
 }
 
 describe("CaseForm", () => {
@@ -446,14 +458,24 @@ describe("CaseForm", () => {
 			expect(screen.getByText(/issue.*to review/i)).toBeInTheDocument();
 		});
 
-		it("surfaces the import error message for an unrelated HTML file", async () => {
-			const file = new File(
-				["<html><body><p>hello</p></body></html>"],
-				"random.html",
-				{ type: "text/html" },
-			);
+		it("confirms before replacing existing form content, and only imports after confirming", async () => {
+			const html = buildHTMLForm({
+				caseName: "Imported Case",
+				accessCode: "CODE1",
+				simulationDurationMinutes: 30,
+				initialBrief: "Imported brief",
+				commonInformation: "Imported background",
+				personas: [],
+				referrals: [],
+				roots: [],
+			});
+			const file = new File([html], "export.html", { type: "text/html" });
 			const user = userEvent.setup();
 			const { container } = renderForm();
+
+			// Existing content in the form is what makes the import destructive —
+			// an empty form (the earlier test) skips the confirm dialog entirely.
+			await user.type(screen.getByLabelText("Case name"), "Existing Case");
 
 			const fileInput = container.querySelector(
 				'input[type="file"]',
@@ -461,10 +483,201 @@ describe("CaseForm", () => {
 			await user.upload(fileInput, file);
 
 			expect(
-				await screen.findByText(
+				await screen.findByText("Replace everything in this form?"),
+			).toBeInTheDocument();
+			// Not yet applied — confirming is still pending.
+			expect(screen.getByLabelText("Case name")).toHaveValue("Existing Case");
+
+			await user.click(screen.getByRole("button", { name: "Import" }));
+
+			expect(
+				await screen.findByDisplayValue("Imported Case"),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByText("Replace everything in this form?"),
+			).not.toBeInTheDocument();
+		});
+
+		it("cancelling the replace-confirm leaves the existing form content untouched", async () => {
+			const html = buildHTMLForm({
+				caseName: "Imported Case",
+				accessCode: "CODE1",
+				simulationDurationMinutes: 30,
+				initialBrief: "Imported brief",
+				commonInformation: "Imported background",
+				personas: [],
+				referrals: [],
+				roots: [],
+			});
+			const file = new File([html], "export.html", { type: "text/html" });
+			const user = userEvent.setup();
+			const { container } = renderForm();
+
+			await user.type(screen.getByLabelText("Case name"), "Existing Case");
+
+			const fileInput = container.querySelector(
+				'input[type="file"]',
+			) as HTMLInputElement;
+			await user.upload(fileInput, file);
+			await screen.findByText("Replace everything in this form?");
+
+			await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+			expect(
+				screen.queryByText("Replace everything in this form?"),
+			).not.toBeInTheDocument();
+			expect(screen.getByLabelText("Case name")).toHaveValue("Existing Case");
+		});
+
+		it("surfaces the import error as a toast for an unrelated HTML file", async () => {
+			const file = new File(
+				["<html><body><p>hello</p></body></html>"],
+				"random.html",
+				{ type: "text/html" },
+			);
+			const user = userEvent.setup();
+			const { container } = renderForm();
+			const toast = vi.mocked(sonner.toast);
+
+			const fileInput = container.querySelector(
+				'input[type="file"]',
+			) as HTMLInputElement;
+			await user.upload(fileInput, file);
+
+			await waitFor(() =>
+				expect(toast).toHaveBeenCalledWith(
 					"This doesn't look like a Case Lab import file.",
 				),
-			).toBeInTheDocument();
+			);
+		});
+	});
+
+	describe("collaborator picker", () => {
+		afterEach(() => {
+			session.clearAdmin();
+		});
+
+		async function openPicker() {
+			const user = userEvent.setup();
+			await user.click(
+				screen.getByRole("button", { name: /Add collaborators/ }),
+			);
+			return user;
+		}
+
+		it("does not fetch the admin roster until the picker is opened, and only fetches it once", async () => {
+			let fetchCount = 0;
+			server.use(
+				http.get("*/api/admin/admins", () => {
+					fetchCount += 1;
+					return HttpResponse.json([makeAdminOut({ id: 9, name: "Nina" })]);
+				}),
+			);
+			renderForm();
+
+			expect(fetchCount).toBe(0);
+
+			const user = await openPicker();
+			await screen.findByText("Nina");
+			expect(fetchCount).toBe(1);
+
+			// Close and reopen: already loaded, so no second fetch.
+			await user.keyboard("{Escape}");
+			await user.click(
+				screen.getByRole("button", { name: /Add collaborators/ }),
+			);
+			await screen.findByText("Nina");
+			expect(fetchCount).toBe(1);
+		});
+
+		it("excludes SUPER admins and the case's owner from the selectable list in edit mode", async () => {
+			const detail = makeCaseDetail({ owner_admin_id: 5 });
+			stubGetCase(detail);
+			server.use(
+				http.get("*/api/admin/admins", () =>
+					HttpResponse.json([
+						makeAdminOut({
+							id: 5,
+							name: "Owner Olivia",
+							role: ADMIN_ROLE.ADMIN,
+						}),
+						makeAdminOut({ id: 6, name: "Super Sam", role: ADMIN_ROLE.SUPER }),
+						makeAdminOut({ id: 7, name: "Rank Rita", role: ADMIN_ROLE.ADMIN }),
+					]),
+				),
+			);
+			renderForm({ editCaseId: String(detail.id) });
+			await screen.findByDisplayValue("Sterling Industries");
+
+			await openPicker();
+
+			expect(await screen.findByText("Rank Rita")).toBeInTheDocument();
+			expect(screen.queryByText("Owner Olivia")).not.toBeInTheDocument();
+			expect(screen.queryByText("Super Sam")).not.toBeInTheDocument();
+		});
+
+		it("excludes the signed-in admin (matched by email) as the effective owner in create mode", async () => {
+			session.setAdmin({
+				adminRole: ADMIN_ROLE.ADMIN,
+				adminEmail: "me@wisc.edu",
+			});
+			server.use(
+				http.get("*/api/admin/admins", () =>
+					HttpResponse.json([
+						makeAdminOut({ id: 1, name: "Me", email: "me@wisc.edu" }),
+						makeAdminOut({ id: 2, name: "Rank Rita", email: "rita@wisc.edu" }),
+					]),
+				),
+			);
+			renderForm();
+
+			await openPicker();
+
+			expect(await screen.findByText("Rank Rita")).toBeInTheDocument();
+			expect(screen.queryByText("Me")).not.toBeInTheDocument();
+		});
+
+		it("toggling a collaborator updates the selected-count badge and is included in the submit payload", async () => {
+			const requests = stubCreate();
+			server.use(
+				http.get("*/api/admin/admins", () =>
+					HttpResponse.json([makeAdminOut({ id: 9, name: "Nina" })]),
+				),
+			);
+			const user = userEvent.setup();
+			renderForm();
+
+			await user.type(
+				screen.getByLabelText("Case name"),
+				"Sterling Industries",
+			);
+			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
+			await user.type(screen.getByLabelText("Access code"), "ABC123");
+			await user.click(
+				screen.getByRole("button", { name: "+ Add root persona" }),
+			);
+			await user.type(screen.getByLabelText("Persona name"), "Mary");
+			await user.type(screen.getByLabelText("Title/Role"), "CFO");
+
+			// bits-ui's floating-ui positioning leaves the popover content
+			// `visibility: hidden` in jsdom (it never resolves a real layout), and
+			// getByRole excludes invisible elements — so this looks the checkbox
+			// up by its (visibility-blind) implicit label text instead.
+			await openPicker();
+			const checkbox = await screen.findByLabelText("Nina");
+			await user.click(checkbox);
+
+			expect(screen.getByText("1 selected")).toBeInTheDocument();
+			expect(checkbox).toBeChecked();
+
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+			await screen.findByText("Case saved successfully.");
+
+			expect(requests[0]?.collaborator_admin_ids).toEqual([9]);
+
+			// Unchecking removes it again.
+			await user.click(checkbox);
+			expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
 		});
 	});
 });

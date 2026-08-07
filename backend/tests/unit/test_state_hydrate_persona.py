@@ -1,4 +1,4 @@
-"""services/simulation/service.py — hydratePersona.
+"""services/simulation/state.py — hydratePersona.
 
 Signing a profile-photo URL is this service's response-building job, not
 reads.py's pure persona-graph shaping (see services/simulation/reads.py and
@@ -8,8 +8,8 @@ tests/unit/test_reads.py's module docstring) — so these tests live here.
 from __future__ import annotations
 
 from models.cases import FileRef
-from models.simulation_runtime import PersonaDetail
-from services.simulation import service as sim_service
+from models.runtime import PersonaDetail
+from services.simulation import state as sim_service
 
 
 def signedUrl(object_key: str) -> str:

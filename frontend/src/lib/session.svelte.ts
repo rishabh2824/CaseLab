@@ -2,13 +2,8 @@ import { browser } from "$app/environment";
 import { ADMIN_ROLE } from "./constants.js";
 import type { Api } from "./types.js";
 
-// Centralized session state Persisted to sessionStorage so a student run survives reload
 const STORAGE_KEY = "caseLabSession";
 
-// The shape round-tripped through sessionStorage. JSON.parse gives back
-// `unknown`, so readPersisted validates each field individually rather than
-// trusting whatever happens to be sitting in storage (e.g. left over from a
-// previous, incompatible version of this app).
 export interface PersistedSession {
 	adminRole: Api<"AdminRole"> | null;
 	adminEmail: string;
@@ -28,10 +23,6 @@ const defaults: PersistedSession = Object.freeze({
 const isAdminRole = (value: unknown): value is Api<"AdminRole"> =>
 	value === ADMIN_ROLE.SUPER || value === ADMIN_ROLE.ADMIN;
 
-// Validates an `unknown` parsed blob against PersistedSession, falling back
-// to the individual default for any field that's missing or the wrong type
-// — rather than either trusting the whole blob (the pre-TS behavior) or
-// discarding the whole session because one field is stale/corrupt.
 function normalizePersisted(value: unknown): PersistedSession {
 	if (typeof value !== "object" || value === null) return defaults;
 	const v = value as Record<string, unknown>;

@@ -24,14 +24,40 @@ def requiresSsl(url: str) -> bool:
 def getEngine() -> AsyncEngine:
     settings = getSettings()
 
+    # Connects straight to Postgres (settings.direct_url), not through Neon's pgbouncer-based
+    # pooled endpoint -- SQLAlchemy already runs its own pool below, so pgbouncer underneath it
+    # was a second, redundant pooling layer. That layering was also *why* statement caching had
+    # to be disabled: asyncpg's prepared-statement cache doesn't work safely against pgbouncer's
+    # transaction-pooling mode, since a connection's backend can change between statements. Going
+    # direct removes that constraint, so asyncpg's statement cache (its default) stays on and
+    # Postgres stops re-parsing/re-planning every query on every execution.
+    #
     # Doesn't immediately connect to the db, does it lazily when first needed.
     return create_async_engine(
         # "ssl" - Forces a secure, encrypted connection to Neon
-        # statement_cache_size=0 - turns off asyncpg's internal caching of SQL queries to avoid weird crashes
-        # pool_pre_ping=True - Ensures the db is alive before handing over a connection to a request
-        asyncpgUrl(settings.pooling_url),
-        connect_args={"ssl": requiresSsl(settings.pooling_url), "statement_cache_size": 0},
-        pool_pre_ping=True,
+        asyncpgUrl(settings.direct_url),
+        connect_args={"ssl": requiresSsl(settings.direct_url)},
+        # Neon (like most managed Postgres) silently drops idle connections after a timeout.
+        # pool_recycle proactively retires a pooled connection once it's been open this long,
+        # so a request never lands on one the server already closed -- without paying pre_ping's
+        # per-checkout round trip to check liveness on every single request.
+        pool_recycle=300,
+        # SQLAlchemy's defaults (pool_size=5, max_overflow=10 -> 15 connections/worker,
+        # pool_timeout=30) were never a deliberate choice for this app's load. A classroom
+        # of ~60 students submitting near-simultaneously, each holding a handful of
+        # concurrent checkouts over the course of a request, can plausibly want way more
+        # than 15 connections at once from a single worker -- past that, checkouts queue
+        # silently and then hard-fail with a pool-timeout error instead of degrading
+        # gracefully. Sized to comfortably cover that burst. NOTE: this used to be sized
+        # against Neon's pooled endpoint, which fans out far beyond any single per-worker
+        # limit -- now that this connects directly to Postgres, pool_size + max_overflow
+        # (40 total, single-instance deployment as of writing) needs to actually fit inside
+        # the Neon plan's real max_connections, which a pgbouncer-fronted endpoint never had
+        # to respect. Re-check both this and the deployed worker/instance count against
+        # whatever connection budget the Postgres plan allows before relying on this number.
+        pool_size=20,
+        max_overflow=20,
+        pool_timeout=30,
     )
 
 

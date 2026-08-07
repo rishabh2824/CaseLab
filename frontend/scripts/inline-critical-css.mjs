@@ -25,6 +25,12 @@ import { fileURLToPath } from "node:url";
 const buildDir = join(dirname(fileURLToPath(import.meta.url)), "..", "build");
 const targets = ["index.html", "200.html"];
 
+// A target existing but ending up unchanged means the <link rel="stylesheet"> regex above
+// no longer matches Vite's output (e.g. its attribute order changed) — silently leaving
+// `changed` false would ship that page with render-blocking CSS, unnoticed, since nothing
+// else checks this build step's output. Fail the build instead.
+let failed = false;
+
 for (const name of targets) {
 	const htmlPath = join(buildDir, name);
 	if (!existsSync(htmlPath)) continue;
@@ -50,5 +56,14 @@ for (const name of targets) {
 	if (changed) {
 		writeFileSync(htmlPath, inlined);
 		console.log(`inline-critical-css: inlined CSS into ${name}`);
+	} else {
+		console.error(
+			`inline-critical-css: found no <link rel="stylesheet"> to inline in ${name} — ` +
+				"the regex no longer matches Vite's output, or this page has no page CSS. " +
+				"Either fix the regex or remove this target if it's now expected.",
+		);
+		failed = true;
 	}
 }
+
+if (failed) process.exit(1);

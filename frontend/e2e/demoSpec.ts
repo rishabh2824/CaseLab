@@ -57,7 +57,7 @@ test("choosing a template seeds a new case form", async ({ page }) => {
 
 	await page.getByRole("button", { name: /Sterling Industries/ }).click();
 
-	await expect(page).toHaveURL(/\/admin\/new\/form\?template=5/);
+	await expect(page).toHaveURL(/\/admin\/cases\/new\?template=5/);
 	await expect(page.getByLabel("Case name")).toHaveValue("Sterling Industries");
 	await expect(page.getByLabel("Access code")).toHaveValue("STERLING");
 });

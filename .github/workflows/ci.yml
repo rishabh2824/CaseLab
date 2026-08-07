@@ -40,7 +40,6 @@ jobs:
     env:
       # infra/db.py turns TLS off for loopback hosts, which is what makes this
       # container usable; every real deployment is remote and keeps TLS on.
-      POOLING: postgresql://postgres:postgres@localhost:5432/caselab_test
       DIRECT: postgresql://postgres:postgres@localhost:5432/caselab_test
       # Settings are required fields, so every one needs a value even where the
       # tests never reach the service behind it. None of these are real: Spaces
@@ -118,7 +117,7 @@ jobs:
         run: pnpm run check
 
       - name: Unit tests
-        run: pnpm exec vitest run
+        run: pnpm exec vitest run --coverage
 
       # Cached separately from node_modules: the browser binaries are large and
       # change only when @playwright/test does.

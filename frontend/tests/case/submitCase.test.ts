@@ -35,28 +35,37 @@ type PresignCapture = {
 	prefix: string | null;
 };
 
-// Wires a working presign endpoint (each call gets a unique object_key so a
-// test can verify which upload produced which key) and the Spaces PUT it
-// hands back. `putStatus` lets the Spaces-failure test reuse this without
-// hand-rolling its own handlers.
+// Wires a working batch-presign endpoint (each call gets a unique object_key
+// so a test can verify which upload produced which key) and the Spaces PUT
+// it hands back. `putStatus` lets the Spaces-failure test reuse this without
+// hand-rolling its own handlers. `presignRequests` flattens every file across
+// every batch call, in request order, so existing per-file assertions still
+// read naturally even though submitCase now sends one batched request.
 function stubUploadPipeline({ putStatus = 200 }: { putStatus?: number } = {}) {
 	const presignRequests: PresignCapture[] = [];
+	const presignBatchCalls: PresignCapture[][] = [];
 	const putRequests: { url: string; contentType: string | null }[] = [];
 	let counter = 0;
 
 	server.use(
-		http.post("*/api/uploads/presign", async ({ request }) => {
-			const body = (await request.json()) as PresignCapture;
-			presignRequests.push(body);
-			counter += 1;
-			const objectKey = `objects/${counter}-${body.file_name}`;
+		http.post("*/api/uploads/presign/batch", async ({ request }) => {
+			const body = (await request.json()) as { files: PresignCapture[] };
+			presignRequests.push(...body.files);
+			presignBatchCalls.push(body.files);
+			const files = body.files.map((file) => {
+				counter += 1;
+				const objectKey = `objects/${counter}-${file.file_name}`;
+				return {
+					upload_url: `${SPACES_ORIGIN}/${objectKey}`,
+					object_key: objectKey,
+					file_name: file.file_name,
+					content_type: file.content_type,
+					expires_in: 900,
+				} satisfies Api<"PresignUploadResponse">;
+			});
 			return HttpResponse.json({
-				upload_url: `${SPACES_ORIGIN}/${objectKey}`,
-				object_key: objectKey,
-				file_name: body.file_name,
-				content_type: body.content_type,
-				expires_in: 900,
-			} satisfies Api<"PresignUploadResponse">);
+				files,
+			} satisfies Api<"PresignUploadBatchResponse">);
 		}),
 		http.put(`${SPACES_ORIGIN}/*`, ({ request }) => {
 			putRequests.push({
@@ -67,7 +76,7 @@ function stubUploadPipeline({ putStatus = 200 }: { putStatus?: number } = {}) {
 		}),
 	);
 
-	return { presignRequests, putRequests };
+	return { presignRequests, presignBatchCalls, putRequests };
 }
 
 // Wires /api/cases (create) and /api/cases/:id (update) and captures every
@@ -276,7 +285,7 @@ describe("submitCase — content type handling", () => {
 
 describe("submitCase — multiple personas and attachments", () => {
 	it("uploads every File across personas/attachments and associates each returned key with the right entry", async () => {
-		const { presignRequests } = stubUploadPipeline();
+		const { presignRequests, presignBatchCalls } = stubUploadPipeline();
 		const { createRequests } = stubCaseEndpoints();
 		const persona1 = makePersona({
 			id: "p1",
@@ -307,9 +316,11 @@ describe("submitCase — multiple personas and attachments", () => {
 
 		await submitCase(baseInput({ personas: [persona1, persona2] }));
 
-		// 4 uploads total: p1's photo + 2 files, p2's 1 file. Runs through
-		// Promise.all in buildPersonaPayload, so the count alone would not
-		// catch a mis-association — the per-persona checks below do.
+		// 4 uploads total: p1's photo + 2 files, p2's 1 file — sent as a single
+		// batched presign call (the fix under test), not 4 separate round
+		// trips. Runs through Promise.all in uploadAll, so the count alone
+		// would not catch a mis-association — the per-persona checks below do.
+		expect(presignBatchCalls).toHaveLength(1);
 		expect(presignRequests).toHaveLength(4);
 		expect(createRequests).toHaveLength(1);
 		const sentPersonas = createRequests[0]?.personas ?? [];
@@ -356,7 +367,7 @@ describe("submitCase — upload failures", () => {
 
 	it("propagates a failed presign request as an ApiError", async () => {
 		server.use(
-			http.post("*/api/uploads/presign", () =>
+			http.post("*/api/uploads/presign/batch", () =>
 				HttpResponse.json({ detail: "Presign failed." }, { status: 500 }),
 			),
 		);

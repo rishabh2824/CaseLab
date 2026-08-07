@@ -12,9 +12,8 @@ type Props = {
 
 let { graph, showFieldErrors, revealErrors }: Props = $props();
 
-const graphValidation = $derived(graph.validate());
+const graphValidation = $derived(graph.validation);
 const rootPersonasError = $derived(graphValidation.rootsError);
-const personaErrors = $derived(graphValidation.personaErrors);
 
 function addRoot(): void {
 	revealErrors();
@@ -62,11 +61,7 @@ function removeRoot(rootId: string): void {
 					</button>
 				</summary>
 				<div class="border-t border-line-soft px-4 py-4">
-					<PersonaFields
-						{persona}
-						{graph}
-						errors={showFieldErrors ? personaErrors[persona.id] : {}}
-					/>
+					<PersonaFields {persona} {graph} {showFieldErrors} />
 				</div>
 			</details>
 		{/each}
@@ -76,11 +71,7 @@ function removeRoot(rootId: string): void {
 					{item.label} &larr; {item.parentLabel}
 				</summary>
 				<div class="border-t border-line-soft px-4 py-4">
-					<PersonaFields
-						persona={item.persona}
-						{graph}
-						errors={showFieldErrors ? personaErrors[item.persona.id] : {}}
-					/>
+					<PersonaFields persona={item.persona} {graph} {showFieldErrors} />
 				</div>
 			</details>
 		{/each}

@@ -43,10 +43,6 @@ const writeSection = (doc: jsPDF, title: string, bodyLines: string[]): void => {
 	}
 };
 
-// Only name/role/messages are read here — accepting this narrower shape
-// (rather than the full ExportPersonaOut, which also carries an id nothing
-// in this file needs) is also what lets the "no unlocked personas" fallback
-// below satisfy the type without inventing a placeholder id.
 type PrintablePersona = Pick<
 	Api<"ExportPersonaOut">,
 	"name" | "role" | "messages"

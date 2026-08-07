@@ -1,8 +1,10 @@
 <script lang="ts">
 import { onMount } from "svelte";
+import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
 import { cases } from "$lib/case/cases.svelte.js";
 import type { Api } from "$lib/types.js";
+import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 
 type Props = {
 	mode?: "template" | "edit";
@@ -10,7 +12,8 @@ type Props = {
 
 let { mode = "template" }: Props = $props();
 
-let deletingId = $state<number | null>(null);
+let pendingDelete = $state<Api<"CaseSummary"> | null>(null);
+let isDeleting = $state(false);
 
 onMount(() => {
 	cases.fetchAll();
@@ -18,23 +21,32 @@ onMount(() => {
 
 function openCase(caseItem: Api<"CaseSummary">) {
 	if (mode === "edit") {
-		goto(`/admin/edit/form?caseId=${caseItem.id}`);
+		goto(`/admin/cases/${caseItem.id}/edit`);
 	} else {
-		goto(`/admin/new/form?template=${caseItem.id}`);
+		goto(`/admin/cases/new?template=${caseItem.id}`);
 	}
 }
 
-async function handleDelete(event: MouseEvent, caseItem: Api<"CaseSummary">) {
+function requestDelete(event: MouseEvent, caseItem: Api<"CaseSummary">) {
 	event.stopPropagation();
-	const confirmed = window.confirm(
-		`Delete "${caseItem.case_name}"? This also frees its access code for reuse. This cannot be undone.`,
-	);
-	if (!confirmed) return;
-	deletingId = caseItem.id;
+	pendingDelete = caseItem;
+}
+
+function cancelDelete(): void {
+	pendingDelete = null;
+}
+
+async function confirmDelete(): Promise<void> {
+	const caseItem = pendingDelete;
+	if (!caseItem) return;
+	isDeleting = true;
 	try {
 		await cases.deleteCase(caseItem.id);
+		pendingDelete = null;
+	} catch (err) {
+		toast((err instanceof Error && err.message) || "Failed to delete case.");
 	} finally {
-		deletingId = null;
+		isDeleting = false;
 	}
 }
 
@@ -95,8 +107,8 @@ const isEditMode = $derived(mode === "edit");
 							<div class="mt-1.5 flex justify-end px-1">
 								<button
 									type="button"
-									onclick={(event) => handleDelete(event, caseItem)}
-									disabled={deletingId === caseItem.id}
+									onclick={(event) => requestDelete(event, caseItem)}
+									disabled={isDeleting && pendingDelete?.id === caseItem.id}
 									class="text-xs font-semibold text-stone-soft transition hover:text-brand disabled:opacity-60"
 								>
 									Delete case
@@ -109,3 +121,12 @@ const isEditMode = $derived(mode === "edit");
 		</div>
 	</div>
 </div>
+
+<DestructiveConfirmDialog
+	bind:open={() => pendingDelete !== null, (isOpen) => { if (!isOpen) pendingDelete = null }}
+	title={pendingDelete ? `Delete "${pendingDelete.case_name}"?` : ""}
+	description="This also frees its access code for reuse. This cannot be undone."
+	confirming={isDeleting}
+	onConfirm={confirmDelete}
+	onCancel={cancelDelete}
+/>

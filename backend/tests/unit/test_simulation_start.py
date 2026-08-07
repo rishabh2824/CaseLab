@@ -4,8 +4,8 @@ contract that nothing persona-secret ever reaches the browser.
 
 import pytest
 from domain_errors import CaseNotFound, InvalidRequest
-from models.simulations import RunCaseSummary
-from services.simulation import service as sim_service
+from models.simulations import RunCase
+from services.simulation import state as sim_service
 
 from tests import factories
 
@@ -19,7 +19,7 @@ def freezeElapsed(monkeypatch, minutes: float) -> None:
     synchronously before the run is ever written to the store, so
     `sim.store.shiftStart` (which mutates an already-persisted row) can't
     reach it. Patches the real stdlib `time.time`, which every caller reads
-    fresh by attribute lookup, so both `services.simulation.service` and
+    fresh by attribute lookup, so both `services.simulation.state` and
     `services.simulation.turn_state` see the same fake clock.
     """
     base = 1_700_000_000.0
@@ -77,7 +77,7 @@ async def test_successful_start_returns_trimmed_summary_and_one_contact_per_root
     state = await sim.start("ACME")
 
     # Case summary is trimmed: no access_code, no common_information.
-    assert state.case == RunCaseSummary(
+    assert state.case == RunCase(
         id=7,
         case_name="Acme Case",
         brief="Do the thing.",
@@ -87,7 +87,6 @@ async def test_successful_start_returns_trimmed_summary_and_one_contact_per_root
     assert {c.id for c in state.contacts} == {"A", "B"}
     assert state.histories == {}
     assert state.shared_files == []
-    assert state.notes == ""
     assert state.run_id in sim.store.rows
 
 

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, Response
 from sqlmodel.ext.asyncio.session import AsyncSession
 from domain_errors import Unauthorized
-from models.admin import AddAdminRequest, AdminDeletedResponse, AdminOut, LoginRequest, LoginResponse
+from models.admin import AddAdmin, DeleteAdmin, AdminOut, LoginRequest, LoginResponse
 from services import admin as admin_repository
 from services.auth import clearCookie, createJwt, setCookie
 from infra.db import getRequestSession
@@ -43,10 +43,10 @@ async def listAdmins(session: AsyncSession = Depends(getRequestSession)) -> list
 
 
 @router.post("/admins", dependencies=[Depends(requireSuperAdmin)])
-async def addAdmin(payload: AddAdminRequest, session: AsyncSession = Depends(getRequestSession)) -> AdminOut:
+async def addAdmin(payload: AddAdmin, session: AsyncSession = Depends(getRequestSession)) -> AdminOut:
     return await admin_repository.create(session, payload.email, payload.name, payload.role)
 
 
 @router.delete("/admins/{admin_id}", dependencies=[Depends(requireSuperAdmin)])
-async def deleteAdmin(admin_id: int, session: AsyncSession = Depends(getRequestSession)) -> AdminDeletedResponse:
+async def deleteAdmin(admin_id: int, session: AsyncSession = Depends(getRequestSession)) -> DeleteAdmin:
     return await admin_repository.deleteWithCascade(session, admin_id)

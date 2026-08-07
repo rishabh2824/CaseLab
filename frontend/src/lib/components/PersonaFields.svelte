@@ -1,20 +1,27 @@
 <script lang="ts">
 import {
+	getPersonaFieldErrors,
 	getPersonaLabel,
 	parseIntOrNull,
 	referralsFrom,
 } from "$lib/case/draft.js";
 import type { CaseGraph } from "$lib/case/graph.svelte.js";
-import type { Persona, PersonaFieldErrors, ReferralEdge } from "$lib/types.js";
+import type { Persona, ReferralEdge } from "$lib/types.js";
 
 type Props = {
 	persona: Persona;
 	graph: CaseGraph;
-	errors?: PersonaFieldErrors;
+	showFieldErrors: boolean;
 };
 
-let { persona, graph, errors = {} }: Props = $props();
+let { persona, graph, showFieldErrors }: Props = $props();
 const uid = $props.id();
+
+// Derived off just this persona, not the whole graph — editing persona #12
+// no longer recomputes (or reallocates error objects for) every other
+// mounted PersonaFields instance. See graph.svelte.ts's `validation` for the
+// graph-wide hasErrors boolean this intentionally doesn't duplicate.
+const errors = $derived(showFieldErrors ? getPersonaFieldErrors(persona) : {});
 
 type InputEvent_ = Event & { currentTarget: EventTarget & HTMLInputElement };
 type TextAreaEvent = Event & {

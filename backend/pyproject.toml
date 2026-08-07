@@ -86,7 +86,7 @@ exclude = ["^alembic/versions/", "^tests/"]
 # ColumnElement[bool]-shaped typing for equality/in_/case/where/or_/asc
 # expressions -- a widely-known SQLModel/mypy friction point, not an actual
 # bug in these modules' query-building code.
-module = ["infra.rate_limits", "services.cases", "services.admin", "services.simulation.run_store"]
+module = ["infra.rate_limit_repo", "services.cases", "services.admin", "services.simulation.run_store"]
 disable_error_code = ["arg-type", "call-overload", "union-attr", "attr-defined"]
 
 [[tool.mypy.overrides]]
@@ -104,10 +104,11 @@ module = "infra.llm"
 disable_error_code = ["call-overload"]
 
 [[tool.mypy.overrides]]
-# Genuine gaps (a couple of untyped local lists, two reads through an
-# Optional dict) -- real findings to revisit, not suppressed as noise; parked
-# here for now per this task's "start loose" scope.
-module = "services.simulation.service"
+# Genuine gaps (a couple of untyped local lists in turn.py, two reads through
+# an Optional dict in stream.py) -- real findings to revisit, not suppressed
+# as noise; parked here for now per this task's "start loose" scope. state.py
+# (the third module service.py split into) has no findings and needs no override.
+module = ["services.simulation.turn", "services.simulation.stream"]
 disable_error_code = ["var-annotated", "union-attr"]
 
 [[tool.mypy.overrides]]

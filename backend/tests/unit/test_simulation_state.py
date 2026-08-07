@@ -1,20 +1,13 @@
-"""getSimulationState, notes, export, and the SSE producer's
+"""getSimulationState, export, and the SSE producer's
 detached-task/client-disconnect contract.
 """
 
 import asyncio
 
 import pytest
-from domain_errors import InvalidRequest, RunNotFound
-from models.simulations import NotesPayload
-from services.simulation.service import (
-    NOTES_CHARS,
-    exportSimulation,
-    generations,
-    getSimulationState,
-    streamMessage,
-    updateNotes,
-)
+from domain_errors import RunNotFound
+from services.simulation.state import exportSimulation, getSimulationState
+from services.simulation.stream import generations, streamTurn
 
 from tests import factories
 
@@ -25,22 +18,6 @@ async def test_get_simulation_state_on_unknown_run_raises_run_not_found(sim):
     # in-memory fake, which is slow and not hermetic.
     with pytest.raises(RunNotFound):
         await getSimulationState("no-such-run")
-
-
-async def test_update_notes_persists_and_is_returned_and_rejects_oversized_notes(sim):
-    structure = factories.caseStructure(personas=[factories.persona("A")], roots=["A"])
-    sim.setCase(structure=structure)
-    state = await sim.start()
-    run_id = state.run_id
-
-    result = await updateNotes(run_id, NotesPayload(notes="Ask about the budget."))
-    assert result.notes == "Ask about the budget."
-
-    full_state = await getSimulationState(run_id)
-    assert full_state.notes == "Ask about the budget."
-
-    with pytest.raises(InvalidRequest):
-        await updateNotes(run_id, NotesPayload(notes="x" * (NOTES_CHARS + 1)))
 
 
 async def test_export_orders_roots_then_referred_by_unlock_time(sim):
@@ -94,7 +71,7 @@ async def test_stream_message_for_boundary_turn_never_touches_the_llm(sim):
 
     prepared = await sim.prepare(run_id, "A", "bad message")
     frames = []
-    async for frame in streamMessage(prepared):
+    async for frame in streamTurn(prepared):
         frames.append(frame["event"])
 
     assert frames == ["meta", "delta", "done"]
@@ -102,7 +79,7 @@ async def test_stream_message_for_boundary_turn_never_touches_the_llm(sim):
 
 
 async def test_client_disconnect_does_not_lose_the_reply(sim):
-    # streamMessage's normal-turn branch runs `reply()` as a detached task
+    # streamTurn's normal-turn branch runs `generateReply()` as a detached task
     # referenced only by the module-level `generations` set, specifically so
     # that a client disconnecting mid-stream (closing the SSE generator)
     # doesn't cancel generation. Nothing previously verified this — this
@@ -115,7 +92,7 @@ async def test_client_disconnect_does_not_lose_the_reply(sim):
     sim.llm.replyWith("Persisted despite disconnect.")
 
     prepared = await sim.prepare(run_id, "A", "hello")
-    gen = streamMessage(prepared)
+    gen = streamTurn(prepared)
     await gen.__anext__()  # consume exactly one frame, like a reader that stops early
 
     # Grab whatever producer task is still tracked before we close the

@@ -1,7 +1,12 @@
 import { getContext, setContext } from "svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
-import { ApiError, apiFetch, streamChat } from "../api/client.js";
+import {
+	ApiError,
+	apiFetch,
+	StreamInterruptedError,
+	streamChat,
+} from "../api/client.js";
 import { session } from "../session.svelte.js";
 import type {
 	Api,
@@ -18,10 +23,55 @@ const notify = (message: string) => toast(message, { duration: 4000 });
 // typing doesn't fire a write per character. flushNotes() bypasses this.
 const NOTES_SAVE_DEBOUNCE_MS = 800;
 
+// Notes are scratch text, last-write-wins, and never needed on another device
+// or after this tab closes — kept purely client-side (never sent to the
+// backend) so autosaving them can't contend with reply persistence for the
+// simulations row's write lock (services/simulation/run_store.py's
+// SELECT ... FOR UPDATE) the way a PUT .../notes call used to. sessionStorage,
+// not localStorage: session.svelte.ts already keys `session.runId` itself off
+// sessionStorage (gone on tab close), so notes share that same lifetime
+// instead of outliving the very id needed to look them up.
+const NOTES_STORAGE_PREFIX = "caselab:notes:";
+
+function notesStorageKey(runId: string): string {
+	return `${NOTES_STORAGE_PREFIX}${runId}`;
+}
+
+function loadNotes(runId: string): string {
+	try {
+		return sessionStorage.getItem(notesStorageKey(runId)) ?? "";
+	} catch {
+		return "";
+	}
+}
+
+function saveNotes(runId: string, notes: string): void {
+	try {
+		sessionStorage.setItem(notesStorageKey(runId), notes);
+	} catch {
+		// Storage full or unavailable (e.g. private browsing) — notes just
+		// won't persist across reloads. Not worth interrupting typing over.
+	}
+}
+
+function clearNotes(runId: string): void {
+	try {
+		sessionStorage.removeItem(notesStorageKey(runId));
+	} catch {
+		// Best-effort cleanup only.
+	}
+}
+
 type StreamingTurn = {
 	personaId: string;
 	messages: Api<"ChatMessage">[];
 };
+
+let pendingRunState: RunState | null = null;
+
+export function stashPendingRunState(state: RunState): void {
+	pendingRunState = state;
+}
 
 export class RunStore {
 	raw = $state<RunState | null>(null);
@@ -33,11 +83,6 @@ export class RunStore {
 
 	#initialized = false;
 	#notesInitialized = false;
-	// Typed `number`, not `ReturnType<typeof window.setInterval>`: with
-	// @types/node in scope, `window`'s type is `Window & typeof globalThis`,
-	// and TS resolves that intersection to Node's ambient setInterval/
-	// setTimeout overload (returning NodeJS.Timeout) instead of the DOM one
-	// (returning number) — even though this code only ever runs in a browser.
 	#notesSaveTimer: number | null = null;
 	#seenContacts = new Set<string>();
 	#seenFiles = new Set<string>();
@@ -82,7 +127,11 @@ export class RunStore {
 	async init(): Promise<void> {
 		if (this.#initialized) return;
 		this.#initialized = true;
-		if (session.runId) {
+		if (session.runId && pendingRunState?.run_id === session.runId) {
+			this.raw = pendingRunState;
+			pendingRunState = null;
+			this.#afterLoad();
+		} else if (session.runId) {
 			await this.refresh(session.runId);
 		} else if (session.accessCode) {
 			await this.startSession(session.accessCode);
@@ -126,8 +175,8 @@ export class RunStore {
 	}
 
 	#afterLoad(): void {
-		if (!this.#notesInitialized && this.raw?.notes !== undefined) {
-			this.notes = this.raw.notes;
+		if (!this.#notesInitialized && session.runId) {
+			this.notes = loadNotes(session.runId);
 			this.#notesInitialized = true;
 		}
 		if (this.activeContactId == null) {
@@ -160,8 +209,15 @@ export class RunStore {
 	}
 
 	#handleExpired(): void {
+		const expiredRunId = session.runId;
+		if (expiredRunId) clearNotes(expiredRunId);
 		session.setRunId("");
 		this.activeContactId = null;
+		// A restart gets a brand-new run_id, whose own (empty) notes need
+		// re-seeding from storage below — otherwise the just-expired run's
+		// notes would keep showing under the new one.
+		this.notes = "";
+		this.#notesInitialized = false;
 		if (session.accessCode) this.startSession(session.accessCode);
 		else goto("/");
 	}
@@ -169,10 +225,6 @@ export class RunStore {
 	// Auto-ends the run once the case's configured duration elapses.
 	#ensureExpiryWatch(): void {
 		if (this.#expiryInterval) return;
-		// Captured once into a local so the closure below keeps TypeScript's
-		// `number` narrowing — totalDurationSeconds derives from case data
-		// that's fixed for the run's lifetime, so this matches the original's
-		// per-tick `this.totalDurationSeconds` read in practice.
 		const totalDurationSeconds = this.totalDurationSeconds;
 		if (typeof totalDurationSeconds !== "number") return;
 		const start = session.startTime ?? Date.now();
@@ -211,22 +263,20 @@ export class RunStore {
 		this.#saveNotesNow();
 	}
 
-	async #saveNotesNow(): Promise<void> {
+	#saveNotesNow(): void {
 		const id = session.runId;
 		if (!id) return;
-		try {
-			await apiFetch(`/api/simulations/${id}/notes`, {
-				method: "PUT",
-				body: { notes: this.notes } satisfies Api<"NotesPayload">,
-			});
-		} catch (err) {
-			console.error(err);
-			notify("Could not save your notes. Please try again.");
-		}
+		saveNotes(id, this.notes);
 	}
 
 	endSimulation(): void {
-		this.flushNotes();
+		// No point flushing a final write here just to delete it on the next
+		// line — cancel whatever's pending and go straight to clearing.
+		if (this.#notesSaveTimer) {
+			window.clearTimeout(this.#notesSaveTimer);
+			this.#notesSaveTimer = null;
+		}
+		if (session.runId) clearNotes(session.runId);
 		session.clearRun();
 		goto("/");
 	}
@@ -269,10 +319,6 @@ export class RunStore {
 		this.raw.histories[personaId] = messages;
 	}
 
-	// Returns true when the message was accepted (all guards passed), so the
-	// caller can clear its input exactly when the send actually starts. The
-	// streaming work itself runs fire-and-forget — not awaited here — so this
-	// stays synchronous, same as the old mutation's immediate `.mutate()`.
 	sendMessage(rawMessage: string): boolean {
 		const message = (rawMessage ?? "").trim();
 		const activeContactId = this.activeContactId;
@@ -290,11 +336,17 @@ export class RunStore {
 			{ role: "assistant", content: streamedText },
 		];
 
-		this.streamingTurn = { personaId, messages: overlayMessages("") };
+		this.streamingTurn = { personaId, messages: overlayMessages("") }
+		const messages = this.streamingTurn.messages;
+		const assistantMessage = messages[messages.length - 1];
+		if (!assistantMessage) {
+			throw new Error("Streaming turn was not initialized with a placeholder reply.");
+		}
 		this.isSending = true;
 		let streamed = "";
 		let receivedDone = false;
 		let streamError: Error | null = null;
+		let streamErrorCode: string | undefined;
 		try {
 			await streamChat(`/api/simulations/${session.runId}/message`, {
 				body: {
@@ -309,21 +361,21 @@ export class RunStore {
 						case "delta":
 							streamed += event.data.text ?? "";
 							if (this.streamingTurn?.personaId === personaId) {
-								this.streamingTurn = {
-									personaId,
-									messages: overlayMessages(streamed),
-								};
+								assistantMessage.content = streamed;
 							}
 							break;
 						case "done":
 							receivedDone = true;
-							if (Array.isArray(event.data.history))
-								this.commitHistory(personaId, event.data.history);
+							this.commitHistory(
+								personaId,
+								overlayMessages(event.data.reply ?? ""),
+							);
 							break;
 						case "error":
 							streamError = new Error(
 								event.data.detail || "The reply could not be generated.",
 							);
+							streamErrorCode = event.data.code ?? undefined;
 							break;
 					}
 				},
@@ -335,23 +387,26 @@ export class RunStore {
 				this.commitHistory(personaId, overlayMessages(streamed));
 		} catch (err) {
 			console.error(err);
-			// The user's turn is kept (the server recorded it before streaming
-			// began); the un-generated assistant reply is dropped.
-			this.commitHistory(personaId, [
-				...priorMessages,
-				{ role: "user", content: message },
-			]);
-			if (err instanceof ApiError && err.code === "conversation_ended") {
-				const target = this.raw?.contacts?.find((c) => c.id === personaId);
-				if (target) {
-					target.chat_ended = true;
-					target.chat_end_reason = target.chat_end_reason || "harassment";
-				}
+			if (err instanceof StreamInterruptedError) {
+				await this.refresh(session.runId);
+				notify("Connection interrupted. Reconnected to check for a reply.");
 			} else {
-				notify(
-					(err instanceof Error && err.message) ||
-						"Message failed. Please try again.",
-				);
+				this.commitHistory(personaId, [
+					...priorMessages,
+					{ role: "user", content: message },
+				]);
+				if (streamErrorCode === "conversation_ended") {
+					const target = this.raw?.contacts?.find((c) => c.id === personaId);
+					if (target) {
+						target.chat_ended = true;
+						target.chat_end_reason = target.chat_end_reason || "harassment";
+					}
+				} else {
+					notify(
+						(err instanceof Error && err.message) ||
+							"Message failed. Please try again.",
+					);
+				}
 			}
 		} finally {
 			this.streamingTurn = null;
@@ -362,10 +417,6 @@ export class RunStore {
 
 const RUN_CONTEXT_KEY = Symbol("run-store");
 
-// Scopes a RunStore to the /student route's component lifetime via Svelte
-// context, instead of a module-level singleton — so ending one run and
-// starting another (no reload, since this is an SPA) gets a fresh store
-// with no stale notes, expiry timer, or active contact left over.
 export function setRunStore(): RunStore {
 	const store = new RunStore();
 	setContext(RUN_CONTEXT_KEY, store);

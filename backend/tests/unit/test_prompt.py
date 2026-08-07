@@ -9,11 +9,11 @@ NOT via the `sim` fixture, which belongs to another test file.
 from __future__ import annotations
 
 from models.cases import FileEntry
-from models.simulation_runtime import PersonaDetail, Referral, RunCaseSnapshot
+from models.runtime import PersonaDetail, Referral, CaseSnapshot
 from services.simulation import prompt as prompt_module
 
 
-CASE_SNAPSHOT = RunCaseSnapshot(
+CASE_SNAPSHOT = CaseSnapshot(
     id=1,
     case_name="Sterling Industries",
     brief="Reduce office supply costs.",
@@ -42,53 +42,59 @@ def referral(condition_trigger: str) -> Referral:
 # --------------------------------------------------------------------------
 
 
-def test_system_prompt_returns_a_stable_turn_pair():
-    stable, turn = prompt_module.systemPrompt(
+def test_system_prompt_returns_a_string():
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(),
         forbidden_referral_names=[],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert isinstance(stable, str)
-    assert isinstance(turn, str)
+    assert isinstance(prompt, str)
 
 
-def test_system_prompt_stable_half_carries_case_and_persona_facts():
-    stable, _ = prompt_module.systemPrompt(
+def test_system_prompt_carries_case_and_persona_facts():
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(),
         forbidden_referral_names=[],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert "Reduce office supply costs." in stable
-    assert "Sterling Industries background." in stable
-    assert "Mary" in stable
-    assert "CFO" in stable
-    assert "Direct, impatient" in stable
-    assert "Karen handles all complaint escalations." in stable
+    assert "Reduce office supply costs." in prompt
+    assert "Sterling Industries background." in prompt
+    assert "Mary" in prompt
+    assert "CFO" in prompt
+    assert "Direct, impatient" in prompt
 
 
-def test_system_prompt_turn_half_carries_referral_and_file_sections():
-    _, turn = prompt_module.systemPrompt(
+def test_system_prompt_carries_persona_known_facts():
+    prompt = prompt_module.systemPrompt(
+        CASE_SNAPSHOT,
+        personaDetails(),
+        forbidden_referral_names=[],
+        eligible_referrals=[],
+        eligible_files=[],
+    )
+    assert "Karen handles all complaint escalations." in prompt
+
+
+def test_system_prompt_carries_referral_and_file_sections():
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(),
         forbidden_referral_names=[],
         eligible_referrals=[{"handle": "R1", "name": "Bob", "role": "COO"}],
         eligible_files=[{"handle": "F1", "name": "Budget.pdf", "perceived_contents": "last quarter's numbers"}],
-        withheld_file_names=[],
     )
-    assert "Referrals:" in turn
-    assert "Files:" in turn
-    assert "R1: Bob (COO)" in turn
-    assert "F1: Budget.pdf (what you believe it contains: last quarter's numbers)" in turn
+    assert "Referrals:" in prompt
+    assert "Files:" in prompt
+    assert "R1: Bob (COO)" in prompt
+    assert "F1: Budget.pdf (what you believe it contains: last quarter's numbers)" in prompt
 
 
 def test_system_prompt_lists_each_eligible_referral_handle():
-    _, turn = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(),
         forbidden_referral_names=[],
@@ -97,86 +103,57 @@ def test_system_prompt_lists_each_eligible_referral_handle():
             {"handle": "R2", "name": "Sue", "role": "CTO"},
         ],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert "You MAY introduce" in turn
-    assert "R1: Bob (COO)" in turn
-    assert "R2: Sue (CTO)" in turn
+    assert "You MAY introduce" in prompt
+    assert "R1: Bob (COO)" in prompt
+    assert "R2: Sue (CTO)" in prompt
 
 
 def test_system_prompt_no_referrals_branch_when_eligible_referrals_empty():
-    _, turn = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(),
         forbidden_referral_names=[],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert "You have no one to introduce this turn." in turn
-    assert "You MAY introduce" not in turn
+    assert "You have no one to introduce this turn." in prompt
+    assert "You MAY introduce" not in prompt
 
 
 def test_system_prompt_files_no_perceived_contents_omits_parenthetical():
-    _, turn = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(),
         forbidden_referral_names=[],
         eligible_referrals=[],
         eligible_files=[{"handle": "F2", "name": "Empty.pdf", "perceived_contents": ""}],
-        withheld_file_names=[],
     )
-    assert "F2: Empty.pdf" in turn
-    assert "F2: Empty.pdf (what you believe" not in turn
+    assert "F2: Empty.pdf" in prompt
+    assert "F2: Empty.pdf (what you believe" not in prompt
 
 
 def test_system_prompt_no_files_branch_when_eligible_files_empty():
-    _, turn = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(),
         forbidden_referral_names=[],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert "You have no file to send this turn." in turn
-    assert "You MAY send" not in turn
-
-
-def test_system_prompt_withheld_file_names_sentence_present_when_given():
-    _, turn = prompt_module.systemPrompt(
-        CASE_SNAPSHOT,
-        personaDetails(),
-        forbidden_referral_names=[],
-        eligible_referrals=[],
-        eligible_files=[],
-        withheld_file_names=["Secret.pdf"],
-    )
-    assert "You possess but must NOT send or offer the following file(s): Secret.pdf." in turn
-
-
-def test_system_prompt_withheld_file_names_sentence_absent_when_empty():
-    _, turn = prompt_module.systemPrompt(
-        CASE_SNAPSHOT,
-        personaDetails(),
-        forbidden_referral_names=[],
-        eligible_referrals=[],
-        eligible_files=[],
-        withheld_file_names=[],
-    )
-    assert "must NOT send or offer" not in turn
+    assert "You have no file to send this turn." in prompt
+    assert "You MAY send" not in prompt
 
 
 def test_system_prompt_forbidden_referrals_add_the_never_mention_sentence():
-    _, turn = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(),
         forbidden_referral_names=["Karen"],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert "Never mention, introduce, or offer to connect the user" in turn
+    assert "Never mention, introduce, or offer to connect the user" in prompt
 
 
 # --------------------------------------------------------------------------
@@ -185,107 +162,65 @@ def test_system_prompt_forbidden_referrals_add_the_never_mention_sentence():
 
 
 def test_system_prompt_redacts_forbidden_name_from_known_facts():
-    stable, _ = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(known_facts="Karen handles all complaint escalations."),
         forbidden_referral_names=["Karen"],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert "Karen" not in stable
-    assert "[undisclosed contact]" in stable
+    assert "Karen" not in prompt
+    assert "[undisclosed contact]" in prompt
 
 
 def test_system_prompt_redaction_is_word_boundary_based():
     # "Ann" is a substring of "Anna" — it must NOT redact into the middle of a
     # longer word ("Anna" must stay intact, not become "[undisclosed contact]a").
-    stable, _ = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(known_facts="Anna is the CFO."),
         forbidden_referral_names=["Ann"],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert "Anna is the CFO." in stable
-    assert "[undisclosed contact]" not in stable
+    assert "Anna is the CFO." in prompt
+    assert "[undisclosed contact]" not in prompt
 
 
 def test_system_prompt_redaction_escapes_regex_metacharacters():
     # A name containing regex metacharacters must be treated literally, not
     # crash, and not over-match.
-    stable, _ = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(known_facts="Reach out to J. Smith for approvals."),
         forbidden_referral_names=["J. Smith"],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
-    assert "J. Smith" not in stable
-    assert "Reach out to [undisclosed contact] for approvals." in stable
+    assert "J. Smith" not in prompt
+    assert "Reach out to [undisclosed contact] for approvals." in prompt
 
 
 def test_system_prompt_redaction_skips_blank_and_whitespace_names():
-    stable, _ = prompt_module.systemPrompt(
+    prompt = prompt_module.systemPrompt(
         CASE_SNAPSHOT,
         personaDetails(known_facts="Karen handles all complaint escalations."),
         forbidden_referral_names=["", "   ", "Karen"],
         eligible_referrals=[],
         eligible_files=[],
-        withheld_file_names=[],
     )
     # Must not raise on the blank entries, and must still redact the real one.
-    assert "[undisclosed contact]" in stable
+    assert "[undisclosed contact]" in prompt
 
 
 # --------------------------------------------------------------------------
-# sanitizeHistory
-# --------------------------------------------------------------------------
-
-
-def test_sanitize_history_rewrites_locked_names_in_assistant_turns_only():
-    history = [
-        {"role": "user", "content": "Is Bob available?"},
-        {"role": "assistant", "content": "Bob is not available. Ask Bob later."},
-    ]
-    result = prompt_module.sanitizeHistory(history, ["Bob"])
-    assert result[0]["content"] == "Is Bob available?"  # user turn untouched
-    assert result[1]["content"] == "my contact is not available. Ask my contact later."
-
-
-def test_sanitize_history_returns_input_unchanged_when_no_locked_names():
-    history = [{"role": "assistant", "content": "Bob said hi."}]
-    result = prompt_module.sanitizeHistory(history, [])
-    assert result is history
-
-
-def test_sanitize_history_does_not_mutate_the_callers_list():
-    history = [{"role": "assistant", "content": "Bob is around."}]
-    result = prompt_module.sanitizeHistory(history, ["Bob"])
-    assert result is not history
-    assert history[0]["content"] == "Bob is around."  # original untouched
-
-
-# --------------------------------------------------------------------------
-# parseReply / jsonExtractor
+# parseReply
 # --------------------------------------------------------------------------
 
 
 def test_parse_reply_clean_json_object():
     raw = '{"reply": "Hi there.", "introduce": ["R1"], "send_files": []}'
     assert prompt_module.parseReply(raw) == {"reply": "Hi there.", "introduce": ["R1"], "send_files": []}
-
-
-def test_parse_reply_strips_code_fence():
-    raw = '```json\n{"reply": "Hi.", "introduce": [], "send_files": []}\n```'
-    assert prompt_module.parseReply(raw) == {"reply": "Hi.", "introduce": [], "send_files": []}
-
-
-def test_parse_reply_extracts_json_object_from_surrounding_prose():
-    raw = 'Sure, here it is: {"reply": "Hi.", "introduce": [], "send_files": []} thanks'
-    assert prompt_module.parseReply(raw) == {"reply": "Hi.", "introduce": [], "send_files": []}
 
 
 def test_parse_reply_empty_or_none_returns_none():

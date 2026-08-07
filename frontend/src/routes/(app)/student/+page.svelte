@@ -1,5 +1,5 @@
 <script lang="ts">
-import { onMount } from "svelte";
+import { onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import { apiFetch } from "$lib/api/client.js";
 import SimulationClock from "$lib/components/SimulationClock.svelte";
@@ -35,17 +35,33 @@ $effect(() => {
 	}
 });
 
-// Re-scroll whenever the active thread's message list changes.
+
+let scrollScheduled = false;
+let lastScrollKey = "";
 $effect(() => {
 	if (!run.activeContactId) return;
-	activeMessages.length;
-	requestAnimationFrame(() => messagesEndEl?.scrollIntoView({ block: "end" }));
+	const key = `${run.activeContactId}:${activeMessages.length}`;
+	const changed = untrack(() => {
+		if (key === lastScrollKey) return false;
+		lastScrollKey = key;
+		return true;
+	});
+	if (!changed || scrollScheduled) return;
+	scrollScheduled = true;
+	requestAnimationFrame(() => {
+		scrollScheduled = false;
+		messagesEndEl?.scrollIntoView({ block: "end" });
+	});
 });
 
-// sendMessage clears nothing itself; clear the input only when it accepted.
 function handleSend(): void {
 	if (overWordLimit) return;
 	if (run.sendMessage(inputValue)) inputValue = "";
+}
+
+function preloadPdfModule(): void {
+	import("$lib/student/pdf.js").catch(() => {
+	});
 }
 
 async function handleExportPdf(): Promise<void> {
@@ -88,6 +104,8 @@ async function handleExportPdf(): Promise<void> {
 				type="button"
 				disabled={!session.runId || isExporting}
 				onclick={handleExportPdf}
+				onpointerenter={preloadPdfModule}
+				onfocus={preloadPdfModule}
 				class="inline-flex items-center rounded-full border border-line bg-white px-4 py-2 font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-50"
 			>
 				{isExporting ? 'Exporting…' : 'Export PDF'}
@@ -295,6 +313,7 @@ async function handleExportPdf(): Promise<void> {
 			</div>
 		</aside>
 	</main>
+
 	<button
 		type="button"
 		onclick={() => run.endSimulation()}

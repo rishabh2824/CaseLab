@@ -1,20 +1,6 @@
-import json
-import logging
 import httpx
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, RateLimitError, InternalServerError
-from infra.settings import getSettings
-
-# Temporary diagnostic logging for the persona-reply/classifier workflow — logs the exact
-# prompt sent to and response received from every LLM call, to rule out structural issues
-# (e.g. classifier context windowing, text/tool-call mismatches) independent of app-wide
-# logging config. Explicit handler so this shows up regardless of uvicorn's root logger setup.
-logger = logging.getLogger("simulation_llm")
-logger.setLevel(logging.INFO)
-if not logger.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(message)s"))
-    logger.addHandler(_handler)
-    logger.propagate = False
+from infra.settings import getSettings, LLM_ATTEMPT_TIMEOUT, LLM_CLASSIFIER_TIMEOUT, PERSONA_REPLY_RETRIES
 
 # Shared client so the 4-6 LLM calls a single student message can fan out to reuse one connection pool
 client: AsyncOpenAI | None = None
@@ -43,7 +29,6 @@ async def closeClient() -> None:
 # Call the chat completions endpoint and return the reply text.
 async def chat(
     *, model: str, messages: list[dict], max_tokens: int, timeout: float, temperature: float | None = None,
-    label: str = "chat",
 ) -> str:
     if client is None: raise RuntimeError("LLM client failed to initialize.")
     kwargs = {"model": model, "messages": messages, "max_tokens": max_tokens, "timeout": timeout}
@@ -52,11 +37,8 @@ async def chat(
     # harassment) — pin routing to Anthropic directly so identical inputs aren't put through
     # whatever upstream OpenRouter happens to pick for a given request.
     kwargs["extra_body"] = {"provider": {"order": ["anthropic"], "allow_fallbacks": False}}
-    logger.info("[%s] REQUEST model=%s\n%s", label, model, json.dumps(messages, indent=2))
     response = await client.chat.completions.create(**kwargs)
-    content = response.choices[0].message.content or ""
-    logger.info("[%s] RESPONSE model=%s\n%s", label, model, content)
-    return content
+    return response.choices[0].message.content or ""
 
 
 # Schema the persona reply is constrained to (structured outputs). reply/introduce/send_files
@@ -64,35 +46,24 @@ async def chat(
 # guarantees introduce/send_files are always present and consistent with the same generation
 # that produced reply, unlike an optional, separately-decided tool call that the model can
 # simply skip or contradict.
+#
+# Descriptions here are deliberately terse field labels, not the full contract — replyInstructions()
+# (services/simulation/prompt.py) already states the full contract — required keys, the handle
+# format, the "introduce"/"send_files" agreement rule — inside the system prompt text. Restating
+# all of that here would just be the same prose paid again.
 PERSONA_REPLY_SCHEMA = {
     "type": "object",
     "properties": {
-        "reply": {
-            "type": "string",
-            "description": (
-                "Your in-character reply as plain text, 1-3 concise sentences, "
-                "with no speaker-name prefix and no surrounding quotes."
-            ),
-        },
+        "reply": {"type": "string", "description": "In-character reply text."},
         "introduce": {
             "type": "array",
             "items": {"type": "string"},
-            "description": (
-                'Contact handles (e.g. "R1") you are introducing in this reply. '
-                "If your reply text introduces or connects the user to a contact, "
-                "that contact's handle MUST appear here; otherwise []. Only use "
-                "handles listed as available to you this turn."
-            ),
+            "description": "Contact handles introduced in this reply.",
         },
         "send_files": {
             "type": "array",
             "items": {"type": "string"},
-            "description": (
-                'File handles (e.g. "F1") you are sending with this reply, or []. '
-                "If your reply text says you are sending/attaching a file, that "
-                "file's handle MUST appear here. Only use handles listed as "
-                "available to you this turn."
-            ),
+            "description": "File handles sent with this reply.",
         },
     },
     "required": ["reply", "introduce", "send_files"],
@@ -105,24 +76,19 @@ RETRYABLE_EXCEPTIONS = (APIConnectionError, APITimeoutError, RateLimitError, Int
 
 
 # Streaming persona reply. Yields {"type": "delta", "text": ...} for each raw fragment of the
-# schema-constrained JSON object as it streams. The caller (services/simulation/service.py)
+# schema-constrained JSON object as it streams. The caller (services/simulation/stream.py)
 # incrementally extracts just the "reply" field for the live preview (see ReplyExtractor in
 # services/simulation/reply_stream.py), then authoritatively parses the full accumulated text
 # once the stream ends — the live preview is best-effort, the final parse is the reply of record.
 async def personaReplyStream(messages: list[dict]):
     if client is None: raise RuntimeError("LLM client failed to initialize.")
     settings = getSettings()
-    retries = 2
+    retries = PERSONA_REPLY_RETRIES
 
     attempt = 0
     while True:
         attempt += 1
         yielded_any = False
-        full_text_parts: list[str] = []
-        logger.info(
-            "[persona_reply] REQUEST model=%s attempt=%d\n%s",
-            settings.llm_model, attempt, json.dumps(messages, indent=2),
-        )
         try:
             stream = await client.chat.completions.create(
                 model=settings.llm_model,
@@ -133,23 +99,20 @@ async def personaReplyStream(messages: list[dict]):
                     "json_schema": {"name": "persona_reply", "strict": True, "schema": PERSONA_REPLY_SCHEMA},
                 },
                 stream=True,
-                timeout=30,
+                timeout=LLM_ATTEMPT_TIMEOUT,
+                # Same provider pin as chat() (classifiers): route to Anthropic directly
+                # so identical inputs aren't put through whatever upstream OpenRouter
+                # happens to pick for a given request.
+                extra_body={"provider": {"order": ["anthropic"], "allow_fallbacks": False}},
             )
             async for chunk in stream:
                 if not chunk.choices: continue
                 delta = chunk.choices[0].delta
                 if delta.content:
                     yielded_any = True
-                    full_text_parts.append(delta.content)
                     yield {"type": "delta", "text": delta.content}
-
-            logger.info(
-                "[persona_reply] RESPONSE model=%s attempt=%d\n%s",
-                settings.llm_model, attempt, "".join(full_text_parts),
-            )
             return
         except Exception as exc:
-            logger.info("[persona_reply] ERROR model=%s attempt=%d exc=%r", settings.llm_model, attempt, exc)
             if not yielded_any and attempt < retries and isinstance(exc, RETRYABLE_EXCEPTIONS):
                 continue
             raise
@@ -175,15 +138,14 @@ def formatTranscript(conversation: list[dict], limit: int = CLASSIFIER_HISTORY_L
 
 
 # YES / NO Classifier for below methods
-async def classifier(system_prompt: str, user_prompt: str, *, label: str = "classifier") -> bool:
+async def classifier(system_prompt: str, user_prompt: str) -> bool:
     settings = getSettings()
     raw = await chat(
         model=settings.llm_classifier_model,
         messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
         temperature=0,
         max_tokens=10,
-        timeout=20,
-        label=label,
+        timeout=LLM_CLASSIFIER_TIMEOUT,
     )
     return raw.strip().upper().startswith("YES")
 
@@ -222,7 +184,7 @@ async def classifyCondition(kind: str, condition: str, conversation: list[dict])
         f"Conversation (most recent last):\n{transcript}\n\n"
         f"Conversation stats: user_messages={user_count}, assistant_messages={assistant_count}"
     )
-    return await classifier(system_prompt, user_prompt, label=kind)
+    return await classifier(system_prompt, user_prompt)
 
 
 async def classifyReferral(condition: str, conversation: list[dict]) -> bool:
@@ -255,10 +217,19 @@ async def classifyHarassment(user_message: str, conversation: list[dict]) -> str
             messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
             temperature=0,
             max_tokens=10,
-            timeout=30,
-            label="harassment",
+            timeout=LLM_ATTEMPT_TIMEOUT,
         )
-    except Exception: return "normal"
+    except Exception:
+        # Fail OPEN, deliberately: a classifier outage (timeout, upstream error)
+        # must not itself block a student from continuing their case. The cost of
+        # under-flagging one message during an outage is low; the cost of a wave
+        # of "please resend" errors for every student mid-simulation is not.
+        # Contrast with referralUnlock/fileShare (services/simulation/prompt.py),
+        # which fail CLOSED (propagate) — there, an outage silently deciding
+        # "don't unlock"/"don't share" is the wrong default because it can hide
+        # content the case design says the student should have gotten, with no
+        # signal to the student or case author that anything went wrong.
+        return "normal"
     label = raw.strip().upper()
     if label.startswith("NONSENSE"): return "nonsense"
     return "normal"

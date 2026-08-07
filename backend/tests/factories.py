@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from models.admin import AdminRole
-from models.cases import CasePayload, CaseStructure, CaseUpdatePayload
-from models.simulation_runtime import PersonaGraph, Run, RunCaseSnapshot
+from models.cases import CasePayload, CaseStructure, CaseUpdate
+from models.runtime import PersonaGraph, Run, CaseSnapshot
 from services.auth import CurrentAdmin
 
 
@@ -35,8 +35,8 @@ def createPayload(**overrides: Any) -> CasePayload:
     return CasePayload(**casePayload(**overrides))
 
 
-def updatePayload(expected_version: int, **overrides: Any) -> CaseUpdatePayload:
-    return CaseUpdatePayload(**casePayload(**overrides), expected_version=expected_version)
+def updatePayload(expected_version: int, **overrides: Any) -> CaseUpdate:
+    return CaseUpdate(**casePayload(**overrides), expected_version=expected_version)
 
 
 def asCurrentAdmin(admin) -> CurrentAdmin:
@@ -95,8 +95,7 @@ def run(**overrides: Any) -> Run:
     turn_state/run_store helpers directly against a valid Run shell rather
     than driving a full turn through the `sim` fixture."""
     base: dict[str, Any] = dict(
-        case_id=1,
-        case_snapshot=RunCaseSnapshot(id=1, case_name="Case", brief="Brief", simulation_duration=None),
+        case_snapshot=CaseSnapshot(id=1, case_name="Case", brief="Brief", simulation_duration=None),
         persona_graph=PersonaGraph(),
         start_time=1000.0,
         active_persona_id="A",

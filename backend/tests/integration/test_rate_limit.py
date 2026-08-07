@@ -1,4 +1,4 @@
-"""DB-backed tests for infra/rate_limit.py + infra/rate_limits.py.
+"""DB-backed tests for infra/rate_limit_policy.py + infra/rate_limit_repo.py.
 
 The fixed-window limiter is a single Postgres `INSERT ... ON CONFLICT DO
 UPDATE ... RETURNING` statement — its correctness (pinned start_time within a
@@ -13,22 +13,22 @@ import uuid
 
 import pytest
 from sqlalchemy import delete
-import infra.rate_limit as rate_limit
+import infra.rate_limit_policy as rate_limit
 from domain_errors import RateLimited
 from infra.db import getSession
 from infra.db_models import RateLimit
-from infra import rate_limits as repo
+from infra import rate_limit_repo as repo
 
 
 # upsertAndGet needs the RETURNING clause from a Core INSERT ... ON CONFLICT
 # statement, which session.exec() doesn't support — same reason
 # pyproject.toml's filterwarnings already exempts services.cases and
 # services.admin from "session.execute() is deprecated, use exec()". This
-# file is the first to exercise infra.rate_limits directly, so it needs
+# file is the first to exercise infra.rate_limit_repo directly, so it needs
 # the same exemption; added here rather than in pyproject.toml (off-limits
 # per the task rules) since pytest.mark.filterwarnings can scope it per-file
 # just as well.
-pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning:infra.rate_limits")
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning:infra.rate_limit_repo")
 
 
 def uniqueKey(prefix: str) -> str:
@@ -37,7 +37,7 @@ def uniqueKey(prefix: str) -> str:
 
 @pytest.fixture
 async def rateLimitKeys():
-    """Tracks every rate_limits.key this test created so it can be swept up
+    """Tracks every rate_limit_repo.key this test created so it can be swept up
     afterward — this table is shared with the running application, so a
     leaked row would sit there polluting real rate-limit counts."""
     keys: list[str] = []

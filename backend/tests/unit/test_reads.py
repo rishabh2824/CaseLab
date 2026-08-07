@@ -1,6 +1,6 @@
 """services/simulation/reads.py — pure shaping of persona-graph data.
 
-reads.py never touches Spaces (see services/simulation/service.py::hydratePersona,
+reads.py never touches Spaces (see services/simulation/state.py::hydratePersona,
 which is where a signed profile-photo URL gets attached) — every persona these
 functions hand back is raw, so nothing here needs to patch anything impure.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from models.cases import PersonaPayload
-from models.simulation_runtime import PersonaGraph, RunCaseSnapshot
+from models.runtime import PersonaGraph, CaseSnapshot
 from services.simulation import reads as reads_module
 
 from tests import factories
@@ -30,7 +30,7 @@ def test_case_snapshot_shapes_the_case_row():
         duration=45,
         access_code="STERLING",
     )
-    assert reads_module.caseSnapshot(case) == RunCaseSnapshot(
+    assert reads_module.caseSnapshot(case) == CaseSnapshot(
         id=1,
         case_name="Sterling Industries",
         brief="Reduce office supply costs.",

@@ -1,6 +1,7 @@
 """services/cases.py — validateGraph and the other pure helpers that don't
-need a database: normalizeAccessCode and violation (the IntegrityError
-sniffer used to turn a duplicate access_code into a friendly 409).
+need a database: normalizeAccessCode and violation (the IntegrityError sniffer
+used to turn a duplicate access_code into a friendly 409 — constraint-name-aware
+so it doesn't also fire for an unrelated UNIQUE violation like uq_files_object_key).
 """
 
 from __future__ import annotations
@@ -179,19 +180,21 @@ def test_normalize_access_code_trims_whitespace():
 
 
 class FakeOrig(Exception):
-    def __init__(self, sqlstate):
-        self.sqlstate = sqlstate
+    def __init__(self, constraint_name):
+        self.constraint_name = constraint_name
 
 
-def test_violation_true_for_unique_constraint_integrity_error():
-    exc = IntegrityError("stmt", {}, FakeOrig("23505"))
-    assert case_service.violation(exc) is True
+def test_violation_true_for_the_named_constraint():
+    exc = IntegrityError("stmt", {}, FakeOrig("idx_cases_access_code_unique"))
+    assert case_service.violation(exc, "idx_cases_access_code_unique") is True
 
 
-def test_violation_false_for_other_integrity_errors():
-    exc = IntegrityError("stmt", {}, FakeOrig("23503"))  # foreign-key violation, not unique
-    assert case_service.violation(exc) is False
+def test_violation_false_for_a_different_constraint():
+    # A real UNIQUE violation (uq_files_object_key, e.g. two concurrent requests
+    # creating the same brand-new file) — just not the one the caller asked about.
+    exc = IntegrityError("stmt", {}, FakeOrig("uq_files_object_key"))
+    assert case_service.violation(exc, "idx_cases_access_code_unique") is False
 
 
 def test_violation_false_for_non_integrity_error():
-    assert case_service.violation(ValueError("not an integrity error")) is False
+    assert case_service.violation(ValueError("not an integrity error"), "idx_cases_access_code_unique") is False

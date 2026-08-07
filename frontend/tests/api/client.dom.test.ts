@@ -5,7 +5,12 @@
 // server-side caller to cover.
 import { delay, HttpResponse, http } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, apiFetch, streamChat } from "../../src/lib/api/client.js";
+import {
+	ApiError,
+	apiFetch,
+	StreamInterruptedError,
+	streamChat,
+} from "../../src/lib/api/client.js";
 import { server, sseBody, sseStreamResponse } from "../support/msw.js";
 
 function assertApiError(err: unknown): asserts err is ApiError {
@@ -337,7 +342,12 @@ describe("streamChat", () => {
 			};
 		}
 
-		it("rejects with the timeout message when the stream stalls between chunks", async () => {
+		it("rejects with a StreamInterruptedError when the stream stalls between chunks", async () => {
+			// This mock's response already resolved (200, headers sent) before the
+			// stall — the same shape as a request the backend accepted and started
+			// processing, then stopped responding to. StreamInterruptedError is
+			// the signal run.svelte.ts uses to refetch instead of assuming
+			// nothing happened server-side.
 			vi.stubGlobal(
 				"fetch",
 				fetchWithAbortAwareStream(
@@ -349,13 +359,15 @@ describe("streamChat", () => {
 				),
 			);
 
-			await expect(
-				streamChat("/api/stream/stall", {
-					body: {},
-					onEvent: () => {},
-					idleTimeoutMs: 30,
-				}),
-			).rejects.toThrow(
+			const err = await streamChat("/api/stream/stall", {
+				body: {},
+				onEvent: () => {},
+				idleTimeoutMs: 30,
+			}).catch((e) => e);
+
+			expect(err).toBeInstanceOf(StreamInterruptedError);
+			expect(err).toHaveProperty(
+				"message",
 				"Connection timed out. Please check your network and try again.",
 			);
 		});
@@ -380,7 +392,7 @@ describe("streamChat", () => {
 			expect(events).toHaveLength(5);
 		});
 
-		it("produces the timeout message on a connect-phase stall (server never responds)", async () => {
+		it("produces the timeout message on a connect-phase stall (server never responds), not a StreamInterruptedError", async () => {
 			server.use(
 				http.post("*/api/stream/connect-stall", async () => {
 					await delay(500);
@@ -388,13 +400,18 @@ describe("streamChat", () => {
 				}),
 			);
 
-			await expect(
-				streamChat("/api/stream/connect-stall", {
-					body: {},
-					onEvent: () => {},
-					idleTimeoutMs: 30,
-				}),
-			).rejects.toThrow(
+			// No response was ever received here -- unlike the mid-stream stall
+			// above, run.svelte.ts must NOT treat this as "the backend already
+			// started" and refetch, since nothing was ever persisted.
+			const err = await streamChat("/api/stream/connect-stall", {
+				body: {},
+				onEvent: () => {},
+				idleTimeoutMs: 30,
+			}).catch((e) => e);
+
+			expect(err).not.toBeInstanceOf(StreamInterruptedError);
+			expect(err).toHaveProperty(
+				"message",
 				"Connection timed out. Please check your network and try again.",
 			);
 		});

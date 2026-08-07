@@ -229,23 +229,6 @@ export interface paths {
 		patch?: never;
 		trace?: never;
 	};
-	"/api/simulations/{run_id}/notes": {
-		parameters: {
-			query?: never;
-			header?: never;
-			path?: never;
-			cookie?: never;
-		};
-		get?: never;
-		/** Updatenotes */
-		put: operations["updateNotes_api_simulations__run_id__notes_put"];
-		post?: never;
-		delete?: never;
-		options?: never;
-		head?: never;
-		patch?: never;
-		trace?: never;
-	};
 	"/api/simulations/{run_id}/message": {
 		parameters: {
 			query?: never;
@@ -502,16 +485,6 @@ export interface components {
 			/** Name */
 			name?: string | null;
 		};
-		/** NotesPayload */
-		NotesPayload: {
-			/** Notes */
-			notes: string;
-		};
-		/** NotesResponse */
-		NotesResponse: {
-			/** Notes */
-			notes: string;
-		};
 		/** PersonaPayload */
 		PersonaPayload: {
 			/** Id */
@@ -571,6 +544,16 @@ export interface components {
 			/** Expires In */
 			expires_in: number;
 		};
+		/** PresignUploadBatchRequest */
+		PresignUploadBatchRequest: {
+			/** Files */
+			files: components["schemas"]["PresignUploadRequest"][];
+		};
+		/** PresignUploadBatchResponse */
+		PresignUploadBatchResponse: {
+			/** Files */
+			files: components["schemas"]["PresignUploadResponse"][];
+		};
 		/** ReferralEdgePayload */
 		ReferralEdgePayload: {
 			/** From Id */
@@ -606,8 +589,6 @@ export interface components {
 			histories: {
 				[key: string]: components["schemas"]["ChatMessage"][];
 			};
-			/** Notes */
-			notes: string;
 		};
 		/** SendMessagePayload */
 		SendMessagePayload: {
@@ -667,13 +648,13 @@ export interface components {
 		DoneFrame: {
 			/** Reply */
 			reply: string;
-			/** History */
-			history: components["schemas"]["ChatMessage"][];
 		};
 		/** ErrorFrame */
 		ErrorFrame: {
 			/** Detail */
 			detail: string;
+			/** Code */
+			code: string | null;
 		};
 	};
 	responses: never;
@@ -1219,41 +1200,6 @@ export interface operations {
 				};
 				content: {
 					"application/json": components["schemas"]["ExportResponse"];
-				};
-			};
-			/** @description Validation Error */
-			422: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["HTTPValidationError"];
-				};
-			};
-		};
-	};
-	updateNotes_api_simulations__run_id__notes_put: {
-		parameters: {
-			query?: never;
-			header?: never;
-			path: {
-				run_id: string;
-			};
-			cookie?: never;
-		};
-		requestBody: {
-			content: {
-				"application/json": components["schemas"]["NotesPayload"];
-			};
-		};
-		responses: {
-			/** @description Successful Response */
-			200: {
-				headers: {
-					[name: string]: unknown;
-				};
-				content: {
-					"application/json": components["schemas"]["NotesResponse"];
 				};
 			};
 			/** @description Validation Error */

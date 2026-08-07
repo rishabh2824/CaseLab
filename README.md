@@ -30,8 +30,8 @@ pnpm install
 
 Each app reads its config from a git-ignored `.env` file in its own folder:
 
-- `backend/.env` — `SPACES_KEY`, `SPACES_SECRET`, `POOLING`/`DIRECT` (Neon
-  Postgres), `FRONTEND_URLS`, `LLM_KEY` (an [OpenRouter](https://openrouter.ai)
+- `backend/.env` — `SPACES_KEY`, `SPACES_SECRET`, `DIRECT` (Neon Postgres,
+  non-pooled), `FRONTEND_URLS`, `LLM_KEY` (an [OpenRouter](https://openrouter.ai)
   API key), `GOOGLE_CLIENT_ID`, `JWT_SECRET`. See `backend/infra/settings.py`
   for the full list and defaults.
 - `frontend/.env` — `VITE_GOOGLE_CLIENT_ID`.

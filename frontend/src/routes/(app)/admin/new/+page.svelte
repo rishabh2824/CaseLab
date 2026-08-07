@@ -29,7 +29,7 @@ import { goto } from "$app/navigation";
 		<div class="mt-12 grid gap-6 md:grid-cols-2">
 			<button
 				type="button"
-				onclick={() => goto('/admin/new/scratch')}
+				onclick={() => goto('/admin/cases/new')}
 				class="group rounded-3xl border border-line bg-white p-8 text-left shadow-soft transition hover:-translate-y-1 hover:border-brand hover:shadow-premium"
 			>
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">

@@ -2,26 +2,17 @@ import json
 import re
 from infra.llm import classifyFileShare, classifyReferral
 from models.cases import FileEntry
-from models.simulation_runtime import PersonaDetail, Referral, RunCaseSnapshot
+from models.runtime import PersonaDetail, Referral, CaseSnapshot
 
 
 def systemPrompt(
-    case_snapshot: RunCaseSnapshot,
+    case_snapshot: CaseSnapshot,
     persona_details: PersonaDetail,
     *,
     forbidden_referral_names,
     eligible_referrals,
     eligible_files,
-    withheld_file_names,
-):
-    known_facts = persona_details.known_facts or "None"
-    # Redact still-forbidden contacts from the facts the model sees
-    if forbidden_referral_names and known_facts != "None":
-        for name in forbidden_referral_names:
-            if not name.strip():
-                continue
-            known_facts = re.sub(rf"\b{re.escape(name)}\b","[undisclosed contact]", known_facts)
-
+) -> str:
     # --- referral guidance ---
     referral_lines = []
     if eligible_referrals:
@@ -68,12 +59,16 @@ def systemPrompt(
             "You have no file to send this turn. Do not claim to send, attach, or offer "
             'any file; keep "send_files" empty.'
         )
-    if withheld_file_names:
-        file_lines.append(
-            "You possess but must NOT send or offer the following file(s): "
-            f"{', '.join(withheld_file_names)}."
-        )
     file_section = " ".join(file_lines)
+
+    # Redact still-forbidden contacts from the facts the model sees. forbidden_referral_names
+    # varies turn to turn as referrals unlock over the conversation.
+    known_facts = persona_details.known_facts or "None"
+    if forbidden_referral_names and known_facts != "None":
+        for name in forbidden_referral_names:
+            if not name.strip():
+                continue
+            known_facts = re.sub(rf"\b{re.escape(name)}\b","[undisclosed contact]", known_facts)
 
     stable = (
         "You are a persona in a case simulation. Stay in character.\n"
@@ -83,33 +78,17 @@ def systemPrompt(
         f"Persona name: {persona_details.name}\n"
         f"Role/title: {persona_details.role}\n"
         f"Personality traits: {persona_details.personality_traits or 'None'}\n"
-        f"Persona information: {known_facts}\n"
         "Never fabricate details outside your known facts. If asked about unknown facts, say you do not know.\n"
     )
     turn = (
+        f"Persona information: {known_facts}\n"
         f"Referrals: {referral_section}\n"
         f"Files: {file_section}\n"
         "Strict rule: the contact(s) and file(s) listed as available above are the ONLY "
         "ones you may ever introduce or send, and only by listing their handle. Never "
         "promise, imply, or offer any referral or file you are not enacting this turn."
     )
-    return stable, turn
-
-
-def sanitizeHistory(history: list[dict], locked_names: list[str]) -> list[dict]:
-    locked_names = [name for name in locked_names if name and name.strip()]
-    if not locked_names:
-        return history
-    sanitized = []
-    for msg in history:
-        if msg.get("role") == "assistant":
-            content = msg.get("content", "")
-            for name in locked_names:
-                content = re.sub(rf"\b{re.escape(name)}\b", "my contact", content)
-            sanitized.append({**msg, "content": content})
-        else:
-            sanitized.append(msg)
-    return sanitized
+    return f"{stable}\n\n{turn}"
 
 
 def replyInstructions() -> str:
@@ -135,27 +114,16 @@ def cleanReply(text: str) -> str:
     return reply
 
 
-# Extracts the JSON if the reply is not clean
-def jsonExtractor(text: str) -> str | None:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    return text[start : end + 1]
-
-
-# Processes the LLM reply
+# Processes the LLM reply. The provider streams with strict structured-output decoding
+# (see PERSONA_REPLY_SCHEMA in infra/llm.py), so `raw` is always a bare, valid JSON
+# object — never wrapped in a code fence or surrounded by prose, which strict decoding
+# can't produce. No fence-stripping or brace-scanning fallback needed.
 def parseReply(raw: str) -> dict | None:
     text = (raw or "").strip()
     if not text: return None
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    if fence: text = fence.group(1).strip()
-    for candidate in (text, jsonExtractor(text)):
-        if not candidate: continue
-        try: data = json.loads(candidate)
-        except (json.JSONDecodeError, TypeError): continue
-        if isinstance(data, dict): return data
-    return None
+    try: data = json.loads(text)
+    except (json.JSONDecodeError, TypeError): return None
+    return data if isinstance(data, dict) else None
 
 
 # normalizes referral/file "handles"
@@ -170,6 +138,13 @@ def coerceHandles(value) -> list[str]:
     return handles
 
 
+# Both of these deliberately have no try/except, unlike infra.llm.classifyHarassment's
+# fail-open "normal" default: a classifier outage here should fail the whole message
+# (see the try/except around asyncio.gather(...) in service.py's message()) rather than
+# silently deciding "don't unlock"/"don't share". Fail-open is right for a safety gate,
+# where under-flagging during an outage is the cheap failure mode; it's wrong here,
+# where the silent default would withhold content the case design says the student
+# should have gotten, with nothing telling the student or case author it happened.
 async def referralUnlock(referral: Referral, decision_history: list[dict]) -> bool:
     condition = referral.condition_trigger.strip()
     if not condition: return False

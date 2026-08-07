@@ -2,20 +2,35 @@ from sqlmodel import select
 from domain_errors import CaseNotFound
 from infra.db_models import Case
 from models.cases import CaseStructure, PersonaPayload
-from models.simulation_runtime import PersonaDetail, PersonaGraph, Referral, RunCaseSnapshot, Run
+from models.runtime import PersonaDetail, PersonaGraph, Referral, CaseSnapshot, Run
 
 
-async def fetchCase(session, *, case_id: int | None = None, access_code: str | None = None) -> Case | None:
-    if case_id:
-        return await session.get(Case, case_id)
-    if access_code:
-        result = await session.exec(select(Case).where(Case.access_code == access_code.strip()))
-        return result.first()
-    raise ValueError("fetch_case requires case_id or access_code.")
+# Deliberately fetches the full row (no load_only column projection): the only
+# caller, getCaseWithGraph below, always needs `structure` right after. Projecting
+# it away would just leave it deferred on the returned Case instance, and reading
+# a deferred column outside an awaited ORM call raises MissingGreenlet under the
+# async engine -- this bit us once already (see getCaseWithGraph's comment) via a
+# second session.get(Case, id) that hit the identity map instead of re-querying.
+async def fetchCase(session, *, access_code: str) -> Case | None:
+    code = access_code.strip()
+    # The `!= ""` / `is_not(None)` clauses are otherwise redundant given `code` here
+    # (already stripped, and startSimulation rejects an empty access code before
+    # this is ever called) -- they're there so this WHERE clause literally matches
+    # idx_cases_access_code_unique's partial predicate. A student hitting this on
+    # their very first request is exactly the query that most needs the index
+    # rather than a generic-plan seq scan across every case.
+    result = await session.exec(
+        select(Case).where(
+            Case.access_code == code,
+            Case.access_code.is_not(None),
+            Case.access_code != "",
+        )
+    )
+    return result.first()
 
 
-def caseSnapshot(case) -> RunCaseSnapshot:
-    return RunCaseSnapshot(
+def caseSnapshot(case) -> CaseSnapshot:
+    return CaseSnapshot(
         id=case.id,
         case_name=case.name,
         brief=case.brief,
@@ -25,15 +40,9 @@ def caseSnapshot(case) -> RunCaseSnapshot:
     )
 
 
-async def getCase(session, access_code: str | None = None, case_id: int | None = None) -> RunCaseSnapshot:
-    case = await fetchCase(session, access_code=access_code, case_id=case_id)
-    if case is None: raise CaseNotFound("No case found.")
-    return caseSnapshot(case)
-
-
 # startSimulation always seeds run.case_snapshot at creation, so this is a pure
 # in-memory read — Run.case_snapshot is a required field, never None.
-async def getRunCase(run: Run) -> RunCaseSnapshot:
+async def getRunCase(run: Run) -> CaseSnapshot:
     return run.case_snapshot
 
 
@@ -78,12 +87,18 @@ def flattenPersonas(structure: CaseStructure) -> PersonaGraph:
     return PersonaGraph(personas=personas, referrals=referrals, roots=root_ids)
 
 
-# Root personas + the full referral graph for a case, fetched once and cached into the run blob
-async def buildPersonaGraph(session, case_id: int) -> PersonaGraph:
-    case = await fetchCase(session, case_id=case_id)
+# startSimulation's only entry into the DB: fetches the case by access code
+# once and derives both the snapshot and the initial persona graph from that
+# single row, rather than a getCase() + buildPersonaGraph() pair that each
+# issued their own fetchCase — the second of which was a session.get(Case, id)
+# identity-map hit against the row this same fetch already produced, so it
+# never re-ran the query and never picked up `structure` if the first fetch
+# hadn't loaded it.
+async def getCaseWithGraph(session, access_code: str) -> tuple[CaseSnapshot, PersonaGraph]:
+    case = await fetchCase(session, access_code=access_code)
     if case is None: raise CaseNotFound("No case found.")
     structure = CaseStructure.model_validate(case.structure)
-    return flattenPersonas(structure)
+    return caseSnapshot(case), flattenPersonas(structure)
 
 
 # Persona graph for the current run. Same pure in-memory read as getRunCase —
@@ -93,7 +108,7 @@ async def getPersonaGraph(run: Run) -> PersonaGraph:
 
 
 # Referrals authored by a persona. Personas here are raw (never a signed profile-photo
-# URL) — hydratePersona (services/simulation/service.py) is the caller's job at the
+# URL) — hydratePersona (services/simulation/state.py) is the caller's job at the
 # point it builds a response, not this module's; reads.py never touches Spaces.
 def graphReferrals(graph: PersonaGraph, parent_persona_id: str) -> list[Referral]:
     return [edge for edge in graph.referrals if edge.parent_persona_id == parent_persona_id]
@@ -108,4 +123,3 @@ def graphPersonas(graph: PersonaGraph, referred_ids) -> list[PersonaDetail]:
 # Raw persona for any id in the graph, root or referred — O(1) dict lookup.
 def graphPersonaById(graph: PersonaGraph, persona_id: str) -> PersonaDetail | None:
     return graph.personas.get(persona_id)
-

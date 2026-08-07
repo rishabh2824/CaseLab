@@ -1,10 +1,11 @@
-"""The core turn lifecycle: message() preparing a generation request, and
-streamMessage()/reply() driving it to completion and persisting the result.
+"""The core turn lifecycle: prepareTurn() preparing a generation request, and
+streamTurn()/generateReply() driving it to completion and persisting the result.
 """
 
 import pytest
 from domain_errors import InvalidRequest, UpstreamError
-from services.simulation.service import HISTORY_MESSAGE_LIMIT, MESSAGE_WORDS, getSimulationState
+from services.simulation.state import getSimulationState
+from services.simulation.turn import HISTORY_MESSAGE_LIMIT, MESSAGE_WORDS
 
 from tests import factories
 
@@ -13,7 +14,7 @@ def singlePersonaCase(**persona_overrides):
     return factories.caseStructure(personas=[factories.persona("A", **persona_overrides)], roots=["A"])
 
 
-async def test_message_prepares_a_normal_turn_with_cached_system_prompt(sim):
+async def test_message_prepares_a_normal_turn_with_system_prompt(sim):
     sim.setCase(structure=singlePersonaCase())
     state = await sim.start()
     run_id = state.run_id
@@ -23,10 +24,7 @@ async def test_message_prepares_a_normal_turn_with_cached_system_prompt(sim):
     assert prepared.kind == "normal"
     system = prepared.messages[0]
     assert system["role"] == "system"
-    # The stable half (case + persona facts) is cached; the per-turn half
-    # (referral/file offers, which change every message) is not.
-    assert system["content"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
-    assert "cache_control" not in system["content"][1]
+    assert isinstance(system["content"], str)
     # The rest of the payload is the recent history, which for a first
     # message is just the user's own turn.
     assert prepared.messages[1:] == [{"role": "user", "content": "What vendor do we use?"}]
@@ -43,10 +41,10 @@ async def test_send_streams_delta_then_meta_then_done_and_persists_reply(sim):
     assert [name for name, _ in frames] == ["delta", "meta", "done"]
     assert sim.deltas(frames) == "Our vendor is Acme."
     done = sim.frame(frames, "done")
-    assert done["history"] == [
-        {"role": "user", "content": "What vendor do we use?"},
-        {"role": "assistant", "content": "Our vendor is Acme."},
-    ]
+    # DoneFrame carries just `reply` now, not the persona's whole history (see
+    # simulation_runtime.py's DoneFrame) -- run.svelte.ts reconstructs the
+    # committed turn locally from `reply` instead.
+    assert done == {"reply": "Our vendor is Acme."}
     assert sim.store.raw(run_id)["history"]["A"][-1] == {"role": "assistant", "content": "Our vendor is Acme."}
 
 

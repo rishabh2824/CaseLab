@@ -4,6 +4,20 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+	build: {
+		rollupOptions: {
+			// jsPDF only reaches for these (dynamically, via its own `.html()`/SVG
+			// paths) through optionalDependencies — src/lib/student/pdf.ts never
+			// calls those methods, only the plain text API, so these never
+			// actually run. Left un-externalized, Rollup still statically finds
+			// jsPDF's `import("html2canvas")`/`import("canvg")` and emits them as
+			// real (if never-fetched) chunks — ~343KB of dead weight in the
+			// deploy. Externalizing drops them from the build entirely; if `.html()`
+			// is ever actually called, both would need to become real (non-
+			// external) dependencies again first, or that call fails at runtime.
+			external: ["html2canvas", "canvg"],
+		},
+	},
 	plugins: [
 		tailwindcss(),
 		sveltekit({
@@ -20,7 +34,7 @@ export default defineConfig({
 	server: {
 		// Proxy API calls to the backend so the browser sees frontend and backend
 		// as the same origin locally too, matching production's path-based routing
-		// under one domain (see backend/services/admin_auth.py's admin_session
+		// under one domain (see backend/services/auth.py's admin_session
 		// cookie, which is SameSite=Lax and gets silently rejected by the browser
 		// without this — it relies on first-party/same-origin, not cross-site CORS).
 		proxy: {
@@ -37,13 +51,9 @@ export default defineConfig({
 			provider: "v8",
 			reporter: ["text", "lcov"],
 			include: ["src/lib/**/*.{ts,svelte}"],
-			// Generated wire types, the Google Identity ambient declaration, and
-			// the barrel file contain no behavior to cover.
-			exclude: [
-				"src/lib/api/schema.d.ts",
-				"src/lib/*.d.ts",
-				"src/lib/index.ts",
-			],
+			// Generated wire types and the Google Identity ambient declaration
+			// contain no behavior to cover.
+			exclude: ["src/lib/api/schema.d.ts", "src/lib/*.d.ts"],
 		},
 		projects: [
 			{

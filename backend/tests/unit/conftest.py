@@ -12,8 +12,8 @@ What is faked, and why:
   `updateRun`'s read-modify-write contract is preserved, so the mutate
   functions in service.py run exactly as they do in production.
 * `reads.fetchCase` — returns a `Case` built in memory. Deliberately patched
-  *below* `getCase`/`buildPersonaGraph` so `caseSnapshot`, `CaseStructure`
-  validation and `flattenPersonas` are all still under test.
+  *below* `getCaseWithGraph` so `caseSnapshot`, `CaseStructure` validation
+  and `flattenPersonas` are all still under test.
 * the LLM — `StubLlm` below, which is programmable per test and records every
   call, so a test can assert on what the classifier was actually asked.
 * rate limits and Spaces URL signing — patched away; they have their own tests.
@@ -29,11 +29,13 @@ from collections.abc import Callable
 import pytest
 from infra.db_models import Case
 from models.cases import CaseStructure
-from models.simulation_runtime import Run
-from models.simulations import SendMessagePayload, StartSimulationPayload
+from models.runtime import Run
+from models.simulations import SendMessage, StartSimulation
 from services.simulation import prompt as prompt_module
 from services.simulation import reads as reads_module
-from services.simulation import service as sim_service
+from services.simulation import state as state_module
+from services.simulation import stream as stream_module
+from services.simulation import turn as turn_module
 
 from tests import factories
 
@@ -53,8 +55,8 @@ class FakeRunStore:
     dict key that comes back as a string, once the blob has been through
     JSONB.
 
-    The real store (run_store.py) splits persistence across a snapshot/state/
-    notes row plus a separate run_messages table; this fake deliberately
+    The real store (run_store.py) splits persistence across a snapshot/state
+    row plus a separate run_messages table; this fake deliberately
     keeps everything as one blob instead of mirroring that split, since Run's
     public shape (what service.py/turn_state.py actually read) didn't change
     and tests only ever observe that shape or `raw()`'s flattened dict below.
@@ -68,14 +70,20 @@ class FakeRunStore:
     async def insert(self, run_id: str, run: Run) -> None:
         self.rows[run_id] = self._roundTrip(run)
 
-    async def get(self, run_id: str) -> Run:
+    # persona_ids is accepted (matching the real store's signature) and ignored —
+    # this fake always keeps the whole run as one blob, so there's no separately-
+    # loaded history to scope in the first place; see the class docstring. `session`
+    # is likewise accepted and ignored — this fake has no real DB session to share.
+    async def get(self, run_id: str, *, persona_ids: set[str] | None = None, session=None) -> Run:
         from domain_errors import RunNotFound
 
         if run_id not in self.rows:
             raise RunNotFound(f"Run {run_id} not found.")
         return self._deserialize(self.rows[run_id])
 
-    async def update(self, run_id: str, fn: Callable[[Run], Any]) -> Any:
+    async def update(
+        self, run_id: str, fn: Callable[[Run], Any], *, persona_ids: set[str] | None = None, session=None
+    ) -> Any:
         from domain_errors import RunNotFound
 
         if run_id not in self.rows:
@@ -172,10 +180,9 @@ class StubLlm:
 
     @property
     def lastSystemPrompt(self) -> str:
-        """The full system text of the most recent reply call — the cached
-        stable half and the per-turn half concatenated."""
+        """The full system text of the most recent reply call."""
         system = self.replyCalls[-1][0]
-        return "\n".join(block["text"] for block in system["content"])
+        return system["content"]
 
 
 # --------------------------------------------------------------------------
@@ -217,11 +224,11 @@ class SimHarness:
         return self.case
 
     async def start(self, access_code: str = "STERLING") -> dict:
-        return await sim_service.startSimulation(StartSimulationPayload(access_code=access_code))
+        return await state_module.startSimulation(StartSimulation(access_code=access_code))
 
     async def prepare(self, run_id: str, persona_id: str, text: str) -> dict:
-        return await sim_service.message(
-            run_id, SendMessagePayload(persona_id=persona_id, message=text)
+        return await turn_module.prepareTurn(
+            run_id, SendMessage(persona_id=persona_id, message=text)
         )
 
     async def send(self, run_id: str, persona_id: str, text: str) -> list[tuple[str, dict]]:
@@ -230,7 +237,7 @@ class SimHarness:
         would have received them."""
         prepared = await self.prepare(run_id, persona_id, text)
         frames: list[tuple[str, dict]] = []
-        async for frame in sim_service.streamMessage(prepared):
+        async for frame in stream_module.streamTurn(prepared):
             frames.append((frame["event"], json.loads(frame["data"])))
         return frames
 
@@ -249,17 +256,34 @@ class SimHarness:
 @pytest.fixture
 def fake_run_store(monkeypatch) -> FakeRunStore:
     store = FakeRunStore()
-    monkeypatch.setattr(sim_service, "insertRun", store.insert)
-    monkeypatch.setattr(sim_service, "getRun", store.get)
-    monkeypatch.setattr(sim_service, "updateRun", store.update)
+    monkeypatch.setattr(state_module, "insertRun", store.insert)
+    # getRun is imported into both state.py and turn.py — both bindings must be
+    # patched, since monkeypatching one module's name has no effect on the
+    # other's already-bound reference to the same function. updateRun is only
+    # imported (and only ever called) from turn.py now — state.py's own notes
+    # endpoint (its one caller) was removed, so there's nothing left to patch
+    # there.
+    monkeypatch.setattr(state_module, "getRun", store.get)
+    monkeypatch.setattr(turn_module, "getRun", store.get)
+    monkeypatch.setattr(turn_module, "updateRun", store.update)
+    # prepareTurn opens its own session (to share across getRun/messageLimit/updateRun)
+    # rather than going through one of the faked functions above, so it needs its own
+    # seam — otherwise it'd build a real engine off backend/.env's real credentials.
+    # `session` is a pass-through value the faked functions above ignore entirely, so
+    # None stands in fine; nothing ever dereferences it.
+    @asynccontextmanager
+    async def fakeSession():
+        yield None
+
+    monkeypatch.setattr(turn_module, "getSession", fakeSession)
     return store
 
 
 @pytest.fixture
 def stub_llm(monkeypatch) -> StubLlm:
     llm = StubLlm()
-    monkeypatch.setattr(sim_service, "classifyHarassment", llm.classifyHarassment)
-    monkeypatch.setattr(sim_service, "personaReplyStream", llm.personaReplyStream)
+    monkeypatch.setattr(turn_module, "classifyHarassment", llm.classifyHarassment)
+    monkeypatch.setattr(stream_module, "personaReplyStream", llm.personaReplyStream)
     # referralUnlock/fileShare call these through the prompt module's namespace.
     monkeypatch.setattr(prompt_module, "classifyReferral", llm.classifyReferral)
     monkeypatch.setattr(prompt_module, "classifyFileShare", llm.classifyFileShare)
@@ -268,11 +292,11 @@ def stub_llm(monkeypatch) -> StubLlm:
 
 @pytest.fixture
 def no_rate_limit(monkeypatch):
-    async def allow(_key: str) -> None:
+    async def allow(_key: str, *, session=None) -> None:
         return None
 
-    monkeypatch.setattr(sim_service, "messageLimit", allow)
-    monkeypatch.setattr(sim_service, "simulationLimit", allow)
+    monkeypatch.setattr(turn_module, "messageLimit", allow)
+    monkeypatch.setattr(state_module, "simulationLimit", allow)
 
 
 @pytest.fixture
@@ -282,7 +306,9 @@ def fake_spaces(monkeypatch):
     def getUrl(object_key: str) -> str:
         return f"https://spaces.test/{object_key}?signed=1"
 
-    monkeypatch.setattr(sim_service, "getUrl", getUrl)
+    # hydratePersona/toSharedFileOut (the only callers of getUrl in the simulation
+    # runtime) both live in state.py now.
+    monkeypatch.setattr(state_module, "getUrl", getUrl)
     return getUrl
 
 
@@ -297,18 +323,16 @@ def sim(monkeypatch, fake_run_store, stub_llm, no_rate_limit, fake_spaces) -> Si
         # patched below — nothing downstream ever uses the object itself.
         yield None
 
-    async def fetchCase(_session, *, case_id: int | None = None, access_code: str | None = None):
+    async def fetchCase(_session, *, access_code: str):
         from domain_errors import CaseNotFound
 
         case = harness.case
         if case is None:
             raise CaseNotFound("No case configured for this test.")
-        if case_id is not None and case_id != case.id:
-            return None
-        if access_code is not None and (case.access_code or "").strip() != access_code.strip():
+        if (case.access_code or "").strip() != access_code.strip():
             return None
         return case
 
-    monkeypatch.setattr(sim_service, "getSession", noSession)
+    monkeypatch.setattr(state_module, "getSession", noSession)
     monkeypatch.setattr(reads_module, "fetchCase", fetchCase)
     return harness

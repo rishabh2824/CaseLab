@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from hypothesis import given, strategies as st
 
-from models.simulation_runtime import ChatState
+from models.runtime import ChatState
 from models.simulations import ChatMessage
 from services.simulation import turn_state
 from tests import factories

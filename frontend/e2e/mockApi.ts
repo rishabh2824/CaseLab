@@ -9,6 +9,14 @@
 // test failure instead of a timeout.
 
 import type { Page, Route } from "@playwright/test";
+import type { Api } from "../src/lib/types.js";
+import {
+	makeAdminOut,
+	makeCaseDetail,
+	makeContact,
+	makePersonaPayload,
+	makeRunState,
+} from "../tests/support/fixtures.js";
 import { sseBody } from "../tests/support/sse.js";
 
 export { type SseFrame, sseBody } from "../tests/support/sse.js";
@@ -93,17 +101,13 @@ export async function mockApi(page: Page, handlers: Handlers): Promise<void> {
 
 // One complete, successful turn: the reply split across two `delta` frames (so
 // the incremental renderer is genuinely exercised), then `meta`, then `done`.
+// DoneFrame carries only `reply` (see backend/models/simulation_runtime.py) —
+// the client reconstructs the committed turn locally from that plus what it
+// already had (run.svelte.ts's overlayMessages()), so this mock doesn't need
+// to echo the user's message or any prior history back.
 export function turn(
 	reply: string,
-	{
-		userMessage,
-		priorHistory = [],
-		meta = {},
-	}: {
-		userMessage: string;
-		priorHistory?: Array<{ role: string; content: string }>;
-		meta?: Record<string, unknown>;
-	},
+	{ meta = {} }: { meta?: Record<string, unknown> } = {},
 ): string {
 	const split = Math.ceil(reply.length / 2);
 	return sseBody([
@@ -120,17 +124,7 @@ export function turn(
 				...meta,
 			},
 		},
-		{
-			event: "done",
-			data: {
-				reply,
-				history: [
-					...priorHistory,
-					{ role: "user", content: userMessage },
-					{ role: "assistant", content: reply },
-				],
-			},
-		},
+		{ event: "done", data: { reply } },
 	]);
 }
 
@@ -177,64 +171,27 @@ export async function signInAsAdmin(
 	});
 }
 
-export const contact = (overrides: Record<string, unknown> = {}) => ({
-	id: "mary",
-	name: "Mary",
-	role: "Chief Financial Officer",
-	profile_photo: null,
-	availability_duration: null,
-	is_referred: false,
-	available: true,
-	available_in: 0,
-	expires_in: null,
-	chat_ended: false,
-	chat_end_reason: null,
-	warning_count: 0,
-	...overrides,
-});
+const marysPersona = () =>
+	makePersonaPayload({
+		id: "mary",
+		name: "Mary",
+		role: "Chief Financial Officer",
+		known_facts: "The vendor is Acme.",
+		personality_traits: "Direct.",
+	});
 
-export const runState = (overrides: Record<string, unknown> = {}) => ({
-	run_id: "testrun123",
-	case: {
-		id: 1,
-		case_name: "Sterling Industries",
-		brief: "Reduce office supply costs.",
-		simulation_duration: 45,
-	},
-	contacts: [contact()],
-	active_persona_id: "mary",
-	shared_files: [],
-	histories: {},
-	notes: "",
-	...overrides,
-});
+export const contact = (overrides: Partial<Api<"ContactOut">> = {}) =>
+	makeContact({ id: "mary", role: "Chief Financial Officer", ...overrides });
 
-export const caseDetail = (overrides: Record<string, unknown> = {}) => ({
-	id: 1,
-	case_name: "Sterling Industries",
-	access_code: "STERLING",
-	brief: "Reduce office supply costs.",
-	common_information: "Company background.",
-	simulation_duration: 45,
-	personas: [
-		{
-			id: "mary",
-			name: "Mary",
-			role: "Chief Financial Officer",
-			profile_photo: null,
-			known_facts: "The vendor is Acme.",
-			personality_traits: "Direct.",
-			availability_minutes: null,
-			files: [],
-		},
-	],
-	referrals: [],
-	roots: ["mary"],
-	version: 1,
-	owner_admin_id: 1,
-	collaborator_admin_ids: [],
-	...overrides,
-});
+export const runState = (overrides: Partial<Api<"RunStateResponse">> = {}) =>
+	makeRunState({ run_id: "testrun123", ...overrides });
+
+export const caseDetail = (overrides: Partial<Api<"CaseDetail">> = {}) =>
+	makeCaseDetail({
+		personas: [marysPersona()],
+		roots: ["mary"],
+		...overrides,
+	});
 
 // The trimmed-down shape /api/cases (CaseListResponse) and the template/edit
 // pickers render — deliberately smaller than caseDetail's, matching CaseSummary.
@@ -245,38 +202,23 @@ export const caseSummary = (overrides: Record<string, unknown> = {}) => ({
 	...overrides,
 });
 
-export const adminOut = (overrides: Record<string, unknown> = {}) => ({
-	id: 1,
-	email: "admin@wisc.edu",
-	name: "Admin One",
-	role: ADMIN_ROLE.ADMIN,
-	...overrides,
-});
+export const adminOut = (overrides: Partial<Api<"AdminOut">> = {}) =>
+	makeAdminOut({ role: ADMIN_ROLE.ADMIN, ...overrides });
 
 // GET /api/cases/demo — same persona/referral shape as caseDetail, minus the
 // id/version/ownership fields a demo case doesn't have.
-export const demoCaseDetail = (overrides: Record<string, unknown> = {}) => ({
-	case_name: "Sterling Industries",
-	access_code: "STERLING",
-	brief: "Reduce office supply costs.",
-	common_information: "Company background.",
-	simulation_duration: 45,
-	personas: [
-		{
-			id: "mary",
-			name: "Mary",
-			role: "Chief Financial Officer",
-			profile_photo: null,
-			known_facts: "The vendor is Acme.",
-			personality_traits: "Direct.",
-			availability_minutes: null,
-			files: [],
-		},
-	],
-	referrals: [],
-	roots: ["mary"],
-	...overrides,
-});
+export const demoCaseDetail = (
+	overrides: Partial<
+		Omit<
+			Api<"CaseDetail">,
+			"id" | "version" | "owner_admin_id" | "collaborator_admin_ids"
+		>
+	> = {},
+) => {
+	const { id, version, owner_admin_id, collaborator_admin_ids, ...rest } =
+		caseDetail(overrides);
+	return rest;
+};
 
 // GET /api/simulations/{id}/export — feeds the student PDF export.
 export const exportResponse = (overrides: Record<string, unknown> = {}) => ({

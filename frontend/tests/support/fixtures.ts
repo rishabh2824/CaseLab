@@ -94,7 +94,6 @@ export function makeRunState(overrides: Partial<RunState> = {}): RunState {
 		active_persona_id: "mary",
 		shared_files: [],
 		histories: {},
-		notes: "",
 		...overrides,
 	};
 }
@@ -103,3 +102,58 @@ export const message = (
 	role: "user" | "assistant",
 	content: string,
 ): Api<"ChatMessage"> => ({ role, content });
+
+// --- Wire-shape (Api<K>) builders -------------------------------------------
+//
+// Unlike makePersona/makeContact/etc. above (which return the app's draft or
+// renamed types), these return the raw schema shape verbatim -- for stubbing
+// API responses directly (MSW handlers, e2e route mocks), where the point is
+// catching a backend field rename/type change at compile time.
+
+export function makePersonaPayload(
+	overrides: Partial<Api<"PersonaPayload">> = {},
+): Api<"PersonaPayload"> {
+	return {
+		id: "p1",
+		name: "Persona",
+		role: "Role",
+		profile_photo: null,
+		known_facts: "",
+		personality_traits: "",
+		availability_minutes: null,
+		files: [],
+		...overrides,
+	};
+}
+
+export function makeCaseDetail(
+	overrides: Partial<Api<"CaseDetail">> = {},
+): Api<"CaseDetail"> {
+	return {
+		id: 1,
+		case_name: "Sterling Industries",
+		access_code: "STERLING",
+		brief: "Reduce office supply costs.",
+		common_information: "Company background.",
+		simulation_duration: 45,
+		personas: [makePersonaPayload()],
+		referrals: [],
+		roots: ["p1"],
+		version: 1,
+		owner_admin_id: 1,
+		collaborator_admin_ids: [],
+		...overrides,
+	};
+}
+
+export function makeAdminOut(
+	overrides: Partial<Api<"AdminOut">> = {},
+): Api<"AdminOut"> {
+	return {
+		id: 1,
+		email: "admin@wisc.edu",
+		name: "Admin One",
+		role: 2,
+		...overrides,
+	};
+}

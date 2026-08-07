@@ -3,6 +3,7 @@ import { goto } from "$app/navigation";
 import { apiFetch } from "$lib/api/client.js";
 import SignInButton from "$lib/components/SignInButton.svelte";
 import { session } from "$lib/session.svelte.js";
+import { stashPendingRunState } from "$lib/student/run.svelte.js";
 import type { Api, RunState } from "$lib/types.js";
 
 let accessCode = $state("");
@@ -16,6 +17,7 @@ async function submit(code: string): Promise<void> {
 			method: "POST",
 			body: { access_code: code } satisfies Api<"StartSimulationPayload">,
 		});
+		stashPendingRunState(fresh);
 		session.startRun({
 			runId: fresh.run_id,
 			accessCode: code,

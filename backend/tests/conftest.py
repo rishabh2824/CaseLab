@@ -33,9 +33,9 @@ def pytest_collection_modifyitems(config, items):
 def pytest_report_header(config):
     """Print which database the DB-backed tests will hit. These tests create
     and delete real rows, so 'which host' is not a detail worth guessing at —
-    point POOLING at a throwaway database, not the production one."""
+    point DIRECT at a throwaway database, not the production one."""
     try:
-        host = urlsplit(getSettings().pooling_url).hostname or "unset"
+        host = urlsplit(getSettings().direct_url).hostname or "unset"
     except Exception as exc:  # settings are incomplete — unit tests may still run
         return f"database: unavailable ({type(exc).__name__})"
     return f"database: {host}"

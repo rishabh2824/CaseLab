@@ -25,7 +25,12 @@ class CaseVersionPoll {
 			const currentCaseId = params.caseId();
 			if (!currentCaseId || params.isLoadingSource()) return;
 			const intervalId = window.setInterval(async () => {
-				if (this.showConflictModal) return;
+				// A backgrounded tab has no admin to warn about a conflict yet, and no
+				// risk of racing a save of its own -- skip the request entirely rather
+				// than hitting getCaseVersion every 12s for a tab nobody's looking at.
+				// Polling picks back up on its own next tick once the tab is visible
+				// again.
+				if (document.hidden || this.showConflictModal) return;
 				try {
 					const { version } = await apiFetch<Api<"CaseVersionResponse">>(
 						`/api/cases/${currentCaseId}/version`,

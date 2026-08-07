@@ -1,12 +1,14 @@
 <script lang="ts">
 import { Popover } from "bits-ui";
 import { onDestroy, onMount, untrack } from "svelte";
+import { toast } from "svelte-sonner";
 import { ApiError, apiFetch } from "$lib/api/client.js";
 import {
 	normalizePersona,
 	normalizeReferral,
 	parseIntOrNull,
 } from "$lib/case/draft.js";
+import { cases } from "$lib/case/cases.svelte.js";
 import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
 import { CaseGraph } from "$lib/case/graph.svelte.js";
 import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
@@ -18,20 +20,27 @@ import type { Api } from "$lib/types.js";
 import { type SaveResult, unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import CaseConflictModal from "./CaseConflictModal.svelte";
 import CaseGraphEditor from "./CaseGraphEditor.svelte";
+import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 
 const MAX_SIMULATION_DURATION = 120;
 
-// Sourced straight from page.url.searchParams.get(...) by the routes that
-// render this form — real URL query strings, never parsed to a number.
-// Both are only ever interpolated into `/api/cases/${sourceCaseId}`.
+// mode is explicit (set by the route: /admin/cases/new vs.
+// /admin/cases/[id]/edit), not inferred from which of caseId/templateId
+// happens to be non-null. caseId is the resource identity in edit mode
+// (sourced from page.params.id, a real path segment); templateId is only
+// ever a "prefill from" hint on the create route (page.url.searchParams,
+// since it doesn't identify the case being created). Both are only ever
+// interpolated into `/api/cases/${sourceCaseId}`, never parsed to a number.
 type Props = {
+	mode: "create" | "edit";
+	caseId?: string | null;
 	templateId?: string | null;
-	editCaseId?: string | null;
 };
 
-let { templateId = null, editCaseId = null }: Props = $props();
+let { mode, caseId = null, templateId = null }: Props = $props();
 
-const isEditMode = $derived(Boolean(editCaseId));
+const isEditMode = $derived(mode === "edit");
+const editCaseId = $derived(isEditMode ? caseId : null);
 const sourceCaseId = $derived(editCaseId || templateId);
 // Import is only offered on the blank "from scratch" new-case route
 const canImport = $derived(!sourceCaseId);
@@ -59,10 +68,25 @@ const versionPoll = useCaseVersionPoll({
 
 // Tracks unsaved edits so AdminTopBar can gate home/logout navigation behind
 // a save-or-discard prompt. null baseline means "nothing loaded to compare
-// against yet" (edit/template mode before loadCase resolves). Covers both the
-// scalar case fields and the persona graph, so there's one dirty mechanism
-// instead of a flag to remember to set on every field-level edit.
-let baselineSnapshot = $state<string | null>(null);
+// against yet" (edit/template mode before loadCase resolves).
+//
+// Split into a cheap scalar comparison and a separate graph comparison
+// (rather than one JSON.stringify of the whole case) so that Svelte's
+// fine-grained $derived dependency tracking actually pays off: typing in
+// caseName/brief/access-code only re-evaluates scalarsDirty's plain equality
+// checks — it never touches graphDirty's derived (and so never re-serializes
+// every persona) since graph.personas/referrals/roots didn't change. Editing
+// inside the persona graph still has to serialize the graph to detect a
+// change, but no longer drags the scalar fields/collaborator list along.
+let baselineScalars = $state<{
+	caseName: string;
+	initialBrief: string;
+	commonInformation: string;
+	simulationDurationMinutes: number | null;
+	accessCode: string;
+	collaboratorAdminIds: number[];
+} | null>(null);
+let baselineGraphSnapshot = $state<string | null>(null);
 
 // File objects serialize to "{}" under plain JSON.stringify (none of their
 // properties are own-enumerable), which would make two different selected
@@ -78,34 +102,46 @@ function jsonReplacer(_key: string, value: unknown): unknown {
 	return value;
 }
 
-function snapshotState(): string {
+function snapshotGraph(): string {
 	return JSON.stringify(
-		{
-			caseName,
-			initialBrief,
-			commonInformation,
-			simulationDurationMinutes,
-			accessCode,
-			collaboratorAdminIds,
-			personas: graph.personas,
-			referrals: graph.referrals,
-			roots: graph.roots,
-		},
+		{ personas: graph.personas, referrals: graph.referrals, roots: graph.roots },
 		jsonReplacer,
 	);
 }
 
 function markSaved(): void {
-	baselineSnapshot = snapshotState();
+	baselineScalars = {
+		caseName,
+		initialBrief,
+		commonInformation,
+		simulationDurationMinutes,
+		accessCode,
+		collaboratorAdminIds: [...collaboratorAdminIds],
+	};
+	baselineGraphSnapshot = snapshotGraph();
 }
 
 // A brand-new case (no source to load) has nothing to wait on — the empty
 // form itself is the baseline, captured once at setup.
 if (!sourceCaseId) markSaved();
 
-const isDirty = $derived(
-	baselineSnapshot !== null && snapshotState() !== baselineSnapshot,
+const scalarsDirty = $derived.by(() => {
+	const baseline = baselineScalars;
+	if (baseline === null) return false;
+	return (
+		caseName !== baseline.caseName ||
+		initialBrief !== baseline.initialBrief ||
+		commonInformation !== baseline.commonInformation ||
+		simulationDurationMinutes !== baseline.simulationDurationMinutes ||
+		accessCode !== baseline.accessCode ||
+		collaboratorAdminIds.length !== baseline.collaboratorAdminIds.length ||
+		collaboratorAdminIds.some((id, i) => id !== baseline.collaboratorAdminIds[i])
+	);
+});
+const graphDirty = $derived(
+	baselineGraphSnapshot !== null && snapshotGraph() !== baselineGraphSnapshot,
 );
+const isDirty = $derived(scalarsDirty || graphDirty);
 
 let showFieldErrors = $state(false);
 function revealErrors() {
@@ -118,7 +154,7 @@ let submitError = $state("");
 let submitSuccess = $state("");
 let isSubmitting = $state(false);
 let importWarnings = $state<string[]>([]);
-let importError = $state("");
+let pendingImportFile = $state<File | null>(null);
 let fileInputEl = $state<HTMLInputElement | null>(null);
 
 // Roster for the collaborator picker. Reuses the same admin-listing endpoint
@@ -232,7 +268,7 @@ const simulationDurationError = $derived(
 		: null,
 );
 
-const graphValidation = $derived(graph.validate());
+const graphValidation = $derived(graph.validation);
 const hasValidationErrors = $derived(
 	Boolean(caseNameError) ||
 		Boolean(initialBriefError) ||
@@ -261,10 +297,12 @@ function handleImportClick(): void {
 	fileInputEl?.click();
 }
 
-// Parses a filled-in export back into form state
-async function handleImportFile(
+// Picks up a file from the input: if the form already has content, routes
+// through the confirm dialog first (destructive — import replaces it all);
+// otherwise imports immediately.
+function handleImportFile(
 	event: Event & { currentTarget: EventTarget & HTMLInputElement },
-): Promise<void> {
+): void {
 	const file = event.currentTarget.files?.[0];
 	event.currentTarget.value = "";
 	if (!file) return;
@@ -274,16 +312,25 @@ async function handleImportFile(
 		initialBrief.trim() ||
 		accessCode.trim() ||
 		graph.personas.length > 0;
-	if (
-		hasExistingData &&
-		!window.confirm(
-			"Import will replace everything currently in this form. Continue?",
-		)
-	) {
+	if (hasExistingData) {
+		pendingImportFile = file;
 		return;
 	}
+	void performImport(file);
+}
 
-	importError = "";
+function cancelImport(): void {
+	pendingImportFile = null;
+}
+
+async function confirmImport(): Promise<void> {
+	const file = pendingImportFile;
+	pendingImportFile = null;
+	if (file) await performImport(file);
+}
+
+// Parses a filled-in export back into form state
+async function performImport(file: File): Promise<void> {
 	importWarnings = [];
 	try {
 		const text = await file.text();
@@ -301,10 +348,11 @@ async function handleImportFile(
 		importWarnings = warnings;
 		revealErrors();
 	} catch (err) {
-		importError =
+		toast(
 			err instanceof CaseImportError
 				? err.message
-				: "Failed to read that file. Make sure it’s an unmodified export from this app.";
+				: "Failed to read that file. Make sure it’s an unmodified export from this app.",
+		);
 	}
 }
 
@@ -344,6 +392,10 @@ async function performSave(): Promise<SaveResult> {
 			? "Case updated successfully."
 			: "Case saved successfully.";
 		if (isEditMode) versionPoll.bumpVersion();
+		// TemplatePicker's case list (cases.svelte.ts) is cached across mounts —
+		// a create adds a row it doesn't have yet, an update can change the
+		// name/access code it displays, so either way the cache is stale now.
+		cases.invalidate();
 		markSaved();
 		return { ok: true };
 	} catch (err) {
@@ -420,22 +472,6 @@ onDestroy(() => {
 					<p class="text-center text-sm text-stone">
 						{isEditMode ? 'Loading case...' : 'Loading case template...'}
 					</p>
-				{/if}
-
-				{#if importError}
-					<div class="rounded-xl border border-brand/20 bg-brand-tint px-4 py-3 text-sm text-brand">
-						<div class="flex items-start justify-between gap-3">
-							<p>{importError}</p>
-							<button
-								type="button"
-								onclick={() => (importError = '')}
-								class="text-xs font-semibold text-brand"
-								aria-label="Dismiss"
-							>
-								&times;
-							</button>
-						</div>
-					</div>
 				{/if}
 
 				{#if importWarnings.length > 0}
@@ -628,4 +664,13 @@ onDestroy(() => {
 	bind:open={versionPoll.showConflictModal}
 	onReload={handleReloadFromConflict}
 	onKeepEditing={() => versionPoll.handleKeepEditing()}
+/>
+<DestructiveConfirmDialog
+	bind:open={() => pendingImportFile !== null, (isOpen) => { if (!isOpen) pendingImportFile = null }}
+	title="Replace everything in this form?"
+	description="Import will replace everything currently in this form. This cannot be undone."
+	confirmLabel="Import"
+	pendingLabel="Importing…"
+	onConfirm={confirmImport}
+	onCancel={cancelImport}
 />

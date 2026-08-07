@@ -24,6 +24,21 @@ export class ApiError extends Error {
 	}
 }
 
+// Thrown by streamChat only once the server has confirmed the request with a
+// 2xx response and the SSE stream itself then broke (idle timeout, dropped
+// connection, malformed body). That 2xx means the backend already accepted
+// and started processing the turn — distinct from a pre-stream ApiError
+// (rejected before anything was persisted) or a connect-phase failure (never
+// reached the server at all), both of which throw plain errors from earlier
+// in streamChat. Callers use this to know a retry/refetch might recover
+// server-side work already in flight, rather than assume nothing happened.
+export class StreamInterruptedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "StreamInterruptedError";
+	}
+}
+
 async function errorFromResponse(response: Response): Promise<ApiError> {
 	let detail: string | undefined;
 	let code: string | undefined;
@@ -84,8 +99,18 @@ type StreamChatInit = {
 
 /**
  * POST to a Server-Sent-Events endpoint and invoke `onEvent({type, data})` for each frame as it streams in.
- * Pre-stream errors throw like apiFetch,so the caller can distinguish a rejected request from a mid-stream failure.
+ * Pre-stream errors throw like apiFetch (ApiError for a rejected request, or a plain Error for a
+ * connect-phase failure that never reached the server), so the caller can distinguish those from
+ * a mid-stream failure -- once the server has 200'd and the stream itself then breaks (dropped
+ * connection, idle timeout, malformed body), this throws StreamInterruptedError instead, since by
+ * then the server has already accepted and started processing the request.
  * Guards against a stalled connection with an IDLE timeout: it resets on every chunk received
+ * (including sse-starlette's keepalive ping, sent for the full duration of a generation), so
+ * this only fires on a genuinely stalled connection (no bytes at all) rather than racing the
+ * backend's own retry budget. The default is set equal to backend infra/settings.py's
+ * LLM_ATTEMPT_TIMEOUT — see that file's "LLM timeout budget" comment for the full picture
+ * (persona-reply attempt/retry timeouts, classifier timeout, wall-clock generation cap) and
+ * re-check it if this default changes.
  */
 export async function streamChat(
 	path: string,
@@ -148,7 +173,7 @@ export async function streamChat(
 			});
 		},
 	});
-	if (!response.body) throw new Error(TIMEOUT_ERROR_MESSAGE);
+	if (!response.body) throw new StreamInterruptedError(TIMEOUT_ERROR_MESSAGE);
 	const reader = response.body.getReader();
 	const decoder = new TextDecoder();
 	try {
@@ -159,7 +184,13 @@ export async function streamChat(
 			parser.feed(decoder.decode(value, { stream: true }));
 		}
 	} catch (error) {
-		throw isTimeoutAbort(error) ? new Error(TIMEOUT_ERROR_MESSAGE) : error;
+		throw new StreamInterruptedError(
+			isTimeoutAbort(error)
+				? TIMEOUT_ERROR_MESSAGE
+				: error instanceof Error
+					? error.message
+					: String(error),
+		);
 	} finally {
 		clearTimeout(idleTimer);
 	}

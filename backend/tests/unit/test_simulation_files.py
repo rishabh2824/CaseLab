@@ -1,6 +1,6 @@
 """File sharing: offering, withholding, and applying shares."""
 
-from services.simulation import service as sim_service
+from services.simulation import state as sim_service
 
 from tests import factories
 
@@ -46,10 +46,12 @@ async def test_file_entry_with_no_file_id_is_never_offered_but_is_withheld(sim):
 
     await sim.send(run_id, "A", "Can I see the budget?")
 
-    # Never classified — there is no file_id to key it by.
+    # Never classified — there is no file_id to key it by. Withheld files aren't named
+    # in the prompt at all (only the whitelist of what's eligible is) -- see
+    # test_system_prompt_no_files_branch_when_eligible_files_empty in test_prompt.py.
     assert sim.llm.fileShareCalls == []
-    assert "budget.pdf" in sim.llm.lastSystemPrompt
-    assert "must NOT send" in sim.llm.lastSystemPrompt
+    assert "budget.pdf" not in sim.llm.lastSystemPrompt
+    assert "You have no file to send this turn." in sim.llm.lastSystemPrompt
 
 
 async def test_file_rejected_by_classifier_is_withheld_and_not_offered(sim):
@@ -61,8 +63,8 @@ async def test_file_rejected_by_classifier_is_withheld_and_not_offered(sim):
 
     frames = await sim.send(run_id, "A", "Can I see the budget?")
 
-    assert "budget.pdf" in sim.llm.lastSystemPrompt
-    assert "must NOT send" in sim.llm.lastSystemPrompt
+    assert "budget.pdf" not in sim.llm.lastSystemPrompt
+    assert "You have no file to send this turn." in sim.llm.lastSystemPrompt
     meta = sim.frame(frames, "meta")
     assert meta["shared_files"] == []
 

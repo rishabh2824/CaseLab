@@ -91,9 +91,17 @@ test("/admin/edit lists cases from GET /api/cases and deleting one removes it", 
 	await expect(page.getByText("Sterling Industries")).toBeVisible();
 	await expect(page.getByText("Acme Corp")).toBeVisible();
 
-	page.once("dialog", (dialog) => dialog.accept());
 	await page.getByRole("button", { name: "Delete case" }).first().click();
+	await expect(page.getByText('Delete "Sterling Industries"?')).toBeVisible();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Delete" })
+		.click();
 
+	// Wait for the dialog itself to close first — its own title also says
+	// "Sterling Industries", so checking the list text while it's still
+	// mid-close-transition races against that.
+	await expect(page.getByRole("alertdialog")).not.toBeVisible();
 	await expect(page.getByText("Sterling Industries")).not.toBeVisible();
 	await expect(page.getByText("Acme Corp")).toBeVisible();
 });
@@ -109,7 +117,7 @@ test("creating a case submits the expected payload", async ({ page }) => {
 		},
 	});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/new/scratch");
+	await page.goto("/admin/cases/new");
 
 	await page.getByLabel("Case name").fill("Riverside Manufacturing");
 	await page.getByLabel("Initial brief").fill("Cut logistics costs by 10%.");
@@ -138,7 +146,7 @@ test("submitting with required fields empty does not issue a request and reveals
 	// No POST /api/cases handler registered — a call would 599 and fail the test.
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/new/scratch");
+	await page.goto("/admin/cases/new");
 
 	// The Submit button is disabled from load (hasValidationErrors is true on
 	// a blank form), so it can never actually be clicked into submitting.
@@ -171,7 +179,7 @@ test("editing a case populates the form and the save carries expected_version", 
 		},
 	});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/edit/form?caseId=7");
+	await page.goto("/admin/cases/7/edit");
 
 	await expect(page.getByLabel("Case name")).toHaveValue("Sterling Industries");
 	await expect(page.getByLabel("Access code")).toHaveValue("STERLING");
@@ -208,7 +216,7 @@ test("a version conflict shows the modal; Reload discards edits and reloads the 
 		}),
 	});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/edit/form?caseId=7");
+	await page.goto("/admin/cases/7/edit");
 	await expect(page.getByLabel("Case name")).toHaveValue("Sterling Industries");
 
 	await page.getByLabel("Case name").fill("Sterling Industries Edited");
@@ -245,7 +253,7 @@ test("a version conflict shows the modal; Keep editing adopts the new version wi
 		}),
 	});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/edit/form?caseId=7");
+	await page.goto("/admin/cases/7/edit");
 	await expect(page.getByLabel("Case name")).toHaveValue("Sterling Industries");
 
 	await page.getByLabel("Case name").fill("Sterling Industries Edited");
@@ -273,7 +281,7 @@ test("a dirty form triggers the unsaved-changes modal when navigating via the to
 }) => {
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/new/scratch");
+	await page.goto("/admin/cases/new");
 
 	await page.getByLabel("Case name").fill("Draft Case");
 	await page.getByRole("button", { name: "Go to admin home" }).click();
@@ -281,7 +289,7 @@ test("a dirty form triggers the unsaved-changes modal when navigating via the to
 	await expect(page.getByText("You have unsaved changes")).toBeVisible();
 	await page.getByRole("button", { name: "Cancel" }).click();
 	// Cancel stays on the form — the unsaved edit is neither lost nor navigated away from.
-	await expect(page).toHaveURL(/\/admin\/new\/scratch$/);
+	await expect(page).toHaveURL(/\/admin\/cases\/new$/);
 	await expect(page.getByLabel("Case name")).toHaveValue("Draft Case");
 });
 
@@ -292,7 +300,7 @@ test("exporting the blank form triggers a download named from the case name", as
 }) => {
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/new/scratch");
+	await page.goto("/admin/cases/new");
 	await page.getByLabel("Case name").fill("My Great Case!");
 
 	const downloadPromise = page.waitForEvent("download");
@@ -305,7 +313,7 @@ test("exporting the blank form triggers a download named from the case name", as
 test("importing a filled-in export populates the form", async ({ page }) => {
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/new/scratch");
+	await page.goto("/admin/cases/new");
 
 	// buildHTMLForm is the exact function CaseForm's own "Export template"
 	// button calls — building a filled-in copy here and feeding it back in
@@ -338,7 +346,7 @@ test("importing an unrelated HTML file surfaces the import error", async ({
 }) => {
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/new/scratch");
+	await page.goto("/admin/cases/new");
 
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "case-lab-e2e-"));
 	const filePath = path.join(dir, "unrelated.html");
@@ -373,7 +381,7 @@ test("the admins page lists admins, adds one, and deletes one with a summary", a
 					id: 2,
 					email: addBody.email as string,
 					name: addBody.name as string | null,
-					role: addBody.role as number,
+					role: addBody.role as 1 | 2,
 				}),
 			];
 			return { json: admins[admins.length - 1] };
@@ -393,11 +401,17 @@ test("the admins page lists admins, adds one, and deletes one with a summary", a
 	await page.getByLabel("Name (optional)").fill("New Admin");
 	await page.getByRole("button", { name: "Add admin" }).click();
 
-	await expect(page.getByText("new@wisc.edu")).toBeVisible();
+	// Scoped to the table cell, not just text: the "Added new@wisc.edu." toast
+	// (also new@wisc.edu-containing) is a separate, incidental match.
+	await expect(page.getByRole("cell", { name: "new@wisc.edu" })).toBeVisible();
 	expect(addBody?.email).toBe("new@wisc.edu");
 
-	page.once("dialog", (dialog) => dialog.accept());
 	await page.getByRole("button", { name: "Delete" }).first().click();
+	await expect(page.getByText("Delete existing@wisc.edu?")).toBeVisible();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Delete" })
+		.click();
 
 	await expect(
 		page.getByText(

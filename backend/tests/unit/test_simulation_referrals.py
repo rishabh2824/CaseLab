@@ -1,6 +1,7 @@
 """Referral unlocking: offering, redacting, and applying introductions."""
 
-from services.simulation import service as sim_service
+from services.simulation import state as state_service
+from services.simulation import turn as turn_service
 
 from tests import factories
 
@@ -40,7 +41,7 @@ async def test_eligible_referral_is_offered_and_introducing_it_unlocks_the_conta
     assert "B" in raw["unlocked_at"]
 
 
-async def test_rejected_referral_is_withheld_and_redacted_from_prompt_and_history(sim):
+async def test_rejected_referral_is_withheld_and_known_facts_redacted_from_prompt(sim):
     structure = factories.caseStructure(
         personas=[
             factories.persona("A", name="Alice", known_facts="Bob is the analyst who audited the budget."),
@@ -54,26 +55,26 @@ async def test_rejected_referral_is_withheld_and_redacted_from_prompt_and_histor
     run_id = state.run_id
     sim.llm.referral = False  # classifier never approves this referral
 
-    # Turn 1: the model mentions Bob by name in its reply (nothing stops it
-    # from doing so in the raw text — sanitization only protects what gets
-    # fed back into the model later).
+    # Turn 1: the model mentions Bob by name in its reply. Nothing stops it from doing so
+    # in the raw text -- the "Strict rule" in the prompt is an instruction, not an
+    # enforcement mechanism -- and history is no longer sanitized after the fact (removed:
+    # redundant given referral eligibility only ever grows, so a name that was ever said
+    # can't retroactively become forbidden by anything the system itself does).
     sim.llm.replyWith("Let me tell you about Bob.")
     await sim.send(run_id, "A", "Tell me about Bob.")
 
-    # Turn 2: Bob is still forbidden. His name must be scrubbed both from the
-    # known_facts baked into this turn's system prompt AND from the prior
-    # assistant turn now being replayed back into the model.
+    # Turn 2: Bob is still forbidden. His name must still be scrubbed from the known_facts
+    # baked into this turn's system prompt -- that redaction is independent of history
+    # sanitization and unaffected by its removal.
     sim.llm.replyWith("Sure, ask away.")
     await sim.send(run_id, "A", "Anything else?")
 
     prompt = sim.llm.lastSystemPrompt
-    assert "Bob" not in prompt
     assert "[undisclosed contact]" in prompt
 
     sent_messages = sim.llm.replyCalls[-1]
     prior_assistant = next(m for m in sent_messages if m.get("role") == "assistant")
-    assert "Bob" not in prior_assistant["content"]
-    assert prior_assistant["content"] == "Let me tell you about my contact."
+    assert prior_assistant["content"] == "Let me tell you about Bob."
 
     assert sim.store.raw(run_id)["unlocked_referred_ids"] == []
 
@@ -117,13 +118,13 @@ async def test_reunlocking_an_already_unlocked_persona_is_a_noop(sim):
     sim.llm.referral = True
 
     prepared = await sim.prepare(run_id, "A", "Connect me with Bob please.")
-    new_contacts_1, *_ = await sim_service.applyDecisions(run_id, prepared, ["R1"], [], "A", "Sure, meet Bob.")
+    new_contacts_1, *_ = await turn_service.applyDecisions(run_id, prepared, ["R1"], [], "A", "Sure, meet Bob.")
     assert len(new_contacts_1) == 1
     first_unlocked_at = sim.store.raw(run_id)["unlocked_at"]["B"]
 
     sim.store.shiftStart(run_id, 5)  # time passes before the (simulated) retry
 
-    new_contacts_2, *_ = await sim_service.applyDecisions(
+    new_contacts_2, *_ = await turn_service.applyDecisions(
         run_id, prepared, ["R1"], [], "A", "Sure, meet Bob again."
     )
     assert new_contacts_2 == []
@@ -142,7 +143,7 @@ async def test_unlocked_persona_is_messageable_and_state_marks_it_referred(sim):
     frames = await sim.send(run_id, "B", "Hello Bob")
     assert sim.frame(frames, "error") is None
 
-    full_state = await sim_service.getSimulationState(run_id)
+    full_state = await state_service.getSimulationState(run_id)
     bob_contact = next(c for c in full_state.contacts if c.id == "B")
     assert bob_contact.is_referred is True
 

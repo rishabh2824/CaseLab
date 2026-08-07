@@ -8,8 +8,6 @@ let { children }: Props = $props();
 </script>
 
 <svelte:head>
-	<!-- Login-gated: no content for a logged-out crawler, and duplicating
-		 the landing page's title/description here would just be noise. -->
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 

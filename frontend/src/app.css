@@ -1,9 +1,14 @@
-@import "@fontsource/ibm-plex-sans/400.css";
-@import "@fontsource/ibm-plex-sans/500.css";
-@import "@fontsource/ibm-plex-sans/600.css";
-@import "@fontsource/space-grotesk/500.css";
-@import "@fontsource/space-grotesk/600.css";
-@import "@fontsource/space-grotesk/700.css";
+/* latin-only subsets, not the combined files: the app is English-only, so the
+   cyrillic/greek/vietnamese/latin-ext @font-face rules those combined files
+   also declare are pure deploy weight — unicode-range means a browser never
+   downloads their woff2s, but the files still ship. Space Grotesk 500 is
+   dropped outright: nothing on the site pairs font-display with font-medium,
+   only font-semibold (600) and font-bold (700). */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/space-grotesk/latin-600.css";
+@import "@fontsource/space-grotesk/latin-700.css";
 @import "tailwindcss";
 
 @theme {

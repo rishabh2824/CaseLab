@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 from models.cases import (
-    CaseCreatedResponse,
-    CaseDeletedResponse,
+    CaseCreated,
+    CaseDeleted,
     CaseDetailResponse,
-    CaseListResponse,
+    CaseList,
     CasePayload,
-    CaseUpdatePayload,
-    CaseVersionResponse,
+    CaseUpdate,
+    CaseVersion,
 )
 from services import cases
 from infra.db import getRequestSession
@@ -22,7 +22,7 @@ async def createCase(
     payload: CasePayload,
     admin: CurrentAdmin = Depends(getCurrentAdmin),
     session: AsyncSession = Depends(getRequestSession),
-) -> CaseCreatedResponse:
+) -> CaseCreated:
     return await cases.createCase(session, payload, admin)
 
 
@@ -30,7 +30,7 @@ async def createCase(
 async def listCases(
     admin: CurrentAdmin = Depends(getCurrentAdmin),
     session: AsyncSession = Depends(getRequestSession),
-) -> CaseListResponse:
+) -> CaseList:
     return await cases.listCases(session, admin)
 
 
@@ -53,10 +53,10 @@ async def getCase(
 @router.put("/{case_id}")
 async def updateCase(
     case_id: int,
-    payload: CaseUpdatePayload,
+    payload: CaseUpdate,
     admin: CurrentAdmin = Depends(getCurrentAdmin),
     session: AsyncSession = Depends(getRequestSession),
-) -> CaseCreatedResponse:
+) -> CaseCreated:
     return await cases.updateCase(session, case_id, payload, admin)
 
 
@@ -65,7 +65,7 @@ async def getCaseVersion(
     case_id: int,
     admin: CurrentAdmin = Depends(getCurrentAdmin),
     session: AsyncSession = Depends(getRequestSession),
-) -> CaseVersionResponse:
+) -> CaseVersion:
     return await cases.getCaseVersion(session, case_id, admin)
 
 
@@ -74,5 +74,5 @@ async def deleteCase(
     case_id: int,
     admin: CurrentAdmin = Depends(getCurrentAdmin),
     session: AsyncSession = Depends(getRequestSession),
-) -> CaseDeletedResponse:
+) -> CaseDeleted:
     return await cases.deleteCase(session, case_id, admin)

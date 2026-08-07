@@ -1,6 +1,6 @@
 import time
 from typing import Literal
-from models.simulation_runtime import ChatState, PersonaDetail, Run
+from models.runtime import ChatState, PersonaDetail, Run
 from models.simulations import ChatMessage
 
 

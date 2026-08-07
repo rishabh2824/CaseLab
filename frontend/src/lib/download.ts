@@ -1,4 +1,3 @@
-// Shared DOM side-effect for triggering a browser download from an in-memory Blob.
 export function downloadBlob(blob: Blob, filename: string): void {
 	const url = URL.createObjectURL(blob);
 	const link = document.createElement("a");

@@ -2,6 +2,7 @@
 import { onMount } from "svelte";
 import { toast } from "svelte-sonner";
 import { apiFetch } from "$lib/api/client.js";
+import DestructiveConfirmDialog from "$lib/components/DestructiveConfirmDialog.svelte";
 import { ADMIN_ROLE } from "$lib/constants.js";
 import type { Api } from "$lib/types.js";
 
@@ -17,10 +18,9 @@ let listError = $state("");
 let email = $state("");
 let name = $state("");
 let role = $state<Api<"AdminRole">>(ADMIN_ROLE.ADMIN);
-let formError = $state("");
 let isAdding = $state(false);
-let deletingId = $state<number | null>(null);
-let deleteError = $state("");
+let pendingDelete = $state<Api<"AdminOut"> | null>(null);
+let isDeleting = $state(false);
 
 async function loadAdmins(): Promise<void> {
 	isLoading = true;
@@ -41,7 +41,7 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 	event.preventDefault();
 	const trimmedEmail = email.trim();
 	if (!trimmedEmail) {
-		formError = "Email is required.";
+		toast("Email is required.");
 		return;
 	}
 	isAdding = true;
@@ -54,25 +54,30 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 				role,
 			} satisfies Api<"AddAdminRequest">,
 		});
-		formError = "";
 		email = "";
 		name = "";
 		role = ADMIN_ROLE.ADMIN;
+		toast(`Added ${trimmedEmail}.`, { duration: 4000 });
 		await loadAdmins();
 	} catch (err) {
-		formError = (err instanceof Error && err.message) || "Failed to add admin.";
+		toast((err instanceof Error && err.message) || "Failed to add admin.");
 	} finally {
 		isAdding = false;
 	}
 }
 
-async function handleDelete(admin: Api<"AdminOut">): Promise<void> {
-	const confirmed = window.confirm(
-		`Delete ${admin.email}? This cannot be undone. Any case they own with no collaborators is deleted; a case they own that has collaborators is reassigned to the longest-standing collaborator.`,
-	);
-	if (!confirmed) return;
-	deleteError = "";
-	deletingId = admin.id;
+function requestDelete(admin: Api<"AdminOut">): void {
+	pendingDelete = admin;
+}
+
+function cancelDelete(): void {
+	pendingDelete = null;
+}
+
+async function confirmDelete(): Promise<void> {
+	const admin = pendingDelete;
+	if (!admin) return;
+	isDeleting = true;
 	try {
 		const result = await apiFetch<Api<"AdminDeletedResponse">>(
 			`/api/admin/admins/${admin.id}`,
@@ -95,12 +100,12 @@ async function handleDelete(admin: Api<"AdminOut">): Promise<void> {
 				: `Deleted ${admin.email}.`,
 			{ duration: 4000 },
 		);
+		pendingDelete = null;
 		await loadAdmins();
 	} catch (err) {
-		deleteError =
-			(err instanceof Error && err.message) || "Failed to delete admin.";
+		toast((err instanceof Error && err.message) || "Failed to delete admin.");
 	} finally {
-		deletingId = null;
+		isDeleting = false;
 	}
 }
 </script>
@@ -167,14 +172,7 @@ async function handleDelete(admin: Api<"AdminOut">): Promise<void> {
 			>
 				{isAdding ? 'Adding…' : 'Add admin'}
 			</button>
-			{#if formError}
-				<p class="w-full text-sm font-medium text-brand">{formError}</p>
-			{/if}
 		</form>
-
-		{#if deleteError}
-			<p class="mt-4 text-sm font-medium text-brand">{deleteError}</p>
-		{/if}
 
 		<div class="mt-8 overflow-hidden rounded-2xl border border-line bg-white shadow-soft">
 			{#if isLoading}
@@ -207,8 +205,8 @@ async function handleDelete(admin: Api<"AdminOut">): Promise<void> {
 									{:else}
 										<button
 											type="button"
-											onclick={() => handleDelete(admin)}
-											disabled={deletingId === admin.id}
+											onclick={() => requestDelete(admin)}
+											disabled={isDeleting && pendingDelete?.id === admin.id}
 											class="text-sm font-semibold text-brand transition hover:text-brand-dark disabled:opacity-60"
 										>
 											Delete
@@ -223,3 +221,12 @@ async function handleDelete(admin: Api<"AdminOut">): Promise<void> {
 		</div>
 	</div>
 </div>
+
+<DestructiveConfirmDialog
+	bind:open={() => pendingDelete !== null, (isOpen) => { if (!isOpen) pendingDelete = null }}
+	title={pendingDelete ? `Delete ${pendingDelete.email}?` : ""}
+	description="This cannot be undone. Any case they own with no collaborators is deleted; a case they own that has collaborators is reassigned to the longest-standing collaborator."
+	confirming={isDeleting}
+	onConfirm={confirmDelete}
+	onCancel={cancelDelete}
+/>

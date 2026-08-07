@@ -18,7 +18,7 @@ class LoginResponse(BaseModel):
     name: str | None = None
 
 
-class AddAdminRequest(BaseModel):
+class AddAdmin(BaseModel):
     email: str
     name: str | None = None
     role: AdminRole
@@ -31,7 +31,7 @@ class AdminOut(BaseModel):
     role: AdminRole
 
 
-class AdminDeletedResponse(BaseModel):
+class DeleteAdmin(BaseModel):
     ok: bool
     cases_deleted: int
     cases_reassigned: int

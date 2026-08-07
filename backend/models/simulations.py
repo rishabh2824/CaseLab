@@ -2,20 +2,16 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    from models.simulation_runtime import ChatState, PersonaDetail
+    from models.runtime import ChatState, PersonaDetail
 
 
-class StartSimulationPayload(BaseModel):
+class StartSimulation(BaseModel):
     access_code: str
 
 
-class SendMessagePayload(BaseModel):
+class SendMessage(BaseModel):
     persona_id: str
     message: str
-
-
-class NotesPayload(BaseModel):
-    notes: str
 
 
 class ChatMessage(BaseModel):
@@ -23,7 +19,7 @@ class ChatMessage(BaseModel):
     content: str
 
 
-class RunCaseSummary(BaseModel):
+class RunCase(BaseModel):
     id: int
     case_name: str
     brief: str
@@ -52,10 +48,7 @@ class ContactOut(BaseModel):
     chat_end_reason: str | None = None
     warning_count: int
 
-    # Reads an explicit allow-list of fields off PersonaDetail only — never a
-    # dict spread, never a .pop(...). A future secret field added to
-    # PersonaDetail is invisible here unless someone deliberately adds a line,
-    # which is the structural fix for the old pop-and-hope pattern.
+
     @classmethod
     def from_persona_detail(
         cls, persona: PersonaDetail, *, is_referred: bool,
@@ -86,22 +79,21 @@ class SharedFileOut(BaseModel):
     url: str
 
 
-class RunStateResponse(BaseModel):
+class RunState(BaseModel):
     run_id: str
-    case: RunCaseSummary
+    case: RunCase
     contacts: list[ContactOut]
     active_persona_id: str
     shared_files: list[SharedFileOut]
     histories: dict[str, list[ChatMessage]]
-    notes: str
 
 
-class ExportCaseSummary(BaseModel):
+class ExportCase(BaseModel):
     id: int
     case_name: str
 
 
-class ExportPersonaOut(BaseModel):
+class ExportPersona(BaseModel):
     id: str
     name: str
     role: str
@@ -109,9 +101,5 @@ class ExportPersonaOut(BaseModel):
 
 
 class ExportResponse(BaseModel):
-    case: ExportCaseSummary
-    personas: list[ExportPersonaOut] = Field(default_factory=list)
-
-
-class NotesResponse(BaseModel):
-    notes: str
+    case: ExportCase
+    personas: list[ExportPersona] = Field(default_factory=list)

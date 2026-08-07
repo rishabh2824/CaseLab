@@ -2,7 +2,7 @@ import asyncio
 import time
 from math import ceil
 from domain_errors import RateLimited
-from infra import rate_limits as repo
+from infra import rate_limit_repo as repo
 from infra.db import getSession
 
 
@@ -11,11 +11,18 @@ START_LIMIT = 200 # How many runs can exist at a time
 CLEANUP_INTERVAL = 300  # how often the stale-row sweeper runs
 
 
-async def messageLimit(run_id: str) -> None:
+# `session`, when given, is used directly instead of opening a fresh one — lets a caller
+# (turn.py's prepareTurn) fold this write into a larger transaction it already holds open.
+# repo.upsertAndGet commits on its own regardless, so the rate-limit count is always
+# charged as soon as this returns, even if a later step in the caller's flow fails.
+async def messageLimit(run_id: str, *, session=None) -> None:
     key = f"message:{run_id}"
     now = time.time()
-    async with getSession() as session:
+    if session is not None:
         row = await repo.upsertAndGet(session, key, now, 60)
+    else:
+        async with getSession() as session:
+            row = await repo.upsertAndGet(session, key, now, 60)
 
     if row["count"] > MESSAGE_LIMIT:
         retry_after = max(1, ceil(row["start_time"] + 60 - now))

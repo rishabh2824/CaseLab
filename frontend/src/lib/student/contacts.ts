@@ -1,5 +1,3 @@
-// Data-shaping helpers for the student chat view
-
 export const getPersonaInitials = (name: string | undefined | null) =>
 	name
 		? name

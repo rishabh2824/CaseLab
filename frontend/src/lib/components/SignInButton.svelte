@@ -24,6 +24,23 @@ let showPicker = $state(false);
 let pickerContainer: HTMLDivElement | undefined = $state();
 let initialized = false;
 let gsiLoadPromise: Promise<void> | null = null;
+let preconnected = false;
+
+// Was an unconditional <link rel="preconnect"> in app.html — every visitor
+// (overwhelmingly students entering an access code, never this button) paid
+// for the DNS/TLS handshake to accounts.google.com on page load, for a
+// staff-only feature. Opening it on hover/focus instead means only someone
+// actually about to click pays for it, while still landing before the real
+// script fetch in loadGsiScript below (hover-then-click, or focus-then-Enter,
+// both leave enough of a gap for the handshake to complete).
+function preconnectGoogle(): void {
+	if (preconnected) return;
+	preconnected = true;
+	const link = document.createElement("link");
+	link.rel = "preconnect";
+	link.href = "https://accounts.google.com";
+	document.head.appendChild(link);
+}
 
 // Deferred to first click (rather than onMount) so the GSI script isn't
 // downloaded by every landing-page visitor — the vast majority are students
@@ -129,7 +146,13 @@ async function handleClick(): Promise<void> {
 </script>
 
 <div class="relative inline-block">
-	<button type="button" onclick={handleClick} class={className}>
+	<button
+		type="button"
+		onclick={handleClick}
+		onpointerenter={preconnectGoogle}
+		onfocus={preconnectGoogle}
+		class={className}
+	>
 		{#if isPending}
 			Signing in…
 		{:else}

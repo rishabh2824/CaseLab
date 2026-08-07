@@ -1,7 +1,7 @@
 // Owns the in-memory persona/referral graph a case form edits — personas and
 // referral edges as sibling arrays (see types.ts). Dirty-tracking lives in
 // CaseForm's snapshot comparison, not here (see CaseForm.svelte).
-import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
+import type { Persona, ReferralEdge } from "../types.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
@@ -20,7 +20,6 @@ export type GraphInput = {
 
 export type GraphValidation = {
 	rootsError: string | null;
-	personaErrors: Record<string, PersonaFieldErrors>;
 	hasErrors: boolean;
 };
 
@@ -29,29 +28,34 @@ export class CaseGraph {
 	referrals = $state<ReferralEdge[]>([]);
 	roots = $state<string[]>([]);
 
-	get byId(): Map<string, Persona> {
-		return personasById(this.personas);
-	}
+	// $derived (memoized against personas/referrals/roots), not a plain getter:
+	// CaseGraphEditor.svelte and PersonaFields.svelte read these once per
+	// persona/referral inside {#each} loops, so a plain getter rebuilt the
+	// whole Map / re-walked the whole graph on every one of those accesses —
+	// real cost for a 30-persona case. ReadOnlyPersonaCard.svelte already uses
+	// this pattern for the same computations outside the class.
+	byId: Map<string, Persona> = $derived(personasById(this.personas));
+	referredWithParents = $derived(
+		referredWithParentsOf(this.personas, this.referrals, this.roots),
+	);
 
-	get referredWithParents() {
-		return referredWithParentsOf(this.personas, this.referrals, this.roots);
-	}
-
-	validate(): GraphValidation {
+	// $derived, same as byId/referredWithParents above — one memoized signal
+	// shared by every reader (CaseForm.svelte and CaseGraphEditor.svelte both
+	// read graph.validation), instead of each call site re-walking all N
+	// personas on its own. Per-persona field errors are no longer computed
+	// here: PersonaFields.svelte derives its own from just its own persona,
+	// so editing one persona no longer invalidates every other one's errors.
+	validation: GraphValidation = $derived.by(() => {
 		const rootsError =
 			this.roots.length < 1 ? "At least 1 persona is required" : null;
-		const personaErrors: Record<string, PersonaFieldErrors> = {};
-		for (const persona of this.personas) {
-			personaErrors[persona.id] = getPersonaFieldErrors(persona);
-		}
-		const hasAnyPersonaError =
-			Object.values(personaErrors).some(hasFieldErrors);
+		const hasAnyPersonaError = this.personas.some((persona) =>
+			hasFieldErrors(getPersonaFieldErrors(persona)),
+		);
 		return {
 			rootsError,
-			personaErrors,
 			hasErrors: Boolean(rootsError) || hasAnyPersonaError,
 		};
-	}
+	});
 
 	load(input: GraphInput): void {
 		this.personas = input.personas;
