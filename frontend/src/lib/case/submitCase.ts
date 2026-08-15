@@ -1,7 +1,14 @@
-import { apiFetch } from "../api/client.js";
+import { getConvexClient } from "convex-svelte";
+import { makeFunctionReference } from "convex/server";
 import { slugify } from "../format.js";
-import type { Api, Persona, ReferralEdge } from "../types.js";
+import type { FileRefPayload, Persona, PersonaPayload, ReferralEdge } from "../types.js";
 import { normalizePersona } from "./draft.js";
+
+// String-based references (not generated `api` imports): the convex/ project lives at
+// the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
+const presignUploadBatchRef = makeFunctionReference<"action">("api/uploads:presignUploadBatch");
+const createCaseRef = makeFunctionReference<"mutation">("api/cases:create");
+const updateCaseRef = makeFunctionReference<"mutation">("api/cases:update");
 
 // Where one File-valued upload slot (a persona's profile photo, or one of its
 // attachments) lives in the persona list, so results can be matched back
@@ -15,40 +22,38 @@ type PendingUpload = {
 	file: File;
 };
 
-// One presign request for every File across every persona (photos and
-// attachments alike) — not one request per file. getCurrentAdmin's JWT
-// decode + admin DB lookup (backend/api/dependencies.py) is paid once for
-// the whole case save; generate_presigned_url itself is a local signing
-// computation with no Spaces round trip, so batching it is free.
+type PresignResult = {
+	uploadUrl: string;
+	objectKey: string;
+	fileName: string;
+	contentType?: string;
+};
+
+// One presign request for every File across every persona (photos and attachments alike)
+// -- not one request per file. Shared by both the create and edit save paths below, since
+// the underlying Spaces bucket/credentials are the same either way.
 async function presignAll(
 	uploads: PendingUpload[],
 	prefix: string,
-): Promise<Api<"PresignUploadResponse">[]> {
+): Promise<PresignResult[]> {
 	if (uploads.length === 0) return [];
-	const response = await apiFetch<Api<"PresignUploadBatchResponse">>(
-		"/api/uploads/presign/batch",
-		{
-			method: "POST",
-			body: {
-				files: uploads.map(({ file }) => ({
-					file_name: file.name,
-					content_type: file.type || null,
-					prefix,
-				})),
-			} satisfies Api<"PresignUploadBatchRequest">,
-		},
-	);
-	return response.files;
+	return await getConvexClient().action(presignUploadBatchRef, {
+		files: uploads.map(({ file }) => ({
+			fileName: file.name,
+			contentType: file.type || undefined,
+			prefix,
+		})),
+	});
 }
 
 async function putToSpaces(
 	file: File,
-	presign: Api<"PresignUploadResponse">,
-): Promise<Api<"FileRef">> {
-	const putResponse = await fetch(presign.upload_url, {
+	presign: PresignResult,
+): Promise<FileRefPayload> {
+	const putResponse = await fetch(presign.uploadUrl, {
 		method: "PUT",
 		headers: {
-			"Content-Type": presign.content_type || "application/octet-stream",
+			"Content-Type": presign.contentType || "application/octet-stream",
 		},
 		body: file,
 	});
@@ -56,9 +61,9 @@ async function putToSpaces(
 	if (!putResponse.ok) throw new Error("Failed to upload file to Spaces.");
 
 	return {
-		object_key: presign.object_key,
-		file_name: presign.file_name,
-		content_type: presign.content_type,
+		object_key: presign.objectKey,
+		file_name: presign.fileName,
+		content_type: presign.contentType,
 	};
 }
 
@@ -74,7 +79,7 @@ function targetKey(target: UploadTarget): string {
 async function uploadAll(
 	personas: Persona[],
 	prefix: string,
-): Promise<Map<string, Api<"FileRef">>> {
+): Promise<Map<string, FileRefPayload>> {
 	const uploads: PendingUpload[] = [];
 	personas.forEach((persona, personaIndex) => {
 		if (persona.profile_photo instanceof File) {
@@ -95,7 +100,7 @@ async function uploadAll(
 
 	// Consumed as a queue (not indexed by position) so each pairing is
 	// type-narrowed by its own `if (!x) throw` rather than an
-	// `Api<"PresignUploadResponse"> | undefined` from indexing presigns[i]
+	// `PresignResult | undefined` from indexing presigns[i]
 	// (noUncheckedIndexedAccess) that a separate length check can't narrow away.
 	const presignQueue = await presignAll(uploads, prefix);
 	const pairs = uploads.map((upload) => {
@@ -110,7 +115,7 @@ async function uploadAll(
 		})),
 	);
 
-	const results = new Map<string, Api<"FileRef">>();
+	const results = new Map<string, FileRefPayload>();
 	refPairs.forEach(({ target, ref }) => results.set(targetKey(target), ref));
 	return results;
 }
@@ -118,8 +123,8 @@ async function uploadAll(
 function buildPersonaPayload(
 	persona: Persona,
 	personaIndex: number,
-	uploaded: Map<string, Api<"FileRef">>,
-): Api<"PersonaPayload"> {
+	uploaded: Map<string, FileRefPayload>,
+): PersonaPayload {
 	const profile_photo =
 		persona.profile_photo instanceof File
 			? (uploaded.get(targetKey({ kind: "photo", personaIndex })) ?? null)
@@ -159,13 +164,16 @@ export type SubmitCaseInput = {
 	personas: Persona[];
 	referrals: ReferralEdge[];
 	roots: string[];
-	collaboratorAdminIds: number[];
-	// Required in edit mode (the version the form loaded, for the optimistic
-	// concurrency check) — unused when creating a brand-new case.
-	expectedVersion?: number;
+	// Convex admin ids (see CaseForm.svelte's collaborator picker, now sourced from
+	// api/admins:listAll rather than the old backend's numeric ids).
+	collaboratorAdminIds: string[];
 };
 
-// Uploads any new (File-valued) profile photos/attachments to Spaces, then creates or updates the case.
+// Uploads any new (File-valued) profile photos/attachments to Spaces, then creates or
+// updates the case -- both go through Convex end to end now. Edit has no optimistic-
+// concurrency check (no expected-version conflict to handle): two admins saving the same
+// case at once is rare enough that last-write-wins is an accepted tradeoff (see
+// newBackend/convex/schema.ts's comment on `cases`).
 export async function submitCase({
 	isEditMode,
 	editCaseId,
@@ -178,8 +186,7 @@ export async function submitCase({
 	referrals,
 	roots,
 	collaboratorAdminIds,
-	expectedVersion,
-}: SubmitCaseInput): Promise<Api<"CaseCreatedResponse">> {
+}: SubmitCaseInput): Promise<unknown> {
 	const slug = slugify(caseName);
 	const prefix = slug ? `cases/${slug}` : "cases";
 	const normalizedPersonas = personas.map((persona) => normalizePersona(persona));
@@ -187,35 +194,29 @@ export async function submitCase({
 	const personasPayload = normalizedPersonas.map((persona, personaIndex) =>
 		buildPersonaPayload(persona, personaIndex, uploaded),
 	);
-	const basePayload = {
-		case_name: caseName.trim(),
+	const referralsPayload = referrals.map((referral) => ({
+		from_id: referral.from_id,
+		to_id: referral.to_id,
+		conditions: referral.conditions,
+	}));
+
+	const scalars = {
+		name: caseName.trim(),
 		brief: initialBrief.trim(),
-		common_information: commonInformation.trim(),
-		simulation_duration: simulationDurationMinutes,
-		access_code: accessCode.trim(),
+		commonInformation: commonInformation.trim(),
+		duration: simulationDurationMinutes ?? undefined,
+		accessCode: accessCode.trim(),
 		personas: personasPayload,
-		referrals: referrals.map((referral) => ({
-			from_id: referral.from_id,
-			to_id: referral.to_id,
-			conditions: referral.conditions,
-		})),
+		referrals: referralsPayload,
 		roots,
-		collaborator_admin_ids: collaboratorAdminIds,
+		collaboratorAdminIds,
 	};
-	const payload: Api<"CasePayload"> | Api<"CaseUpdatePayload"> = isEditMode
-		? ({
-				...basePayload,
-				// The submit button is disabled while isEditMode is true and
-				// expectedVersion hasn't loaded yet (see CaseForm.svelte), so
-				// this is always a number by the time submitCase can run.
-				expected_version: expectedVersion as number,
-			} satisfies Api<"CaseUpdatePayload">)
-		: (basePayload satisfies Api<"CasePayload">);
-	return apiFetch<Api<"CaseCreatedResponse">>(
-		isEditMode ? `/api/cases/${editCaseId}` : "/api/cases",
-		{
-			method: isEditMode ? "PUT" : "POST",
-			body: payload,
-		},
-	);
+
+	if (isEditMode) {
+		// editCaseId is always set by the time submitCase can run in edit mode -- the
+		// submit button stays disabled until loadCase resolves (see CaseForm.svelte).
+		return getConvexClient().mutation(updateCaseRef, { caseId: editCaseId as string, ...scalars });
+	}
+
+	return getConvexClient().mutation(createCaseRef, scalars);
 }

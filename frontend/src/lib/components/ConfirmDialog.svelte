@@ -2,8 +2,8 @@
 // Shared button styles, so callers don't each retype the same class strings.
 // SECONDARY is for Cancel/"keep editing"-type actions; CONFIRM is for the
 // primary action, including destructive ones — this app has no separate
-// danger color (CaseConflictModal's data-losing "Reload" already uses the
-// same brand-colored primary button), so destructive confirms follow suit.
+// danger color (DestructiveConfirmDialog's data-losing "Import" already uses
+// the same brand-colored primary button), so destructive confirms follow suit.
 export const SECONDARY_BUTTON_CLASS =
 	"rounded-lg border border-line px-4 py-2 text-sm font-semibold text-ink-soft transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-60";
 export const CONFIRM_BUTTON_CLASS =
@@ -15,9 +15,9 @@ import { AlertDialog } from "bits-ui";
 import type { Snippet } from "svelte";
 
 // Shared Overlay/Content shell for every AlertDialog-based confirmation in the
-// admin UI — UnsavedChangesModal, CaseConflictModal, and any destructive-action
-// confirm (delete admin/case, overwrite-on-import) render through this instead
-// of each hand-rolling the same fixed-position overlay/panel markup. Callers
+// admin UI — UnsavedChangesModal and any destructive-action confirm (delete
+// admin/case, overwrite-on-import) render through this instead of each
+// hand-rolling the same fixed-position overlay/panel markup. Callers
 // supply their own `actions` snippet (button count and labels vary: a plain
 // destructive confirm is Cancel/Confirm, UnsavedChangesModal is
 // Cancel/Discard/Save) — see SECONDARY_BUTTON_CLASS/CONFIRM_BUTTON_CLASS above

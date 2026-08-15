@@ -1,10 +1,16 @@
 <script lang="ts">
-import { onMount } from "svelte";
+import { useMutation, useQuery } from "convex-svelte";
+import { makeFunctionReference } from "convex/server";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
-import { cases } from "$lib/case/cases.svelte.js";
-import type { Api } from "$lib/types.js";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
+
+// String-based references (not generated `api` imports): the convex/ project lives at
+// the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
+const listAllRef = makeFunctionReference<"query">("api/cases:listAll");
+const deleteCaseRef = makeFunctionReference<"mutation">("api/cases:deleteCase");
+
+type CaseSummary = { _id: string; name: string; accessCode?: string };
 
 type Props = {
 	mode?: "template" | "edit";
@@ -12,22 +18,24 @@ type Props = {
 
 let { mode = "template" }: Props = $props();
 
-let pendingDelete = $state<Api<"CaseSummary"> | null>(null);
+// A live subscription, not a fetch-once cache: Convex pushes an updated list to every
+// subscriber automatically whenever a case is created/deleted/edited (including from
+// deleteCase below), so there's no manual invalidate-and-refetch bookkeeping to maintain.
+const casesQuery = useQuery(listAllRef, {});
+const deleteCase = useMutation(deleteCaseRef);
+
+let pendingDelete = $state<CaseSummary | null>(null);
 let isDeleting = $state(false);
 
-onMount(() => {
-	cases.fetchAll();
-});
-
-function openCase(caseItem: Api<"CaseSummary">) {
+function openCase(caseItem: CaseSummary) {
 	if (mode === "edit") {
-		goto(`/admin/cases/${caseItem.id}/edit`);
+		goto(`/admin/cases/${caseItem._id}/edit`);
 	} else {
-		goto(`/admin/cases/new?template=${caseItem.id}`);
+		goto(`/admin/cases/new?template=${caseItem._id}`);
 	}
 }
 
-function requestDelete(event: MouseEvent, caseItem: Api<"CaseSummary">) {
+function requestDelete(event: MouseEvent, caseItem: CaseSummary) {
 	event.stopPropagation();
 	pendingDelete = caseItem;
 }
@@ -41,7 +49,7 @@ async function confirmDelete(): Promise<void> {
 	if (!caseItem) return;
 	isDeleting = true;
 	try {
-		await cases.deleteCase(caseItem.id);
+		await deleteCase({ caseId: caseItem._id });
 		pendingDelete = null;
 	} catch (err) {
 		toast((err instanceof Error && err.message) || "Failed to delete case.");
@@ -74,20 +82,20 @@ const isEditMode = $derived(mode === "edit");
 		</div>
 
 		<div class="mt-10 space-y-4">
-			{#if cases.isLoading}
+			{#if casesQuery.isLoading}
 				<div class="rounded-2xl border border-line bg-white p-5 text-sm text-stone">
 					Loading cases...
 				</div>
-			{:else if cases.error}
+			{:else if casesQuery.error}
 				<div class="rounded-2xl border border-brand/20 bg-brand-tint p-5 text-sm text-brand">
-					{cases.error}
+					{casesQuery.error.message || "Failed to load cases."}
 				</div>
-			{:else if cases.list.length === 0}
+			{:else if casesQuery.data.length === 0}
 				<div class="rounded-2xl border border-line bg-white p-5 text-sm text-stone">
 					No cases found.
 				</div>
 			{:else}
-				{#each cases.list as caseItem (caseItem.id)}
+				{#each casesQuery.data as caseItem (caseItem._id)}
 					<div>
 						<button
 							type="button"
@@ -95,11 +103,11 @@ const isEditMode = $derived(mode === "edit");
 							class="group block w-full rounded-2xl border border-line bg-white p-5 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-brand hover:shadow-premium"
 						>
 							<p class="font-display text-lg font-semibold text-ink transition group-hover:text-brand">
-								{caseItem.case_name}
+								{caseItem.name}
 							</p>
-							{#if caseItem.access_code}
+							{#if caseItem.accessCode}
 								<p class="mt-1 font-mono text-xs uppercase tracking-[0.18em] text-stone-soft">
-									Access code: {caseItem.access_code}
+									Access code: {caseItem.accessCode}
 								</p>
 							{/if}
 						</button>
@@ -108,7 +116,7 @@ const isEditMode = $derived(mode === "edit");
 								<button
 									type="button"
 									onclick={(event) => requestDelete(event, caseItem)}
-									disabled={isDeleting && pendingDelete?.id === caseItem.id}
+									disabled={isDeleting && pendingDelete?._id === caseItem._id}
 									class="text-xs font-semibold text-stone-soft transition hover:text-brand disabled:opacity-60"
 								>
 									Delete case
@@ -124,7 +132,7 @@ const isEditMode = $derived(mode === "edit");
 
 <DestructiveConfirmDialog
 	bind:open={() => pendingDelete !== null, (isOpen) => { if (!isOpen) pendingDelete = null }}
-	title={pendingDelete ? `Delete "${pendingDelete.case_name}"?` : ""}
+	title={pendingDelete ? `Delete "${pendingDelete.name}"?` : ""}
 	description="This also frees its access code for reuse. This cannot be undone."
 	confirming={isDeleting}
 	onConfirm={confirmDelete}

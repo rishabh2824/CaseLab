@@ -1,115 +1,185 @@
-// run.svelte.ts uses `window.setTimeout`/`setInterval` directly (notes
-// debounce, run-expiry watch) and relies on relative `fetch("/api/...")`
-// URLs resolving against a real origin — both need a `window`/`location`,
-// which is why this file is named `*.svelte.test.ts` rather than plain
-// `*.test.ts`: per vite.config.ts's project split, that suffix (also what
-// gets the Svelte compiler to process `$state` in this non-.svelte module)
-// routes it to the jsdom-backed "client" project, not "server"/node.
-import { HttpResponse, http } from "msw";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+// run.svelte.ts uses `window.setTimeout`/`setInterval` directly (notes debounce,
+// run-expiry watch), which is why this file is named `*.svelte.test.ts` rather than plain
+// `*.test.ts`: per vite.config.ts's project split, that suffix (also what gets the Svelte
+// compiler to process runes in this non-.svelte module) routes it to the jsdom-backed
+// "client" project, not "server"/node.
+import { goto } from "$app/navigation";
+import { getFunctionName } from "convex/server";
+import { toast } from "svelte-sonner";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { session } from "../../src/lib/session.svelte.js";
+import { RunStore } from "../../src/lib/student/run.svelte.js";
 import {
 	makeContact,
 	makeRunState,
 	makeSharedFile,
 	message,
 } from "../support/fixtures.js";
-import { server } from "../support/msw.js";
+
+// startSession/sendMessage go through Convex mutations, and the run's live state
+// (contacts, histories, ...) through a Convex query subscription -- both mocked here.
+const mockClientMutation = vi.fn();
+const mockClientQuery = vi.fn();
+
+// A minimal, reactive-enough stand-in for convex-svelte's useQuery: entries are keyed by
+// (function name, args) and re-read via a getter on every access, gated behind a $state
+// version counter so changing an *existing* key's value later (simulating a live server
+// push, same args as before) still invalidates anything derived from it -- a plain Map
+// mutation alone wouldn't, since Svelte has no way to see inside a plain JS getter.
+type FakeQueryEntry = { data?: unknown; error?: Error };
+const fakeQueryData = new Map<string, FakeQueryEntry>();
+let fakeQueryVersion = $state(0);
+
+function fakeQueryKey(refName: string, args: unknown): string {
+	return `${refName}::${JSON.stringify(args)}`;
+}
+
+function setFakeQuery(refName: string, args: unknown, entry: FakeQueryEntry): void {
+	fakeQueryData.set(fakeQueryKey(refName, args), entry);
+	fakeQueryVersion += 1;
+}
+
+function resetFakeQueries(): void {
+	fakeQueryData.clear();
+	fakeQueryVersion += 1;
+}
+
+const mockUseQuery = vi.fn();
+mockUseQuery.mockImplementation((ref: unknown, argsOrFn: unknown) => ({
+	get data() {
+		void fakeQueryVersion;
+		const args = typeof argsOrFn === "function" ? argsOrFn() : argsOrFn;
+		if (args === "skip") return undefined;
+		// biome-ignore lint/suspicious/noExplicitAny: ref's real type is a branded object convex/server owns
+		return fakeQueryData.get(fakeQueryKey(getFunctionName(ref as any), args))?.data;
+	},
+	get error() {
+		void fakeQueryVersion;
+		const args = typeof argsOrFn === "function" ? argsOrFn() : argsOrFn;
+		if (args === "skip") return undefined;
+		// biome-ignore lint/suspicious/noExplicitAny: ref's real type is a branded object convex/server owns
+		return fakeQueryData.get(fakeQueryKey(getFunctionName(ref as any), args))?.error;
+	},
+	isLoading: false,
+	isStale: false,
+}));
+
+vi.mock("convex-svelte", () => ({
+	getConvexClient: () => ({
+		mutation: mockClientMutation,
+		query: mockClientQuery,
+	}),
+	useQuery: (...args: unknown[]) => mockUseQuery(...args),
+}));
+
+const GET_SIMULATION_STATE = "api/simulations:get";
+const GET_PERSONA_HISTORY = "api/simulations:getPersonaHistory";
+const GET_STREAMING_PREVIEW = "api/turn:getStreamingPreview";
 
 // A case with no configured duration keeps #ensureExpiryWatch's early-return
 // branch active, so tests never touch `window.setInterval` incidentally —
 // that behavior (auto-ending a run on expiry) is out of scope here.
 const caseData = {
-	id: 1,
+	id: "case-1",
 	case_name: "Sterling Industries",
 	brief: "Reduce office supply costs.",
 	simulation_duration: null as number | null,
 };
 
-// RunStore is created fresh per /student mount via context (setRunStore),
-// not a module singleton — so tests just need a fresh instance, with a
-// fresh, empty-call-history `goto`/`toast` mock bound to whatever this
-// import returns (still re-imported per test since `session` remains a
-// module singleton these tests share/reset).
-async function freshRun() {
-	const { RunStore } = await import("../../src/lib/student/run.svelte.js");
-	const { session } = await import("../../src/lib/session.svelte.js");
-	const nav = await import("$app/navigation");
-	const sonner = await import("svelte-sonner");
+// RunStore is created fresh per /student mount via context (setRunStore), not a module
+// singleton -- session IS a module singleton these tests share, reset via session.clearRun()/
+// clearAdmin() in beforeEach below rather than vi.resetModules(): fakeQueryVersion above is a
+// $state declared at this file's top level, which vi.resetModules() would NOT re-evaluate
+// (only subsequently-imported modules get a fresh instance) -- reactivity across that boundary
+// silently doesn't propagate, since a freshly re-imported run.svelte.ts would run under a
+// different Svelte runtime instance than this file's own top-level $state. Every created
+// RunStore is tracked and disposed in afterEach, so a stale instance's effects can't keep
+// reacting to the next test's session changes.
+const liveRuns: RunStore[] = [];
+function freshRun() {
+	const run = new RunStore();
+	liveRuns.push(run);
 	return {
-		run: new RunStore(),
+		run,
 		session,
-		goto: vi.mocked(nav.goto),
-		toast: vi.mocked(sonner.toast),
+		goto: vi.mocked(goto),
+		toast: vi.mocked(toast),
 	};
 }
 
-// An SSE response body the test drives by hand (rather than a canned string
-// or a fixed chunk/delay schedule), so mid-stream assertions land on an exact
-// point in the sequence instead of racing a timer.
-function manualSseStream() {
-	const encoder = new TextEncoder();
-	let controllerRef!: ReadableStreamDefaultController<Uint8Array>;
-	const stream = new ReadableStream<Uint8Array>({
-		start(controller) {
-			controllerRef = controller;
+// Establishes a run whose active persona ("mary") is available, wired through the fake
+// reactive query rather than a direct `run.raw = ...` assignment -- raw is now $derived,
+// read-only, sourced from the (mocked) live subscription.
+async function primeRun(
+	run: Awaited<ReturnType<typeof freshRun>>["run"],
+	session: Awaited<ReturnType<typeof freshRun>>["session"],
+	overrides: Parameters<typeof makeRunState>[0] = {},
+) {
+	session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+	setFakeQuery(
+		GET_SIMULATION_STATE,
+		{ runId: "run-1" },
+		{
+			data: makeRunState({
+				case: caseData,
+				contacts: [makeContact({ id: "mary", chat_ended: false })],
+				active_persona_id: "mary",
+				...overrides,
+			}),
 		},
-	});
-	return {
-		response: new Response(stream, {
-			status: 200,
-			headers: { "Content-Type": "text/event-stream" },
-		}),
-		push(frame: string) {
-			controllerRef.enqueue(encoder.encode(frame));
-		},
-		error(err: unknown) {
-			controllerRef.error(err);
-		},
-		close() {
-			controllerRef.close();
-		},
-	};
+	);
+	await vi.waitFor(() => expect(run.raw).not.toBeNull());
 }
 
 beforeEach(() => {
-	vi.resetModules();
+	session.clearRun();
+	session.clearAdmin();
+	mockClientMutation.mockReset();
+	mockClientQuery.mockReset();
+	mockUseQuery.mockClear();
+	resetFakeQueries();
+});
+
+afterEach(() => {
+	for (const run of liveRuns.splice(0)) run.destroy();
 });
 
 describe("startSession", () => {
-	it("a successful POST populates raw, writes the session, and selects an active contact", async () => {
+	it("a successful call populates raw (via the live query), writes the session, and selects an active contact", async () => {
 		const { run, session, goto } = await freshRun();
-		server.use(
-			http.post("*/api/simulations/start", () =>
-				HttpResponse.json(
-					makeRunState({
-						run_id: "run-42",
-						case: caseData,
-						contacts: [makeContact({ id: "mary" })],
-						active_persona_id: "mary",
-					}),
-				),
-			),
+		mockClientMutation.mockResolvedValue(
+			makeRunState({
+				run_id: "run-42",
+				case: caseData,
+				contacts: [makeContact({ id: "mary" })],
+				active_persona_id: "mary",
+			}),
+		);
+		setFakeQuery(
+			GET_SIMULATION_STATE,
+			{ runId: "run-42" },
+			{
+				data: makeRunState({
+					run_id: "run-42",
+					case: caseData,
+					contacts: [makeContact({ id: "mary" })],
+					active_persona_id: "mary",
+				}),
+			},
 		);
 
 		await run.startSession("ACCESS1");
 
-		expect(run.raw?.run_id).toBe("run-42");
 		expect(session.runId).toBe("run-42");
 		expect(session.accessCode).toBe("ACCESS1");
+		await vi.waitFor(() => expect(run.raw?.run_id).toBe("run-42"));
 		expect(run.activeContactId).toBe("mary");
 		expect(goto).not.toHaveBeenCalled();
 	});
 
-	it("a failed POST navigates home", async () => {
+	it("a failed call navigates home", async () => {
 		const { run, goto } = await freshRun();
-		server.use(
-			http.post("*/api/simulations/start", () =>
-				HttpResponse.json(
-					{ detail: "Access code not found." },
-					{ status: 404 },
-				),
-			),
-		);
+		mockClientMutation.mockRejectedValue(new Error("Invalid access code."));
 
 		await run.startSession("BADCODE");
 
@@ -118,616 +188,294 @@ describe("startSession", () => {
 	});
 });
 
-describe("refresh", () => {
-	it("a 404 clears the run id and starts a fresh session when an access code is still known", async () => {
+describe("session resume / live-query errors", () => {
+	it("an expired run clears the run id and starts a fresh session when an access code is still known", async () => {
 		const { run, session, goto } = await freshRun();
 		session.startRun({ runId: "stale-run", accessCode: "ACCESS1" });
-		server.use(
-			http.get("*/api/simulations/stale-run", () =>
-				HttpResponse.json({ detail: "Run not found." }, { status: 404 }),
-			),
-			http.post("*/api/simulations/start", () =>
-				HttpResponse.json(
-					makeRunState({
-						run_id: "fresh-run",
-						case: caseData,
-						contacts: [makeContact({ id: "mary" })],
-						active_persona_id: "mary",
-					}),
-				),
-			),
+		setFakeQuery(GET_SIMULATION_STATE, { runId: "stale-run" }, { error: new Error("Run not found.") });
+		mockClientMutation.mockResolvedValue(
+			makeRunState({
+				run_id: "fresh-run",
+				case: caseData,
+				contacts: [makeContact({ id: "mary" })],
+				active_persona_id: "mary",
+			}),
+		);
+		setFakeQuery(
+			GET_SIMULATION_STATE,
+			{ runId: "fresh-run" },
+			{
+				data: makeRunState({
+					run_id: "fresh-run",
+					case: caseData,
+					contacts: [makeContact({ id: "mary" })],
+					active_persona_id: "mary",
+				}),
+			},
 		);
 
-		await run.refresh("stale-run");
-
 		// #handleExpired fires startSession without awaiting it, so the fresh
-		// run only shows up once that fetch resolves.
+		// run only shows up once that call resolves.
 		await vi.waitFor(() => expect(run.raw?.run_id).toBe("fresh-run"));
 		expect(session.runId).toBe("fresh-run");
 		expect(goto).not.toHaveBeenCalled();
 	});
 
-	it("a 404 with no known access code navigates home instead", async () => {
+	it("an expired run with no known access code navigates home instead", async () => {
 		const { run, session, goto } = await freshRun();
 		session.startRun({ runId: "stale-run", accessCode: "" });
-		server.use(
-			http.get("*/api/simulations/stale-run", () =>
-				HttpResponse.json({ detail: "Run not found." }, { status: 404 }),
-			),
-		);
+		setFakeQuery(GET_SIMULATION_STATE, { runId: "stale-run" }, { error: new Error("Run not found.") });
 
-		await run.refresh("stale-run");
-
-		expect(goto).toHaveBeenCalledWith("/");
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
 		expect(session.runId).toBe("");
+		void run;
 	});
 
-	it("a non-404 error sets loadError instead of clearing the run", async () => {
+	it("a non-expiry error sets loadError instead of clearing the run", async () => {
 		const { run, session, goto } = await freshRun();
 		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
-		server.use(
-			http.get("*/api/simulations/run-1", () =>
-				HttpResponse.json({ detail: "Server exploded." }, { status: 500 }),
-			),
-		);
+		setFakeQuery(GET_SIMULATION_STATE, { runId: "run-1" }, { error: new Error("Server exploded.") });
 
-		await run.refresh("run-1");
-
-		expect(run.loadError).toBe("Server exploded.");
+		await vi.waitFor(() => expect(run.loadError).toBe("Server exploded."));
 		expect(session.runId).toBe("run-1");
 		expect(goto).not.toHaveBeenCalled();
 	});
 });
 
 describe("sendMessage guards", () => {
-	// Each guard test registers a counting handler for the message endpoint
-	// (rather than no handler at all) so a broken guard shows up as a
-	// deterministic assertion failure — a stray call would otherwise surface
-	// as an unhandled rejection from MSW's onUnhandledRequest:"error" instead
-	// of a clean test failure.
-	async function setupAvailablePersona(
-		run: Awaited<ReturnType<typeof freshRun>>["run"],
-		session: Awaited<ReturnType<typeof freshRun>>["session"],
-	) {
-		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
-		run.raw = makeRunState({
-			case: caseData,
-			contacts: [
-				makeContact({ id: "mary", available: true, chat_ended: false }),
-			],
-			active_persona_id: "mary",
-		});
-		run.activeContactId = "mary";
-	}
-
 	it("returns false and sends nothing when there is no run id", async () => {
 		const { run, session } = await freshRun();
-		await setupAvailablePersona(run, session);
+		await primeRun(run, session);
+		run.activeContactId = "mary";
 		session.setRunId("");
-		let calls = 0;
-		server.use(
-			http.post("*/api/simulations/:runId/message", () => {
-				calls++;
-				return new HttpResponse(null);
-			}),
-		);
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(calls).toBe(0);
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
 	it("returns false and sends nothing when there is no active contact", async () => {
 		const { run, session } = await freshRun();
-		await setupAvailablePersona(run, session);
+		await primeRun(run, session);
 		run.activeContactId = null;
-		let calls = 0;
-		server.use(
-			http.post("*/api/simulations/:runId/message", () => {
-				calls++;
-				return new HttpResponse(null);
-			}),
-		);
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(calls).toBe(0);
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
 	it("returns false and sends nothing for an empty or whitespace-only message", async () => {
 		const { run, session } = await freshRun();
-		await setupAvailablePersona(run, session);
-		let calls = 0;
-		server.use(
-			http.post("*/api/simulations/:runId/message", () => {
-				calls++;
-				return new HttpResponse(null);
-			}),
-		);
+		await primeRun(run, session);
+		run.activeContactId = "mary";
 
 		expect(run.sendMessage("")).toBe(false);
 		expect(run.sendMessage("   \n\t ")).toBe(false);
-		expect(calls).toBe(0);
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
 	it("returns false and sends nothing while a send is already in flight", async () => {
 		const { run, session } = await freshRun();
-		await setupAvailablePersona(run, session);
+		await primeRun(run, session);
+		run.activeContactId = "mary";
 		run.isSending = true;
-		let calls = 0;
-		server.use(
-			http.post("*/api/simulations/:runId/message", () => {
-				calls++;
-				return new HttpResponse(null);
-			}),
-		);
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(calls).toBe(0);
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
 	it("returns false and sends nothing when the active persona is unavailable", async () => {
 		const { run, session } = await freshRun();
-		await setupAvailablePersona(run, session);
-		run.raw = makeRunState({
-			case: caseData,
-			contacts: [makeContact({ id: "mary", available: false })],
-			active_persona_id: "mary",
-		});
+		// available_at far in the future -- elapsedMinutes stays ~0 for the test's real-time
+		// duration (session.startTime defaults to "now"), so this persona never becomes
+		// available. See fixtures.ts's makeContact comment for why not `available: false`.
+		await primeRun(run, session, { contacts: [makeContact({ id: "mary", available_at: 9999 })] });
 		run.activeContactId = "mary";
-		let calls = 0;
-		server.use(
-			http.post("*/api/simulations/:runId/message", () => {
-				calls++;
-				return new HttpResponse(null);
-			}),
-		);
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(calls).toBe(0);
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
 	it("returns false and sends nothing when the active persona's chat has ended", async () => {
 		const { run, session } = await freshRun();
-		await setupAvailablePersona(run, session);
-		run.raw = makeRunState({
-			case: caseData,
-			contacts: [
-				makeContact({ id: "mary", available: true, chat_ended: true }),
-			],
-			active_persona_id: "mary",
+		await primeRun(run, session, {
+			contacts: [makeContact({ id: "mary", chat_ended: true })],
 		});
 		run.activeContactId = "mary";
-		let calls = 0;
-		server.use(
-			http.post("*/api/simulations/:runId/message", () => {
-				calls++;
-				return new HttpResponse(null);
-			}),
-		);
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(calls).toBe(0);
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
-	it("returns true when the message is accepted", async () => {
+	it("returns true and calls the api/turn:start mutation when the message is accepted", async () => {
 		const { run, session } = await freshRun();
-		await setupAvailablePersona(run, session);
-		server.use(
-			http.post(
-				"*/api/simulations/run-1/message",
-				() =>
-					new HttpResponse('event: done\ndata: {"reply":"hi"}\n\n', {
-						status: 200,
-						headers: { "Content-Type": "text/event-stream" },
-					}),
-			),
-		);
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
 
 		expect(run.sendMessage("hello")).toBe(true);
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
+		const [, args] = mockClientMutation.mock.calls[0] as [unknown, Record<string, unknown>];
+		expect(args).toEqual({ runId: "run-1", personaId: "mary", message: "hello" });
 	});
 });
 
-describe("streaming reconciliation", () => {
-	async function setupTwoContacts(
-		run: Awaited<ReturnType<typeof freshRun>>["run"],
-		session: Awaited<ReturnType<typeof freshRun>>["session"],
-	) {
-		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
-		run.raw = makeRunState({
-			case: caseData,
-			contacts: [
-				makeContact({ id: "mary", name: "Mary", available: true }),
-				makeContact({ id: "bob", name: "Bob", available: true }),
-			],
-			active_persona_id: "mary",
-			histories: {
-				mary: [message("user", "prior q"), message("assistant", "prior a")],
-				bob: [message("user", "bob q"), message("assistant", "bob a")],
-			},
-		});
+describe("sendMessage lifecycle", () => {
+	it("isSending stays true through the user's own message landing, and only clears once the reply lands too", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		setFakeQuery(
+			GET_PERSONA_HISTORY,
+			{ runId: "run-1", personaId: "mary" },
+			{ data: [message("user", "prior q"), message("assistant", "prior a")] },
+		);
 		run.activeContactId = "mary";
-	}
-
-	it("shows the optimistic user turn plus partial streamed text, composed on the persona's prior history", async () => {
-		const { run, session } = await freshRun();
-		await setupTwoContacts(run, session);
-		const stream = manualSseStream();
-		server.use(
-			http.post("*/api/simulations/run-1/message", () => stream.response),
-		);
-
-		expect(run.sendMessage("New question")).toBe(true);
-		stream.push('event: delta\ndata: {"text":"Hel"}\n\n');
-		await vi.waitFor(() =>
-			expect(run.streamingTurn?.messages.at(-1)?.content).toBe("Hel"),
-		);
-
-		expect(run.messagesByPersona.mary).toEqual([
-			message("user", "prior q"),
-			message("assistant", "prior a"),
-			message("user", "New question"),
-			{ role: "assistant", content: "Hel" },
-		]);
-
-		stream.push('event: done\ndata: {"reply":"Hel"}\n\n');
-		stream.close();
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-	});
-
-	it("a done frame's reply becomes the final assistant message, appended to the persona's prior history", async () => {
-		// DoneFrame carries only `reply`, not a full history array (see
-		// simulation_runtime.py's DoneFrame) -- the client appends it to the
-		// prior history it already had, rather than trusting a server-sent
-		// blob. This also covers `reply` differing from what streamed (e.g.
-		// the backend's cleanReply stripping a leading speaker tag) -- the
-		// committed text must be `reply`, not the raw streamed preview.
-		const { run, session } = await freshRun();
-		await setupTwoContacts(run, session);
-		const stream = manualSseStream();
-		server.use(
-			http.post("*/api/simulations/run-1/message", () => stream.response),
-		);
+		await vi.waitFor(() => expect(run.activeMessages).toHaveLength(2));
+		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("New question");
-		stream.push('event: delta\ndata: {"text":"[Mary] draft"}\n\n');
-		await vi.waitFor(() => expect(run.streamingTurn).not.toBeNull());
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		stream.push(
-			'event: done\ndata: {"reply":"the canonical server reply"}\n\n',
-		);
-		stream.close();
+		// The mutation resolving alone must not clear isSending -- only a persisted reply
+		// (reflected via the live query) does, since runTurn finishes asynchronously.
+		await Promise.resolve();
+		expect(run.isSending).toBe(true);
 
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(run.serverHistories.mary).toEqual([
-			message("user", "prior q"),
-			message("assistant", "prior a"),
-			message("user", "New question"),
-			message("assistant", "the canonical server reply"),
-		]);
-	});
-
-	it("commits the streamed text when the stream closes cleanly with no done frame", async () => {
-		const { run, session } = await freshRun();
-		await setupTwoContacts(run, session);
-		const stream = manualSseStream();
-		server.use(
-			http.post("*/api/simulations/run-1/message", () => stream.response),
-		);
-
-		run.sendMessage("New question");
-		stream.push('event: delta\ndata: {"text":"partial reply"}\n\n');
-		await vi.waitFor(() =>
-			expect(run.streamingTurn?.messages.at(-1)?.content).toBe("partial reply"),
-		);
-		// No `done` frame — the server just closes the connection.
-		stream.close();
-
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(run.serverHistories.mary).toEqual([
-			message("user", "prior q"),
-			message("assistant", "prior a"),
-			message("user", "New question"),
-			message("assistant", "partial reply"),
-		]);
-		expect(run.streamingTurn).toBeNull();
-	});
-
-	it("an error frame keeps the user's turn, drops the assistant reply, and shows a toast", async () => {
-		const { run, session, toast } = await freshRun();
-		await setupTwoContacts(run, session);
-		const stream = manualSseStream();
-		server.use(
-			http.post("*/api/simulations/run-1/message", () => stream.response),
-		);
-
-		run.sendMessage("New question");
-		stream.push('event: delta\ndata: {"text":"partial"}\n\n');
-		await vi.waitFor(() => expect(run.streamingTurn).not.toBeNull());
-		stream.push('event: error\ndata: {"detail":"The model errored."}\n\n');
-		stream.close();
-
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(run.serverHistories.mary).toEqual([
-			message("user", "prior q"),
-			message("assistant", "prior a"),
-			message("user", "New question"),
-		]);
-		expect(run.streamingTurn).toBeNull();
-		expect(toast).toHaveBeenCalledWith("The model errored.", {
-			duration: 4000,
-		});
-	});
-
-	// A mid-stream break (as opposed to a pre-stream rejection, covered by the
-	// error-frame/ApiError tests elsewhere in this file) only happens after the
-	// backend has already 200'd the request -- prepareTurn already persisted
-	// the user's message, and its producer task keeps generating and
-	// persisting the reply after a client disconnect regardless of whether
-	// this stream is still being read (see services/simulation/stream.py).
-	// So #runSend refetches instead of assuming the reply was lost: this pins
-	// that recovery, not the old drop-the-reply fallback.
-	it("recovers a stream break by refetching the run instead of dropping the reply", async () => {
-		const { run, session, toast } = await freshRun();
-		await setupTwoContacts(run, session);
-		const stream = manualSseStream();
-		server.use(
-			http.post("*/api/simulations/run-1/message", () => stream.response),
-		);
-		const recovered = makeRunState({
-			case: caseData,
-			contacts: [
-				makeContact({ id: "mary", name: "Mary", available: true }),
-				makeContact({ id: "bob", name: "Bob", available: true }),
-			],
-			active_persona_id: "mary",
-			histories: {
-				// The producer finished and persisted the full turn server-side
-				// during the disconnect, unseen by this client until the refetch.
-				mary: [
+		// startTurn (services/turn.ts) persists the user's own message before runTurn ever
+		// runs -- the live query reflects that first, with no reply yet. isSending must NOT
+		// clear here: this is exactly the regression where the Send button read "Send"
+		// instead of showing the typing indicator while the reply was still generating.
+		setFakeQuery(
+			GET_PERSONA_HISTORY,
+			{ runId: "run-1", personaId: "mary" },
+			{
+				data: [
 					message("user", "prior q"),
 					message("assistant", "prior a"),
 					message("user", "New question"),
-					message("assistant", "Recovered reply"),
 				],
-				bob: [message("user", "bob q"), message("assistant", "bob a")],
 			},
-		});
-		server.use(
-			http.get("*/api/simulations/run-1", () => HttpResponse.json(recovered)),
+		);
+		await Promise.resolve();
+		expect(run.isSending).toBe(true);
+
+		// Simulate the turn completing server-side: the live query now also returns the
+		// reply (applyDecisions/applyBoundary both insert exactly one assistant message).
+		setFakeQuery(
+			GET_PERSONA_HISTORY,
+			{ runId: "run-1", personaId: "mary" },
+			{
+				data: [
+					message("user", "prior q"),
+					message("assistant", "prior a"),
+					message("user", "New question"),
+					message("assistant", "the reply"),
+				],
+			},
 		);
 
-		run.sendMessage("New question");
-		stream.push('event: delta\ndata: {"text":"partial"}\n\n');
-		await vi.waitFor(() => expect(run.streamingTurn).not.toBeNull());
-		stream.error(new Error("connection reset"));
-
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(run.serverHistories.mary).toEqual([
+		expect(run.activeMessages).toEqual([
 			message("user", "prior q"),
 			message("assistant", "prior a"),
 			message("user", "New question"),
-			message("assistant", "Recovered reply"),
+			message("assistant", "the reply"),
 		]);
-		expect(run.streamingTurn).toBeNull();
+	});
+
+	it("a rejected mutation (e.g. rate limited, conversation ended) clears isSending immediately and shows a toast", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockRejectedValue(new Error("This conversation has ended."));
+
+		run.sendMessage("hello");
+
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(toast).toHaveBeenCalledWith("This conversation has ended.", { duration: 4000 });
+	});
+
+	it("streamingPreview surfaces the live streamingReplies row's text only while status is 'streaming'", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+
+		expect(run.streamingPreview).toBeNull();
+
+		setFakeQuery(
+			GET_STREAMING_PREVIEW,
+			{ runId: "run-1", personaId: "mary" },
+			{ data: { status: "streaming", text: "Partial re" } },
+		);
+		await vi.waitFor(() => expect(run.streamingPreview).toBe("Partial re"));
+
+		setFakeQuery(
+			GET_STREAMING_PREVIEW,
+			{ runId: "run-1", personaId: "mary" },
+			{ data: { status: "done", text: "" } },
+		);
+		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
+	});
+
+	it("a failed runTurn (streamingReplies status 'error') clears isSending and toasts, instead of leaving it stuck forever", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
+
+		run.sendMessage("hello");
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
+
+		// runTurn's catch (services/turn.ts) marks the row "error" on any failure -- unlike a
+		// synchronous startTurn rejection, this arrives asynchronously via the reactive
+		// subscription, not a rejected mutation promise, since the mutation already resolved.
+		setFakeQuery(
+			GET_STREAMING_PREVIEW,
+			{ runId: "run-1", personaId: "mary" },
+			{ data: { status: "error", text: "" } },
+		);
+
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(run.streamingPreview).toBeNull();
 		expect(toast).toHaveBeenCalledWith(
-			"Connection interrupted. Reconnected to check for a reply.",
+			"Something went wrong generating a reply. Please resend your message.",
 			{ duration: 4000 },
 		);
 	});
-
-	it("does not let deltas for a persona switched away from overwrite the newly active persona's view", async () => {
-		const { run, session } = await freshRun();
-		await setupTwoContacts(run, session);
-		const stream = manualSseStream();
-		server.use(
-			http.post("*/api/simulations/run-1/message", () => stream.response),
-		);
-
-		run.sendMessage("New question"); // sent to mary, the active contact
-		stream.push('event: delta\ndata: {"text":"first chunk"}\n\n');
-		await vi.waitFor(() =>
-			expect(run.streamingTurn?.messages.at(-1)?.content).toBe("first chunk"),
-		);
-
-		const bobViewBeforeSwitch = run.messagesByPersona.bob;
-		run.selectContact("bob"); // user looks away from mary mid-stream
-		// #runSend accumulates deltas with `+=`, so this chunk is the
-		// incremental piece, not the full text-so-far.
-		stream.push('event: delta\ndata: {"text":", more"}\n\n');
-		await vi.waitFor(() =>
-			expect(run.streamingTurn?.messages.at(-1)?.content).toBe(
-				"first chunk, more",
-			),
-		);
-
-		// Bob's messages are untouched by mary's ongoing stream.
-		expect(run.messagesByPersona.bob).toEqual(bobViewBeforeSwitch);
-		expect(run.messagesByPersona.bob).toEqual(run.serverHistories.bob);
-
-		stream.push('event: done\ndata: {"reply":"first chunk, more"}\n\n');
-		stream.close();
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-	});
-
-	it('marks the contact chat_ended, without a generic toast, when the send fails with code "conversation_ended"', async () => {
-		// prepareTurn runs inside the SSE generator (services/simulation/stream.py's
-		// streamMessage), so this arrives as a 200 + an "error" frame carrying
-		// `code: "conversation_ended"` -- never a rejected fetch/JSON error response.
-		const { run, session, toast } = await freshRun();
-		await setupTwoContacts(run, session);
-		server.use(
-			http.post(
-				"*/api/simulations/run-1/message",
-				() =>
-					new HttpResponse(
-						'event: error\ndata: {"detail":"This conversation has ended.","code":"conversation_ended"}\n\n',
-						{ status: 200, headers: { "Content-Type": "text/event-stream" } },
-					),
-			),
-		);
-
-		run.sendMessage("New question");
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-
-		const mary = run.raw?.contacts.find((c) => c.id === "mary");
-		expect(mary?.chat_ended).toBe(true);
-		expect(mary?.chat_end_reason).toBe("harassment");
-		expect(toast).not.toHaveBeenCalled();
-	});
 });
 
-describe("applyMeta", () => {
-	function setupRaw(run: Awaited<ReturnType<typeof freshRun>>["run"]) {
-		run.raw = makeRunState({
-			case: caseData,
-			contacts: [
-				makeContact({ id: "mary", chat_ended: false, warning_count: 0 }),
-			],
-			active_persona_id: "mary",
-			shared_files: [makeSharedFile({ file_id: "7", file_name: "budget.pdf" })],
-		});
-	}
-
-	it("appends new contacts with available: true patched in", async () => {
-		const { run } = await freshRun();
-		setupRaw(run);
-
-		run.applyMeta("mary", {
-			new_contacts: [makeContact({ id: "bob", name: "Bob", available: false })],
-			shared_files: [],
-			chat_ended: false,
-			chat_end_reason: null,
-			warning_count: 0,
-		});
-
-		const bob = run.raw?.contacts.find((c) => c.id === "bob");
-		expect(bob?.available).toBe(true);
-	});
-
-	it("ignores a contact id that is already present", async () => {
-		const { run } = await freshRun();
-		setupRaw(run);
-
-		run.applyMeta("mary", {
-			new_contacts: [makeContact({ id: "mary", name: "Renamed Mary" })],
-			shared_files: [],
-			chat_ended: false,
-			chat_end_reason: null,
-			warning_count: 0,
-		});
-
-		expect(run.raw?.contacts).toHaveLength(1);
-		expect(run.raw?.contacts[0]?.name).not.toBe("Renamed Mary");
-	});
-
-	it("updates chat_ended/chat_end_reason/warning_count on the target contact only", async () => {
-		const { run } = await freshRun();
-		run.raw = makeRunState({
-			case: caseData,
-			contacts: [
-				makeContact({ id: "mary", chat_ended: false, warning_count: 0 }),
-				makeContact({ id: "bob", chat_ended: false, warning_count: 0 }),
-			],
-			active_persona_id: "mary",
-		});
-
-		run.applyMeta("mary", {
-			new_contacts: [],
-			shared_files: [],
-			chat_ended: true,
-			chat_end_reason: "harassment",
-			warning_count: 2,
-		});
-
-		const mary = run.raw?.contacts.find((c) => c.id === "mary");
-		const bob = run.raw?.contacts.find((c) => c.id === "bob");
-		expect(mary).toMatchObject({
-			chat_ended: true,
-			chat_end_reason: "harassment",
-			warning_count: 2,
-		});
-		expect(bob).toMatchObject({ chat_ended: false, warning_count: 0 });
-	});
-
-	it("appends new shared files", async () => {
-		const { run } = await freshRun();
-		setupRaw(run);
-
-		run.applyMeta("mary", {
-			new_contacts: [],
-			shared_files: [makeSharedFile({ file_id: "9", file_name: "new.pdf" })],
-			chat_ended: false,
-			chat_end_reason: null,
-			warning_count: 0,
-		});
-
-		expect(run.raw?.shared_files.map((f) => f.file_id)).toEqual(["7", "9"]);
-	});
-
-	it("de-duplicates a file id that is already listed", async () => {
-		const { run } = await freshRun();
-		setupRaw(run);
-
-		run.applyMeta("mary", {
-			new_contacts: [],
-			shared_files: [
-				makeSharedFile({ file_id: "7", file_name: "renamed.pdf" }),
-			],
-			chat_ended: false,
-			chat_end_reason: null,
-			warning_count: 0,
-		});
-
-		expect(run.raw?.shared_files).toHaveLength(1);
-		expect(run.raw?.shared_files[0]?.file_name).toBe("budget.pdf");
-	});
-});
-
-describe("notification diffing (#diffAndNotify, observed via the mocked toast)", () => {
+describe("notification diffing (#diffAndNotify, observed via the live query)", () => {
 	it("fires no toasts for the initial roster, exactly one for a later new contact and a later new file, and none for a repeat", async () => {
-		const { run, toast } = await freshRun();
-		server.use(
-			http.post("*/api/simulations/start", () =>
-				HttpResponse.json(
-					makeRunState({
-						run_id: "run-1",
-						case: caseData,
-						contacts: [makeContact({ id: "mary", name: "Mary" })],
-						active_persona_id: "mary",
-						shared_files: [],
-					}),
-				),
-			),
-		);
-		await run.startSession("ACCESS1");
-		expect(toast).not.toHaveBeenCalled();
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session, { shared_files: [] });
+		await vi.waitFor(() => expect(toast).not.toHaveBeenCalled());
 
 		const bob = makeContact({ id: "bob", name: "Bob", role: "Analyst" });
 		const newFile = makeSharedFile({ file_id: "9", file_name: "new.pdf" });
-		run.applyMeta("mary", {
-			new_contacts: [bob],
-			shared_files: [newFile],
-			chat_ended: false,
-			chat_end_reason: null,
-			warning_count: 0,
-		});
+		setFakeQuery(
+			GET_SIMULATION_STATE,
+			{ runId: "run-1" },
+			{
+				data: makeRunState({
+					case: caseData,
+					contacts: [makeContact({ id: "mary", chat_ended: false }), bob],
+					active_persona_id: "mary",
+					shared_files: [newFile],
+				}),
+			},
+		);
 
-		expect(toast).toHaveBeenCalledTimes(2);
-		expect(toast).toHaveBeenCalledWith("New contact unlocked: Bob (Analyst)", {
-			duration: 4000,
-		});
-		expect(toast).toHaveBeenCalledWith("File shared: new.pdf", {
-			duration: 4000,
-		});
+		await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2));
+		expect(toast).toHaveBeenCalledWith("New contact unlocked: Bob (Analyst)", { duration: 4000 });
+		expect(toast).toHaveBeenCalledWith("File shared: new.pdf", { duration: 4000 });
 
-		// The same contact/file showing up again must not re-notify.
-		run.applyMeta("mary", {
-			new_contacts: [bob],
-			shared_files: [newFile],
-			chat_ended: false,
-			chat_end_reason: null,
-			warning_count: 0,
-		});
+		// The same contact/file showing up again -- via an entirely unrelated query (this
+		// persona's history is its own subscription now, see #historyQuery's comment)
+		// changing -- must not re-notify.
+		setFakeQuery(
+			GET_PERSONA_HISTORY,
+			{ runId: "run-1", personaId: "mary" },
+			{ data: [message("user", "hi")] },
+		);
+		await vi.waitFor(() => expect(run.activeMessages).toHaveLength(1));
 		expect(toast).toHaveBeenCalledTimes(2);
 	});
 });

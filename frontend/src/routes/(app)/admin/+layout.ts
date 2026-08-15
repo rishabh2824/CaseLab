@@ -1,4 +1,5 @@
-import { fetchAdmin } from "$lib/auth.js";
+import { session } from "$lib/session.svelte.js";
+import type { AdminIdentity } from "$lib/auth.js";
 import type { LayoutLoad } from "./$types";
 
 // Return type is also spelled out by hand as AdminLayoutData (auth.js) -- svelte-kit
@@ -8,9 +9,15 @@ import type { LayoutLoad } from "./$types";
 // PageData/LayoutData to `unknown` -- reproduces even for a brand-new trivial route, so
 // it's unrelated to this file specifically). Consumers (+layout.svelte, admins/+page.ts)
 // import AdminLayoutData directly instead of trusting LayoutData/PageData here.
+//
+// Identity now comes from the `session` store (synced from the Convex `viewer` query by
+// AdminAuth.svelte, mounted on the landing page during sign-in) instead of an old-backend
+// `/api/admin/me` round trip -- a plain module-level singleton, so it's readable here even
+// though this load function has no Svelte component context to reach a Convex client
+// through.
 export const load: LayoutLoad = () => {
-	// Not awaited: lets the whole admin subtree mount immediately (and each page fire its
-	// own onMount data fetch) instead of blocking on this round trip first. See
-	// +layout.svelte, which awaits this itself to redirect away once it settles.
-	return { admin: fetchAdmin() };
+	const admin: AdminIdentity | null = session.adminRole
+		? { adminRole: session.adminRole, adminEmail: session.adminEmail }
+		: null;
+	return { admin: Promise.resolve(admin) };
 };

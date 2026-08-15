@@ -1,6 +1,6 @@
 <script lang="ts">
-import { onMount } from "svelte";
-import { apiFetch } from "$lib/api/client.js";
+import { useQuery } from "convex-svelte";
+import { makeFunctionReference } from "convex/server";
 import {
 	getPersonaLabel,
 	normalizePersona,
@@ -8,60 +8,54 @@ import {
 	referredWithParents,
 	rootPersonas as rootPersonasOf,
 } from "$lib/case/draft.js";
-import type { Api } from "$lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
-let caseData = $state<Api<"CaseDetail"> | null>(null);
-let isLoading = $state(true);
-let loadError = $state("");
+// Sterling Industries, the old backend's case id 1 -- hardcoded until Phase 3 builds real
+// case selection. Update this if the dev deployment is ever reseeded.
+const DEMO_CASE_ID = "k5787w72emrc30bkhxh03e85p98c023g";
 
-onMount(async () => {
-	try {
-		const data = await apiFetch<Api<"CaseDetailResponse">>("/api/cases/demo");
-		caseData = data.case;
-	} catch (err) {
-		loadError =
-			(err instanceof Error && err.message) || "Failed to load the demo case.";
-	} finally {
-		isLoading = false;
-	}
-});
+const caseRef = makeFunctionReference<"query">("api/cases:get");
+const caseQuery = useQuery(caseRef, { caseId: DEMO_CASE_ID });
 
-// normalizePersona/normalizeReferral are the same helpers CaseForm.svelte uses
-// on live persona/referral data from the API — reused here so the demo view's
-// persona graph (root personas + referred personas) matches the real editor
-// exactly.
+// `structure` (personas/referrals/roots) is stored as-is from the old backend's
+// CaseStructure shape -- same field names normalizePersona/normalizeReferral and the
+// CaseForm editor already expect, so nothing here needs to change to match it.
+const structure = $derived(
+	caseQuery.data?.structure ?? { personas: [], referrals: [], roots: [] },
+);
 const personas = $derived(
-	(caseData?.personas ?? []).map((persona) => normalizePersona(persona)),
+	(structure.personas ?? []).map((persona: unknown) =>
+		normalizePersona(persona as Parameters<typeof normalizePersona>[0]),
+	),
 );
 const referrals = $derived(
-	(caseData?.referrals ?? []).map((referral) => normalizeReferral(referral)),
+	(structure.referrals ?? []).map((referral: unknown) =>
+		normalizeReferral(referral as Parameters<typeof normalizeReferral>[0]),
+	),
 );
-const roots = $derived(caseData?.roots ?? []);
+const roots = $derived(structure.roots ?? []);
 const rootPersonas = $derived(rootPersonasOf(personas, roots));
-const referredPersonas = $derived(
-	referredWithParents(personas, referrals, roots),
-);
+const referredPersonas = $derived(referredWithParents(personas, referrals, roots));
 </script>
 
 <div class="relative min-h-screen bg-parchment">
 	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<div class="mx-auto max-w-4xl px-6 py-10">
-		{#if isLoading}
+		{#if caseQuery.isLoading}
 			<p class="text-center text-sm text-stone">Loading demo case...</p>
-		{:else if loadError}
+		{:else if caseQuery.error}
 			<div class="rounded-2xl border border-brand/20 bg-brand-tint px-4 py-3 text-sm text-brand">
-				{loadError}
+				{caseQuery.error.message || "Failed to load the demo case."}
 			</div>
-		{:else if caseData}
+		{:else if caseQuery.data}
 			<div class="rounded-2xl border border-line bg-white p-8 shadow-soft">
 				<div class="text-center">
 					<p class="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
 						Demo Case &middot; Read Only
 					</p>
 					<h1 class="mt-1.5 font-display text-3xl font-semibold text-ink">
-						{caseData.case_name}
+						{caseQuery.data.name}
 					</h1>
 				</div>
 
@@ -79,17 +73,17 @@ const referredPersonas = $derived(
 						Case Information
 					</summary>
 					<div class="grid grid-cols-1 gap-4 border-t border-line-soft px-5 py-5 sm:grid-cols-2">
-						<ReadOnlyField label="Access code" value={caseData.access_code} />
+						<ReadOnlyField label="Access code" value={caseQuery.data.accessCode} />
 						<ReadOnlyField
 							label="Simulation duration (minutes)"
-							value={caseData.simulation_duration}
+							value={caseQuery.data.duration}
 							placeholder="Unlimited"
 						/>
 						<div class="sm:col-span-2">
-							<ReadOnlyField label="Initial brief" value={caseData.brief} />
+							<ReadOnlyField label="Initial brief" value={caseQuery.data.brief} />
 						</div>
 						<div class="sm:col-span-2">
-							<ReadOnlyField label="Case background" value={caseData.common_information} />
+							<ReadOnlyField label="Case background" value={caseQuery.data.commonInformation} />
 						</div>
 					</div>
 				</details>

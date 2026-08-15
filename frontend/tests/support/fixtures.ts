@@ -5,14 +5,14 @@
 // here (rather than re-declaring a persona literal per file) is what makes a
 // wire-shape change surface as one edit instead of a dozen silently-stale
 // copies — the same reason the backend keeps its payload builders in conftest.
+import type { StartedRun } from "../../src/lib/student/run.svelte.js";
 import type {
-	Api,
+	ChatMessage,
 	Contact,
 	Persona,
+	PersonaPayload,
 	ReferralEdge,
-	RunState,
 	SharedFile,
-	TurnMeta,
 } from "../../src/lib/types.js";
 
 let personaSeq = 0;
@@ -40,6 +40,10 @@ export function makeReferral(
 	return { from_id, to_id, conditions };
 }
 
+// available_at: 0 (the default) means available from the run's own minute 0 -- callers
+// simulating an unavailable/not-yet-unlocked contact should override this to some minute
+// past whatever elapsed time the test's scenario implies, not pass an `available: false`
+// flag (the wire shape no longer carries one -- see types.ts's Contact comment for why).
 export function makeContact(overrides: Partial<Contact> = {}): Contact {
 	return {
 		id: "mary",
@@ -47,10 +51,8 @@ export function makeContact(overrides: Partial<Contact> = {}): Contact {
 		role: "Chief Financial Officer",
 		profile_photo: null,
 		availability_duration: null,
+		available_at: 0,
 		is_referred: false,
-		available: true,
-		available_in: 0,
-		expires_in: null,
 		chat_ended: false,
 		chat_end_reason: null,
 		warning_count: 0,
@@ -70,22 +72,11 @@ export function makeSharedFile(
 	};
 }
 
-export function makeTurnMeta(overrides: Partial<TurnMeta> = {}): TurnMeta {
-	return {
-		new_contacts: [],
-		shared_files: [],
-		chat_ended: false,
-		chat_end_reason: null,
-		warning_count: 0,
-		...overrides,
-	};
-}
-
-export function makeRunState(overrides: Partial<RunState> = {}): RunState {
+export function makeRunState(overrides: Partial<StartedRun> = {}): StartedRun {
 	return {
 		run_id: "run-1",
 		case: {
-			id: 1,
+			id: "case-1",
 			case_name: "Sterling Industries",
 			brief: "Reduce office supply costs.",
 			simulation_duration: 45,
@@ -93,7 +84,6 @@ export function makeRunState(overrides: Partial<RunState> = {}): RunState {
 		contacts: [makeContact()],
 		active_persona_id: "mary",
 		shared_files: [],
-		histories: {},
 		...overrides,
 	};
 }
@@ -101,18 +91,15 @@ export function makeRunState(overrides: Partial<RunState> = {}): RunState {
 export const message = (
 	role: "user" | "assistant",
 	content: string,
-): Api<"ChatMessage"> => ({ role, content });
+): ChatMessage => ({ role, content });
 
-// --- Wire-shape (Api<K>) builders -------------------------------------------
-//
-// Unlike makePersona/makeContact/etc. above (which return the app's draft or
-// renamed types), these return the raw schema shape verbatim -- for stubbing
-// API responses directly (MSW handlers, e2e route mocks), where the point is
-// catching a backend field rename/type change at compile time.
-
+// Returns the raw wire shape verbatim (not the app's draft/renamed Persona type) -- for
+// stubbing Convex responses directly, where the point is catching a backend field
+// rename/type change at compile time. Mirrors newBackend/convex/models/cases.ts's
+// PersonaPayload.
 export function makePersonaPayload(
-	overrides: Partial<Api<"PersonaPayload">> = {},
-): Api<"PersonaPayload"> {
+	overrides: Partial<PersonaPayload> = {},
+): PersonaPayload {
 	return {
 		id: "p1",
 		name: "Persona",
@@ -122,38 +109,6 @@ export function makePersonaPayload(
 		personality_traits: "",
 		availability_minutes: null,
 		files: [],
-		...overrides,
-	};
-}
-
-export function makeCaseDetail(
-	overrides: Partial<Api<"CaseDetail">> = {},
-): Api<"CaseDetail"> {
-	return {
-		id: 1,
-		case_name: "Sterling Industries",
-		access_code: "STERLING",
-		brief: "Reduce office supply costs.",
-		common_information: "Company background.",
-		simulation_duration: 45,
-		personas: [makePersonaPayload()],
-		referrals: [],
-		roots: ["p1"],
-		version: 1,
-		owner_admin_id: 1,
-		collaborator_admin_ids: [],
-		...overrides,
-	};
-}
-
-export function makeAdminOut(
-	overrides: Partial<Api<"AdminOut">> = {},
-): Api<"AdminOut"> {
-	return {
-		id: 1,
-		email: "admin@wisc.edu",
-		name: "Admin One",
-		role: 2,
 		...overrides,
 	};
 }

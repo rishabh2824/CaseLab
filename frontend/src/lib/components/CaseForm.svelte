@@ -1,28 +1,36 @@
 <script lang="ts">
 import { Popover } from "bits-ui";
+import { getConvexClient, useQuery } from "convex-svelte";
+import { makeFunctionReference } from "convex/server";
 import { onDestroy, onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
-import { ApiError, apiFetch } from "$lib/api/client.js";
 import {
 	normalizePersona,
 	normalizeReferral,
 	parseIntOrNull,
 } from "$lib/case/draft.js";
-import { cases } from "$lib/case/cases.svelte.js";
 import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
 import { CaseGraph } from "$lib/case/graph.svelte.js";
 import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
 import { submitCase } from "$lib/case/submitCase.js";
-import { useCaseVersionPoll } from "$lib/case/useCaseVersionPoll.svelte.js";
-import { ADMIN_ROLE } from "$lib/constants.js";
 import { session } from "$lib/session.svelte.js";
-import type { Api } from "$lib/types.js";
 import { type SaveResult, unsavedGuard } from "$lib/unsavedGuard.svelte.js";
-import CaseConflictModal from "./CaseConflictModal.svelte";
 import CaseGraphEditor from "./CaseGraphEditor.svelte";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 
+// String-based references (not generated `api` imports): the convex/ project lives at
+// the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
+const listAllAdminsRef = makeFunctionReference<"query">("api/admins:listAll");
+// Used both to load an existing case for editing and to load one as a create-from-template
+// source -- see its comment in newBackend/convex/api/cases.ts.
+const getForEditRef = makeFunctionReference<"query">("api/cases:getForEdit");
+
 const MAX_SIMULATION_DURATION = 120;
+// Mirrors newBackend/convex/services/cases.ts's ACCESS_CODE_FORMAT.
+const ACCESS_CODE_FORMAT = /^[a-z]+$/;
+
+type AdminRole = "super" | "admin";
+type AdminRow = { _id: string; email: string; name?: string; role: AdminRole };
 
 // mode is explicit (set by the route: /admin/cases/new vs.
 // /admin/cases/[id]/edit), not inferred from which of caseId/templateId
@@ -55,16 +63,14 @@ const graph = new CaseGraph();
 // Collaborators: access-control metadata, not case content — only ever
 // populated in edit mode (see loadCase). A new case (blank or from a
 // template) always starts with none.
-let allAdmins = $state<Api<"AdminOut">[]>([]);
-let isAdminsLoaded = $state(false);
-let isLoadingAdmins = $state(false);
-let collaboratorAdminIds = $state<number[]>([]);
-let ownerAdminId = $state<number | null>(null);
-
-const versionPoll = useCaseVersionPoll({
-	caseId: () => (isEditMode ? editCaseId : null),
-	isLoadingSource: () => isLoadingSource,
-});
+//
+// Always-subscribed (not fetched lazily on popover open, as this used to be against the
+// old backend's REST endpoint): Convex's reactivity makes a live subscription to a ~10-row
+// table cheap enough that the bookkeeping to defer it isn't worth keeping.
+const adminsQuery = useQuery(listAllAdminsRef, {});
+const allAdmins = $derived((adminsQuery.data ?? []) as AdminRow[]);
+let collaboratorAdminIds = $state<string[]>([]);
+let ownerAdminId = $state<string | null>(null);
 
 // Tracks unsaved edits so AdminTopBar can gate home/logout navigation behind
 // a save-or-discard prompt. null baseline means "nothing loaded to compare
@@ -84,7 +90,7 @@ let baselineScalars = $state<{
 	commonInformation: string;
 	simulationDurationMinutes: number | null;
 	accessCode: string;
-	collaboratorAdminIds: number[];
+	collaboratorAdminIds: string[];
 } | null>(null);
 let baselineGraphSnapshot = $state<string | null>(null);
 
@@ -157,46 +163,34 @@ let importWarnings = $state<string[]>([]);
 let pendingImportFile = $state<File | null>(null);
 let fileInputEl = $state<HTMLInputElement | null>(null);
 
-// Roster for the collaborator picker. Reuses the same admin-listing endpoint
-// as admin/admins/+page.svelte — any authenticated admin can call it, not
-// just SUPER admins. Fetched lazily (only when the picker popover is first
-// opened, see below) rather than on form load, since most form loads never
-// touch the collaborator picker at all.
-async function ensureAdminsLoaded(): Promise<void> {
-	if (isAdminsLoaded || isLoadingAdmins) return;
-	isLoadingAdmins = true;
-	try {
-		allAdmins = await apiFetch<Api<"AdminOut">[]>("/api/admin/admins");
-		isAdminsLoaded = true;
-	} catch {
-		// Leave isAdminsLoaded false — next open just retries.
-	} finally {
-		isLoadingAdmins = false;
-	}
-}
-
-// Shared by the initial load and the conflict modal's "Reload" action.
+// Loads a case's fields into the form, either as the resource being edited (edit mode) or
+// as a from-scratch starting point (template mode, via TemplatePicker) -- the same query
+// serves both. They differ only in whether collaborators come along, since a template load
+// always starts a brand-new case with none.
 async function loadCase(id: string): Promise<void> {
-	const data = await apiFetch<Api<"CaseDetailResponse">>(`/api/cases/${id}`);
-	const loadedCase = data.case;
-	caseName = loadedCase.case_name ?? "";
+	const loadedCase = await getConvexClient().query(getForEditRef, { caseId: id });
+	const structure = (loadedCase.structure ?? {}) as {
+		personas?: unknown[];
+		referrals?: unknown[];
+		roots?: string[];
+	};
+	caseName = loadedCase.name ?? "";
 	initialBrief = loadedCase.brief ?? "";
-	commonInformation = loadedCase.common_information ?? "";
-	simulationDurationMinutes = loadedCase.simulation_duration ?? null;
-	accessCode = loadedCase.access_code ?? "";
+	commonInformation = loadedCase.commonInformation ?? "";
+	simulationDurationMinutes = loadedCase.duration ?? null;
+	accessCode = loadedCase.accessCode ?? "";
 	graph.load({
-		personas: (loadedCase.personas ?? []).map((persona) =>
-			normalizePersona(persona),
+		personas: (structure.personas ?? []).map((persona) =>
+			normalizePersona(persona as Parameters<typeof normalizePersona>[0]),
 		),
-		referrals: (loadedCase.referrals ?? []).map((referral) =>
-			normalizeReferral(referral),
+		referrals: (structure.referrals ?? []).map((referral) =>
+			normalizeReferral(referral as Parameters<typeof normalizeReferral>[0]),
 		),
-		roots: loadedCase.roots ?? [],
+		roots: structure.roots ?? [],
 	});
 	if (isEditMode) {
-		collaboratorAdminIds = loadedCase.collaborator_admin_ids ?? [];
-		ownerAdminId = loadedCase.owner_admin_id ?? null;
-		versionPoll.setLoadedVersion(loadedCase.version ?? null);
+		collaboratorAdminIds = (loadedCase.collaboratorAdminIds ?? []) as string[];
+		ownerAdminId = (loadedCase.ownerAdminId ?? null) as string | null;
 	}
 	revealErrors();
 	markSaved();
@@ -224,32 +218,16 @@ $effect(() => {
 const effectiveOwnerId = $derived(
 	isEditMode
 		? ownerAdminId
-		: (allAdmins.find((admin) => admin.email === session.adminEmail)?.id ??
+		: (allAdmins.find((admin) => admin.email === session.adminEmail)?._id ??
 				null),
 );
 // SUPER admins already have full access to every case — no need to offer
 // explicitly granting it.
 const selectableAdmins = $derived(
 	allAdmins.filter(
-		(admin) => admin.role !== ADMIN_ROLE.SUPER && admin.id !== effectiveOwnerId,
+		(admin) => admin.role !== "super" && admin._id !== effectiveOwnerId,
 	),
 );
-
-// "Reload" — discards in-progress edits and refetches everything, including
-// the current version.
-async function handleReloadFromConflict(): Promise<void> {
-	versionPoll.showConflictModal = false;
-	if (!editCaseId) return;
-	isLoadingSource = true;
-	try {
-		await loadCase(editCaseId);
-	} catch (err) {
-		loadErrorMessage =
-			(err instanceof Error && err.message) || "Failed to reload case.";
-	} finally {
-		isLoadingSource = false;
-	}
-}
 
 const caseNameError = $derived(
 	!caseName.trim() ? "Case name is required." : null,
@@ -257,9 +235,17 @@ const caseNameError = $derived(
 const initialBriefError = $derived(
 	!initialBrief.trim() ? "Initial brief is required." : null,
 );
-const accessCodeError = $derived(
-	!accessCode.trim() ? "Access code is required." : null,
-);
+const accessCodeError = $derived.by(() => {
+	const trimmed = accessCode.trim();
+	if (!trimmed) return "Access code is required.";
+	// Mirrors both Convex's createCase and updateCase mutations -- every access code in the
+	// migrated data is already pure lowercase, so there's no legacy case to carve an
+	// exception out for.
+	if (!ACCESS_CODE_FORMAT.test(trimmed)) {
+		return "Access code must contain only lowercase letters.";
+	}
+	return null;
+});
 const simulationDurationError = $derived(
 	typeof simulationDurationMinutes === "number" &&
 		(simulationDurationMinutes > MAX_SIMULATION_DURATION ||
@@ -358,7 +344,7 @@ async function performImport(file: File): Promise<void> {
 
 // Single source of truth for saving: used by the form's own Submit button
 // and by AdminTopBar's "Save changes" action (via unsavedGuard), so both
-// paths get the same validation gate and version-conflict handling.
+// paths get the same validation gate and error handling.
 async function performSave(): Promise<SaveResult> {
 	revealErrors();
 	if (hasValidationErrors) {
@@ -383,28 +369,13 @@ async function performSave(): Promise<SaveResult> {
 			referrals: graph.referrals,
 			roots: graph.roots,
 			collaboratorAdminIds,
-			// Populated by loadCase before isLoadingSource clears in edit mode
-			// (the submit button stays disabled until then), so this is always
-			// a number by the time an edit-mode submit can actually run.
-			expectedVersion: versionPoll.loadedVersion ?? undefined,
 		});
 		submitSuccess = isEditMode
 			? "Case updated successfully."
 			: "Case saved successfully.";
-		if (isEditMode) versionPoll.bumpVersion();
-		// TemplatePicker's case list (cases.svelte.ts) is cached across mounts —
-		// a create adds a row it doesn't have yet, an update can change the
-		// name/access code it displays, so either way the cache is stale now.
-		cases.invalidate();
 		markSaved();
 		return { ok: true };
 	} catch (err) {
-		if (err instanceof ApiError && err.code === "version_conflict") {
-			versionPoll.showConflictModal = true;
-			const message =
-				"This case was updated by someone else. Resolve the conflict, then save again.";
-			return { ok: false, error: message };
-		}
 		const message = (err instanceof Error && err.message) || "Upload failed.";
 		submitError = message;
 		return { ok: false, error: message };
@@ -587,7 +558,7 @@ onDestroy(() => {
 							<p class="text-xs text-stone">
 								Collaborators get full edit access to this case, same as the owner.
 							</p>
-							<Popover.Root onOpenChange={(open) => open && ensureAdminsLoaded()}>
+							<Popover.Root>
 								<Popover.Trigger
 									class="flex w-fit items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition hover:border-brand hover:text-brand"
 								>
@@ -604,22 +575,22 @@ onDestroy(() => {
 										class="z-50 w-64 rounded-lg border border-line bg-white p-3 shadow-soft"
 										sideOffset={6}
 									>
-										{#if isLoadingAdmins}
+										{#if adminsQuery.isLoading}
 											<p class="text-xs text-stone-soft">Loading admins…</p>
 										{:else if selectableAdmins.length === 0}
 											<p class="text-xs text-stone-soft">No other admins available to add.</p>
 										{:else}
 											<div class="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
-												{#each selectableAdmins as admin (admin.id)}
+												{#each selectableAdmins as admin (admin._id)}
 													<label class="flex items-center gap-2 text-sm text-ink-soft">
 														<input
 															type="checkbox"
-															checked={collaboratorAdminIds.includes(admin.id)}
+															checked={collaboratorAdminIds.includes(admin._id)}
 															onchange={(event) => {
 																const checked = event.currentTarget.checked
 																collaboratorAdminIds = checked
-																	? [...collaboratorAdminIds, admin.id]
-																	: collaboratorAdminIds.filter((id) => id !== admin.id)
+																	? [...collaboratorAdminIds, admin._id]
+																	: collaboratorAdminIds.filter((id) => id !== admin._id)
 															}}
 															class="h-4 w-4 rounded border-line text-brand focus:ring-brand/30"
 														/>
@@ -660,11 +631,6 @@ onDestroy(() => {
 		</div>
 	</div>
 </div>
-<CaseConflictModal
-	bind:open={versionPoll.showConflictModal}
-	onReload={handleReloadFromConflict}
-	onKeepEditing={() => versionPoll.handleKeepEditing()}
-/>
 <DestructiveConfirmDialog
 	bind:open={() => pendingImportFile !== null, (isOpen) => { if (!isOpen) pendingImportFile = null }}
 	title="Replace everything in this form?"

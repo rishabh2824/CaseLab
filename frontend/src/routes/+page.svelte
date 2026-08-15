@@ -1,10 +1,36 @@
 <script lang="ts">
+import { getConvexClient } from "convex-svelte";
+import type { Component, Snippet } from "svelte";
+import { browser } from "$app/environment";
 import { goto } from "$app/navigation";
-import { apiFetch } from "$lib/api/client.js";
-import SignInButton from "$lib/components/SignInButton.svelte";
 import { session } from "$lib/session.svelte.js";
-import { stashPendingRunState } from "$lib/student/run.svelte.js";
-import type { Api, RunState } from "$lib/types.js";
+import { startSimulationRef } from "$lib/student/run.svelte.js";
+import type { StartedRun } from "$lib/student/run.svelte.js";
+
+// The Convex/Google-auth stack (AdminAuth.svelte and everything it pulls in) is loaded
+// on demand instead of imported here, so the vast majority of visitors -- students, who
+// never touch admin login -- don't pay for that JS or have it silently restore a
+// previous admin session from storage just by opening this page.
+let AdminAuth = $state<Component<{ class?: string; children?: Snippet; autoSignIn?: boolean }> | null>(
+	null,
+);
+
+// A `code` query param means Google just redirected back here mid sign-in (the user
+// already clicked "Admin Login" once, before navigating away) -- that page load has to
+// load AdminAuth itself to complete the exchange, since there's no button click on
+// *this* load to hang the import off of. Any other load (a plain tab open, or a reload)
+// leaves AdminAuth unloaded until an explicit click.
+const hasOAuthCode = browser && new URLSearchParams(window.location.search).has("code");
+if (hasOAuthCode) {
+	import("$lib/components/AdminAuth.svelte").then((mod) => {
+		AdminAuth = mod.default;
+	});
+}
+
+async function loadAdminAuth(): Promise<void> {
+	const mod = await import("$lib/components/AdminAuth.svelte");
+	AdminAuth = mod.default;
+}
 
 let accessCode = $state("");
 let error = $state("");
@@ -13,11 +39,9 @@ let isSubmitting = $state(false);
 async function submit(code: string): Promise<void> {
 	isSubmitting = true;
 	try {
-		const fresh = await apiFetch<RunState>("/api/simulations/start", {
-			method: "POST",
-			body: { access_code: code } satisfies Api<"StartSimulationPayload">,
-		});
-		stashPendingRunState(fresh);
+		const fresh = (await getConvexClient().mutation(startSimulationRef, {
+			accessCode: code,
+		})) as StartedRun;
 		session.startRun({
 			runId: fresh.run_id,
 			accessCode: code,
@@ -39,7 +63,7 @@ function handleSubmit(event: SubmitEvent): void {
 		error = "Invalid access code.";
 		return;
 	}
-	submit(code.toUpperCase());
+	submit(code.toLowerCase());
 }
 </script>
 
@@ -116,11 +140,22 @@ function handleSubmit(event: SubmitEvent): void {
 	/>
 
 	<div class="absolute right-6 top-6 z-10 sm:right-20 sm:top-12">
-		<SignInButton
-			class="rounded-full border-2 border-brand bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-stone shadow-sm backdrop-blur transition hover:bg-brand hover:text-ink"
-		>
-			Admin Login
-		</SignInButton>
+		{#if AdminAuth}
+			<AdminAuth
+				class="rounded-full border-2 border-brand bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-stone shadow-sm backdrop-blur transition hover:bg-brand hover:text-ink"
+				autoSignIn={!hasOAuthCode}
+			>
+				Admin Login
+			</AdminAuth>
+		{:else}
+			<button
+				type="button"
+				onclick={loadAdminAuth}
+				class="rounded-full border-2 border-brand bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-stone shadow-sm backdrop-blur transition hover:bg-brand hover:text-ink"
+			>
+				Admin Login
+			</button>
+		{/if}
 	</div>
 
 	<div class="relative z-10 w-full max-w-lg text-center">

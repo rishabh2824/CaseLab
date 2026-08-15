@@ -4,6 +4,16 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+	optimizeDeps: {
+		// AdminAuth.svelte only ever reaches these via a runtime `import()` (see
+		// +page.svelte) so students never fetch them -- but that also means Vite's
+		// dev-server dependency scanner (which only follows static imports) never
+		// discovers them at startup either. Without this, the *first* click on
+		// "Admin Login" in a dev session makes Vite discover them mid-flow and
+		// force a full page reload to re-bundle, which lands right in the middle of
+		// the Google OAuth redirect and shows up as a transient error page.
+		include: ["convex-svelte", "@mmailaender/convex-auth-svelte/svelte", "convex/server", "convex/browser"],
+	},
 	build: {
 		rollupOptions: {
 			// jsPDF only reaches for these (dynamically, via its own `.html()`/SVG
@@ -31,34 +41,19 @@ export default defineConfig({
 			adapter: adapter({ fallback: "200.html" }),
 		}),
 	],
-	server: {
-		// Proxy API calls to the backend so the browser sees frontend and backend
-		// as the same origin locally too, matching production's path-based routing
-		// under one domain (see backend/services/auth.py's admin_session
-		// cookie, which is SameSite=Lax and gets silently rejected by the browser
-		// without this — it relies on first-party/same-origin, not cross-site CORS).
-		proxy: {
-			"/api": {
-				target: "http://127.0.0.1:8000",
-				changeOrigin: true,
-				ws: true,
-			},
-		},
-	},
 	test: {
 		expect: { requireAssertions: true },
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov"],
 			include: ["src/lib/**/*.{ts,svelte}"],
-			// Generated wire types and the Google Identity ambient declaration
-			// contain no behavior to cover.
-			exclude: ["src/lib/api/schema.d.ts", "src/lib/*.d.ts"],
+			// The Google Identity ambient declaration contains no behavior to cover.
+			exclude: ["src/lib/*.d.ts"],
 		},
 		projects: [
 			{
-				// Pure logic: prompt/graph/format helpers, the API client, and the
-				// student run store. No DOM — these must keep working under SSR too.
+				// Pure logic: prompt/graph/format helpers, and the student run store.
+				// No DOM — these must keep working under SSR too.
 				extends: "./vite.config.ts",
 				test: {
 					name: "server",

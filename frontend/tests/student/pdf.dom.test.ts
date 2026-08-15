@@ -8,10 +8,10 @@ import {
 	buildChatPdfBlob,
 	slugifyFileName,
 } from "../../src/lib/student/pdf.js";
-import type { Api } from "../../src/lib/types.js";
+import type { ExportPersonaOut } from "../../src/lib/types.js";
 
 type PrintablePersona = Pick<
-	Api<"ExportPersonaOut">,
+	ExportPersonaOut,
 	"name" | "role" | "messages"
 >;
 

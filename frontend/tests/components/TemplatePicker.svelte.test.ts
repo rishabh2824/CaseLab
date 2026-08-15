@@ -4,47 +4,41 @@
 // plain template-picking click-through.
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { HttpResponse, http } from "msw";
-import { beforeEach, describe, expect, it } from "vitest";
-import { cases } from "../../src/lib/case/cases.svelte.js";
+import * as sonner from "svelte-sonner";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import TemplatePicker from "../../src/lib/components/TemplatePicker.svelte";
-import type { Api } from "../../src/lib/types.js";
-import { server } from "../support/msw.js";
 
-function caseSummary(
-	overrides: Partial<Api<"CaseSummary">> = {},
-): Api<"CaseSummary"> {
+const mockUseQuery = vi.fn();
+const mockDeleteCase = vi.fn();
+
+vi.mock("convex-svelte", () => ({
+	useQuery: (...args: unknown[]) => mockUseQuery(...args),
+	useMutation: () => mockDeleteCase,
+}));
+
+type CaseSummary = { _id: string; name: string; accessCode?: string };
+
+function makeCaseSummary(overrides: Partial<CaseSummary> = {}): CaseSummary {
 	return {
-		id: 1,
-		case_name: "Sterling Industries",
-		access_code: "STERLING",
+		_id: "case-1",
+		name: "Sterling Industries",
+		accessCode: "sterling",
 		...overrides,
 	};
 }
 
-function stubCaseList(items: Api<"CaseSummary">[]) {
-	server.use(
-		http.get("*/api/cases", () =>
-			HttpResponse.json({ cases: items } satisfies Api<"CaseListResponse">),
-		),
-	);
+function stubCaseList(items: CaseSummary[]) {
+	mockUseQuery.mockReturnValue({ data: items, isLoading: false, error: undefined });
 }
 
 beforeEach(() => {
-	// cases is a module singleton (see cases.svelte.ts) -- reset between tests
-	// the same way the list itself would after a fresh page load. invalidate()
-	// also clears the "already loaded" cache flag, so each test's mounted
-	// TemplatePicker actually re-fetches from its own stubCaseList instead of
-	// short-circuiting on a previous test's cached result.
-	cases.list = [];
-	cases.isLoading = false;
-	cases.error = "";
-	cases.invalidate();
+	mockUseQuery.mockReset();
+	mockDeleteCase.mockReset();
 });
 
 describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 	it("opens the confirm dialog with the case's name, without navigating away", async () => {
-		stubCaseList([caseSummary()]);
+		stubCaseList([makeCaseSummary()]);
 		const user = userEvent.setup();
 		render(TemplatePicker, { props: { mode: "edit" } });
 		await screen.findByText("Sterling Industries");
@@ -67,14 +61,7 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 	});
 
 	it("Cancel closes the dialog without deleting the case", async () => {
-		stubCaseList([caseSummary()]);
-		let deleteCalled = false;
-		server.use(
-			http.delete("*/api/cases/:id", () => {
-				deleteCalled = true;
-				return HttpResponse.json({ ok: true });
-			}),
-		);
+		stubCaseList([makeCaseSummary()]);
 		const user = userEvent.setup();
 		render(TemplatePicker, { props: { mode: "edit" } });
 		await screen.findByText("Sterling Industries");
@@ -86,19 +73,13 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		expect(
 			screen.queryByText('Delete "Sterling Industries"?'),
 		).not.toBeInTheDocument();
-		expect(deleteCalled).toBe(false);
+		expect(mockDeleteCase).not.toHaveBeenCalled();
 		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
 	});
 
-	it("Delete removes the case from the list and closes the dialog", async () => {
-		stubCaseList([caseSummary({ id: 1, case_name: "Sterling Industries" })]);
-		let deletedId: string | undefined;
-		server.use(
-			http.delete("*/api/cases/:id", ({ params }) => {
-				deletedId = params.id as string;
-				return HttpResponse.json({ ok: true });
-			}),
-		);
+	it("Delete calls the Convex mutation with the case id and closes the dialog", async () => {
+		stubCaseList([makeCaseSummary({ _id: "case-1" })]);
+		mockDeleteCase.mockResolvedValue(undefined);
 		const user = userEvent.setup();
 		render(TemplatePicker, { props: { mode: "edit" } });
 		await screen.findByText("Sterling Industries");
@@ -112,18 +93,12 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 				screen.queryByText('Delete "Sterling Industries"?'),
 			).not.toBeInTheDocument(),
 		);
-		expect(deletedId).toBe("1");
-		expect(screen.queryByText("Sterling Industries")).not.toBeInTheDocument();
-		expect(cases.list).toEqual([]);
+		expect(mockDeleteCase).toHaveBeenCalledWith({ caseId: "case-1" });
 	});
 
-	it("keeps the dialog open and the case in the list when the delete request fails", async () => {
-		stubCaseList([caseSummary()]);
-		server.use(
-			http.delete("*/api/cases/:id", () =>
-				HttpResponse.json({ detail: "Case not found." }, { status: 404 }),
-			),
-		);
+	it("keeps the dialog open and shows a toast when the delete request fails", async () => {
+		stubCaseList([makeCaseSummary()]);
+		mockDeleteCase.mockRejectedValue(new Error("Case not found."));
 		const user = userEvent.setup();
 		render(TemplatePicker, { props: { mode: "edit" } });
 		await screen.findByText("Sterling Industries");
@@ -133,13 +108,16 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		await user.click(screen.getByRole("button", { name: "Delete" }));
 
 		// The failure path (confirmDelete's catch) never clears pendingDelete,
-		// so the dialog stays open and the case is never removed.
-		await waitFor(() => expect(dialog).toBeInTheDocument());
-		expect(cases.list).toHaveLength(1);
+		// so the dialog stays open and the case is never removed from view.
+		await waitFor(() =>
+			expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith("Case not found."),
+		);
+		expect(dialog).toBeInTheDocument();
+		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
 	});
 
 	it("does not offer a delete button in template (create) mode", async () => {
-		stubCaseList([caseSummary()]);
+		stubCaseList([makeCaseSummary()]);
 		render(TemplatePicker, { props: { mode: "template" } });
 		await screen.findByText("Sterling Industries");
 

@@ -1,8 +1,12 @@
-# Whitelist: everything at the repo root is ignored unless re-included below.
-/*
-!/backend/
-!/frontend/
-!/README.md
-!/.gitignore
-# The CI workflow has to be tracked or GitHub Actions never sees it.
-!/.github/
+# Editor / IDE
+.idea/
+.zed/
+
+# Local agent/tool config
+.claude/
+.ai/
+.superpowers/
+
+# OS
+.DS_Store
+Thumbs.db

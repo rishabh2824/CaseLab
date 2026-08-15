@@ -11,8 +11,6 @@ const escapeHtml = (value: unknown): string =>
 		.replace(/</g, "&lt;")
 		.replace(/>/g, "&gt;");
 
-const blank = (value: unknown): string => (value == null ? "" : String(value));
-
 type Graph = {
 	personas: Persona[];
 	referrals: ReferralEdge[];
@@ -56,7 +54,7 @@ function fields({
     <label class="field-label">${escapeHtml(label)}${required ? '<span class="required-mark"> *</span>' : ""}</label>
     ${hint ? `<p class="field-hint">${escapeHtml(hint)}</p>` : ""}
     <textarea class="input ${rows === 1 ? "input--line" : "input--area"}"
-        data-field="${field}" rows="${rows}">${escapeHtml(blank(value))}
+        data-field="${field}" rows="${rows}">${escapeHtml(value)}
     </textarea>
   </div>`;
 }

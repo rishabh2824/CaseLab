@@ -1,41 +1,34 @@
 <script lang="ts">
-import { onMount } from "svelte";
+import { useMutation, useQuery } from "convex-svelte";
+import { makeFunctionReference } from "convex/server";
 import { toast } from "svelte-sonner";
-import { apiFetch } from "$lib/api/client.js";
 import DestructiveConfirmDialog from "$lib/components/DestructiveConfirmDialog.svelte";
-import { ADMIN_ROLE } from "$lib/constants.js";
-import type { Api } from "$lib/types.js";
 
-const ROLE_LABELS: Record<Api<"AdminRole">, string> = {
-	[ADMIN_ROLE.SUPER]: "Super Admin",
-	[ADMIN_ROLE.ADMIN]: "Admin",
+// String-based references (not generated `api` imports): the convex/ project lives at
+// the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
+const listAllRef = makeFunctionReference<"query">("api/admins:listAll");
+const createRef = makeFunctionReference<"mutation">("api/admins:create");
+const deleteRef = makeFunctionReference<"mutation">("api/admins:deleteWithCascade");
+
+type AdminRole = "super" | "admin";
+type AdminRow = { _id: string; email: string; name?: string; role: AdminRole };
+
+const ROLE_LABELS: Record<AdminRole, string> = {
+	super: "Super Admin",
+	admin: "Admin",
 };
 
-let admins = $state<Api<"AdminOut">[]>([]);
-let isLoading = $state(true);
-let listError = $state("");
+const adminsQuery = useQuery(listAllRef, {});
+const admins = $derived((adminsQuery.data ?? []) as AdminRow[]);
+const createAdmin = useMutation(createRef);
+const deleteAdmin = useMutation(deleteRef);
 
 let email = $state("");
 let name = $state("");
-let role = $state<Api<"AdminRole">>(ADMIN_ROLE.ADMIN);
+let role = $state<AdminRole>("admin");
 let isAdding = $state(false);
-let pendingDelete = $state<Api<"AdminOut"> | null>(null);
+let pendingDelete = $state<AdminRow | null>(null);
 let isDeleting = $state(false);
-
-async function loadAdmins(): Promise<void> {
-	isLoading = true;
-	listError = "";
-	try {
-		admins = await apiFetch<Api<"AdminOut">[]>("/api/admin/admins");
-	} catch (err) {
-		listError =
-			(err instanceof Error && err.message) || "Failed to load admins.";
-	} finally {
-		isLoading = false;
-	}
-}
-
-onMount(loadAdmins);
 
 async function handleAdd(event: SubmitEvent): Promise<void> {
 	event.preventDefault();
@@ -46,19 +39,11 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 	}
 	isAdding = true;
 	try {
-		await apiFetch("/api/admin/admins", {
-			method: "POST",
-			body: {
-				email: trimmedEmail,
-				name: name.trim() || null,
-				role,
-			} satisfies Api<"AddAdminRequest">,
-		});
+		await createAdmin({ email: trimmedEmail, name: name.trim() || undefined, role });
 		email = "";
 		name = "";
-		role = ADMIN_ROLE.ADMIN;
+		role = "admin";
 		toast(`Added ${trimmedEmail}.`, { duration: 4000 });
-		await loadAdmins();
 	} catch (err) {
 		toast((err instanceof Error && err.message) || "Failed to add admin.");
 	} finally {
@@ -66,7 +51,7 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 	}
 }
 
-function requestDelete(admin: Api<"AdminOut">): void {
+function requestDelete(admin: AdminRow): void {
 	pendingDelete = admin;
 }
 
@@ -79,19 +64,14 @@ async function confirmDelete(): Promise<void> {
 	if (!admin) return;
 	isDeleting = true;
 	try {
-		const result = await apiFetch<Api<"AdminDeletedResponse">>(
-			`/api/admin/admins/${admin.id}`,
-			{ method: "DELETE" },
-		);
+		const result = await deleteAdmin({ adminId: admin._id });
 		const parts: string[] = [];
-		if (result.cases_deleted > 0) {
-			parts.push(
-				`${result.cases_deleted} case${result.cases_deleted === 1 ? "" : "s"} deleted`,
-			);
+		if (result.casesDeleted > 0) {
+			parts.push(`${result.casesDeleted} case${result.casesDeleted === 1 ? "" : "s"} deleted`);
 		}
-		if (result.cases_reassigned > 0) {
+		if (result.casesReassigned > 0) {
 			parts.push(
-				`${result.cases_reassigned} case${result.cases_reassigned === 1 ? "" : "s"} reassigned`,
+				`${result.casesReassigned} case${result.casesReassigned === 1 ? "" : "s"} reassigned`,
 			);
 		}
 		toast(
@@ -101,7 +81,6 @@ async function confirmDelete(): Promise<void> {
 			{ duration: 4000 },
 		);
 		pendingDelete = null;
-		await loadAdmins();
 	} catch (err) {
 		toast((err instanceof Error && err.message) || "Failed to delete admin.");
 	} finally {
@@ -161,8 +140,8 @@ async function confirmDelete(): Promise<void> {
 					bind:value={role}
 					class="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 				>
-					<option value={ADMIN_ROLE.ADMIN}>Admin</option>
-					<option value={ADMIN_ROLE.SUPER}>Super Admin</option>
+					<option value="admin">Admin</option>
+					<option value="super">Super Admin</option>
 				</select>
 			</div>
 			<button
@@ -175,10 +154,12 @@ async function confirmDelete(): Promise<void> {
 		</form>
 
 		<div class="mt-8 overflow-hidden rounded-2xl border border-line bg-white shadow-soft">
-			{#if isLoading}
+			{#if adminsQuery.isLoading}
 				<p class="p-5 text-sm text-stone">Loading admins…</p>
-			{:else if listError}
-				<p class="p-5 text-sm text-brand">{listError}</p>
+			{:else if adminsQuery.error}
+				<p class="p-5 text-sm text-brand">
+					{adminsQuery.error.message || "Failed to load admins."}
+				</p>
 			{:else if admins.length === 0}
 				<p class="p-5 text-sm text-stone">No admins yet.</p>
 			{:else}
@@ -194,19 +175,19 @@ async function confirmDelete(): Promise<void> {
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-line-soft">
-						{#each admins as admin (admin.id)}
+						{#each admins as admin (admin._id)}
 							<tr class="transition hover:bg-cream/60">
 								<td class="px-5 py-3 font-medium text-ink">{admin.email}</td>
 								<td class="px-5 py-3 text-stone">{admin.name || '—'}</td>
 								<td class="px-5 py-3 text-stone">{ROLE_LABELS[admin.role] || admin.role}</td>
 								<td class="px-5 py-3 text-right">
-									{#if admin.role === ADMIN_ROLE.SUPER}
+									{#if admin.role === "super"}
 										<span class="text-sm text-stone-soft">Super admins can't be deleted</span>
 									{:else}
 										<button
 											type="button"
 											onclick={() => requestDelete(admin)}
-											disabled={isDeleting && pendingDelete?.id === admin.id}
+											disabled={isDeleting && pendingDelete?._id === admin._id}
 											class="text-sm font-semibold text-brand transition hover:text-brand-dark disabled:opacity-60"
 										>
 											Delete

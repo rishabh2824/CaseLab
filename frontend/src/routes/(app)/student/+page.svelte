@@ -1,15 +1,15 @@
 <script lang="ts">
+import { getConvexClient } from "convex-svelte";
 import { onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
-import { apiFetch } from "$lib/api/client.js";
 import SimulationClock from "$lib/components/SimulationClock.svelte";
 import { MAX_MESSAGE_WORDS } from "$lib/constants.js";
 import { downloadBlob } from "$lib/download.js";
 import { countWords } from "$lib/format.js";
 import { session } from "$lib/session.svelte.js";
 import { getPersonaInitials } from "$lib/student/contacts.js";
-import { setRunStore } from "$lib/student/run.svelte.js";
-import type { Api } from "$lib/types.js";
+import { exportRunRef, setRunStore } from "$lib/student/run.svelte.js";
+import type { ExportRunOut } from "$lib/student/run.svelte.js";
 
 const run = setRunStore();
 
@@ -24,9 +24,7 @@ let messagesEndEl = $state<HTMLDivElement | null>(null);
 
 const wordCount = $derived(countWords(inputValue));
 const overWordLimit = $derived(wordCount > MAX_MESSAGE_WORDS);
-const activeMessages = $derived(
-	run.activeContactId ? (run.messagesByPersona[run.activeContactId] ?? []) : [],
-);
+const activeMessages = $derived(run.activeMessages);
 
 $effect(() => {
 	if (run.activeContactId && run.activePersonaAvailable && !run.isSending) {
@@ -68,9 +66,9 @@ async function handleExportPdf(): Promise<void> {
 	if (!session.runId || isExporting) return;
 	isExporting = true;
 	try {
-		const data = await apiFetch<Api<"ExportResponse">>(
-			`/api/simulations/${session.runId}/export`,
-		);
+		const data = (await getConvexClient().query(exportRunRef, {
+			runId: session.runId,
+		})) as ExportRunOut;
 		const { buildChatPdfBlob, slugifyFileName } = await import(
 			"$lib/student/pdf.js"
 		);
@@ -230,7 +228,7 @@ async function handleExportPdf(): Promise<void> {
 			<div
 				class="mt-5 max-h-[55vh] min-h-72 overflow-y-auto rounded-2xl border border-dashed border-line bg-cream/40 p-6 text-center text-sm text-stone-soft"
 			>
-				{#if activeMessages.length === 0}
+				{#if activeMessages.length === 0 && !run.streamingPreview}
 					Chat history is empty.
 				{:else}
 					<div class="space-y-3 text-left">
@@ -243,6 +241,13 @@ async function handleExportPdf(): Promise<void> {
 								{msg.content}
 							</div>
 						{/each}
+						{#if run.streamingPreview}
+							<div
+								class="mr-auto max-w-[85%] whitespace-pre-wrap break-words rounded-2xl border border-line bg-white px-4 py-3 text-sm text-stone"
+							>
+								{run.streamingPreview}
+							</div>
+						{/if}
 						<div bind:this={messagesEndEl}></div>
 					</div>
 				{/if}

@@ -1,21 +1,52 @@
+import { getConvexClient, useQuery } from "convex-svelte";
+import { makeFunctionReference } from "convex/server";
 import { getContext, setContext } from "svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
-import {
-	ApiError,
-	apiFetch,
-	StreamInterruptedError,
-	streamChat,
-} from "../api/client.js";
 import { session } from "../session.svelte.js";
-import type {
-	Api,
-	Contact,
-	RunState,
-	SharedFile,
-	StreamEvent,
-	TurnMeta,
-} from "../types.js";
+import type { ChatMessage, Contact, SharedFile } from "../types.js";
+import { personaAvailability } from "./availability.js";
+
+// Exported so +page.svelte (start) and the student route's +page.svelte (export) can share
+// these instead of each re-declaring their own copy.
+export const startSimulationRef = makeFunctionReference<"mutation">("api/simulations:start");
+export const exportRunRef = makeFunctionReference<"query">("api/simulations:exportRun");
+const getSimulationStateRef = makeFunctionReference<"query">("api/simulations:get");
+const getPersonaHistoryRef = makeFunctionReference<"query">("api/simulations:getPersonaHistory");
+const getStreamingPreviewRef = makeFunctionReference<"query">("api/turn:getStreamingPreview");
+const startTurnRef = makeFunctionReference<"mutation">("api/turn:start");
+
+// Imported from newBackend's compiled declarations, not hand-mirrored -- see types.ts's
+// comment for how/why.
+import type { ExportSimulationOut, RunStateOut } from "../../../../newBackend/types/services/simulations.js";
+import type { StreamingPreviewOut } from "../../../../newBackend/types/services/turn.js";
+
+// RunStateOut/ExportSimulationOut as-is, except run_id/case.id come back de-branded to plain
+// `string`. Server-side those are Convex's Id<"runs">/Id<"cases">, but this project
+// deliberately never touches newBackend's generated `api` object (see AdminAuth.svelte for
+// why) -- nothing on the frontend can leverage that branding's compile-time table-matching
+// anyway, so keeping it would only mean every test fixture constructing a fake run/case id
+// needs an `as Id<...>` cast to satisfy a guarantee nothing here actually checks.
+export type StartedRun = Omit<RunStateOut, "run_id" | "case"> & {
+	run_id: string;
+	case: Omit<RunStateOut["case"], "id"> & { id: string };
+};
+export type ExportRunOut = Omit<ExportSimulationOut, "case"> & {
+	case: Omit<ExportSimulationOut["case"], "id"> & { id: string };
+};
+
+// A wire Contact plus its live-computed availability -- what RunStore.contacts (below)
+// actually exposes. The wire Contact only carries available_at (a fixed minute); available/
+// available_in/expires_in are derived from it against RunStore's own ticking clock, not the
+// server's, since a query can't push updates on elapsed time alone (see ContactOut's comment
+// in newBackend/convex/services/simulations.ts). Snake_case here, not Availability's own
+// camelCase, to match every other wire field on Contact -- the mapping happens once, in
+// `contacts` below, the same boundary toContactOut used to own server-side.
+export type DisplayContact = Contact & {
+	available: boolean;
+	available_in: number | null;
+	expires_in: number | null;
+};
 
 const notify = (message: string) => toast(message, { duration: 4000 });
 
@@ -62,22 +93,9 @@ function clearNotes(runId: string): void {
 	}
 }
 
-type StreamingTurn = {
-	personaId: string;
-	messages: Api<"ChatMessage">[];
-};
-
-let pendingRunState: RunState | null = null;
-
-export function stashPendingRunState(state: RunState): void {
-	pendingRunState = state;
-}
-
 export class RunStore {
-	raw = $state<RunState | null>(null);
 	loadError = $state("");
 	activeContactId = $state<string | null>(null);
-	streamingTurn = $state<StreamingTurn | null>(null);
 	notes = $state("");
 	isSending = $state(false);
 
@@ -88,20 +106,89 @@ export class RunStore {
 	#seenFiles = new Set<string>();
 	#seenInitialized = false;
 	#expiryInterval: number | null = null;
+	// Ticked every 15s by #ensureAvailabilityTick (below) so `contacts` recomputes each
+	// persona's availability against a live clock, instead of freezing at whatever it was
+	// the last time the run's DATA changed. $state, not a plain field: `elapsedMinutes`
+	// (below) reads it, and a plain field write wouldn't be visible to that $derived.
+	#nowTick = $state(Date.now());
+	#availabilityTickInterval: number | null = null;
+	// Set by #runSend, cleared once serverHistories[personaId] grows by 2 past the count
+	// captured at send time -- see the constructor's effect below. It takes 2, not 1: the
+	// live query observes startTurn's own user-message insert (services/turn.ts) first,
+	// before the reply exists, so clearing at +1 turned the input back on (and the guard
+	// in sendMessage back off) while the reply was still generating -- confirmed live, not
+	// just in theory: the Send button read "Send" instead of showing the typing indicator
+	// mid-reply. +2 waits for that user message AND the one assistant message that follows
+	// it, whether from a normal reply (applyDecisions) or a boundary reply (applyBoundary) --
+	// both insert exactly one.
+	// $state, not a plain field: the effect below reads #sendingPersonaId, and a plain
+	// field write is invisible to Svelte -- the effect would run once at construction
+	// (when it's still null) and never again, so #runSend setting it later would silently
+	// never trigger the recheck.
+	#sendingPersonaId = $state<string | null>(null);
+	#sendingBaseline = 0;
 
-	caseData = $derived(this.raw?.case ?? null);
-	contacts = $derived<Contact[]>(this.raw?.contacts ?? []);
-	sharedFiles = $derived<SharedFile[]>(this.raw?.shared_files ?? []);
-	serverHistories = $derived<Record<string, Api<"ChatMessage">[]>>(
-		this.raw?.histories ?? {},
+	// The run's live state -- contacts, shared files, case info -- as a reactive Convex
+	// subscription, not a one-shot fetch. This is what lets a completed turn (newly-unlocked
+	// contact, updated chat-end state) simply appear without this store needing to manually
+	// patch anything in after the fact. Carries no message histories -- see
+	// newBackend/convex/services/simulations.ts's RunStateOut comment for why; #historyQuery
+	// below is the scoped replacement.
+	#runStateQuery = useQuery(getSimulationStateRef, () => (session.runId ? { runId: session.runId } : "skip"));
+	// Reactive subscription scoped to just the active persona's own messages (see
+	// convex/services/simulations.ts's getPersonaHistory) -- NOT every visible persona's
+	// history, so a turn landing for one persona doesn't re-push every OTHER persona's entire
+	// transcript to a client only looking at one of them. The tradeoff: switching to a
+	// contact whose history hasn't been subscribed to yet needs this query to resolve first,
+	// unlike before when every persona's messages already sat in `raw`.
+	#historyQuery = useQuery(getPersonaHistoryRef, () =>
+		session.runId && this.activeContactId
+			? { runId: session.runId, personaId: this.activeContactId }
+			: "skip",
 	);
-	messagesByPersona = $derived<Record<string, Api<"ChatMessage">[]>>(
-		this.streamingTurn
-			? {
-					...this.serverHistories,
-					[this.streamingTurn.personaId]: this.streamingTurn.messages,
-				}
-			: this.serverHistories,
+	// Reactive subscription scoped to just the active persona's streamingReplies row (see
+	// convex/services/turn.ts's getStreamingPreview) -- NOT the full run state, so runTurn's
+	// batched deltas only re-render this one query's subscribers, not everything reading
+	// `raw` below.
+	#streamingPreviewQuery = useQuery(getStreamingPreviewRef, () =>
+		session.runId && this.activeContactId
+			? { runId: session.runId, personaId: this.activeContactId }
+			: "skip",
+	);
+
+	raw = $derived<StartedRun | null>(this.#runStateQuery.data ?? null);
+	caseData = $derived(this.raw?.case ?? null);
+	// Minutes elapsed since the run started, against RunStore's own ticking clock -- not
+	// re-derived from server data, since #nowTick (not `raw`) is what's supposed to drive
+	// this. Falls back to 0 (nothing has elapsed) before session.startTime is known, same as
+	// a brand-new run's own available_at=0 baseline.
+	elapsedMinutes = $derived(
+		session.startTime !== null ? Math.max(0, Math.floor((this.#nowTick - session.startTime) / 60_000)) : 0,
+	);
+	// Wire contacts (available_at only) mapped through personaAvailability against the live
+	// clock above -- see DisplayContact's comment for why this mapping happens here instead
+	// of server-side.
+	contacts = $derived<DisplayContact[]>(
+		(this.raw?.contacts ?? []).map((contact) => {
+			const availability = personaAvailability(contact.availability_duration, contact.available_at, this.elapsedMinutes);
+			return {
+				...contact,
+				available: availability.available,
+				available_in: availability.availableIn,
+				expires_in: availability.expiresIn,
+			};
+		}),
+	);
+	sharedFiles = $derived<SharedFile[]>(this.raw?.shared_files ?? []);
+	// The active persona's transcript, live from Convex -- see #historyQuery's comment for
+	// why this is scoped to just the active persona rather than every visible one.
+	activeMessages = $derived<ChatMessage[]>(this.#historyQuery.data ?? []);
+	// The active persona's in-progress reply, live from Convex -- null once the row is
+	// missing/done/error, so callers don't need to check `status` themselves.
+	streamingPreview = $derived<string | null>(
+		(this.#streamingPreviewQuery.data as StreamingPreviewOut)?.status === "streaming"
+			? ((this.#streamingPreviewQuery.data as StreamingPreviewOut)?.text ?? null)
+			: null,
 	);
 	activeContact = $derived(
 		this.contacts.find((c) => c.id === this.activeContactId) ??
@@ -122,18 +209,72 @@ export class RunStore {
 			: null,
 	);
 
-	// Establishes a run exactly once: resume a persisted runId, else start
-	// from the access code, else bail home.
+	// $effect.root, not a bare $effect: RunStore owns its reactive lifecycle rather than
+	// depending on the call site (setRunStore(), a component's script) already being inside
+	// a Svelte effect tree -- a real $effect created outside one throws immediately. This
+	// also lets a test construct a RunStore directly with `new RunStore()` and have these
+	// still run, the same as they do wired up through a mounted component.
+	#dispose = $effect.root(() => {
+		// Surfaces a run-not-found/expired/other error from the live subscription -- the
+		// equivalent of the old one-shot refresh()'s catch block, just reactive now.
+		$effect(() => {
+			const err = this.#runStateQuery.error;
+			if (!err) return;
+			if (err.message === "Run not found." || err.message === "Run expired.") {
+				this.#handleExpired();
+			} else {
+				this.loadError = err.message || "Failed to load the simulation.";
+			}
+		});
+		// Runs on every reactive update, not just the first -- #afterLoad's own pieces are
+		// each idempotent/guarded (notes load once, activeContactId set once, expiry watch
+		// arms once), except #diffAndNotify, which is DESIGNED to run on every update: that's
+		// what lets a newly-unlocked contact or shared file notify in real time now, instead
+		// of only at the next manual refresh.
+		$effect(() => {
+			if (this.raw) this.#afterLoad();
+		});
+		// Clears isSending once the persona being sent to has both its new user message
+		// AND a reply persisted -- see #sendingPersonaId's comment for why +2, not +1.
+		// Scoped to the currently-viewed contact, matching #historyQuery's own scope (see its
+		// comment): if the student switches away from the persona they just messaged before
+		// the reply lands, this won't observe it there, the same limitation the error-
+		// detection effect below already has.
+		$effect(() => {
+			const personaId = this.#sendingPersonaId;
+			if (!personaId || personaId !== this.activeContactId) return;
+			const count = this.#historyQuery.data?.length ?? 0;
+			if (count >= this.#sendingBaseline + 2) {
+				this.#sendingPersonaId = null;
+				this.isSending = false;
+			}
+		});
+		// Clears isSending (and notifies) if runTurn failed server-side instead of ever
+		// persisting a reply -- see convex/services/turn.ts's markStreamingError. Without
+		// this, a failed turn left isSending stuck true forever: the effect above only ever
+		// clears it by observing a new persisted message, and a failed turn never produces
+		// one. Scoped to the currently-viewed contact, matching streamingPreview's own scope
+		// (see its comment) -- if the student switches away from the persona they just
+		// messaged before the reply fails, this won't catch it there, the same pre-existing
+		// limitation the effect above has (neither watches a persona once it's no longer
+		// active).
+		$effect(() => {
+			const personaId = this.#sendingPersonaId;
+			if (!personaId || personaId !== this.activeContactId) return;
+			if ((this.#streamingPreviewQuery.data as StreamingPreviewOut)?.status !== "error") return;
+			this.#sendingPersonaId = null;
+			this.isSending = false;
+			notify("Something went wrong generating a reply. Please resend your message.");
+		});
+	});
+
+	// Establishes a run exactly once: resume a persisted runId (the reactive query above
+	// picks it up automatically), else start from the access code, else bail home.
 	async init(): Promise<void> {
 		if (this.#initialized) return;
 		this.#initialized = true;
-		if (session.runId && pendingRunState?.run_id === session.runId) {
-			this.raw = pendingRunState;
-			pendingRunState = null;
-			this.#afterLoad();
-		} else if (session.runId) {
-			await this.refresh(session.runId);
-		} else if (session.accessCode) {
+		if (session.runId) return;
+		if (session.accessCode) {
 			await this.startSession(session.accessCode);
 		} else {
 			goto("/");
@@ -142,35 +283,18 @@ export class RunStore {
 
 	async startSession(code: string): Promise<void> {
 		try {
-			const fresh = await apiFetch<RunState>("/api/simulations/start", {
-				method: "POST",
-				body: { access_code: code } satisfies Api<"StartSimulationPayload">,
-			});
-			this.raw = fresh;
+			const fresh = (await getConvexClient().mutation(startSimulationRef, {
+				accessCode: code,
+			})) as StartedRun;
 			session.startRun({
 				runId: fresh.run_id,
 				accessCode: code,
 				startTime: Date.now(),
 			});
-			this.#afterLoad();
+			// #runStateQuery's reactive subscription (now keyed on session.runId) picks up
+			// this exact state within a moment -- no need to assign anything manually.
 		} catch {
 			goto("/");
-		}
-	}
-
-	async refresh(runId: string): Promise<void> {
-		try {
-			const data = await apiFetch<RunState>(`/api/simulations/${runId}`);
-			this.raw = data;
-			this.#afterLoad();
-		} catch (err) {
-			if (err instanceof ApiError && err.status === 404) {
-				this.#handleExpired();
-			} else {
-				this.loadError =
-					(err instanceof Error && err.message) ||
-					"Failed to load the simulation.";
-			}
 		}
 	}
 
@@ -186,6 +310,7 @@ export class RunStore {
 		}
 		this.#diffAndNotify();
 		this.#ensureExpiryWatch();
+		this.#ensureAvailabilityTick();
 	}
 
 	// Notifies on newly-unlocked contacts / newly-shared files by diffing
@@ -218,6 +343,7 @@ export class RunStore {
 		// notes would keep showing under the new one.
 		this.notes = "";
 		this.#notesInitialized = false;
+		this.#seenInitialized = false;
 		if (session.accessCode) this.startSession(session.accessCode);
 		else goto("/");
 	}
@@ -238,6 +364,18 @@ export class RunStore {
 		};
 		checkExpiry();
 		this.#expiryInterval = window.setInterval(checkExpiry, 1000);
+	}
+
+	// Ticks #nowTick every 15s so `contacts` recomputes availability against a live clock --
+	// see #nowTick's own comment for why this is needed at all. 15s, not 1s (unlike
+	// #ensureExpiryWatch above): availability changes in whole-minute increments, so
+	// finer-grained ticking would only add reactivity churn without the display ever
+	// actually showing a difference.
+	#ensureAvailabilityTick(): void {
+		if (this.#availabilityTickInterval) return;
+		this.#availabilityTickInterval = window.setInterval(() => {
+			this.#nowTick = Date.now();
+		}, 15_000);
 	}
 
 	selectContact(contactId: string): void {
@@ -281,42 +419,14 @@ export class RunStore {
 		goto("/");
 	}
 
-	// Folds a turn's meta (unlocked contacts, shared files, chat-state) into
-	// raw so it shows immediately; mutated in place since raw is deep $state.
-	applyMeta(personaId: string, meta: TurnMeta): void {
-		if (!this.raw) return;
-		if (meta.new_contacts?.length) {
-			const existing = new Set(this.raw.contacts.map((c) => c.id));
-			for (const c of meta.new_contacts) {
-				if (existing.has(c.id)) continue;
-				// NewContact never carries `available` (see types.ts) — a
-				// freshly-unlocked contact is available immediately.
-				this.raw.contacts.push({ ...c, available: true });
-			}
-		}
-		const target = this.raw.contacts.find((c) => c.id === personaId);
-		if (target) {
-			target.chat_ended = meta.chat_ended ?? target.chat_ended;
-			target.chat_end_reason = meta.chat_end_reason ?? target.chat_end_reason;
-			target.warning_count = meta.warning_count ?? target.warning_count;
-		}
-		if (meta.shared_files?.length) {
-			const existingFiles = new Set(
-				this.raw.shared_files.map((f) => f.file_id),
-			);
-			for (const f of meta.shared_files) {
-				if (existingFiles.has(f.file_id)) continue;
-				this.raw.shared_files.push(f);
-			}
-		}
-		this.#diffAndNotify();
-	}
-
-	// Overwrites a persona's history — used to commit a completed turn.
-	commitHistory(personaId: string, messages: Api<"ChatMessage">[]): void {
-		if (!this.raw) return;
-		if (!this.raw.histories) this.raw.histories = {};
-		this.raw.histories[personaId] = messages;
+	// Tears down this store's reactive subscriptions/effects. Never needed in production --
+	// setRunStore() is called once per page load, and the whole component tree (and its
+	// effect roots) is discarded on navigation anyway -- but a test that constructs several
+	// RunStores against one shared `session` singleton needs to dispose each one, or a
+	// stale instance's effects keep reacting to the next test's session changes.
+	destroy(): void {
+		this.#dispose();
+		if (this.#availabilityTickInterval) window.clearInterval(this.#availabilityTickInterval);
 	}
 
 	sendMessage(rawMessage: string): boolean {
@@ -328,89 +438,28 @@ export class RunStore {
 		return true;
 	}
 
+	// Mirrors backend/api/simulations.py's old POST .../message, now a plain Convex
+	// mutation (api/turn:start) instead of an SSE request: it only confirms the message
+	// was accepted (or rejects with a plain, user-presentable Error -- rate limited,
+	// conversation ended, persona unavailable, message too long). The actual reply streams
+	// in via streamingPreview above, the final persisted message arrives via #historyQuery,
+	// and updated contacts/shared files arrive via the live getSimulationState subscription
+	// (raw) -- nothing here needs to patch any of that in by hand.
 	async #runSend(personaId: string, message: string): Promise<void> {
-		const priorMessages = this.serverHistories[personaId] ?? [];
-		const overlayMessages = (streamedText: string): Api<"ChatMessage">[] => [
-			...priorMessages,
-			{ role: "user", content: message },
-			{ role: "assistant", content: streamedText },
-		];
-
-		this.streamingTurn = { personaId, messages: overlayMessages("") }
-		const messages = this.streamingTurn.messages;
-		const assistantMessage = messages[messages.length - 1];
-		if (!assistantMessage) {
-			throw new Error("Streaming turn was not initialized with a placeholder reply.");
-		}
+		const runId = session.runId;
+		// personaId is always activeContactId at the moment sendMessage calls this (see its
+		// own body), so #historyQuery -- keyed on activeContactId -- is already this exact
+		// persona's data.
+		this.#sendingBaseline = this.#historyQuery.data?.length ?? 0;
+		this.#sendingPersonaId = personaId;
 		this.isSending = true;
-		let streamed = "";
-		let receivedDone = false;
-		let streamError: Error | null = null;
-		let streamErrorCode: string | undefined;
 		try {
-			await streamChat(`/api/simulations/${session.runId}/message`, {
-				body: {
-					persona_id: personaId,
-					message,
-				} satisfies Api<"SendMessagePayload">,
-				onEvent: (event: StreamEvent) => {
-					switch (event.type) {
-						case "meta":
-							this.applyMeta(personaId, event.data);
-							break;
-						case "delta":
-							streamed += event.data.text ?? "";
-							if (this.streamingTurn?.personaId === personaId) {
-								assistantMessage.content = streamed;
-							}
-							break;
-						case "done":
-							receivedDone = true;
-							this.commitHistory(
-								personaId,
-								overlayMessages(event.data.reply ?? ""),
-							);
-							break;
-						case "error":
-							streamError = new Error(
-								event.data.detail || "The reply could not be generated.",
-							);
-							streamErrorCode = event.data.code ?? undefined;
-							break;
-					}
-				},
-			});
-			if (streamError) throw streamError;
-			// No `done` frame (e.g. the connection closed cleanly mid-reply):
-			// keep what streamed rather than losing it.
-			if (!receivedDone)
-				this.commitHistory(personaId, overlayMessages(streamed));
+			await getConvexClient().mutation(startTurnRef, { runId, personaId, message });
 		} catch (err) {
 			console.error(err);
-			if (err instanceof StreamInterruptedError) {
-				await this.refresh(session.runId);
-				notify("Connection interrupted. Reconnected to check for a reply.");
-			} else {
-				this.commitHistory(personaId, [
-					...priorMessages,
-					{ role: "user", content: message },
-				]);
-				if (streamErrorCode === "conversation_ended") {
-					const target = this.raw?.contacts?.find((c) => c.id === personaId);
-					if (target) {
-						target.chat_ended = true;
-						target.chat_end_reason = target.chat_end_reason || "harassment";
-					}
-				} else {
-					notify(
-						(err instanceof Error && err.message) ||
-							"Message failed. Please try again.",
-					);
-				}
-			}
-		} finally {
-			this.streamingTurn = null;
+			this.#sendingPersonaId = null;
 			this.isSending = false;
+			notify((err instanceof Error && err.message) || "Message failed. Please try again.");
 		}
 	}
 }

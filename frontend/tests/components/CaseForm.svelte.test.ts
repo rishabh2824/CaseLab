@@ -1,32 +1,57 @@
 // Client project: CaseForm is the largest file in the frontend and the main
 // case-authoring surface. These tests drive it through
-// @testing-library/svelte + user-event, stubbing every endpoint it touches
-// with MSW, and focus on the validation gate, the save/conflict paths, dirty
-// tracking, persona add/remove cascades, and import — not the markup.
+// @testing-library/svelte + user-event, stubbing every endpoint it touches,
+// and focus on the validation gate, the save/load paths, dirty tracking,
+// persona add/remove cascades, and import — not the markup.
 //
+// Everything CaseForm touches (admin roster, case load, case create/update)
+// goes through Convex now, so convex-svelte is mocked here rather than MSW.
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { HttpResponse, http, type JsonBodyType } from "msw";
 import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
 import { ADMIN_ROLE } from "../../src/lib/constants.js";
 import { session } from "../../src/lib/session.svelte.js";
-import type { Api } from "../../src/lib/types.js";
+import type { PersonaPayload, ReferralEdge } from "../../src/lib/types.js";
 import { unsavedGuard } from "../../src/lib/unsavedGuard.svelte.js";
 import {
-	makeAdminOut,
-	makeCaseDetail as makeBaseCaseDetail,
 	makePersonaPayload as makeBasePersonaPayload,
 	makePersona,
 	makeReferral,
 } from "../support/fixtures.js";
-import { server } from "../support/msw.js";
+
+const mockUseQuery = vi.fn();
+const mockClientQuery = vi.fn();
+const mockClientMutation = vi.fn();
+const mockClientAction = vi.fn();
+
+vi.mock("convex-svelte", () => ({
+	useQuery: (...args: unknown[]) => mockUseQuery(...args),
+	getConvexClient: () => ({
+		query: mockClientQuery,
+		mutation: mockClientMutation,
+		action: mockClientAction,
+	}),
+}));
+
+type AdminRole = "super" | "admin";
+type AdminRow = { _id: string; email: string; name?: string; role: AdminRole };
+
+function makeAdminRow(overrides: Partial<AdminRow> = {}): AdminRow {
+	return {
+		_id: "admin-1",
+		email: "admin@wisc.edu",
+		name: "Admin One",
+		role: "admin",
+		...overrides,
+	};
+}
 
 function makePersonaPayload(
-	overrides: Partial<Api<"PersonaPayload">> = {},
-): Api<"PersonaPayload"> {
+	overrides: Partial<PersonaPayload> = {},
+): PersonaPayload {
 	return makeBasePersonaPayload({
 		id: "p1",
 		name: "Mary",
@@ -35,79 +60,62 @@ function makePersonaPayload(
 	});
 }
 
-function makeCaseDetail(
-	overrides: Partial<Api<"CaseDetail">> = {},
-): Api<"CaseDetail"> {
-	return makeBaseCaseDetail({
-		id: 7,
-		access_code: "ABC123",
+// The shape api/cases:getForEdit returns: a raw Convex case doc (camelCase scalars,
+// snake_case `structure` -- see newBackend/convex/models/cases.ts) plus a flattened
+// collaboratorAdminIds list.
+type ConvexCaseDoc = {
+	_id: string;
+	name: string;
+	brief: string;
+	commonInformation?: string;
+	duration?: number;
+	accessCode?: string;
+	ownerAdminId: string;
+	structure: { personas: PersonaPayload[]; referrals: ReferralEdge[]; roots: string[] };
+	collaboratorAdminIds?: string[];
+};
+
+function makeCaseDoc(overrides: Partial<ConvexCaseDoc> = {}): ConvexCaseDoc {
+	return {
+		_id: "case-7",
+		name: "Sterling Industries",
+		accessCode: "sterling",
 		brief: "Reduce costs.",
-		common_information: "Background.",
-		simulation_duration: 45,
-		personas: [makePersonaPayload()],
-		referrals: [],
-		roots: ["p1"],
-		version: 3,
-		owner_admin_id: 1,
-		collaborator_admin_ids: [],
+		commonInformation: "Background.",
+		duration: 45,
+		ownerAdminId: "1",
+		structure: { personas: [makePersonaPayload()], referrals: [], roots: ["p1"] },
+		collaboratorAdminIds: [],
 		...overrides,
+	};
+}
+
+// Loading a case (edit or template mode) goes through getConvexClient().query -- stub it to
+// respond only to the matching caseId, same way a real query would 404/reject otherwise.
+function stubLoadCase(doc: ConvexCaseDoc) {
+	mockClientQuery.mockImplementation(async (_ref: unknown, args: { caseId: string }) => {
+		if (args.caseId !== doc._id) throw new Error("Case not found.");
+		return doc;
 	});
 }
 
-function stubGetCase(detail: Api<"CaseDetail">) {
-	server.use(
-		http.get("*/api/cases/:id", ({ params }) => {
-			if (String(params.id) !== String(detail.id)) {
-				return HttpResponse.json({ detail: "Not found" }, { status: 404 });
+// Replaces the old MSW-based POST/PUT /api/cases stubs: case creation and update now go
+// through Convex's create/update mutations (see submitCase.ts). Update's args always carry
+// a `caseId`, create's never do -- that's how the two are told apart here.
+function stubMutations() {
+	const createRequests: Record<string, unknown>[] = [];
+	const updateRequests: Record<string, unknown>[] = [];
+	mockClientMutation.mockImplementation(
+		async (_ref: unknown, args: Record<string, unknown>) => {
+			if ("caseId" in args) {
+				updateRequests.push(args);
+				return { caseId: args.caseId };
 			}
-			return HttpResponse.json({
-				case: detail,
-			} satisfies Api<"CaseDetailResponse">);
-		}),
+			createRequests.push(args);
+			return { caseId: "convex-case-1" };
+		},
 	);
-}
-
-function stubVersion(id: number, version: number) {
-	server.use(
-		http.get(`*/api/cases/${id}/version`, () =>
-			HttpResponse.json({ version } satisfies Api<"CaseVersionResponse">),
-		),
-	);
-}
-
-function stubCreate() {
-	const requests: Api<"CasePayload">[] = [];
-	server.use(
-		http.post("*/api/cases", async ({ request }) => {
-			requests.push((await request.json()) as Api<"CasePayload">);
-			return HttpResponse.json({
-				case_id: 1,
-			} satisfies Api<"CaseCreatedResponse">);
-		}),
-	);
-	return requests;
-}
-
-function stubUpdate(
-	id: number,
-	respond: (body: Api<"CaseUpdatePayload">) => {
-		status: number;
-		body: JsonBodyType;
-	} = () => ({
-		status: 200,
-		body: { case_id: id },
-	}),
-) {
-	const requests: Api<"CaseUpdatePayload">[] = [];
-	server.use(
-		http.put(`*/api/cases/${id}`, async ({ request }) => {
-			const body = (await request.json()) as Api<"CaseUpdatePayload">;
-			requests.push(body);
-			const { status, body: responseBody } = respond(body);
-			return HttpResponse.json(responseBody, { status });
-		}),
-	);
-	return requests;
+	return { createRequests, updateRequests };
 }
 
 // Mirrors what the /admin/cases/new and /admin/cases/[id]/edit route files
@@ -127,10 +135,13 @@ function renderForm(
 
 describe("CaseForm", () => {
 	beforeEach(() => {
-		// Never actually opened in these tests (that's the collaborator-picker
-		// popover), but stubbed unconditionally since MSW's onUnhandledRequest:
-		// "error" would otherwise punish any test that happens to trigger it.
-		server.use(http.get("*/api/admin/admins", () => HttpResponse.json([])));
+		mockUseQuery.mockReset();
+		mockClientQuery.mockReset();
+		mockClientMutation.mockReset();
+		mockClientAction.mockReset();
+		// Safe default roster (empty, already loaded) — collaborator-picker tests
+		// below override this with their own fixture list before rendering.
+		mockUseQuery.mockReturnValue({ data: [], isLoading: false, error: undefined });
 	});
 
 	afterEach(() => {
@@ -139,13 +150,6 @@ describe("CaseForm", () => {
 
 	describe("create mode — validation", () => {
 		it("renders empty and surfaces required-field errors instead of sending a request", async () => {
-			let createSeen = false;
-			server.use(
-				http.post("*/api/cases", () => {
-					createSeen = true;
-					return HttpResponse.json({ case_id: 1 });
-				}),
-			);
 			const { container } = renderForm();
 
 			expect(screen.getByLabelText("Case name")).toHaveValue("");
@@ -170,13 +174,13 @@ describe("CaseForm", () => {
 			expect(
 				screen.getByText("At least 1 persona is required"),
 			).toBeInTheDocument();
-			expect(createSeen).toBe(false);
+			expect(mockClientMutation).not.toHaveBeenCalled();
 		});
 	});
 
 	describe("create mode — valid submit", () => {
-		it("sends the expected payload with no expected_version and reports success", async () => {
-			const requests = stubCreate();
+		it("sends the expected payload and reports success", async () => {
+			const { createRequests } = stubMutations();
 			const user = userEvent.setup();
 			renderForm();
 
@@ -185,7 +189,7 @@ describe("CaseForm", () => {
 				"Sterling Industries",
 			);
 			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
-			await user.type(screen.getByLabelText("Access code"), "ABC123");
+			await user.type(screen.getByLabelText("Access code"), "sterling");
 			await user.click(
 				screen.getByRole("button", { name: "+ Add root persona" }),
 			);
@@ -197,26 +201,27 @@ describe("CaseForm", () => {
 			expect(
 				await screen.findByText("Case saved successfully."),
 			).toBeInTheDocument();
-			expect(requests).toHaveLength(1);
-			expect(requests[0]).not.toHaveProperty("expected_version");
-			expect(requests[0]?.case_name).toBe("Sterling Industries");
-			expect(requests[0]?.personas?.[0]?.name).toBe("Mary");
+			expect(createRequests).toHaveLength(1);
+			expect(createRequests[0]?.name).toBe("Sterling Industries");
+			expect(
+				(createRequests[0]?.personas as PersonaPayload[])[0]?.name,
+			).toBe("Mary");
 		});
 	});
 
 	describe("edit mode", () => {
-		it("loads the case into the form and its submit includes the loaded expected_version", async () => {
-			const detail = makeCaseDetail();
-			stubGetCase(detail);
-			const updateRequests = stubUpdate(detail.id as number);
+		it("loads the case into the form and saves it via the Convex updateCase mutation", async () => {
+			const doc = makeCaseDoc();
+			stubLoadCase(doc);
+			const { updateRequests } = stubMutations();
 			const user = userEvent.setup();
-			renderForm({ editCaseId: String(detail.id) });
+			renderForm({ editCaseId: doc._id });
 
 			expect(
 				await screen.findByDisplayValue("Sterling Industries"),
 			).toBeInTheDocument();
 			expect(screen.getByDisplayValue("Reduce costs.")).toBeInTheDocument();
-			expect(screen.getByDisplayValue("ABC123")).toBeInTheDocument();
+			expect(screen.getByDisplayValue("sterling")).toBeInTheDocument();
 			expect(screen.getByDisplayValue("Mary")).toBeInTheDocument();
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
@@ -225,88 +230,19 @@ describe("CaseForm", () => {
 				await screen.findByText("Case updated successfully."),
 			).toBeInTheDocument();
 			expect(updateRequests).toHaveLength(1);
-			expect(updateRequests[0]?.expected_version).toBe(detail.version);
+			expect(updateRequests[0]?.caseId).toBe(doc._id);
 		});
 
-		it("shows the conflict modal (not a generic error) on a 409 version_conflict response", async () => {
-			const detail = makeCaseDetail();
-			stubGetCase(detail);
-			server.use(
-				http.put(`*/api/cases/${detail.id}`, () =>
-					HttpResponse.json(
-						{
-							detail: {
-								message: "This case was updated by someone else.",
-								code: "version_conflict",
-							},
-						},
-						{ status: 409 },
-					),
-				),
+		it("surfaces a save failure inline", async () => {
+			const doc = makeCaseDoc();
+			stubLoadCase(doc);
+			mockClientMutation.mockRejectedValue(
+				new Error("Access code already in use."),
 			);
 			const user = userEvent.setup();
-			renderForm({ editCaseId: String(detail.id) });
+			renderForm({ editCaseId: doc._id });
 			await screen.findByDisplayValue("Sterling Industries");
 
-			// The fields render before the loaded version arrives, and Submit
-			// stays disabled until it does (CaseForm can't send a PUT without an
-			// expected_version). Waiting on the button rather than on a field is
-			// what makes this deterministic.
-			await waitFor(() =>
-				expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled(),
-			);
-			await user.click(screen.getByRole("button", { name: "Submit" }));
-
-			expect(
-				await screen.findByText("This case was updated by someone else"),
-			).toBeInTheDocument();
-			// handleSubmit ignores performSave's return value entirely on the
-			// conflict path, so the generic inline-error paragraph must stay empty
-			// — the modal is the only surfaced error, not a duplicate message.
-			expect(screen.queryByText("Upload failed.")).not.toBeInTheDocument();
-		});
-
-		it("detects a concurrent save via the background version poll and shows the conflict modal", async () => {
-			// Fake timers must be installed *before* the component mounts: the
-			// polling $effect's setInterval(..., 12000) is armed once, right when
-			// isLoadingSource first clears, and only a timer scheduled while fake
-			// timers are active can later be fast-forwarded by
-			// advanceTimersByTimeAsync — installing them after mount would leave
-			// that interval running on the real clock, unreachable by fake time.
-			vi.useFakeTimers();
-			const detail = makeCaseDetail();
-			stubGetCase(detail);
-			renderForm({ editCaseId: String(detail.id) });
-			// findBy*'s own retry loop is MutationObserver-driven, not timer-driven,
-			// so it still resolves as soon as the (real, microtask-scheduled) fetch
-			// response updates the DOM — unaffected by the fake clock above.
-			await screen.findByDisplayValue("Sterling Industries");
-
-			stubVersion(detail.id as number, (detail.version as number) + 1);
-			await vi.advanceTimersByTimeAsync(12000);
-
-			expect(
-				await screen.findByText("This case was updated by someone else"),
-			).toBeInTheDocument();
-		});
-
-		it("surfaces the server's detail message inline for a non-conflict failure", async () => {
-			const detail = makeCaseDetail();
-			stubGetCase(detail);
-			server.use(
-				http.put(`*/api/cases/${detail.id}`, () =>
-					HttpResponse.json(
-						{ detail: "Access code already in use." },
-						{ status: 400 },
-					),
-				),
-			);
-			const user = userEvent.setup();
-			renderForm({ editCaseId: String(detail.id) });
-			await screen.findByDisplayValue("Sterling Industries");
-
-			// Same as the conflict test above: Submit is disabled until the
-			// loaded version arrives, which lands after the fields do.
 			await waitFor(() =>
 				expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled(),
 			);
@@ -320,7 +256,7 @@ describe("CaseForm", () => {
 
 	describe("dirty tracking", () => {
 		it("starts clean, becomes dirty on typing, and clean again after a successful save", async () => {
-			const requests = stubCreate();
+			const { createRequests } = stubMutations();
 			const user = userEvent.setup();
 			renderForm();
 
@@ -335,7 +271,7 @@ describe("CaseForm", () => {
 			expect(unsavedGuard.isDirty).toBe(true);
 
 			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
-			await user.type(screen.getByLabelText("Access code"), "ABC123");
+			await user.type(screen.getByLabelText("Access code"), "sterling");
 			await user.click(
 				screen.getByRole("button", { name: "+ Add root persona" }),
 			);
@@ -345,7 +281,7 @@ describe("CaseForm", () => {
 
 			await screen.findByText("Case saved successfully.");
 			expect(unsavedGuard.isDirty).toBe(false);
-			expect(requests).toHaveLength(1);
+			expect(createRequests).toHaveLength(1);
 		});
 	});
 
@@ -403,9 +339,9 @@ describe("CaseForm", () => {
 		});
 
 		it("is not offered in edit mode", async () => {
-			const detail = makeCaseDetail();
-			stubGetCase(detail);
-			renderForm({ editCaseId: String(detail.id) });
+			const doc = makeCaseDoc();
+			stubLoadCase(doc);
+			renderForm({ editCaseId: doc._id });
 			await screen.findByDisplayValue("Sterling Industries");
 			expect(
 				screen.queryByRole("button", { name: "Import template" }),
@@ -565,48 +501,32 @@ describe("CaseForm", () => {
 			return user;
 		}
 
-		it("does not fetch the admin roster until the picker is opened, and only fetches it once", async () => {
-			let fetchCount = 0;
-			server.use(
-				http.get("*/api/admin/admins", () => {
-					fetchCount += 1;
-					return HttpResponse.json([makeAdminOut({ id: 9, name: "Nina" })]);
-				}),
-			);
+		it("shows the admin roster from the live Convex subscription in the picker", async () => {
+			mockUseQuery.mockReturnValue({
+				data: [makeAdminRow({ _id: "9", name: "Nina" })],
+				isLoading: false,
+				error: undefined,
+			});
 			renderForm();
 
-			expect(fetchCount).toBe(0);
+			await openPicker();
 
-			const user = await openPicker();
-			await screen.findByText("Nina");
-			expect(fetchCount).toBe(1);
-
-			// Close and reopen: already loaded, so no second fetch.
-			await user.keyboard("{Escape}");
-			await user.click(
-				screen.getByRole("button", { name: /Add collaborators/ }),
-			);
-			await screen.findByText("Nina");
-			expect(fetchCount).toBe(1);
+			expect(await screen.findByText("Nina")).toBeInTheDocument();
 		});
 
 		it("excludes SUPER admins and the case's owner from the selectable list in edit mode", async () => {
-			const detail = makeCaseDetail({ owner_admin_id: 5 });
-			stubGetCase(detail);
-			server.use(
-				http.get("*/api/admin/admins", () =>
-					HttpResponse.json([
-						makeAdminOut({
-							id: 5,
-							name: "Owner Olivia",
-							role: ADMIN_ROLE.ADMIN,
-						}),
-						makeAdminOut({ id: 6, name: "Super Sam", role: ADMIN_ROLE.SUPER }),
-						makeAdminOut({ id: 7, name: "Rank Rita", role: ADMIN_ROLE.ADMIN }),
-					]),
-				),
-			);
-			renderForm({ editCaseId: String(detail.id) });
+			const doc = makeCaseDoc({ ownerAdminId: "5" });
+			stubLoadCase(doc);
+			mockUseQuery.mockReturnValue({
+				data: [
+					makeAdminRow({ _id: "5", name: "Owner Olivia", role: "admin" }),
+					makeAdminRow({ _id: "6", name: "Super Sam", role: "super" }),
+					makeAdminRow({ _id: "7", name: "Rank Rita", role: "admin" }),
+				],
+				isLoading: false,
+				error: undefined,
+			});
+			renderForm({ editCaseId: doc._id });
 			await screen.findByDisplayValue("Sterling Industries");
 
 			await openPicker();
@@ -621,14 +541,14 @@ describe("CaseForm", () => {
 				adminRole: ADMIN_ROLE.ADMIN,
 				adminEmail: "me@wisc.edu",
 			});
-			server.use(
-				http.get("*/api/admin/admins", () =>
-					HttpResponse.json([
-						makeAdminOut({ id: 1, name: "Me", email: "me@wisc.edu" }),
-						makeAdminOut({ id: 2, name: "Rank Rita", email: "rita@wisc.edu" }),
-					]),
-				),
-			);
+			mockUseQuery.mockReturnValue({
+				data: [
+					makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
+					makeAdminRow({ _id: "2", name: "Rank Rita", email: "rita@wisc.edu" }),
+				],
+				isLoading: false,
+				error: undefined,
+			});
 			renderForm();
 
 			await openPicker();
@@ -638,12 +558,12 @@ describe("CaseForm", () => {
 		});
 
 		it("toggling a collaborator updates the selected-count badge and is included in the submit payload", async () => {
-			const requests = stubCreate();
-			server.use(
-				http.get("*/api/admin/admins", () =>
-					HttpResponse.json([makeAdminOut({ id: 9, name: "Nina" })]),
-				),
-			);
+			const { createRequests } = stubMutations();
+			mockUseQuery.mockReturnValue({
+				data: [makeAdminRow({ _id: "9", name: "Nina" })],
+				isLoading: false,
+				error: undefined,
+			});
 			const user = userEvent.setup();
 			renderForm();
 
@@ -652,7 +572,7 @@ describe("CaseForm", () => {
 				"Sterling Industries",
 			);
 			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
-			await user.type(screen.getByLabelText("Access code"), "ABC123");
+			await user.type(screen.getByLabelText("Access code"), "sterling");
 			await user.click(
 				screen.getByRole("button", { name: "+ Add root persona" }),
 			);
@@ -673,7 +593,7 @@ describe("CaseForm", () => {
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 			await screen.findByText("Case saved successfully.");
 
-			expect(requests[0]?.collaborator_admin_ids).toEqual([9]);
+			expect(createRequests[0]?.collaboratorAdminIds).toEqual(["9"]);
 
 			// Unchecking removes it again.
 			await user.click(checkbox);

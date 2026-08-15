@@ -1,10 +1,21 @@
 <script lang="ts">
 import House from "@lucide/svelte/icons/house";
 import LogOut from "@lucide/svelte/icons/log-out";
+import { useAuth } from "@mmailaender/convex-auth-svelte/svelte";
 import { goto } from "$app/navigation";
-import { signOutAdmin } from "$lib/auth.js";
+import { session } from "$lib/session.svelte.js";
 import { unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import UnsavedChangesModal from "./UnsavedChangesModal.svelte";
+
+// Available because admin/+layout.svelte (an ancestor of every route this component
+// renders on) calls setupConvexAuth.
+const auth = useAuth();
+
+async function signOutAdmin(): Promise<void> {
+	await auth.signOut();
+	session.clearAdmin();
+	await goto("/");
+}
 
 let showUnsavedModal = $state(false);
 let isSaving = $state(false);

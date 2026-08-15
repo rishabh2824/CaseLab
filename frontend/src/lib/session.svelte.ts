@@ -1,11 +1,10 @@
 import { browser } from "$app/environment";
-import { ADMIN_ROLE } from "./constants.js";
-import type { Api } from "./types.js";
+import { ADMIN_ROLE, type AdminRole } from "./constants.js";
 
 const STORAGE_KEY = "caseLabSession";
 
 export interface PersistedSession {
-	adminRole: Api<"AdminRole"> | null;
+	adminRole: AdminRole | null;
 	adminEmail: string;
 	runId: string;
 	accessCode: string;
@@ -20,7 +19,7 @@ const defaults: PersistedSession = Object.freeze({
 	startTime: null,
 });
 
-const isAdminRole = (value: unknown): value is Api<"AdminRole"> =>
+const isAdminRole = (value: unknown): value is AdminRole =>
 	value === ADMIN_ROLE.SUPER || value === ADMIN_ROLE.ADMIN;
 
 function normalizePersisted(value: unknown): PersistedSession {
@@ -52,7 +51,7 @@ function readPersisted(): PersistedSession {
 const initial = readPersisted();
 
 class SessionStore {
-	adminRole = $state<Api<"AdminRole"> | null>(initial.adminRole);
+	adminRole = $state<AdminRole | null>(initial.adminRole);
 	adminEmail = $state<string>(initial.adminEmail);
 	runId = $state<string>(initial.runId);
 	accessCode = $state<string>(initial.accessCode);
@@ -74,7 +73,7 @@ class SessionStore {
 		adminRole,
 		adminEmail,
 	}: {
-		adminRole: Api<"AdminRole"> | null;
+		adminRole: AdminRole | null;
 		adminEmail: string;
 	}) {
 		this.adminRole = adminRole ?? null;

@@ -3,16 +3,33 @@
 // create/update payload. Nothing else exercises it, and a silent
 // field-mapping bug here (e.g. an uploaded key landing on the wrong persona)
 // would corrupt a saved case without ever throwing.
+//
+// Both create and update go through Convex (getConvexClient().action/.mutation,
+// mocked below) -- only the Spaces PUT itself stays real MSW/fetch.
 import { HttpResponse, http } from "msw";
-import { describe, expect, it } from "vitest";
-import { ApiError } from "../../src/lib/api/client.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type SubmitCaseInput,
 	submitCase,
 } from "../../src/lib/case/submitCase.js";
-import type { Api } from "../../src/lib/types.js";
+import type { FileRefPayload, PersonaPayload } from "../../src/lib/types.js";
 import { makePersona } from "../support/fixtures.js";
 import { server } from "../support/msw.js";
+
+const mockAction = vi.fn();
+const mockMutation = vi.fn();
+
+vi.mock("convex-svelte", () => ({
+	getConvexClient: () => ({ action: mockAction, mutation: mockMutation }),
+}));
+
+// This file's "server" vitest project doesn't set clearMocks (only "client" does, see
+// vite.config.ts) -- reset call history and implementations ourselves so one test's
+// mockAction/mockMutation setup can't leak into the next.
+beforeEach(() => {
+	mockAction.mockReset();
+	mockMutation.mockReset();
+});
 
 // Node's built-in fetch (bundled undici) refuses a relative URL outright — it
 // needs a same-origin base to resolve against, which a browser gets for free
@@ -29,44 +46,37 @@ Object.defineProperty(globalThis, Symbol.for("undici.globalOrigin.1"), {
 
 const SPACES_ORIGIN = "https://spaces.test";
 
-type PresignCapture = {
-	file_name: string;
-	content_type: string | null;
-	prefix: string | null;
-};
+type PresignItem = { fileName: string; contentType?: string; prefix?: string };
 
-// Wires a working batch-presign endpoint (each call gets a unique object_key
-// so a test can verify which upload produced which key) and the Spaces PUT
-// it hands back. `putStatus` lets the Spaces-failure test reuse this without
+// Wires a working batch-presign action (each call gets a unique objectKey so
+// a test can verify which upload produced which key) and the Spaces PUT it
+// hands back. `putStatus` lets the Spaces-failure test reuse this without
 // hand-rolling its own handlers. `presignRequests` flattens every file across
 // every batch call, in request order, so existing per-file assertions still
-// read naturally even though submitCase now sends one batched request.
+// read naturally even though submitCase sends one batched action call.
 function stubUploadPipeline({ putStatus = 200 }: { putStatus?: number } = {}) {
-	const presignRequests: PresignCapture[] = [];
-	const presignBatchCalls: PresignCapture[][] = [];
+	const presignRequests: PresignItem[] = [];
+	const presignBatchCalls: PresignItem[][] = [];
 	const putRequests: { url: string; contentType: string | null }[] = [];
 	let counter = 0;
 
+	mockAction.mockImplementation(async (_ref: unknown, args: { files: PresignItem[] }) => {
+		presignRequests.push(...args.files);
+		presignBatchCalls.push(args.files);
+		return args.files.map((file) => {
+			counter += 1;
+			const objectKey = `objects/${counter}-${file.fileName}`;
+			return {
+				uploadUrl: `${SPACES_ORIGIN}/${objectKey}`,
+				objectKey,
+				fileName: file.fileName,
+				contentType: file.contentType,
+				expiresIn: 900,
+			};
+		});
+	});
+
 	server.use(
-		http.post("*/api/uploads/presign/batch", async ({ request }) => {
-			const body = (await request.json()) as { files: PresignCapture[] };
-			presignRequests.push(...body.files);
-			presignBatchCalls.push(body.files);
-			const files = body.files.map((file) => {
-				counter += 1;
-				const objectKey = `objects/${counter}-${file.file_name}`;
-				return {
-					upload_url: `${SPACES_ORIGIN}/${objectKey}`,
-					object_key: objectKey,
-					file_name: file.file_name,
-					content_type: file.content_type,
-					expires_in: 900,
-				} satisfies Api<"PresignUploadResponse">;
-			});
-			return HttpResponse.json({
-				files,
-			} satisfies Api<"PresignUploadBatchResponse">);
-		}),
 		http.put(`${SPACES_ORIGIN}/*`, ({ request }) => {
 			putRequests.push({
 				url: request.url,
@@ -79,30 +89,22 @@ function stubUploadPipeline({ putStatus = 200 }: { putStatus?: number } = {}) {
 	return { presignRequests, presignBatchCalls, putRequests };
 }
 
-// Wires /api/cases (create) and /api/cases/:id (update) and captures every
-// request body MSW actually received — the payload-shaping assertions below
-// read these rather than re-deriving what submitCase "should" have sent.
+// Wires the Convex createCase/updateCase mutations (mocked) and captures every request
+// submitCase actually sent, split by which one fired -- update's args always carry a
+// `caseId`, create's never do, since submitCase builds them from the same `scalars` object
+// plus that one extra field.
 function stubCaseEndpoints() {
-	const createRequests: Api<"CasePayload">[] = [];
-	const updateRequests: { id: string; body: Api<"CaseUpdatePayload"> }[] = [];
+	const createRequests: Record<string, unknown>[] = [];
+	const updateRequests: Record<string, unknown>[] = [];
 
-	server.use(
-		http.post("*/api/cases", async ({ request }) => {
-			createRequests.push((await request.json()) as Api<"CasePayload">);
-			return HttpResponse.json({
-				case_id: 1,
-			} satisfies Api<"CaseCreatedResponse">);
-		}),
-		http.put("*/api/cases/:id", async ({ request, params }) => {
-			updateRequests.push({
-				id: params.id as string,
-				body: (await request.json()) as Api<"CaseUpdatePayload">,
-			});
-			return HttpResponse.json({
-				case_id: Number(params.id),
-			} satisfies Api<"CaseCreatedResponse">);
-		}),
-	);
+	mockMutation.mockImplementation(async (_ref: unknown, args: Record<string, unknown>) => {
+		if ("caseId" in args) {
+			updateRequests.push(args);
+			return { caseId: args.caseId };
+		}
+		createRequests.push(args);
+		return { caseId: "convex-case-id" };
+	});
 
 	return { createRequests, updateRequests };
 }
@@ -115,7 +117,7 @@ function baseInput(overrides: Partial<SubmitCaseInput> = {}): SubmitCaseInput {
 		initialBrief: "Reduce office supply costs.",
 		commonInformation: "Background context.",
 		simulationDurationMinutes: 45,
-		accessCode: "ABC123",
+		accessCode: "abc",
 		personas: [],
 		referrals: [],
 		roots: [],
@@ -125,25 +127,23 @@ function baseInput(overrides: Partial<SubmitCaseInput> = {}): SubmitCaseInput {
 }
 
 describe("submitCase — create vs. edit routing", () => {
-	it("creates a case with POST /api/cases and no expected_version field at all", async () => {
+	it("creates a case via the Convex createCase mutation", async () => {
 		const { createRequests } = stubCaseEndpoints();
 
 		await submitCase(baseInput());
 
 		expect(createRequests).toHaveLength(1);
-		expect(createRequests[0]).not.toHaveProperty("expected_version");
+		expect(mockMutation).toHaveBeenCalledTimes(1);
 	});
 
-	it("updates a case with PUT /api/cases/{id}, including expected_version", async () => {
+	it("updates a case via the Convex updateCase mutation, passing its caseId", async () => {
 		const { updateRequests } = stubCaseEndpoints();
 
-		await submitCase(
-			baseInput({ isEditMode: true, editCaseId: "42", expectedVersion: 7 }),
-		);
+		await submitCase(baseInput({ isEditMode: true, editCaseId: "42" }));
 
 		expect(updateRequests).toHaveLength(1);
-		expect(updateRequests[0]?.id).toBe("42");
-		expect(updateRequests[0]?.body.expected_version).toBe(7);
+		expect(updateRequests[0]?.caseId).toBe("42");
+		expect(mockMutation).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -190,8 +190,8 @@ describe("submitCase — profile photo upload", () => {
 
 		expect(presignRequests).toHaveLength(1);
 		expect(createRequests).toHaveLength(1);
-		const sentPersona = createRequests[0]?.personas?.[0];
-		expect(sentPersona?.profile_photo).toEqual({
+		const personas = createRequests[0]?.personas as PersonaPayload[];
+		expect(personas[0]?.profile_photo).toEqual({
 			object_key: "objects/1-mary.png",
 			file_name: "mary.png",
 			content_type: "image/png",
@@ -199,9 +199,9 @@ describe("submitCase — profile photo upload", () => {
 	});
 
 	it("passes an existing FileRef profile photo through without uploading it again", async () => {
-		const { presignRequests } = stubUploadPipeline();
+		stubUploadPipeline();
 		const { createRequests } = stubCaseEndpoints();
-		const existingPhoto: Api<"FileRef"> = {
+		const existingPhoto: FileRefPayload = {
 			object_key: "cases/x/old.png",
 			file_name: "old.png",
 			content_type: "image/png",
@@ -211,11 +211,10 @@ describe("submitCase — profile photo upload", () => {
 		await submitCase(baseInput({ personas: [persona] }));
 
 		// The whole point: an already-uploaded photo must not hit presign again.
-		expect(presignRequests).toHaveLength(0);
+		expect(mockAction).not.toHaveBeenCalled();
 		expect(createRequests).toHaveLength(1);
-		expect(createRequests[0]?.personas?.[0]?.profile_photo).toEqual(
-			existingPhoto,
-		);
+		const personas = createRequests[0]?.personas as PersonaPayload[];
+		expect(personas[0]?.profile_photo).toEqual(existingPhoto);
 	});
 });
 
@@ -237,7 +236,8 @@ describe("submitCase — file attachments", () => {
 
 		expect(presignRequests).toHaveLength(1);
 		expect(createRequests).toHaveLength(1);
-		const sentFile = createRequests[0]?.personas?.[0]?.files?.[0];
+		const personas = createRequests[0]?.personas as PersonaPayload[];
+		const sentFile = personas[0]?.files?.[0];
 		expect(sentFile?.file).toEqual({
 			object_key: "objects/1-budget.pdf",
 			file_name: "budget.pdf",
@@ -248,7 +248,7 @@ describe("submitCase — file attachments", () => {
 	});
 
 	it("preserves a file:null attachment entry as-is, uploading nothing for it", async () => {
-		const { presignRequests } = stubUploadPipeline();
+		stubUploadPipeline();
 		const { createRequests } = stubCaseEndpoints();
 		const persona = makePersona({
 			files: [
@@ -258,14 +258,15 @@ describe("submitCase — file attachments", () => {
 
 		await submitCase(baseInput({ personas: [persona] }));
 
-		expect(presignRequests).toHaveLength(0);
+		expect(mockAction).not.toHaveBeenCalled();
 		expect(createRequests).toHaveLength(1);
-		expect(createRequests[0]?.personas?.[0]?.files?.[0]?.file).toBeNull();
+		const personas = createRequests[0]?.personas as PersonaPayload[];
+		expect(personas[0]?.files?.[0]?.file).toBeNull();
 	});
 });
 
 describe("submitCase — content type handling", () => {
-	it("sends content_type: null on presign and application/octet-stream on the PUT for a file with no MIME type", async () => {
+	it("sends no contentType on presign and application/octet-stream on the PUT for a file with no MIME type", async () => {
 		const { presignRequests, putRequests } = stubUploadPipeline();
 		stubCaseEndpoints();
 		// No `type` option — a real drag-and-dropped file of an unrecognized kind
@@ -278,7 +279,7 @@ describe("submitCase — content type handling", () => {
 
 		expect(presignRequests).toHaveLength(1);
 		expect(putRequests).toHaveLength(1);
-		expect(presignRequests[0]?.content_type).toBeNull();
+		expect(presignRequests[0]?.contentType).toBeUndefined();
 		expect(putRequests[0]?.contentType).toBe("application/octet-stream");
 	});
 });
@@ -317,13 +318,13 @@ describe("submitCase — multiple personas and attachments", () => {
 		await submitCase(baseInput({ personas: [persona1, persona2] }));
 
 		// 4 uploads total: p1's photo + 2 files, p2's 1 file — sent as a single
-		// batched presign call (the fix under test), not 4 separate round
-		// trips. Runs through Promise.all in uploadAll, so the count alone
-		// would not catch a mis-association — the per-persona checks below do.
+		// batched presign call, not 4 separate round trips. Runs through
+		// Promise.all in uploadAll, so the count alone would not catch a
+		// mis-association — the per-persona checks below do.
 		expect(presignBatchCalls).toHaveLength(1);
 		expect(presignRequests).toHaveLength(4);
 		expect(createRequests).toHaveLength(1);
-		const sentPersonas = createRequests[0]?.personas ?? [];
+		const sentPersonas = (createRequests[0]?.personas ?? []) as PersonaPayload[];
 		const sentP1 = sentPersonas.find((p) => p.id === "p1");
 		const sentP2 = sentPersonas.find((p) => p.id === "p2");
 
@@ -348,13 +349,7 @@ describe("submitCase — multiple personas and attachments", () => {
 describe("submitCase — upload failures", () => {
 	it("rejects with 'Failed to upload file to Spaces.' and never creates the case when the Spaces PUT fails", async () => {
 		stubUploadPipeline({ putStatus: 500 });
-		let caseRequestSeen = false;
-		server.use(
-			http.post("*/api/cases", () => {
-				caseRequestSeen = true;
-				return HttpResponse.json({ case_id: 1 });
-			}),
-		);
+		stubCaseEndpoints();
 		const persona = makePersona({
 			profile_photo: new File(["a"], "photo.png", { type: "image/png" }),
 		});
@@ -362,15 +357,12 @@ describe("submitCase — upload failures", () => {
 		await expect(
 			submitCase(baseInput({ personas: [persona] })),
 		).rejects.toThrow("Failed to upload file to Spaces.");
-		expect(caseRequestSeen).toBe(false);
+		expect(mockMutation).not.toHaveBeenCalled();
 	});
 
-	it("propagates a failed presign request as an ApiError", async () => {
-		server.use(
-			http.post("*/api/uploads/presign/batch", () =>
-				HttpResponse.json({ detail: "Presign failed." }, { status: 500 }),
-			),
-		);
+	it("propagates a failed presign action call, never creating the case", async () => {
+		mockAction.mockRejectedValue(new Error("Presign failed."));
+		stubCaseEndpoints();
 		const persona = makePersona({
 			profile_photo: new File(["a"], "photo.png", { type: "image/png" }),
 		});
@@ -379,8 +371,9 @@ describe("submitCase — upload failures", () => {
 			(e) => e,
 		);
 
-		expect(err).toBeInstanceOf(ApiError);
-		expect((err as ApiError).message).toBe("Presign failed.");
+		expect(err).toBeInstanceOf(Error);
+		expect((err as Error).message).toBe("Presign failed.");
+		expect(mockMutation).not.toHaveBeenCalled();
 	});
 });
 
@@ -393,28 +386,28 @@ describe("submitCase — payload shaping", () => {
 				caseName: "  Sterling Industries  ",
 				initialBrief: "  Reduce office supply costs.  ",
 				commonInformation: "  Background context.  ",
-				accessCode: "  ABC123  ",
+				accessCode: "  abc  ",
 				referrals: [
 					{ from_id: "p1", to_id: "p2", conditions: "  when asked  " },
 				],
 				roots: ["p1"],
-				collaboratorAdminIds: [2, 5],
+				collaboratorAdminIds: ["admin2", "admin5"],
 			}),
 		);
 
 		expect(createRequests).toHaveLength(1);
 		const [body] = createRequests;
 		if (!body) throw new Error("expected a captured create request");
-		expect(body.case_name).toBe("Sterling Industries");
+		expect(body.name).toBe("Sterling Industries");
 		expect(body.brief).toBe("Reduce office supply costs.");
-		expect(body.common_information).toBe("Background context.");
-		expect(body.access_code).toBe("ABC123");
+		expect(body.commonInformation).toBe("Background context.");
+		expect(body.accessCode).toBe("abc");
 		// Reduced to exactly {from_id, to_id, conditions} — conditions itself is
 		// passed through untrimmed, only the top-level case fields are trimmed.
 		expect(body.referrals).toEqual([
 			{ from_id: "p1", to_id: "p2", conditions: "  when asked  " },
 		]);
 		expect(body.roots).toEqual(["p1"]);
-		expect(body.collaborator_admin_ids).toEqual([2, 5]);
+		expect(body.collaboratorAdminIds).toEqual(["admin2", "admin5"]);
 	});
 });
