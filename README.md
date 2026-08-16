@@ -7,53 +7,36 @@ dashboard.
 
 ## Tech stack
 
-**Backend** — FastAPI (Python 3.14, [uv](https://docs.astral.sh/uv/)), SQLModel +
-Alembic over Neon Postgres (`asyncpg`), DigitalOcean Spaces for file storage,
-Claude (via [OpenRouter](https://openrouter.ai)) for persona replies, Google
-Identity Services (FedCM ID-token sign-in) + hand-rolled JWT for admin auth.
+**Backend** — [Convex](https://convex.dev) (TypeScript functions, reactive
+database, and file storage, all on one deployment), `@convex-dev/auth` with
+Google sign-in for admin auth, Claude (via
+[OpenRouter](https://openrouter.ai)) for persona replies.
 
 **Frontend** — SvelteKit (Svelte 5 runes) in SPA mode, Tailwind 4, Bits UI
-(headless) + svelte-sonner, built with `adapter-static` and served from
-DigitalOcean App Platform alongside the API under one domain.
+(headless) + svelte-sonner, built with `adapter-static`. Everything —
+backend functions, database, file storage, and the static frontend build —
+runs on Convex; there's no separate hosting provider.
 
 ## Installation
 
 ```bash
-# backend
-cd backend
-uv sync
-
-# frontend
-cd frontend
 pnpm install
 ```
 
-Each app reads its config from a git-ignored `.env` file in its own folder:
+Config comes from two git-ignored files at the repo root:
 
-- `backend/.env` — `SPACES_KEY`, `SPACES_SECRET`, `DIRECT` (Neon Postgres,
-  non-pooled), `FRONTEND_URLS`, `LLM_KEY` (an [OpenRouter](https://openrouter.ai)
-  API key), `GOOGLE_CLIENT_ID`, `JWT_SECRET`. See `backend/infra/settings.py`
-  for the full list and defaults.
-- `frontend/.env` — `VITE_GOOGLE_CLIENT_ID`.
-
-Set `ENABLE_OPENAPI=true` in `backend/.env` to serve `/openapi.json` locally
-(off by default — production doesn't publish its schema). Needed only to
-regenerate `frontend/src/lib/api/schema.d.ts` (see below).
+- `.env` — `LLM_KEY` (an [OpenRouter](https://openrouter.ai) API key),
+  `GOOGLE_ID`/`GOOGLE_SECRET` (Google OAuth client), `JWT_SECRET`,
+  `VITE_GOOGLE_CLIENT_ID`, `PUBLIC_CONVEX_URL`.
+- `.env.local` — `CONVEX_DEPLOYMENT`, managed automatically by the Convex CLI
+  (`npx convex dev` regenerates it if it's missing; don't hand-edit it).
 
 ## Running locally
 
 ```bash
-# backend — http://localhost:8000
-cd backend
-uv run uvicorn main:app --reload --port 8000
-
-# frontend — http://localhost:5173
-cd frontend
-pnpm run dev
+npx convex dev     # backend — pushes convex/ on every save
+pnpm run dev:web    # frontend — http://localhost:5173
 ```
-
-The frontend's dev server proxies `/api` to `127.0.0.1:8000`
-(`/api` → backend, everything else → the static frontend, one domain).
 
 ## Testing
 
@@ -61,34 +44,11 @@ Everything below runs in CI on every push and pull request
 (`.github/workflows/ci.yml`).
 
 ```bash
-# backend — fast suite: no database, no network, runs in ~1s
-cd backend
-uv run pytest -m "not db"
-
-# backend — everything, including the Postgres-backed tests
-uv run pytest
-uv run ruff check .
-
-# frontend
-cd frontend
-pnpm exec vitest run     # unit (node + jsdom projects)
-pnpm run check           # svelte-check
-pnpm run lint            # biome
+pnpm run lint           # biome
+pnpm run typecheck      # tsc over convex/
+pnpm run check           # svelte-check over src/
+pnpm exec vitest run     # unit — convex (convex-test), and frontend node + jsdom projects
 pnpm run test:e2e        # Playwright, against a fully-mocked backend
-```
-
-## API types
-
-`frontend/src/lib/api/schema.d.ts` is generated from the backend's OpenAPI
-schema and checked into git — the frontend does not regenerate it at build
-time. Regenerate it whenever a Pydantic request/response model changes:
-
-```bash
-# backend, with ENABLE_OPENAPI=true in .env
-uv run uvicorn main:app --port 8000
-
-# frontend
-pnpm gen:api
 ```
 
 ## Workflows
@@ -118,31 +78,14 @@ completes.
 
 
 **Persona reply generation (LLM pipeline).** Each student message triggers
-four kinds of OpenRouter calls. One Claude Sonnet call generates the reply, 
-and up to three kinds of Claude Haiku classifier calls run concurrently:
-1. A harassment/nonsense check on the message
-2. One referral-unlock check for each still-locked referral the current persona could introduce
-3. One file-share check for each still-withheld file the current persona could send
-
-All classifier calls run concurrently (`asyncio.gather`); the Sonnet reply 
-call runs strictly after, since its prompt depends on the other 3. The 
-system prompt is split into a stable block (common case information) which
-is cached, and a turn-specific block (this turn's eligible referrals/files). 
-The reply is a single structured-output JSON object (`response_format:
-json_schema`, strict mode) with `reply`/`introduce`/`send_files` keys, so the
-provider's constrained decoding guarantees `introduce`/`send_files` are always
-present and consistent with the same generation that produced `reply` — a
-schema-constrained object, not a separately-decided tool call the model could
-skip or contradict. A small incremental JSON lexer
-(`services/simulation/reply_stream.py`) extracts just the `reply` field's
-characters as they stream, so the client still sees the persona's words
-appear live; the full accumulated JSON is parsed once the stream ends and is
-the authoritative reply of record, driving referral/file unlocking.
+two OpenRouter calls: a Claude Haiku harassment/nonsense classifier
+(`classifyHarassment` in `convex/lib/llm.ts`) on the message, and one Claude 
+Sonnet call that decides the referral and file unlock and generates the reply.
 
 
-**File uploads (two-phase, direct-to-Spaces).** The browser never sends file
-bytes through the backend. It first calls `/api/uploads/presign` to get a
-presigned URL, then `PUT`s the file straight to DigitalOcean Spaces from the
-browser. Only the resulting object key is submitted with the case/persona
-data. Spaces' CORS policy must allow `GET`/`PUT` from every origin in
-`FRONTEND_URLS` for this to work.
+
+**File uploads (two-phase, direct-to-Convex-storage).** The browser calls
+`generateUploadUrl` (or the batched `generateUploadUrls`) to get a
+short-lived upload URL, then `POST`s the file straight to Convex storage
+from the browser. Only the resulting `storageId` is submitted with the
+case/persona data.

@@ -1,5 +1,4 @@
 # Editor / IDE
-.idea/
 .zed/
 
 # Local agent/tool config
@@ -10,3 +9,24 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# --- dependencies / build output ---
+node_modules/
+.output
+.vercel
+.netlify
+.wrangler
+.svelte-kit
+build
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+test-results
+playwright-report
+coverage
+
+# .env.example and .env.test stay tracked; every other env file is local-only.
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

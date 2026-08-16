@@ -1,9 +1,0 @@
-node_modules/
-
-# Skill content synced from skills-lock.json -- regenerable, not authored.
-.agents/
-
-.env
-.env.*
-
-.DS_Store
