@@ -1,14 +1,13 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
-import { internalQuery, mutation, query } from "../_generated/server";
-import { adminRole } from "../models/admin";
+import { query } from "../_generated/server";
+import { adminQuery, superAdminMutation } from "../lib/adminFunctions";
+import { adminRole } from "../schema";
 import {
 	createAdmin,
 	deleteAdminWithCascade,
 	getAdminByEmail,
 	listAdmins,
-	requireCurrentAdmin,
-	requireSuperAdmin,
 } from "../services/admins";
 
 // The current admin's identity + role, or null if not signed in / not an admin.
@@ -30,39 +29,24 @@ export const viewer = query({
 	},
 });
 
-// Mirrors backend/api/admin.py's GET /admin/admins: any signed-in admin can see the
-// full roster, not just super admins.
-export const listAll = query({
+// Any signed-in admin can see the full roster, not just super admins.
+export const listAll = adminQuery({
 	args: {},
 	handler: async (ctx) => {
-		await requireCurrentAdmin(ctx);
 		return await listAdmins(ctx);
 	},
 });
 
-// Mirrors backend/api/admin.py's POST /admin/admins (requireSuperAdmin dependency).
-export const create = mutation({
+export const create = superAdminMutation({
 	args: { email: v.string(), name: v.optional(v.string()), role: adminRole },
 	handler: async (ctx, args) => {
-		await requireSuperAdmin(ctx);
 		return await createAdmin(ctx, args);
 	},
 });
 
-// Mirrors backend/api/admin.py's DELETE /admin/admins/{id} (requireSuperAdmin dependency).
-export const deleteWithCascade = mutation({
+export const deleteWithCascade = superAdminMutation({
 	args: { adminId: v.id("admins") },
 	handler: async (ctx, args) => {
-		await requireSuperAdmin(ctx);
 		return await deleteAdminWithCascade(ctx, args.adminId);
-	},
-});
-
-// Not client-callable -- lets actions (which have no direct db access, e.g.
-// api/uploads.ts's presign actions) reuse the same admin gate every query/mutation uses.
-export const requireCurrentAdminInternal = internalQuery({
-	args: {},
-	handler: async (ctx) => {
-		await requireCurrentAdmin(ctx);
 	},
 });

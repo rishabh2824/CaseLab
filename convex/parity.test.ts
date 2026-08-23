@@ -17,7 +17,8 @@
 
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import caseFormSource from "../src/lib/components/CaseForm.svelte?raw";
+import { isSelectableCollaborator } from "../src/lib/case/draft.js";
+import caseInfoFieldsSource from "../src/lib/components/CaseInfoFields.svelte?raw";
 import { MAX_MESSAGE_WORDS } from "../src/lib/constants.js";
 import { countWords } from "../src/lib/format.js";
 import { personaAvailability as clientAvailability } from "../src/lib/student/availability.js";
@@ -26,7 +27,6 @@ import { personaAvailability as serverAvailability } from "./lib/turnState.js";
 // ?raw loader -- the alternative (exporting a constant purely so a test can read it) would put
 // a test-only seam into production code.
 import casesSource from "./services/cases.ts?raw";
-import { RUN_LIFETIME_MINUTES } from "./services/simulations.js";
 import turnSource from "./services/turn.ts?raw";
 
 function requireMatch(source: string, pattern: RegExp, what: string): string {
@@ -165,7 +165,7 @@ describe("message word limit: src/lib/constants.ts vs convex/services/turn.ts", 
 	});
 });
 
-describe("access code format: CaseForm.svelte vs convex/services/cases.ts", () => {
+describe("access code format: CaseInfoFields.svelte vs convex/services/cases.ts", () => {
 	it("uses the same regex literal on both sides", () => {
 		const serverRegex = requireMatch(
 			casesSource,
@@ -173,52 +173,65 @@ describe("access code format: CaseForm.svelte vs convex/services/cases.ts", () =
 			"ACCESS_CODE_FORMAT in convex/services/cases.ts",
 		);
 		const clientRegex = requireMatch(
-			caseFormSource,
+			caseInfoFieldsSource,
 			/const ACCESS_CODE_FORMAT = (\/.+\/);/,
-			"ACCESS_CODE_FORMAT in src/lib/components/CaseForm.svelte",
+			"ACCESS_CODE_FORMAT in src/lib/components/CaseInfoFields.svelte",
 		);
 		expect(clientRegex).toBe(serverRegex);
 	});
 });
 
-describe("simulation duration bound: CaseForm.svelte vs the run lifetime", () => {
-	// The client's max and the server's hard cap on how long a run can actually live have to be
-	// the same number: a case saved with a longer duration drives a countdown that is still
-	// showing time remaining at the moment the run is deleted underneath the student.
-	it("bounds the authoring input by exactly the run lifetime", () => {
-		const clientMax = Number(
-			requireMatch(
-				caseFormSource,
-				/const MAX_SIMULATION_DURATION = (\d+);/,
-				"MAX_SIMULATION_DURATION in src/lib/components/CaseForm.svelte",
-			),
-		);
-		expect(clientMax).toBe(RUN_LIFETIME_MINUTES);
-	});
-
-	it("validates against that same bound server-side, not just in the form", () => {
-		// The validator has to reference the shared constant rather than re-typing a literal --
-		// a hard-coded 120 here would silently drift the next time the lifetime changes.
+describe("simulation duration bound: services/cases.ts vs the run lifetime", () => {
+	// CaseForm.svelte's own MAX_SIMULATION_DURATION is just RUN_LIFETIME_MINUTES imported
+	// (see convex/schema.ts), not a second literal, so there's no client/server drift left to
+	// pin here -- only that the server validator keeps referencing the shared constant rather
+	// than a hard-coded 120 that could silently drift from it.
+	it("validates duration against RUN_LIFETIME_MINUTES, not a hard-coded literal", () => {
 		expect(casesSource).toContain("duration > RUN_LIFETIME_MINUTES");
 	});
 });
 
-describe("admin role representation: src/lib/constants.ts vs convex/models/admin.ts", () => {
-	// The frontend uses a numeric enum inherited from the old backend; Convex emits string
-	// literals. The bridge is a single ternary in AdminAuth.svelte, which silently maps ANY
-	// unrecognized role to the lower-privileged ADMIN. That's the safe direction to fail, but it
-	// only stays safe while "super" is the exact string the server emits.
-	it("bridges exactly the roles the server can emit", async () => {
-		const adminModelSource = (await import("../convex/models/admin.ts?raw"))
-			.default as string;
-		const serverRoles = [
-			...adminModelSource.matchAll(/v\.literal\("(\w+)"\)/g),
-		].map(([, role]) => role);
-		expect(serverRoles.sort()).toEqual(["admin", "super"]);
+describe("collaborator eligibility: src/lib/case/draft.ts's isSelectableCollaborator vs services/cases.ts's resolveCollaboratorIds", () => {
+	// resolveCollaboratorIds isn't exported and does real db lookups (get-by-id, role checks
+	// against stored admin docs), so it can't be called directly from a pure unit test the way
+	// isSelectableCollaborator can. What CAN be pinned without a live db: that the server's
+	// rejection is keyed on exactly `role === "super"`, and that the client predicate excludes
+	// (never offers as a collaborator candidate) exactly the same role -- so the picker can
+	// never offer an admin the server would reject.
+	it('the server rejects a collaborator by checking role === "super"', () => {
+		expect(casesSource).toContain('admin?.role === "super"');
+		expect(casesSource).toContain(
+			"Super admins cannot be added as collaborators.",
+		);
+	});
 
-		const adminAuthSource = (
-			await import("../src/lib/components/AdminAuth.svelte?raw")
-		).default as string;
-		expect(adminAuthSource).toContain('=== "super"');
+	it("the client never offers a super admin as a selectable collaborator", () => {
+		fc.assert(
+			fc.property(
+				fc.constantFrom("super", "admin"),
+				fc.uuid(),
+				fc.option(fc.uuid(), { nil: null }),
+				(role, adminId, effectiveOwnerId) => {
+					const selectable = isSelectableCollaborator(
+						{ _id: adminId, role },
+						effectiveOwnerId,
+					);
+					if (role === "super") expect(selectable).toBe(false);
+				},
+			),
+		);
+	});
+
+	// The owner exclusion is the other half of the predicate -- not a server/client parity
+	// concern (resolveCollaboratorIds independently rejects the owner appearing in their own
+	// collaborator list), but worth pinning here since it's the same function.
+	it("the client never offers the effective owner as a selectable collaborator", () => {
+		fc.assert(
+			fc.property(fc.uuid(), (adminId) => {
+				expect(
+					isSelectableCollaborator({ _id: adminId, role: "admin" }, adminId),
+				).toBe(false);
+			}),
+		);
 	});
 });

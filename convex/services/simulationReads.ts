@@ -20,9 +20,8 @@ function parseStructure(structure: unknown): CaseStructure {
 	};
 }
 
-// Mirrors backend/models/runtime.py's PersonaDetail. `profilePhotoUrl` starts null and is
-// filled in by hydratePersona (services/simulations.ts) at response-building time -- this
-// module never touches Spaces, same as reads.py.
+// `profilePhotoUrl` starts null and is filled in by hydratePersona (services/simulations.ts)
+// at response-building time -- this module never touches file storage.
 export type PersonaDetail = {
 	id: string;
 	name: string;
@@ -36,8 +35,8 @@ export type PersonaDetail = {
 	isReferred: boolean;
 };
 
-// Mirrors backend/services/simulation/reads.py's getPersonaDetails: renames the wire/admin-
-// authoring field `availability_minutes` to the internal `availabilityDuration`.
+// Renames the wire/admin-authoring field `availability_minutes` to the internal
+// `availabilityDuration`.
 function getPersonaDetails(
 	persona: PersonaPayload,
 	isReferred: boolean,
@@ -68,11 +67,9 @@ export type PersonaGraph = {
 	roots: string[];
 };
 
-// Mirrors backend/services/simulation/reads.py's flattenPersonas: reshapes a case's stored
-// structure blob into {personas, referrals, roots}. Unlike the old backend, this is never
-// cached onto a run (no RunSnapshot/persona_graph column, no _snapshot_cache) -- callers
-// just call this fresh off the live case document every time, which is cheap since the
-// case doc is already fetched by then.
+// Reshapes a case's stored structure blob into {personas, referrals, roots}. Never cached
+// onto a run -- callers just call this fresh off the live case document every time, which is
+// cheap since the case doc is already fetched by then.
 export function flattenPersonas(structure: unknown): PersonaGraph {
 	const {
 		personas: personaPayloads,
@@ -98,7 +95,7 @@ export function flattenPersonas(structure: unknown): PersonaGraph {
 
 // Referrals authored by a persona. Personas here are raw (never a hydrated photo URL) --
 // hydratePersona (services/simulations.ts) is the caller's job at the point it builds a
-// response, not this module's; simulationReads.ts never touches Spaces.
+// response, not this module's; simulationReads.ts never touches file storage.
 export function graphReferrals(
 	graph: PersonaGraph,
 	parentPersonaId: string,

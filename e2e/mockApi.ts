@@ -9,9 +9,7 @@
 // or rejects the same way (mutations/actions) -- a missing stub shows up as a loud, specific
 // failure instead of a silent hang or a stale-data false pass.
 import type { Page } from "@playwright/test";
-import type { AdminRole } from "../src/lib/constants.js";
-import { ADMIN_ROLE } from "../src/lib/constants.js";
-import type { Persona, ReferralEdge } from "../src/lib/types.js";
+import type { AdminRole, Persona, ReferralEdge } from "../src/lib/types.js";
 import {
 	makeContact,
 	makePersonaPayload,
@@ -117,7 +115,12 @@ export async function pushQuery(
 
 // --- admin sign-in ----------------------------------------------------------
 
-export { ADMIN_ROLE };
+// Convex's own "super" | "admin" string union (see convex/schema.ts) -- callers
+// import this instead of spelling the literals out, for readability at call sites.
+export const ADMIN_ROLE = Object.freeze({
+	SUPER: "super",
+	ADMIN: "admin",
+}) satisfies Record<string, AdminRole>;
 
 // admin/+layout.ts gates purely on `session.adminRole` (sessionStorage's "caseLabSession"
 // key, see src/lib/session.svelte.ts) -- it does NOT re-query Convex's api/admins:viewer on
@@ -297,8 +300,7 @@ export const caseDoc = (
 });
 
 // A Convex `admins` document as api/admins:listAll / create return it -- `_id`/`role`
-// ("super" | "admin" string literals, see convex/models/admin.ts), not the old numeric
-// ADMIN_ROLE enum (that stays frontend-only, for session/route-gating -- see constants.ts).
+// ("super" | "admin" string literals, see convex/schema.ts).
 export const adminDoc = (
 	overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({

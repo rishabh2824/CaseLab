@@ -156,7 +156,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 				activePersonaKey: "A",
 				unlockedReferredIds: [],
 				unlockedAt: {},
-				sharedFiles: {},
+				sharedFiles: [],
 				personaChatState: {},
 			}),
 		);

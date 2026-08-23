@@ -1,24 +1,17 @@
 import { type Infer, v } from "convex/values";
 
-// Mirrors backend/models/cases.py's FileRef/FileEntry/PersonaPayload/ReferralEdge --
-// including their exact optionality (every field below is `T | null | undefined` in the
-// generated frontend types, not just `T | undefined`, since Pydantic's `T | None = None`
-// serializes an unset field as JSON `null`, and the untouched frontend often carries that
-// null through rather than omitting the key). Deliberately snake_case, not Convex's usual
-// camelCase: this shape lives inside `cases.structure` (a JSON blob preserved as-is from
-// the old backend's migrated data -- see schema.ts) and is exactly what the still-untouched
-// CaseGraph/CaseGraphEditor frontend already reads and writes. There's no benefit to a
-// translation layer here when the stored data and the only consumer already agree on this
-// shape.
+// Every field below is `T | null | undefined`, not just `T | undefined`: the still-untouched
+// CaseGraph/CaseGraphEditor frontend expects an unset field to arrive as JSON `null` rather
+// than an omitted key, and often carries that null through itself. Deliberately snake_case,
+// not Convex's usual camelCase: this shape lives inside `cases.structure` (a JSON blob -- see
+// schema.ts) and is exactly what that frontend already reads and writes. There's no benefit
+// to a translation layer here when the stored data and the only consumer already agree on
+// this shape.
 const nullableString = v.optional(v.union(v.string(), v.null()));
 
 export const fileRefValidator = v.union(
 	v.null(),
 	v.object({
-		// Never read server-side (see services/files.ts's resolveFileRefs, which
-		// resolves purely by storage_id) -- accepted only so the untouched frontend can
-		// round-trip an already-resolved ref's id without the shape being rejected.
-		file_id: nullableString,
 		storage_id: v.id("_storage"),
 		file_name: v.string(),
 		content_type: nullableString,

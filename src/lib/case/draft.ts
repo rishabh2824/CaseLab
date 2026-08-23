@@ -48,6 +48,42 @@ export const normalizeReferral = (
 	...(referral ?? {}),
 });
 
+// A case document's `structure` field (personas/referrals/roots) as read back from Convex --
+// untyped (`v.any()` server-side), so every reader has to shape-guess it the same way.
+// CaseForm.svelte (loading a case to edit or use as a template) and DemoCaseView.svelte
+// (the read-only demo) both need this exact normalization; sharing it here means there's one
+// place that knows how to turn a raw `structure` blob into display-ready Personas/Referrals,
+// not two independently-written casts that could drift.
+export function parseCaseStructure(structure: unknown): {
+	personas: Persona[];
+	referrals: ReferralEdge[];
+	roots: string[];
+} {
+	const s = (structure ?? {}) as {
+		personas?: unknown[];
+		referrals?: unknown[];
+		roots?: string[];
+	};
+	return {
+		personas: (s.personas ?? []).map((persona) =>
+			normalizePersona(persona as Parameters<typeof normalizePersona>[0]),
+		),
+		referrals: (s.referrals ?? []).map((referral) =>
+			normalizeReferral(referral as Parameters<typeof normalizeReferral>[0]),
+		),
+		roots: s.roots ?? [],
+	};
+}
+
+// SUPER admins already have full access to every case, and a case's owner can't also be
+// listed as its own collaborator -- mirrors convex/services/cases.ts's resolveCollaboratorIds,
+// which rejects both server-side. Named and exported (not an inline filter predicate) so
+// convex/parity.test.ts can pin it against that rejection rule.
+export const isSelectableCollaborator = (
+	admin: { _id: string; role: string },
+	effectiveOwnerId: string | null,
+): boolean => admin.role !== "super" && admin._id !== effectiveOwnerId;
+
 export const getPersonaLabel = (
 	persona: { name: string },
 	fallback: string,

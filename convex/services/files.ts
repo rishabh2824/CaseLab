@@ -8,9 +8,8 @@ export type FileRefInput = {
 	contentType?: string;
 };
 
-// Mirrors backend/services/cases.py's _shapeFileRow, in Convex's own camelCase rather than
-// the old backend's snake_case -- this shape isn't constrained by any preserved-as-is old
-// data (unlike `cases.structure`), so there's no reason to carry the old naming forward.
+// Convex's own camelCase -- unlike `cases.structure`, this shape isn't constrained by any
+// preserved-as-is data, so there's no reason for it to be anything but camelCase.
 export type ResolvedFileRef = {
 	fileId: Id<"files">;
 	storageId: Id<"_storage">;
@@ -27,12 +26,11 @@ function shapeFileRow(file: Doc<"files">): ResolvedFileRef {
 	};
 }
 
-// Mirrors backend/services/cases.py's resolveFileRefs: batched get-or-create by storageId.
-// One query per distinct id in the batch, then one insert per still-missing id (deduped, so
-// two refs new to the DB sharing a storageId -- e.g. two personas given the same brand-new
-// photo in one save -- insert a single row instead of racing). Convex mutations are
-// serializable, so two concurrent saves resolving the same new storageId simply run one
-// after the other -- there's no IntegrityError/violation()/uq_files_object_key dance to port.
+// Batched get-or-create by storageId. One query per distinct id in the batch, then one
+// insert per still-missing id (deduped, so two refs new to the DB sharing a storageId -- e.g.
+// two personas given the same brand-new photo in one save -- insert a single row instead of
+// racing). Convex mutations are serializable, so two concurrent saves resolving the same new
+// storageId simply run one after the other.
 export async function resolveFileRefs(
 	ctx: MutationCtx,
 	fileRefs: (FileRefInput | null)[],
@@ -73,9 +71,10 @@ export async function resolveFileRefs(
 	);
 }
 
-// Whether any case still references this file. Shared by syncCaseFiles' pre-check (cheap,
-// avoids scheduling a cleanup action at all for a still-referenced file) and
-// api/files.ts's cleanup action, which re-checks right before actually deleting anything.
+// Whether any case still references this file -- e.g. a template and a case cloned from it
+// both hold a `caseFiles` row for the same file. api/files.ts's cleanup action checks this
+// right before actually deleting anything, so a file dropped from one case is never deleted
+// out from under another case that still legitimately references it.
 export async function fileHasReferences(
 	ctx: QueryCtx | MutationCtx,
 	fileId: Id<"files">,
@@ -87,11 +86,11 @@ export async function fileHasReferences(
 	return referencing !== null;
 }
 
-// Replaces backend/services/cases.py's referencedFileIds JSONB-text scan: reconciles a
-// case's `caseFiles` rows to exactly `desiredFileIds` (the file ids its just-saved
-// structure references), instead of scanning every case's serialized structure for a
-// needle. Call this from both case create and case update with the freshly-extracted file
-// id set, and from case delete with an empty set (which removes every row for that case).
+// Reconciles a case's `caseFiles` rows to exactly `desiredFileIds` (the file ids its
+// just-saved structure references), instead of scanning every case's serialized structure
+// for a needle. Call this from both case create and case update with the freshly-extracted
+// file id set, and from case delete with an empty set (which removes every row for that
+// case).
 export async function syncCaseFiles(
 	ctx: MutationCtx,
 	caseId: Id<"cases">,
@@ -109,21 +108,15 @@ export async function syncCaseFiles(
 		}
 	}
 
-	const removedFileIds: Id<"files">[] = [];
+	// Scheduled rather than deleted inline: cleanupOrphanedFile re-checks orphan status
+	// itself right before deleting anything, since another case (e.g. a template's clone)
+	// may still hold a `caseFiles` row for this file even though this one just dropped its
+	// own.
 	for (const row of existingRows) {
 		if (!desiredFileIds.has(row.fileId)) {
 			await ctx.db.delete(row._id);
-			removedFileIds.push(row.fileId);
-		}
-	}
-
-	// Scheduled rather than deleted inline: another mutation could re-reference this file
-	// before the scheduled cleanup (api/files.ts's cleanupOrphanedFile) actually runs, so it
-	// re-checks orphan status itself rather than this call site trusting its own snapshot.
-	for (const fileId of removedFileIds) {
-		if (!(await fileHasReferences(ctx, fileId))) {
 			await ctx.scheduler.runAfter(0, internal.api.files.cleanupOrphanedFile, {
-				fileId,
+				fileId: row.fileId,
 			});
 		}
 	}

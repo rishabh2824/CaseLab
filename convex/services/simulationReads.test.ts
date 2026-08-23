@@ -105,7 +105,6 @@ function buildGraph(): PersonaGraph {
 			personaPayload("B"),
 			personaPayload("C", {
 				profile_photo: {
-					file_id: null,
 					storage_id: "kg2test00000000000000001" as Id<"_storage">,
 					file_name: "c.png",
 					content_type: "image/png",

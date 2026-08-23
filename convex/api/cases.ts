@@ -1,15 +1,14 @@
 import { v } from "convex/values";
-import { mutation, query } from "../_generated/server";
+import { adminMutation, adminQuery } from "../lib/adminFunctions";
 import {
 	personaPayloadValidator,
 	referralEdgeValidator,
 } from "../models/cases";
-import { requireCurrentAdmin } from "../services/admins";
 import {
 	createCase,
 	deleteCase as deleteCaseWithAccess,
 	listCases,
-	requireCaseAccess,
+	loadCaseForAccess,
 	updateCase,
 } from "../services/cases";
 
@@ -20,29 +19,21 @@ import {
 // including its `accessCode` (all a student needs to launch that simulation) and every
 // persona's `known_facts`. A case meant to be a shared example is shared via the normal
 // collaborator mechanism (or is visible to super admins), not by exempting the read path.
-export const get = query({
+export const get = adminQuery({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
-		const admin = await requireCurrentAdmin(ctx);
-		const c = await ctx.db.get(args.caseId);
-		if (!c) return null;
-		await requireCaseAccess(ctx, c, admin);
-		return c;
+		return await loadCaseForAccess(ctx, args.caseId, ctx.admin);
 	},
 });
 
-// Mirrors backend/api/cases.py's GET /cases/{case_id} access control -- used by
-// CaseForm.svelte both to load an existing case for editing and to load one as a
+// Used by CaseForm.svelte both to load an existing case for editing and to load one as a
 // create-from-template source (the same query serves both; a template load simply doesn't
 // read collaboratorAdminIds, since a new case starts with none regardless of the source
 // case's own list).
-export const getForEdit = query({
+export const getForEdit = adminQuery({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
-		const admin = await requireCurrentAdmin(ctx);
-		const c = await ctx.db.get(args.caseId);
-		if (!c) throw new Error("Case not found.");
-		await requireCaseAccess(ctx, c, admin);
+		const c = await loadCaseForAccess(ctx, args.caseId, ctx.admin);
 		const collaboratorRows = await ctx.db
 			.query("collaborators")
 			.withIndex("by_case", (q) => q.eq("caseId", c._id))
@@ -54,22 +45,18 @@ export const getForEdit = query({
 	},
 });
 
-// Mirrors backend/api/cases.py's GET /cases: owner-or-collaborator visibility, SUPER
-// admins see everything.
-export const listAll = query({
+// Owner-or-collaborator visibility; SUPER admins see everything.
+export const listAll = adminQuery({
 	args: {},
 	handler: async (ctx) => {
-		const admin = await requireCurrentAdmin(ctx);
-		return await listCases(ctx, admin);
+		return await listCases(ctx, ctx.admin);
 	},
 });
 
-// Mirrors backend/api/cases.py's DELETE /cases/{case_id}.
-export const deleteCase = mutation({
+export const deleteCase = adminMutation({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
-		const admin = await requireCurrentAdmin(ctx);
-		await deleteCaseWithAccess(ctx, args.caseId, admin);
+		await deleteCaseWithAccess(ctx, args.caseId, ctx.admin);
 	},
 });
 
@@ -87,24 +74,21 @@ const casePayloadArgs = {
 	collaboratorAdminIds: v.array(v.id("admins")),
 };
 
-// Mirrors backend/api/cases.py's POST /cases.
-export const create = mutation({
+export const create = adminMutation({
 	args: casePayloadArgs,
 	handler: async (ctx, args) => {
-		const admin = await requireCurrentAdmin(ctx);
-		const caseId = await createCase(ctx, args, admin);
+		const caseId = await createCase(ctx, args, ctx.admin);
 		return { caseId };
 	},
 });
 
-// Mirrors backend/api/cases.py's PUT /cases/{case_id}, minus the expected_version conflict
-// check -- see schema.ts's comment on `cases` for why last-write-wins replaces it.
-export const update = mutation({
+// No expected_version conflict check -- see schema.ts's comment on `cases` for why
+// last-write-wins replaces it.
+export const update = adminMutation({
 	args: { caseId: v.id("cases"), ...casePayloadArgs },
 	handler: async (ctx, args) => {
-		const admin = await requireCurrentAdmin(ctx);
 		const { caseId, ...payload } = args;
-		await updateCase(ctx, caseId, payload, admin);
+		await updateCase(ctx, caseId, payload, ctx.admin);
 		return { caseId };
 	},
 });

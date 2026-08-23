@@ -5,18 +5,17 @@ import type {
 	PersonaPayload,
 	ReferralEdgePayload,
 } from "../models/cases";
+import { RUN_LIFETIME_MINUTES } from "../schema";
 import { type ResolvedFileRef, resolveFileRefs, syncCaseFiles } from "./files";
-import { RUN_LIFETIME_MINUTES } from "./simulations";
 
 const ACCESS_CODE_CONFLICT =
 	"An access code with this value already exists on another case.";
-// Stricter than the old backend's free-form (CITEXT-uniqueness-only) access code: Convex
-// has no case-insensitive column type, so codes are constrained to lowercase letters at
-// write time instead, making storage canonical by construction.
+// Convex has no case-insensitive column type, so codes are constrained to lowercase letters
+// at write time instead, making storage canonical by construction.
 const ACCESS_CODE_FORMAT = /^[a-z]+$/;
 
-// Mirrors backend/services/cases.py's caseAccess: SUPER admins bypass everything, the
-// owner always has access, otherwise the admin must be a collaborator.
+// SUPER admins bypass everything, the owner always has access, otherwise the admin must be
+// a collaborator.
 export async function requireCaseAccess(
 	ctx: QueryCtx | MutationCtx,
 	c: Doc<"cases">,
@@ -32,9 +31,23 @@ export async function requireCaseAccess(
 	if (!collaborating) throw new Error("You do not have access to this case.");
 }
 
-// Mirrors backend/services/cases.py's fetchCases/listCases: SUPER admins see every case;
-// everyone else sees only cases they own or collaborate on. Sorted by name, matching the
-// old order_by(Case.name).
+// The "load a case the caller is allowed to see, or fail" idiom every case-scoped handler
+// needs before it can do anything else -- get, getForEdit, deleteCase, and updateCase all
+// used to repeat these three lines by hand, and one of the four copies (api/cases.ts's
+// `get`) quietly returned null on a missing case instead of throwing like the rest.
+export async function loadCaseForAccess(
+	ctx: QueryCtx | MutationCtx,
+	caseId: Id<"cases">,
+	admin: Doc<"admins">,
+): Promise<Doc<"cases">> {
+	const c = await ctx.db.get(caseId);
+	if (!c) throw new Error("Case not found.");
+	await requireCaseAccess(ctx, c, admin);
+	return c;
+}
+
+// SUPER admins see every case; everyone else sees only cases they own or collaborate on.
+// Sorted by name.
 export async function listCases(
 	ctx: QueryCtx,
 	admin: Doc<"admins">,
@@ -64,18 +77,15 @@ export async function listCases(
 	return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// Mirrors backend/services/cases.py's deleteCase. syncCaseFiles (empty desired set) removes
-// every caseFiles row pointing at this case and schedules Spaces object + `files` row
-// cleanup for any file that was only referenced here -- closing the file-lifecycle leak the
-// old backend deferred (see services/files.ts).
+// syncCaseFiles (empty desired set) removes every caseFiles row pointing at this case and
+// schedules storage object + `files` row cleanup for any file that was only referenced here
+// (see services/files.ts).
 export async function deleteCase(
 	ctx: MutationCtx,
 	caseId: Id<"cases">,
 	admin: Doc<"admins">,
 ): Promise<void> {
-	const c = await ctx.db.get(caseId);
-	if (!c) throw new Error("Case not found.");
-	await requireCaseAccess(ctx, c, admin);
+	await loadCaseForAccess(ctx, caseId, admin);
 
 	await syncCaseFiles(ctx, caseId, new Set());
 
@@ -87,8 +97,8 @@ export async function deleteCase(
 	await ctx.db.delete(caseId);
 }
 
-// A persona id doubles as a Convex record key: a run's `unlockedAt`, `sharedFiles` and
-// `personaChatState` are all `v.record()`s keyed by persona id, and Convex rejects a field name
+// A persona id doubles as a Convex record key: a run's `unlockedAt` and `personaChatState`
+// are `v.record()`s keyed by persona id, and Convex rejects a field name
 // that is empty, starts with "$", or contains anything outside non-control ASCII. Ids are not
 // minted server-side -- the authoring UI generates UUIDs, but importCase.ts reads them straight
 // out of an uploaded HTML case file's `data-persona-id` attributes, which is untrusted input --
@@ -106,9 +116,9 @@ function validatePersonaId(id: string): void {
 	}
 }
 
-// Mirrors backend/services/cases.py's validateGraph: the flat persona/referral graph a
-// save is about to write must have usable, unique persona ids, roots/referral endpoints that
-// all point at real personas, at least one root, and no referral cycle.
+// The flat persona/referral graph a save is about to write must have usable, unique persona
+// ids, roots/referral endpoints that all point at real personas, at least one root, and no
+// referral cycle.
 export function validateGraph(
 	personas: PersonaPayload[],
 	referrals: ReferralEdgePayload[],
@@ -207,23 +217,20 @@ function toFileRefInput(ref: FileRefPayload | undefined) {
 }
 
 // The inverse of toFileRefInput, in the structure blob's snake_case shape (see
-// models/cases.ts). `file_id` is stringified even though it's a real Convex Id -- this
-// dict lands inside `structure`, where old migrated data already stores it as a string.
+// models/cases.ts).
 function toStructureFileRef(resolved: ResolvedFileRef | null): FileRefPayload {
 	if (resolved === null) return null;
 	return {
-		file_id: resolved.fileId,
 		storage_id: resolved.storageId,
 		file_name: resolved.fileName,
 		content_type: resolved.contentType,
 	};
 }
 
-// Mirrors backend/services/cases.py's buildStructure: validates the graph, resolves every
-// persona's profile photo + attachments in one batched resolveFileRefs call (fixed order:
-// each persona's photo, then each of its file entries), then reassembles the structure
-// blob with the resolved refs. Returns the resolved file id set alongside the structure so
-// the caller can reconcile `caseFiles` via syncCaseFiles.
+// Validates the graph, resolves every persona's profile photo + attachments in one batched
+// resolveFileRefs call (fixed order: each persona's photo, then each of its file entries),
+// then reassembles the structure blob with the resolved refs. Returns the resolved file id
+// set alongside the structure so the caller can reconcile `caseFiles` via syncCaseFiles.
 export async function buildStructure(
 	ctx: MutationCtx,
 	personas: PersonaPayload[],
@@ -247,7 +254,7 @@ export async function buildStructure(
 		const files = (persona.files ?? [])
 			.map((entry) => {
 				const resolvedFile = resolved[cursor++] ?? null;
-				if (!entry.file) return null; // dropped, same as the old backend
+				if (!entry.file) return null; // dropped
 				if (resolvedFile) fileIds.add(resolvedFile.fileId);
 				return {
 					file: toStructureFileRef(resolvedFile),
@@ -304,9 +311,8 @@ async function isAccessCodeTaken(
 	return existing !== null && existing._id !== excludeCaseId;
 }
 
-// Mirrors backend/services/cases.py's resolveCollaboratorIds: dedupes, rejects the case
-// owner appearing in their own collaborator list, rejects unknown admin ids, and rejects
-// SUPER admins (they already have full access everywhere).
+// Dedupes, rejects the case owner appearing in their own collaborator list, rejects unknown
+// admin ids, and rejects SUPER admins (they already have full access everywhere).
 async function resolveCollaboratorIds(
 	ctx: MutationCtx,
 	ids: Id<"admins">[],
@@ -404,7 +410,6 @@ async function replaceCollaborators(
 	}
 }
 
-// Mirrors backend/services/cases.py's createCase.
 export async function createCase(
 	ctx: MutationCtx,
 	payload: CasePayload,
@@ -440,11 +445,9 @@ export async function createCase(
 	return caseId;
 }
 
-// Mirrors backend/services/cases.py's updateCase, minus the expected_version optimistic-
-// concurrency check: two admins saving the same case at once is rare enough that
-// last-write-wins is an accepted tradeoff here (see schema.ts's comment on `cases`). File
-// cleanup is simpler than the old backend's manual extractFileIds diff + deleteOrphanedFiles
-// call too -- syncCaseFiles already diffs the case's caseFiles rows against buildStructure's
+// No expected_version optimistic-concurrency check: two admins saving the same case at once
+// is rare enough that last-write-wins is an accepted tradeoff here (see schema.ts's comment
+// on `cases`). syncCaseFiles diffs the case's caseFiles rows against buildStructure's
 // resolved file id set and schedules cleanup for anything dropped.
 export async function updateCase(
 	ctx: MutationCtx,
@@ -452,14 +455,11 @@ export async function updateCase(
 	payload: CasePayload,
 	admin: Doc<"admins">,
 ): Promise<void> {
-	const c = await ctx.db.get(caseId);
-	if (!c) throw new Error("Case not found.");
-	await requireCaseAccess(ctx, c, admin);
+	const c = await loadCaseForAccess(ctx, caseId, admin);
 
 	const accessCode = await validateAccessCode(ctx, payload.accessCode, caseId);
 	const duration = validateDuration(payload.duration);
-	// The owner never changes via update -- only backend/services/cases.py's CaseUpdate
-	// (personas/referrals/collaborators/scalars) does, same as here.
+	// The owner never changes via update -- only personas/referrals/collaborators/scalars do.
 	const collaboratorIds = await resolveCollaboratorIds(
 		ctx,
 		payload.collaboratorAdminIds,

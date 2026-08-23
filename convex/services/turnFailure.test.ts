@@ -17,7 +17,11 @@ import {
 	referralEdge,
 } from "../testFactories";
 import { getPersonaHistory, startSimulation } from "./simulations";
-import { getStreamingPreview, startTurn } from "./turn";
+import {
+	getStreamingPreview,
+	STREAMING_SLOT_STALE_MS,
+	startTurn,
+} from "./turn";
 
 type T = ReturnType<typeof newTestConvex>;
 
@@ -88,7 +92,7 @@ async function expectTurnFailedCleanly(
 		shared: run.sharedFiles,
 	}).toEqual({
 		unlocked: [],
-		shared: {},
+		shared: [],
 	});
 }
 
@@ -110,7 +114,6 @@ async function startRunWithCandidates(t: T) {
 			personaPayload("A", {
 				files: [
 					fileEntry({
-						file_id: fileId,
 						storage_id: storageId,
 						share_conditions: "the user asks about the budget",
 					}),
@@ -224,7 +227,7 @@ describe("hostile / off-schema decision fields", () => {
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect({
 			unlocked: run.unlockedReferredIds,
-			shared: Object.keys(run.sharedFiles),
+			shared: run.sharedFiles,
 		}).toEqual({ unlocked: [], shared: [] });
 	});
 
@@ -243,7 +246,7 @@ describe("hostile / off-schema decision fields", () => {
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect(run.unlockedReferredIds).toEqual([]);
-		expect(run.sharedFiles).toEqual({});
+		expect(run.sharedFiles).toEqual([]);
 	});
 
 	// A single well-formed generation naming both handles is the positive control for the
@@ -262,7 +265,7 @@ describe("hostile / off-schema decision fields", () => {
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect(run.unlockedReferredIds).toEqual(["B"]);
-		expect(Object.keys(run.sharedFiles)).toEqual([fileId]);
+		expect(run.sharedFiles).toEqual([fileId]);
 	});
 
 	// An enormous handle list must not turn into an enormous write or a partial unlock -- only
@@ -305,7 +308,7 @@ describe("hostile / off-schema decision fields", () => {
 		expect(history.at(-1)).toEqual({ role: "assistant", content: injection });
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect(run.unlockedReferredIds).toEqual([]);
-		expect(run.sharedFiles).toEqual({});
+		expect(run.sharedFiles).toEqual([]);
 	});
 });
 
@@ -453,7 +456,7 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect(run.unlockedReferredIds).toEqual([]);
-		expect(run.sharedFiles[fileId]).toBeUndefined();
+		expect(run.sharedFiles).not.toContain(fileId);
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
@@ -502,10 +505,12 @@ describe("streaming preview lifecycle", () => {
 		).toMatchObject({ status: "error" });
 	});
 
-	// A run destroyed mid-turn (expiry racing a slow generation) deletes the streamingReplies
-	// row the action is still holding an id for. markStreamingError guards with a get first;
-	// applyDecisions does not, so this pins that the whole scheduled action still fails
-	// gracefully rather than leaving an unhandled write to a deleted document.
+	// A run destroyed mid-turn (expiry racing a slow generation) deletes the run out from
+	// under the scheduled action -- getTurnContext's loadLiveRun throws "Run not found."
+	// before any streaming happens. Nothing awaits a scheduled action's outcome (runTurn is
+	// fired via ctx.scheduler.runAfter, not awaited), so this pins that the failure -- even
+	// a secondary one from markStreamingError patching an already-deleted streamingReplies
+	// row -- never surfaces as an unhandled rejection the caller sees.
 	it("does not crash the scheduled action when the run is destroyed mid-generation", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -621,6 +626,84 @@ describe("the concurrency guard is the real serialization point", () => {
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect([...run.unlockedReferredIds].sort()).toEqual(["C", "D"]);
+	});
+});
+
+describe("a stuck streaming slot is reclaimed once it's stale", () => {
+	// A platform-level kill (a deploy racing an in-flight action, an enforced max-duration, an
+	// OOM) skips runTurn's own catch entirely, so markStreamingError never runs and the row
+	// claimStreamingSlot created is left at "streaming" forever. Modeled here by letting the
+	// first turn run to completion (so there's no leftover scheduled runTurn to bleed into a
+	// later finishAllScheduledFunctions call) and then forcing the row's status back to
+	// "streaming" -- claimStreamingSlot only ever looks at this row's own status/updatedAt, not
+	// at whether some scheduled function is still pending, so this is an equally faithful
+	// stand-in for "the process that owned this row died mid-turn".
+	async function leaveSlotStreaming(t: T) {
+		const state = await startRun(t);
+		stub({ replyText: "first" });
+		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first message"));
+		await t.finishAllScheduledFunctions(() => {});
+		const stuckRow = await t.run((ctx) =>
+			ctx.db
+				.query("streamingReplies")
+				.withIndex("by_run_persona", (q) =>
+					q.eq("runId", state.run_id).eq("personaKey", "A"),
+				)
+				.first(),
+		);
+		await t.run((ctx) => ctx.db.patch(stuckRow!._id, { status: "streaming" }));
+		return { state, stuckRowId: stuckRow!._id };
+	}
+
+	it("still rejects a second turn while the row is fresh", async () => {
+		const t = newTestConvex();
+		const { state } = await leaveSlotStreaming(t);
+
+		await expect(
+			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
+		).rejects.toThrow(/already being generated/);
+	});
+
+	it("still rejects a row idle for just under the staleness threshold", async () => {
+		const t = newTestConvex();
+		const { state, stuckRowId } = await leaveSlotStreaming(t);
+		await t.run((ctx) =>
+			ctx.db.patch(stuckRowId, {
+				updatedAt: Date.now() - STREAMING_SLOT_STALE_MS + 1_000,
+			}),
+		);
+
+		await expect(
+			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
+		).rejects.toThrow(/already being generated/);
+	});
+
+	// This is the fix: without it, the persona above stays locked for up to
+	// RUN_LIFETIME_MINUTES with no way for the student (or anyone) to recover it.
+	it("reclaims a row idle past the staleness threshold, instead of rejecting forever", async () => {
+		const t = newTestConvex();
+		const { state, stuckRowId } = await leaveSlotStreaming(t);
+		await t.run((ctx) =>
+			ctx.db.patch(stuckRowId, {
+				updatedAt: Date.now() - STREAMING_SLOT_STALE_MS - 1,
+			}),
+		);
+
+		stub({ replyText: "second" });
+		await expect(
+			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
+		).resolves.toBeNull();
+		await t.finishAllScheduledFunctions(() => {});
+
+		const history = await t.run((ctx) =>
+			getPersonaHistory(ctx, state.run_id, "A"),
+		);
+		expect(history.map((m) => m.content)).toEqual([
+			"first message",
+			"first",
+			"second message",
+			"second",
+		]);
 	});
 });
 

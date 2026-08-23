@@ -1,6 +1,6 @@
-// Payload/graph builders shared by convex-test suites, mirroring backend/tests/factories.py --
-// everything builds off `personaPayload`/`caseStructure` below, so a new required field is one
-// edit instead of updating every call site.
+// Payload/graph builders shared by convex-test suites -- everything builds off
+// `personaPayload`/`caseStructure` below, so a new required field is one edit instead of
+// updating every call site.
 import type { Id } from "./_generated/dataModel";
 import type {
 	FileEntryPayload,
@@ -36,7 +36,6 @@ export function referralEdge(
 
 export function fileEntry(
 	overrides: Partial<{
-		file_id: string | null;
 		storage_id: Id<"_storage">;
 		file_name: string;
 		content_type: string | null;
@@ -45,14 +44,13 @@ export function fileEntry(
 	}> = {},
 ): FileEntryPayload {
 	const {
-		file_id = "1",
 		storage_id = "kg2test00000000000000000" as Id<"_storage">,
 		file_name = "doc.pdf",
 		content_type = "application/pdf",
 		share_conditions = "the user asks about the budget",
 		perceived_contents = "last quarter's budget",
 	} = overrides;
-	const file: FileRefPayload = { file_id, storage_id, file_name, content_type };
+	const file: FileRefPayload = { storage_id, file_name, content_type };
 	return { file, share_conditions, perceived_contents };
 }
 

@@ -1,5 +1,5 @@
 import { browser } from "$app/environment";
-import { ADMIN_ROLE, type AdminRole } from "./constants.js";
+import type { AdminRole } from "./types.js";
 
 const STORAGE_KEY = "caseLabSession";
 
@@ -20,7 +20,7 @@ const defaults: PersistedSession = Object.freeze({
 });
 
 const isAdminRole = (value: unknown): value is AdminRole =>
-	value === ADMIN_ROLE.SUPER || value === ADMIN_ROLE.ADMIN;
+	value === "super" || value === "admin";
 
 function normalizePersisted(value: unknown): PersistedSession {
 	if (typeof value !== "object" || value === null) return defaults;

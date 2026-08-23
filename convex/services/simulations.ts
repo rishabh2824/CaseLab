@@ -8,6 +8,7 @@ import {
 	getChatState,
 	personaAvailability,
 } from "../lib/turnState";
+import { RUN_LIFETIME_MINUTES } from "../schema";
 import {
 	flattenPersonas,
 	graphPersonaById,
@@ -17,21 +18,14 @@ import {
 	referredContactIds,
 } from "./simulationReads";
 
-// Mirrors backend/domain_constants.py's SIMULATION_DURATION -- the cap on how long a run
-// can live even when a case sets no duration. Exported because it is also the upper bound a
-// case's own `duration` is validated against at save time (services/cases.ts): a duration a run
-// can never actually reach would leave the student's countdown still running when the run is
-// deleted underneath it.
-export const RUN_LIFETIME_MINUTES = 120;
-// Mirrors backend/services/simulation/run_store.py's GRACE_PERIOD: extra time tacked onto
-// a case's configured duration so students can finish up chat after time is "up".
+// Extra time tacked onto a case's configured duration so students can finish up chat after
+// time is "up".
 const GRACE_PERIOD_MINUTES = 15;
 
 function normalizeAccessCode(raw: string): string {
 	return raw.trim().toLowerCase();
 }
 
-// Mirrors backend/services/simulation/run_store.py's expiry().
 function computeExpiresAt(
 	startTime: number,
 	durationMinutes: number | undefined,
@@ -43,12 +37,10 @@ function computeExpiresAt(
 	return startTime + ttlMs;
 }
 
-// Mirrors backend/services/simulation/state.py's hydratePersona. The persona graph
-// (simulationReads.ts) stores each photo as a raw file reference, never a URL -- this
-// resolves it to a fetchable URL at read time via Convex's own file storage. Unlike the old
-// Spaces-backed version (a presign-and-redirect HTTP route, since presigning is
-// timestamp-dependent and can't live in a cacheable query), ctx.storage.getUrl is plain
-// query-safe Convex data access, so this can just be async instead of needing its own route.
+// The persona graph (simulationReads.ts) stores each photo as a raw file reference, never a
+// URL -- this resolves it to a fetchable URL at read time via Convex's own file storage.
+// ctx.storage.getUrl is plain query-safe Convex data access, so this can just be async
+// instead of needing its own route.
 async function fileUrl(
 	ctx: QueryCtx | MutationCtx,
 	storageId: Id<"_storage">,
@@ -68,7 +60,6 @@ async function hydratePersona(
 }
 
 export type PersonaPhotoOut = {
-	file_id: string | null;
 	storage_id: Id<"_storage">;
 	file_name: string;
 	content_type: string | null;
@@ -110,7 +101,6 @@ function toContactOut(
 		role: persona.role,
 		profile_photo: persona.profilePhoto
 			? {
-					file_id: persona.profilePhoto.file_id ?? null,
 					storage_id: persona.profilePhoto.storage_id,
 					file_name: persona.profilePhoto.file_name,
 					content_type: persona.profilePhoto.content_type ?? null,
@@ -126,12 +116,11 @@ function toContactOut(
 	};
 }
 
-// Mirrors backend/services/simulation/state.py's buildContacts: every root persona (always
-// available from minute 0), plus every unlocked referred persona (available from whenever
-// it was unlocked). Takes the run's chat-state/unlock-time maps directly (not a full run
-// doc) so startSimulation can call this while still deciding a brand-new run's initial
-// contacts, before any row exists. No `elapsed` parameter -- unlike the old version, this no
-// longer needs "now" at all; it just reports each persona's fixed available_at minute and
+// Every root persona (always available from minute 0), plus every unlocked referred persona
+// (available from whenever it was unlocked). Takes the run's chat-state/unlock-time maps
+// directly (not a full run doc) so startSimulation can call this while still deciding a
+// brand-new run's initial contacts, before any row exists. No `elapsed` parameter -- this
+// doesn't need "now" at all; it just reports each persona's fixed available_at minute and
 // lets the caller (or, for a live run, the frontend) compare that against elapsed time.
 function buildContacts(
 	personaChatState: ChatStateMap,
@@ -162,16 +151,22 @@ export type SharedFileOut = {
 	url: string | null;
 };
 
-// Mirrors backend/services/simulation/state.py's toSharedFileOut.
+// Resolves the current name/contentType/storageId live off the `files` row rather than a
+// stored snapshot -- case edits/deletes are assumed never to happen against a live run (see
+// schema.ts's `runs` comment), so there's no risk of this row changing out from under an
+// active simulation. Returns null if the file is somehow gone, so a stale id just drops
+// silently from the list instead of failing the whole query.
 async function toSharedFileOut(
 	ctx: QueryCtx | MutationCtx,
-	record: Doc<"runs">["sharedFiles"][string],
-): Promise<SharedFileOut> {
+	fileId: Id<"files">,
+): Promise<SharedFileOut | null> {
+	const file = await ctx.db.get(fileId);
+	if (!file) return null;
 	return {
-		file_id: record.fileId,
-		file_name: record.fileName,
-		content_type: record.contentType ?? null,
-		url: await fileUrl(ctx, record.storageId),
+		file_id: fileId,
+		file_name: file.name,
+		content_type: file.contentType ?? null,
+		url: await fileUrl(ctx, file.storageId),
 	};
 }
 
@@ -215,7 +210,6 @@ export type RunStateOut = {
 	shared_files: SharedFileOut[];
 };
 
-// Mirrors backend/services/simulation/state.py's startSimulation.
 export async function startSimulation(
 	ctx: MutationCtx,
 	accessCodeRaw: string,
@@ -256,7 +250,7 @@ export async function startSimulation(
 		activePersonaKey,
 		unlockedReferredIds: [],
 		unlockedAt: {},
-		sharedFiles: {},
+		sharedFiles: [],
 		personaChatState: {},
 	});
 	const destroyJobId = await ctx.scheduler.runAt(
@@ -282,7 +276,7 @@ export async function startSimulation(
 
 // Shared by getSimulationState/exportSimulation below, and by services/turn.ts. A read
 // never deletes an expired row -- the scheduled `destroy` job (see api/simulations.ts) owns
-// that, same rationale as the old backend's getRun.
+// that.
 export async function loadLiveRun(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -295,8 +289,7 @@ export async function loadLiveRun(
 	return { run, c };
 }
 
-// Mirrors backend/services/simulation/state.py's getSimulationState, minus the per-persona
-// histories it used to also return -- see RunStateOut's own comment for why.
+// No per-persona histories -- see RunStateOut's own comment for why.
 export async function getSimulationState(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -318,11 +311,11 @@ export async function getSimulationState(
 		rootPersonas,
 		referredPersonas,
 	);
-	const sharedFiles = await Promise.all(
-		Object.values(run.sharedFiles).map((record) =>
-			toSharedFileOut(ctx, record),
-		),
-	);
+	const sharedFiles = (
+		await Promise.all(
+			run.sharedFiles.map((fileId) => toSharedFileOut(ctx, fileId)),
+		)
+	).filter((file): file is SharedFileOut => file !== null);
 
 	return {
 		run_id: runId,
@@ -364,10 +357,9 @@ export type ExportSimulationOut = {
 	personas: ExportPersonaOut[];
 };
 
-// Mirrors backend/services/simulation/state.py's exportSimulation: every root persona, plus
-// every referred persona unlocked so far (oldest-unlocked first), each carrying its full
-// user/assistant transcript. `run.unlockedReferredIds` is populated by services/turn.ts's
-// applyDecisions as referrals unlock over the course of a run.
+// Every root persona, plus every referred persona unlocked so far (oldest-unlocked first),
+// each carrying its full user/assistant transcript. `run.unlockedReferredIds` is populated by
+// services/turn.ts's applyDecisions as referrals unlock over the course of a run.
 export async function exportSimulation(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -396,10 +388,10 @@ export async function exportSimulation(
 }
 
 // Deletes every row scoped to a run -- its messages and any in-progress streaming-preview
-// row -- before the run document itself. Convex has no FK cascade the way Postgres did, so
-// this has to be explicit: without it, a deleted run's runMessages/streamingReplies rows are
-// unreachable (nothing can look them up by runId once the run is gone) but never actually
-// removed, the same class of leak the migration plan called out for files. Both `destroy`
+// row -- before the run document itself. Convex has no FK cascade, so this has to be
+// explicit: without it, a deleted run's runMessages/streamingReplies rows are unreachable
+// (nothing can look them up by runId once the run is gone) but never actually removed, the
+// same class of leak files are exposed to (see services/files.ts). Both `destroy`
 // (api/simulations.ts, the primary per-run expiry path) and deleteExpiredRuns below (the
 // backstop sweep) call this instead of deleting the run row directly.
 export async function deleteRunCascade(
@@ -428,11 +420,11 @@ export async function deleteRunCascade(
 	await ctx.db.delete(runId);
 }
 
-// Mirrors backend/services/simulation/run_store.py's deleteRuns: a backstop sweep for any
-// run whose scheduled `destroy` job (see startSimulation above and api/simulations.ts) was
-// somehow lost -- e.g. a deploy that raced the scheduler, or a transient scheduler failure.
-// Every run is normally deleted precisely at its own expiresAt by that job, so this finds
-// nothing in the common case; api/simulations.ts's weekly cron is what actually calls it.
+// A backstop sweep for any run whose scheduled `destroy` job (see startSimulation above and
+// api/simulations.ts) was somehow lost -- e.g. a deploy that raced the scheduler, or a
+// transient scheduler failure. Every run is normally deleted precisely at its own expiresAt
+// by that job, so this finds nothing in the common case; api/simulations.ts's weekly cron is
+// what actually calls it.
 export async function deleteExpiredRuns(ctx: MutationCtx): Promise<number> {
 	const now = Date.now();
 	const expired = await ctx.db

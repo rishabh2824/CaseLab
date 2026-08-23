@@ -1,4 +1,3 @@
-// Mirrors backend/services/simulation/turn_state.py's elapsedMinutes.
 export function elapsedMinutes(startTime: number, now: number): number {
 	return Math.floor((now - startTime) / 60_000);
 }
@@ -9,8 +8,7 @@ export type Availability = {
 	expiresIn: number | null;
 };
 
-// Mirrors backend/services/simulation/turn_state.py's personaAvailability: computes whether
-// a persona should currently be reachable.
+// Computes whether a persona should currently be reachable.
 export function personaAvailability(
 	availabilityDuration: number | null,
 	availableAtMinutes: number,
@@ -36,9 +34,8 @@ export function personaAvailability(
 	return { available: true, availableIn: 0, expiresIn: null };
 }
 
-// Mirrors schema.ts's chatState validator (itself a mirror of backend/models/runtime.py's
-// ChatState) -- kept here, not imported from schema.ts, since these are plain data shapes
-// with no Convex validator machinery attached.
+// Mirrors schema.ts's chatState validator -- kept here, not imported from schema.ts, since
+// these are plain data shapes with no Convex validator machinery attached.
 export type ChatStateMap = Record<
 	string,
 	{ warningCount: number; ended: boolean; endReason?: string }
@@ -49,10 +46,9 @@ export type ChatStateOut = {
 	warningCount: number;
 };
 
-// Mirrors backend/services/simulation/turn_state.py's getChatState. Takes the map directly
-// (not a full run doc) so it works both against a real run's `personaChatState` and against
-// a plain `{}` at the moment startSimulation is still deciding a run's initial contacts,
-// before any run document exists to read one from.
+// Takes the map directly (not a full run doc) so it works both against a real run's
+// `personaChatState` and against a plain `{}` at the moment startSimulation is still
+// deciding a run's initial contacts, before any run document exists to read one from.
 export function getChatState(
 	personaChatState: ChatStateMap,
 	personaId: string,
@@ -67,19 +63,10 @@ export function getChatState(
 		: { ended: false, endReason: null, warningCount: 0 };
 }
 
-// backend/services/simulation/turn_state.py's editChatState/shapeChatState/chatStatePayload
-// aren't ported as separate functions: editChatState's only "pure" content is the same
-// get-with-default logic getChatState above already provides -- the rest of it (returning a
-// mutable reference into `run.persona_chat_state` for the caller to edit in place) doesn't
-// have an equivalent in Convex's immutable-update model, where services/turn.ts's
-// applyBoundary instead computes a new ChatState value and `ctx.db.patch`es it. Likewise,
-// shapeChatState/chatStatePayload's trimmed shape is exactly ChatStateOut above.
-
 // Number of nonsense messages allowed before ending the chat.
 export const NONSENSE_THRESHOLD = 3;
 
-// Mirrors backend/services/simulation/turn_state.py's boundaryReply: a persona's canned
-// response to a harassment/nonsense-classified message.
+// A persona's canned response to a harassment/nonsense-classified message.
 export function boundaryReply(personaName: string, shouldEnd: boolean): string {
 	const name = personaName || "I";
 	if (shouldEnd) {

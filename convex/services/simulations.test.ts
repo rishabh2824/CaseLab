@@ -157,7 +157,6 @@ describe("startSimulation", () => {
 				personas: [
 					personaPayload("A", {
 						profile_photo: {
-							file_id: "photo-1",
 							storage_id: storageId,
 							file_name: "alice.png",
 							content_type: "image/png",
@@ -183,7 +182,6 @@ describe("startSimulation", () => {
 				personas: [
 					personaPayload("A", {
 						profile_photo: {
-							file_id: "photo-1",
 							storage_id: storageId,
 							file_name: "alice.png",
 							content_type: "image/png",
@@ -342,6 +340,7 @@ describe("deleteRunCascade", () => {
 				personaKey: "A",
 				text: "",
 				status: "streaming",
+				updatedAt: Date.now(),
 			}),
 		);
 

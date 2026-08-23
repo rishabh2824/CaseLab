@@ -1,6 +1,5 @@
 import { makeFunctionReference } from "convex/server";
 import { getConvexClient, useQuery } from "convex-svelte";
-import { getContext, setContext } from "svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
 import { session } from "../session.svelte.js";
@@ -50,7 +49,7 @@ export type ExportRunOut = Omit<ExportSimulationOut, "case"> & {
 // actually exposes. The wire Contact only carries available_at (a fixed minute); available/
 // available_in/expires_in are derived from it against RunStore's own ticking clock, not the
 // server's, since a query can't push updates on elapsed time alone (see ContactOut's comment
-// in backend/convex/services/simulations.ts). Snake_case here, not Availability's own
+// in convex/services/simulations.ts). Snake_case here, not Availability's own
 // camelCase, to match every other wire field on Contact -- the mapping happens once, in
 // `contacts` below, the same boundary toContactOut used to own server-side.
 export type DisplayContact = Contact & {
@@ -143,7 +142,7 @@ export class RunStore {
 	// subscription, not a one-shot fetch. This is what lets a completed turn (newly-unlocked
 	// contact, updated chat-end state) simply appear without this store needing to manually
 	// patch anything in after the fact. Carries no message histories -- see
-	// backend/convex/services/simulations.ts's RunStateOut comment for why; #historyQuery
+	// convex/services/simulations.ts's RunStateOut comment for why; #historyQuery
 	// below is the scoped replacement.
 	#runStateQuery = useQuery(getSimulationStateRef, () =>
 		session.runId ? { runId: session.runId } : "skip",
@@ -231,7 +230,7 @@ export class RunStore {
 	);
 
 	// $effect.root, not a bare $effect: RunStore owns its reactive lifecycle rather than
-	// depending on the call site (setRunStore(), a component's script) already being inside
+	// depending on the call site (createRunStore(), a component's script) already being inside
 	// a Svelte effect tree -- a real $effect created outside one throws immediately. This
 	// also lets a test construct a RunStore directly with `new RunStore()` and have these
 	// still run, the same as they do wired up through a mounted component.
@@ -240,7 +239,13 @@ export class RunStore {
 		// equivalent of the old one-shot refresh()'s catch block, just reactive now.
 		$effect(() => {
 			const err = this.#runStateQuery.error;
-			if (!err) return;
+			if (!err) {
+				// A transient failure (network blip, momentary server error) clears once the
+				// subscription recovers on its own -- without this, the banner set below would
+				// stay up forever even after a subsequent update succeeds.
+				this.loadError = "";
+				return;
+			}
 			if (err.message === "Run not found." || err.message === "Run expired.") {
 				this.#handleExpired();
 			} else {
@@ -456,7 +461,7 @@ export class RunStore {
 	}
 
 	// Tears down this store's reactive subscriptions/effects. Never needed in production --
-	// setRunStore() is called once per page load, and the whole component tree (and its
+	// createRunStore() is called once per page load, and the whole component tree (and its
 	// effect roots) is discarded on navigation anyway -- but a test that constructs several
 	// RunStores against one shared `session` singleton needs to dispose each one, or a
 	// stale instance's effects keep reacting to the next test's session changes.
@@ -475,13 +480,12 @@ export class RunStore {
 		return true;
 	}
 
-	// Mirrors backend/api/simulations.py's old POST .../message, now a plain Convex
-	// mutation (api/turn:start) instead of an SSE request: it only confirms the message
-	// was accepted (or rejects with a plain, user-presentable Error -- rate limited,
-	// conversation ended, persona unavailable, message too long). The actual reply streams
-	// in via streamingPreview above, the final persisted message arrives via #historyQuery,
-	// and updated contacts/shared files arrive via the live getSimulationState subscription
-	// (raw) -- nothing here needs to patch any of that in by hand.
+	// A plain Convex mutation (api/turn:start): it only confirms the message was accepted (or
+	// rejects with a plain, user-presentable Error -- rate limited, conversation ended,
+	// persona unavailable, message too long). The actual reply streams in via
+	// streamingPreview above, the final persisted message arrives via #historyQuery, and
+	// updated contacts/shared files arrive via the live getSimulationState subscription (raw)
+	// -- nothing here needs to patch any of that in by hand.
 	async #runSend(personaId: string, message: string): Promise<void> {
 		const runId = session.runId;
 		// personaId is always activeContactId at the moment sendMessage calls this (see its
@@ -508,14 +512,6 @@ export class RunStore {
 	}
 }
 
-const RUN_CONTEXT_KEY = Symbol("run-store");
-
-export function setRunStore(): RunStore {
-	const store = new RunStore();
-	setContext(RUN_CONTEXT_KEY, store);
-	return store;
-}
-
-export function getRunStore(): RunStore {
-	return getContext(RUN_CONTEXT_KEY);
+export function createRunStore(): RunStore {
+	return new RunStore();
 }

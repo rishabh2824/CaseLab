@@ -4,9 +4,8 @@ import { internal } from "./_generated/api";
 const crons = cronJobs();
 
 // Backstop for startSimulation's per-run destroy scheduling (services/simulations.ts) --
-// see deleteExpiredRuns's own comment for why this should normally find nothing to do.
-// Mirrors backend/services/simulation/run_store.py's cleanupRuns() loop, just at a much
-// coarser interval since it's a backstop rather than the primary cleanup path here.
+// see deleteExpiredRuns's own comment for why this should normally find nothing to do. Runs
+// at a coarse interval since it's a backstop rather than the primary cleanup path.
 crons.interval(
 	"reconcile expired simulation runs",
 	{ hours: 24 * 7 },

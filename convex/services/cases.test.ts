@@ -349,7 +349,6 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 					personas: [
 						personaPayload("A", {
 							profile_photo: {
-								file_id: null,
 								storage_id: storageId,
 								file_name: "shared.pdf",
 								content_type: "application/pdf",
@@ -357,7 +356,6 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 						}),
 						personaPayload("B", {
 							profile_photo: {
-								file_id: null,
 								storage_id: storageId,
 								file_name: "shared.pdf",
 								content_type: "application/pdf",
@@ -369,14 +367,6 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 				owner,
 			),
 		);
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
-		const structure = c.structure as {
-			personas: { profile_photo: { file_id: string } }[];
-		};
-		const fileIds = new Set(
-			structure.personas.map((p) => p.profile_photo.file_id),
-		);
-		expect(fileIds.size).toBe(1);
 
 		const rows = await t.run((ctx) =>
 			ctx.db
@@ -394,7 +384,6 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 			ctx.storage.store(new Blob(["shared"])),
 		);
 		const photo = {
-			file_id: null,
 			storage_id: storageId,
 			file_name: "shared.pdf",
 			content_type: "application/pdf",
@@ -409,11 +398,6 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 				owner,
 			),
 		);
-
-		const before = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
-		const originalFileId = (
-			before.structure as { personas: { profile_photo: { file_id: string } }[] }
-		).personas[0]!.profile_photo.file_id;
 
 		await t.run((ctx) =>
 			updateCase(
@@ -430,16 +414,6 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 			),
 		);
 
-		const after = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
-		const fileIds = new Set(
-			(
-				after.structure as {
-					personas: { profile_photo: { file_id: string } }[];
-				}
-			).personas.map((p) => p.profile_photo.file_id),
-		);
-		expect(fileIds).toEqual(new Set([originalFileId]));
-
 		const rows = await t.run((ctx) =>
 			ctx.db
 				.query("files")
@@ -451,15 +425,14 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 });
 
 describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
-	// Deletion now goes through ctx.storage.delete (a normal transactional Convex
-	// operation, not a network call), so unlike the old Spaces-backed version this needs no
-	// fetch mocking or SPACES_* env stubbing to exercise the cleanup path.
+	// Deletion goes through ctx.storage.delete (a normal transactional Convex operation, not
+	// a network call), so this needs no fetch mocking or env stubbing to exercise the
+	// cleanup path.
 	async function makePhoto(t: ReturnType<typeof newTestConvex>) {
 		const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["x"])));
 		return {
 			storageId,
 			photo: {
-				file_id: null,
 				storage_id: storageId,
 				file_name: "lifecycle.pdf",
 				content_type: "application/pdf",

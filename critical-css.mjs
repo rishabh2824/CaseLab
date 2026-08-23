@@ -22,8 +22,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const buildDir = join(dirname(fileURLToPath(import.meta.url)), "..", "build");
-const targets = ["index.html", "200.html"];
+const buildDir = join(dirname(fileURLToPath(import.meta.url)), "build");
+// Every route is client-only now (see vite.config.ts's adapter comment), so
+// index.html -- the SPA fallback -- is the only HTML file the build emits.
+const targets = ["index.html"];
 
 // A target existing but ending up unchanged means the <link rel="stylesheet"> regex above
 // no longer matches Vite's output (e.g. its attribute order changed) — silently leaving
@@ -44,7 +46,16 @@ for (const name of targets) {
 			const cssPath = join(buildDir, href.replace(/^\.\//, ""));
 			if (!existsSync(cssPath)) return match;
 			changed = true;
-			const css = readFileSync(cssPath, "utf-8");
+			// The CSS's own relative url(...) references (the @font-face files) resolve
+			// against the CSS file's location (e.g. /_app/immutable/assets/). Moving the
+			// same text verbatim into a <style> tag in index.html re-resolves them against
+			// "/" instead, 404ing every font -- rewrite to absolute paths first.
+			const cssDir = href.slice(0, href.lastIndexOf("/") + 1);
+			const css = readFileSync(cssPath, "utf-8").replace(
+				/url\((['"]?)(\.\.?\/[^'")]+)\1\)/g,
+				(_match, quote, rel) =>
+					`url(${quote}${new URL(rel, `https://_${cssDir}`).pathname}${quote})`,
+			);
 			return (
 				`<style>${css}</style>` +
 				`<link rel="preload" href="${href}" as="style" onload="this.onload=null;this.rel='stylesheet'">` +

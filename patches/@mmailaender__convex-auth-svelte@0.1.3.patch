@@ -1,0 +1,158 @@
+diff --git a/dist/svelte/client.svelte.d.ts b/dist/svelte/client.svelte.d.ts
+index b2d640b28f1353cc88685285c12ecfb9f0ec2e9e..c0a666618dcb49ecfcaed608a0ab9a25192b4af3 100644
+--- a/dist/svelte/client.svelte.d.ts
++++ b/dist/svelte/client.svelte.d.ts
+@@ -71,6 +71,5 @@ export declare function getConvexAuthContext(): {
+     }>;
+     signOut: () => Promise<void>;
+ };
+-export declare function browserMutex<T>(key: string, callback: () => Promise<T>): Promise<T>;
+ export declare const setupConvexClient: (convexUrl: string, options?: ConvexClientOptions) => ConvexClient;
+ //# sourceMappingURL=client.svelte.d.ts.map
+\ No newline at end of file
+diff --git a/dist/svelte/client.svelte.js b/dist/svelte/client.svelte.js
+index 5ed613c856a238040e14a6d54139711f24dfbe2e..dd0284d3d310a6cc866a241a7e6964cd0d04d170 100644
+--- a/dist/svelte/client.svelte.js
++++ b/dist/svelte/client.svelte.js
+@@ -180,29 +180,6 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+         // Check for code in URL
+         void checkUrlForCode();
+     });
+-    // Listen for storage events (for cross-tab sync)
+-    $effect(() => {
+-        if (typeof window === "undefined") {
+-            return;
+-        }
+-        const storageListener = (event) => {
+-            if (event.storageArea !== storage) {
+-                return;
+-            }
+-            // Check if our JWT token changed
+-            if (event.key === storageKey(JWT_STORAGE_KEY, storageNamespace)) {
+-                const value = event.newValue;
+-                logVerbose(`synced access token, is null: ${value === null}`);
+-                // Update our state without writing back to storage
+-                void setToken({
+-                    shouldStore: false,
+-                    tokens: value === null ? null : { token: value },
+-                });
+-            }
+-        };
+-        window.addEventListener("storage", storageListener);
+-        return () => window.removeEventListener("storage", storageListener);
+-    });
+     // Prevent accidental navigation away from the page during token refresh.
+     $effect(() => {
+         if (typeof window === "undefined") {
+@@ -259,6 +236,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+      * @return {Promise<string | null>} The access token, or null if none is
+      *   available.
+      */
++    // Concurrent callers within this tab share one in-flight refresh instead of each
++    // starting their own -- a plain closure variable, not a cross-tab lock, since a single
++    // tab's calls are already serialized by JS itself.
++    let refreshInFlight = null;
+     const fetchAccessToken = async (options) => {
+         const { forceRefreshToken = false } = options ?? {};
+         logVerbose(`fetchAccessToken forceRefreshToken=${forceRefreshToken}`);
+@@ -267,17 +248,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+             logVerbose(`returning existing token, is null: ${state.token === null}`);
+             return state.token;
+         }
+-        // From here on, we need to potentially refresh the token.
+-        // We use a mutex to ensure only one tab/window attempts the refresh.
+-        const tokenBeforeLockAquisition = state.token;
+-        return await browserMutex(REFRESH_TOKEN_STORAGE_KEY, async () => {
+-            const tokenAfterLockAquisition = state.token;
+-            // Another tab or frame might have refreshed the token while we waited for the lock.
+-            if (tokenAfterLockAquisition !== tokenBeforeLockAquisition) {
+-                logVerbose(`returning synced token, is null: ${tokenAfterLockAquisition === null}`);
+-                return tokenAfterLockAquisition;
+-            }
+-            // We hold the lock, proceed with refreshing the token.
++        if (refreshInFlight) {
++            return refreshInFlight;
++        }
++        refreshInFlight = (async () => {
+             try {
+                 state.isRefreshingToken = true;
+                 // Get the refresh token from storage
+@@ -312,8 +286,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+             }
+             finally {
+                 state.isRefreshingToken = false;
++                refreshInFlight = null;
+             }
+-        });
++        })();
++        return refreshInFlight;
+     };
+     const signIn = async (provider, params) => {
+         logVerbose(`signIn provider=${provider}`);
+@@ -468,66 +444,6 @@ function useNamespacedStorage(persistentStorage, namespace) {
+     };
+     return { storageSet, storageGet, storageRemove };
+ }
+-// In the browser, executes the callback as the only tab / frame at a time.
+-export async function browserMutex(key, callback) {
+-    if (typeof window === "undefined") {
+-        return callback();
+-    }
+-    const lockManager = window?.navigator?.locks;
+-    return lockManager !== undefined
+-        ? await lockManager.request(key, callback)
+-        : await manualMutex(key, callback);
+-}
+-function getMutexValue(key) {
+-    if (globalThis.__convexAuthMutexes === undefined) {
+-        globalThis.__convexAuthMutexes = {};
+-    }
+-    let mutex = globalThis.__convexAuthMutexes[key];
+-    if (mutex === undefined) {
+-        globalThis.__convexAuthMutexes[key] = {
+-            currentlyRunning: null,
+-            waiting: [],
+-        };
+-    }
+-    mutex = globalThis.__convexAuthMutexes[key];
+-    return mutex;
+-}
+-function setMutexValue(key, value) {
+-    globalThis.__convexAuthMutexes[key] = value;
+-}
+-async function enqueueCallbackForMutex(key, callback) {
+-    const mutex = getMutexValue(key);
+-    if (mutex.currentlyRunning === null) {
+-        setMutexValue(key, {
+-            currentlyRunning: callback().finally(() => {
+-                const nextCb = getMutexValue(key).waiting.shift();
+-                getMutexValue(key).currentlyRunning = null;
+-                setMutexValue(key, {
+-                    ...getMutexValue(key),
+-                    currentlyRunning: nextCb === undefined ? null : enqueueCallbackForMutex(key, nextCb),
+-                });
+-            }),
+-            waiting: [],
+-        });
+-    }
+-    else {
+-        setMutexValue(key, {
+-            ...mutex,
+-            waiting: [...mutex.waiting, callback],
+-        });
+-    }
+-}
+-async function manualMutex(key, callback) {
+-    const outerPromise = new Promise((resolve, reject) => {
+-        const wrappedCallback = () => {
+-            return callback()
+-                .then((v) => resolve(v))
+-                .catch((e) => reject(e));
+-        };
+-        void enqueueCallbackForMutex(key, wrappedCallback);
+-    });
+-    return outerPromise;
+-}
+ export const setupConvexClient = (convexUrl, options) => {
+     // Client resolution priority:
+     // 1. Client from context

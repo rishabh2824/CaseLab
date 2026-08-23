@@ -29,13 +29,11 @@ type PendingUpload = {
 	file: File;
 };
 
-// One request for every File across every persona (photos and attachments alike) -- not
-// one request per file. Shared by both the create and edit save paths below. Unlike the old
-// Spaces presign (which needed each file's name/content type/prefix to sign a matching PUT
-// URL), a Convex upload URL carries none of that -- it's generated and consumed once, with
-// the file's own metadata attached separately when Convex resolves the upload -- so this is
-// just "give me N URLs," paying the admin auth check once per case save instead of once per
-// file.
+// One request for every File across every persona (photos and attachments alike) -- not one
+// request per file. Shared by both the create and edit save paths below. A Convex upload URL
+// carries no file metadata -- it's generated and consumed once, with the file's own name/
+// content type attached separately when Convex resolves the upload -- so this is just "give
+// me N URLs," paying the admin auth check once per case save instead of once per file.
 async function generateUploadUrls(count: number): Promise<string[]> {
 	if (count === 0) return [];
 	return await getConvexClient().mutation(generateUploadUrlsRef, { count });
@@ -160,8 +158,8 @@ export type SubmitCaseInput = {
 	personas: Persona[];
 	referrals: ReferralEdge[];
 	roots: string[];
-	// Convex admin ids (see CaseForm.svelte's collaborator picker, now sourced from
-	// api/admins:listAll rather than the old backend's numeric ids).
+	// Convex admin ids (see CaseForm.svelte's collaborator picker, sourced from
+	// api/admins:listAll).
 	collaboratorAdminIds: string[];
 };
 
@@ -169,7 +167,7 @@ export type SubmitCaseInput = {
 // or updates the case -- both go through Convex end to end now. Edit has no optimistic-
 // concurrency check (no expected-version conflict to handle): two admins saving the same
 // case at once is rare enough that last-write-wins is an accepted tradeoff (see
-// backend/convex/schema.ts's comment on `cases`).
+// convex/schema.ts's comment on `cases`).
 export async function submitCase({
 	isEditMode,
 	editCaseId,

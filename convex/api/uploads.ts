@@ -1,17 +1,13 @@
 import { v } from "convex/values";
-import { internal } from "../_generated/api";
-import { mutation } from "../_generated/server";
+import { adminMutation } from "../lib/adminFunctions";
 
-// Mirrors backend/api/uploads.py's POST /uploads/presign, now backed by Convex's own file
-// storage instead of a Spaces presigned PUT. Unlike the old Spaces flow, generating the URL
-// has no notion of file name/content type/prefix -- Convex just hands back a short-lived
-// upload URL and allocates an `Id<"_storage">` when the client POSTs to it -- so the client
-// keeps the file's name/content type itself and pairs it back up with the returned
-// `storageId` (see frontend/src/lib/case/submitCase.ts).
-export const generateUploadUrl = mutation({
+// Generates a short-lived upload URL backed by Convex's own file storage. Convex hands back
+// no notion of file name/content type/prefix -- just the URL and an `Id<"_storage">` once the
+// client POSTs to it -- so the client keeps the file's name/content type itself and pairs it
+// back up with the returned `storageId` (see frontend/src/lib/case/submitCase.ts).
+export const generateUploadUrl = adminMutation({
 	args: {},
 	handler: async (ctx) => {
-		await ctx.runQuery(internal.api.admins.requireCurrentAdminInternal, {});
 		return await ctx.storage.generateUploadUrl();
 	},
 });
@@ -21,13 +17,11 @@ export const generateUploadUrl = mutation({
 // bounding what a single request can allocate.
 const MAX_UPLOAD_BATCH = 200;
 
-// Mirrors backend/api/uploads.py's POST /uploads/presign/batch. Each URL is independently
-// cheap to generate (no network I/O) -- the batching win is paying for the admin auth check
-// once per case save instead of once per file.
-export const generateUploadUrls = mutation({
+// Each URL is independently cheap to generate (no network I/O) -- the batching win is paying
+// for the admin auth check once per case save instead of once per file.
+export const generateUploadUrls = adminMutation({
 	args: { count: v.number() },
 	handler: async (ctx, args) => {
-		await ctx.runQuery(internal.api.admins.requireCurrentAdminInternal, {});
 		// `v.number()` accepts any float, including NaN, Infinity and negatives, and
 		// `Array.from({ length })` silently coerces all of those to an empty or wrong-length
 		// array rather than failing. The client (submitCase.ts) pairs the returned urls to its

@@ -1,5 +1,6 @@
 // Client project: buildHTMLForm/downloadForm produce and manipulate real DOM
 // (DOMParser output, download anchors), so this needs jsdom.
+import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm, downloadForm } from "../../src/lib/case/exportCase.js";
 import { makePersona, makeReferral } from "../support/fixtures.js";
@@ -152,6 +153,146 @@ describe("buildHTMLForm", () => {
 			expect(field.value.trim()).toBe(dangerous);
 			expect(doc.querySelectorAll("script")).toHaveLength(1);
 		});
+	});
+});
+
+// The generated form's embedded <script> (add/remove persona, add/remove referral,
+// dropdown sync) is real, executable JS that a browser runs when an admin opens the
+// downloaded file -- DOMParser (used above) never executes it, so these drive it in an
+// actual JSDOM window with script execution enabled, the same way opening the file would.
+describe("buildHTMLForm's embedded script", () => {
+	function loadInteractive(html: string): JSDOM {
+		const dom = new JSDOM(html, { runScripts: "dangerously" });
+		// jsdom implements no WebCrypto randomUUID (see tests/support/setup.client.ts's
+		// same polyfill for the main app's own jsdom environment) -- this is a separate,
+		// freshly constructed window, so it needs its own copy.
+		let counter = 0;
+		Object.defineProperty(dom.window.crypto, "randomUUID", {
+			configurable: true,
+			value: () =>
+				`00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`,
+		});
+		return dom;
+	}
+
+	function click(el: Element | null): void {
+		el?.dispatchEvent(
+			new (el.ownerDocument.defaultView as typeof window).MouseEvent("click", {
+				bubbles: true,
+			}),
+		);
+	}
+
+	it("mints a UUID for a newly-added persona, not a sequential id", () => {
+		const dom = loadInteractive(
+			buildHTMLForm({
+				caseName: "Case",
+				accessCode: "ABC",
+				simulationDurationMinutes: null,
+				initialBrief: "Brief",
+				commonInformation: "",
+			}),
+		);
+		const doc = dom.window.document;
+		const before = new Set(
+			Array.from(doc.querySelectorAll("[data-persona-id]")).map((el) =>
+				el.getAttribute("data-persona-id"),
+			),
+		);
+
+		click(doc.getElementById("add-persona-btn"));
+
+		const after = Array.from(doc.querySelectorAll("[data-persona-id]")).map(
+			(el) => el.getAttribute("data-persona-id"),
+		);
+		expect(after).toHaveLength(before.size + 1);
+		const newId = after.find((id) => id && !before.has(id));
+		expect(newId).toMatch(/^[0-9a-f-]{36}$/i);
+	});
+
+	it("cascade-removes a persona's exclusive descendants, matching graph.svelte.ts's removeSubtree", () => {
+		const a = makePersona();
+		const b = makePersona();
+		const c = makePersona();
+		const dom = loadInteractive(
+			buildHTMLForm({
+				caseName: "Case",
+				accessCode: "ABC",
+				simulationDurationMinutes: null,
+				initialBrief: "Brief",
+				commonInformation: "",
+				personas: [a, b, c],
+				referrals: [makeReferral(a.id, b.id), makeReferral(b.id, c.id)],
+				roots: [a.id],
+			}),
+		);
+		const doc = dom.window.document;
+
+		click(
+			doc.querySelector(
+				`[data-persona-id="${b.id}"] [data-action="remove-persona"]`,
+			),
+		);
+
+		expect(doc.querySelector(`[data-persona-id="${a.id}"]`)).not.toBeNull();
+		expect(doc.querySelector(`[data-persona-id="${b.id}"]`)).toBeNull();
+		expect(doc.querySelector(`[data-persona-id="${c.id}"]`)).toBeNull();
+		expect(doc.querySelectorAll(".referral-row")).toHaveLength(0);
+	});
+
+	it("removing a referral cascade-removes the target only once it has no other path from a root", () => {
+		const a = makePersona();
+		const d = makePersona();
+		const c = makePersona();
+		const dom = loadInteractive(
+			buildHTMLForm({
+				caseName: "Case",
+				accessCode: "ABC",
+				simulationDurationMinutes: null,
+				initialBrief: "Brief",
+				commonInformation: "",
+				personas: [a, d, c],
+				referrals: [makeReferral(a.id, c.id), makeReferral(d.id, c.id)],
+				roots: [a.id, d.id],
+			}),
+		);
+		const doc = dom.window.document;
+		const rows = () => doc.querySelectorAll(".referral-row");
+
+		// C is still reachable via D -> C, so removing A -> C alone must not remove it.
+		click(rows()[0]?.querySelector('[data-action="remove-referral"]') ?? null);
+		expect(doc.querySelector(`[data-persona-id="${c.id}"]`)).not.toBeNull();
+		expect(rows()).toHaveLength(1);
+
+		// Now C's only remaining path (D -> C) is gone too.
+		click(rows()[0]?.querySelector('[data-action="remove-referral"]') ?? null);
+		expect(doc.querySelector(`[data-persona-id="${c.id}"]`)).toBeNull();
+		expect(doc.querySelector(`[data-persona-id="${a.id}"]`)).not.toBeNull();
+		expect(doc.querySelector(`[data-persona-id="${d.id}"]`)).not.toBeNull();
+	});
+
+	it("refreshes referral dropdown options after a persona is added", () => {
+		const dom = loadInteractive(
+			buildHTMLForm({
+				caseName: "Case",
+				accessCode: "ABC",
+				simulationDurationMinutes: null,
+				initialBrief: "Brief",
+				commonInformation: "",
+			}),
+		);
+		const doc = dom.window.document;
+
+		click(doc.getElementById("add-persona-btn"));
+
+		const fromSelect = doc.querySelector(
+			'.referral-row select[data-role="from"]',
+		) as HTMLSelectElement;
+		const optionValues = Array.from(fromSelect.options).map((o) => o.value);
+		const personaIds = Array.from(
+			doc.querySelectorAll("[data-persona-id]"),
+		).map((el) => el.getAttribute("data-persona-id"));
+		expect(optionValues.sort()).toEqual([...personaIds].sort());
 	});
 });
 

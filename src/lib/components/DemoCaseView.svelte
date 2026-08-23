@@ -3,38 +3,24 @@ import { makeFunctionReference } from "convex/server";
 import { useQuery } from "convex-svelte";
 import {
 	getPersonaLabel,
-	normalizePersona,
-	normalizeReferral,
+	parseCaseStructure,
 	referredWithParents,
 	rootPersonas as rootPersonasOf,
 } from "$lib/case/draft.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
-// Sterling Industries, the old backend's case id 1 -- hardcoded until Phase 3 builds real
-// case selection. Update this if the dev deployment is ever reseeded.
+// Sterling Industries -- hardcoded until real case selection is built. Update this if the
+// dev deployment is ever reseeded.
 const DEMO_CASE_ID = "k5787w72emrc30bkhxh03e85p98c023g";
 
 const caseRef = makeFunctionReference<"query">("api/cases:get");
 const caseQuery = useQuery(caseRef, { caseId: DEMO_CASE_ID });
 
-// `structure` (personas/referrals/roots) is stored as-is from the old backend's
-// CaseStructure shape -- same field names normalizePersona/normalizeReferral and the
-// CaseForm editor already expect, so nothing here needs to change to match it.
-const structure = $derived(
-	caseQuery.data?.structure ?? { personas: [], referrals: [], roots: [] },
-);
-const personas = $derived(
-	(structure.personas ?? []).map((persona: unknown) =>
-		normalizePersona(persona as Parameters<typeof normalizePersona>[0]),
-	),
-);
-const referrals = $derived(
-	(structure.referrals ?? []).map((referral: unknown) =>
-		normalizeReferral(referral as Parameters<typeof normalizeReferral>[0]),
-	),
-);
-const roots = $derived(structure.roots ?? []);
+const parsedStructure = $derived(parseCaseStructure(caseQuery.data?.structure));
+const personas = $derived(parsedStructure.personas);
+const referrals = $derived(parsedStructure.referrals);
+const roots = $derived(parsedStructure.roots);
 const rootPersonas = $derived(rootPersonasOf(personas, roots));
 const referredPersonas = $derived(
 	referredWithParents(personas, referrals, roots),

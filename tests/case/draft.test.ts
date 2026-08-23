@@ -57,7 +57,6 @@ describe("normalizePersona", () => {
 			files: [
 				{
 					file: {
-						file_id: "1",
 						storage_id: "storage-key" as GenericId<"_storage">,
 						file_name: "a.pdf",
 					},

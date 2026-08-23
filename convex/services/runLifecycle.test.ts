@@ -122,6 +122,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 				personaKey: "A",
 				text: "partial",
 				status: "streaming",
+				updatedAt: Date.now(),
 			});
 		});
 

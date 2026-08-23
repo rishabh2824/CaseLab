@@ -3,6 +3,8 @@ import type { Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
 import {
 	classifyHarassment,
+	LLM_ATTEMPT_TIMEOUT_MS,
+	PERSONA_REPLY_RETRIES,
 	personaReplyStream,
 	RECENT_HISTORY_LIMIT,
 } from "../lib/llm";
@@ -35,17 +37,15 @@ import { loadLiveRun } from "./simulations";
 
 const MESSAGE_WORDS = 50;
 
-// Mirrors backend/services/simulation/turn.py's CONVERSATION_ENDED, minus its `code` field --
-// the frontend (run.svelte.ts) matches on the plain error message string, same as every
+// The frontend (run.svelte.ts) matches on the plain error message string, same as every
 // other rejection here (rate limited, persona unavailable, etc.), so there's no structured
 // {message, code} shape to preserve.
 const CONVERSATION_ENDED_MESSAGE = "This conversation has ended.";
 
-// Mirrors backend/services/simulation/turn.py's prepareTurn, split at the boundary Convex
-// requires: this mutation covers prepareTurn's validation/availability-check/rate-limit/
-// appendMessage -- everything that's pure DB work and needs a transaction. The classifier
-// fan-out and the LLM call that used to happen in the same function move to runTurn (an
-// action, scheduled below), since both are I/O a mutation can't perform.
+// Split at the boundary Convex requires: this mutation covers validation/availability-check/
+// rate-limit/appendMessage -- everything that's pure DB work and needs a transaction. The
+// classifier fan-out and the LLM call move to runTurn (an action, scheduled below), since
+// both are I/O a mutation can't perform.
 export async function startTurn(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
@@ -111,6 +111,20 @@ export async function startTurn(
 	});
 }
 
+// A killed action (a deploy racing an in-flight turn, an enforced max-duration, an OOM) skips
+// runTurn's own catch, so markStreamingError never runs and a row can be left at "streaming"
+// forever -- claimStreamingSlot would then refuse every future turn on this persona for the
+// rest of the run (up to RUN_LIFETIME_MINUTES), with no self-service recovery. updatedAt is
+// refreshed on every legitimate write to a streamingReplies row (claim, preview flush,
+// terminal patch -- see each of their own comments), so a genuinely stuck row is one nothing
+// has touched in a while, not one that's merely slow to produce its first delta or between
+// flushes. LLM_ATTEMPT_TIMEOUT_MS * PERSONA_REPLY_RETRIES (lib/llm.ts) is the worst-case time
+// personaReplyStream itself allows before it gives up, so anything idle well past that can
+// only mean the process died mid-turn, never that it's still legitimately working. Exported
+// so tests can pin behavior right at the boundary without hard-coding a second copy of it.
+export const STREAMING_SLOT_STALE_MS =
+	LLM_ATTEMPT_TIMEOUT_MS * PERSONA_REPLY_RETRIES + 30_000;
+
 // Claims this persona's streamingReplies row for a new turn, rejecting if one is already in
 // flight -- this IS the concurrency guard for turns on the same persona, not just a defense
 // against its symptoms (contrast with applyBoundary's endReason latch below, kept as a
@@ -121,6 +135,10 @@ export async function startTurn(
 // rate-limit budget, or schedule a second runTurn that would interleave writes with the
 // first. Returning the row's id (rather than callers re-querying it by index every time) is
 // also what lets writeStreamingPreview become a plain patch-by-id -- see its own comment.
+//
+// A "streaming" row older than STREAMING_SLOT_STALE_MS is reclaimed instead of rejected --
+// see that constant's comment for why an unconditional rejection would otherwise strand a
+// persona whenever the action generating its reply gets killed rather than erroring cleanly.
 async function claimStreamingSlot(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
@@ -132,13 +150,19 @@ async function claimStreamingSlot(
 			q.eq("runId", runId).eq("personaKey", personaId),
 		)
 		.first();
+	const now = Date.now();
 	if (existing) {
-		if (existing.status === "streaming") {
+		const isStale = now - existing.updatedAt >= STREAMING_SLOT_STALE_MS;
+		if (existing.status === "streaming" && !isStale) {
 			throw new Error(
 				"A reply is already being generated for this contact. Please wait.",
 			);
 		}
-		await ctx.db.patch(existing._id, { text: "", status: "streaming" });
+		await ctx.db.patch(existing._id, {
+			text: "",
+			status: "streaming",
+			updatedAt: now,
+		});
 		return existing._id;
 	}
 	return await ctx.db.insert("streamingReplies", {
@@ -146,6 +170,7 @@ async function claimStreamingSlot(
 		personaKey: personaId,
 		text: "",
 		status: "streaming",
+		updatedAt: now,
 	});
 }
 
@@ -158,8 +183,6 @@ type PendingReferral = {
 type PendingFile = {
 	fileId: Id<"files">;
 	fileName: string;
-	contentType: string | null;
-	storageId: Id<"_storage">;
 	shareConditions: string | null;
 	perceivedContents: string | null;
 };
@@ -174,10 +197,9 @@ export type TurnContext = {
 	decisionHistory: DecisionMessage[];
 };
 
-// Mirrors backend/services/simulation/reads.py's graphReferrals + the pending-referral/
-// pending-file filtering that lived inline in turn.py's resolveDecisions -- gathered here
-// since runTurn (the action below) has no direct db access and needs this as one
-// self-contained bundle fetched via ctx.runQuery.
+// The pending-referral/pending-file filtering gathered here since runTurn (the action below)
+// has no direct db access and needs this as one self-contained bundle fetched via
+// ctx.runQuery.
 export async function getTurnContext(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -212,30 +234,23 @@ export async function getTurnContext(
 			};
 		});
 
-	// Each candidate's real `files` row id is resolved here by storage id, NOT taken from the
-	// structure blob's own `file_id` string. That string is whatever was written into
-	// `cases.structure` (a `v.any()` blob) at save time or during migration, and a value that
-	// isn't a live `Id<"files">` makes applyDecisions' `v.id("files")` validator reject the whole
-	// mutation -- so a stale attachment reference used to cost the student the entire reply
-	// rather than just the attachment. Resolving through the by_storage_id index is also what
-	// resolveFileRefs (services/files.ts) uses as the canonical identity for a file, so this
-	// keys `sharedFiles` consistently with what applyDecisions writes; an entry whose storage
-	// object has no `files` row at all is simply never offered, since nothing downstream could
-	// ever record the share.
+	// Each candidate's real `files` row id is resolved here by storage id -- the canonical
+	// identity for a file (also what resolveFileRefs in services/files.ts uses), which keys
+	// `sharedFiles` consistently with what applyDecisions writes. An entry whose storage object
+	// has no `files` row at all is simply never offered, since nothing downstream could ever
+	// record the share.
 	const pendingFiles: PendingFile[] = [];
 	for (const entry of persona.files) {
 		const file = entry.file;
-		if (!file?.file_id || !(entry.share_conditions ?? "").trim()) continue;
+		if (!file || !(entry.share_conditions ?? "").trim()) continue;
 		const row = await ctx.db
 			.query("files")
 			.withIndex("by_storage_id", (q) => q.eq("storageId", file.storage_id))
 			.first();
-		if (!row || row._id in run.sharedFiles) continue;
+		if (!row || run.sharedFiles.includes(row._id)) continue;
 		pendingFiles.push({
 			fileId: row._id,
 			fileName: file.file_name || "file",
-			contentType: file.content_type ?? null,
-			storageId: file.storage_id,
 			shareConditions: entry.share_conditions ?? null,
 			perceivedContents: entry.perceived_contents ?? null,
 		});
@@ -267,9 +282,8 @@ export async function getTurnContext(
 	};
 }
 
-// Mirrors the `if message_label != "normal"` branch of backend/services/simulation/
-// turn.py's prepareTurn: increments the persona's warning count, flags the type, ends the
-// chat once NONSENSE_THRESHOLD is reached, and appends the persona's canned boundary reply.
+// Increments the persona's warning count, ends the chat once NONSENSE_THRESHOLD is reached,
+// and appends the persona's canned boundary reply.
 export async function applyBoundary(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
@@ -283,17 +297,12 @@ export async function applyBoundary(
 
 	const previous = getChatState(run.personaChatState, personaId);
 	const warningCount = previous.warningCount + 1;
-	const ended = previous.ended || warningCount >= NONSENSE_THRESHOLD;
-	// Once a chat has ended, its endReason latches to whatever first ended it. Kept as a
-	// defensive backstop, not the primary protection: startTurn's claimStreamingSlot now
-	// rejects a second turn on this persona outright while one is already in flight, so the
-	// race this originally guarded against (two concurrent turns both reaching applyBoundary
-	// for the same persona) can no longer happen in practice.
-	const endReason = previous.ended
-		? previous.endReason
-		: ended
-			? label
-			: previous.endReason;
+	// startTurn already refuses a turn on a persona whose chat has ended (before
+	// claimStreamingSlot even claims a slot for it), so this always runs with
+	// previous.ended false -- there is no "already ended, latch to the earlier reason" case
+	// to handle.
+	const ended = warningCount >= NONSENSE_THRESHOLD;
+	const endReason = ended ? label : previous.endReason;
 	await ctx.db.patch(runId, {
 		personaChatState: {
 			...run.personaChatState,
@@ -301,7 +310,6 @@ export async function applyBoundary(
 				warningCount,
 				ended,
 				endReason: endReason ?? undefined,
-				lastFlagType: label,
 			},
 		},
 	});
@@ -322,19 +330,13 @@ export async function applyBoundary(
 }
 
 export type UnlockedReferral = { referredPersonaId: string };
-export type SharedFileInput = {
-	fileId: Id<"files">;
-	fileName: string;
-	contentType: string | null;
-	storageId: Id<"_storage">;
-};
+export type SharedFileInput = { fileId: Id<"files"> };
 
-// Mirrors backend/services/simulation/turn.py's applyDecisions: persists the reply, any
-// newly-unlocked referrals, and any newly-shared files, all in one mutation. Unlike the old
-// backend, this doesn't also build/return a ContactOut/SharedFileOut payload for an SSE meta
+// Persists the reply, any newly-unlocked referrals, and any newly-shared files, all in one
+// mutation. Doesn't also build/return a ContactOut/SharedFileOut payload for an SSE meta
 // frame -- there's no synchronous caller waiting on one; the reactive getSimulationState
 // query (services/simulations.ts) already derives contacts/shared files fresh from this same
-// data on every read, which is the whole point of the reactive redesign (Phase 6).
+// data on every read.
 export async function applyDecisions(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
@@ -365,21 +367,13 @@ export async function applyDecisions(
 		unlockedAt[referredPersonaId] = elapsed;
 	}
 
-	const sharedFilesMap = { ...run.sharedFiles };
-	for (const file of sharedFiles) {
-		if (file.fileId in sharedFilesMap) continue;
-		sharedFilesMap[file.fileId] = {
-			fileId: file.fileId,
-			fileName: file.fileName,
-			contentType: file.contentType ?? undefined,
-			storageId: file.storageId,
-		};
-	}
+	const sharedFileIds = new Set(run.sharedFiles);
+	for (const file of sharedFiles) sharedFileIds.add(file.fileId);
 
 	await ctx.db.patch(runId, {
 		unlockedReferredIds,
 		unlockedAt,
-		sharedFiles: sharedFilesMap,
+		sharedFiles: [...sharedFileIds],
 	});
 	await ctx.db.insert("runMessages", {
 		runId,
@@ -409,7 +403,11 @@ export async function writeStreamingPreview(
 	streamId: Id<"streamingReplies">,
 	text: string,
 ): Promise<void> {
-	await ctx.db.patch(streamId, { text, status: "streaming" });
+	await ctx.db.patch(streamId, {
+		text,
+		status: "streaming",
+		updatedAt: Date.now(),
+	});
 }
 
 // Called by applyDecisions and applyBoundary (both above) once a turn has reached a terminal
@@ -425,7 +423,11 @@ async function clearStreamingPreview(
 	ctx: MutationCtx,
 	streamId: Id<"streamingReplies">,
 ): Promise<void> {
-	await ctx.db.patch(streamId, { text: "", status: "done" });
+	await ctx.db.patch(streamId, {
+		text: "",
+		status: "done",
+		updatedAt: Date.now(),
+	});
 }
 
 export type StreamingPreviewOut = {
@@ -440,17 +442,12 @@ export type StreamingPreviewOut = {
 // (below) on ANY failure -- before any delta has streamed just as much as mid-stream, since
 // claimStreamingSlot guarantees the row already exists by the time runTurn ever runs (unlike
 // before this was threaded through as an id, there's no "no row yet" case to handle here
-// anymore). Guarded with a get-by-id first, not a bare patch, because this specific row CAN
-// legitimately be gone already: the run expiring and deleteRunCascade (services/
-// simulations.ts) running mid-turn is a real (if rare) race a long-running LLM call can lose
-// to, and patching a deleted document throws.
+// anymore).
 export async function markStreamingError(
 	ctx: MutationCtx,
 	streamId: Id<"streamingReplies">,
 ): Promise<void> {
-	if (await ctx.db.get(streamId)) {
-		await ctx.db.patch(streamId, { status: "error" });
-	}
+	await ctx.db.patch(streamId, { status: "error", updatedAt: Date.now() });
 }
 
 // Deliberately scoped to just this one small streamingReplies document, not folded into
@@ -473,8 +470,7 @@ export async function getStreamingPreview(
 	return row ? { text: row.text, status: row.status } : null;
 }
 
-// Mirrors backend/services/simulation/turn.py's resolveDecisions plus the classifier/LLM
-// portion of prepareTurn, run inside an action since both are I/O (LLM calls). Ends by
+// Runs inside an action since both the classifier and the reply LLM call are I/O. Ends by
 // calling applyBoundary or applyDecisions (both mutations) to persist the outcome.
 //
 // Referral/file eligibility is no longer a separate classifier fan-out: the same Sonnet call
@@ -624,12 +620,7 @@ export async function runTurn(
 		const sharedFiles = [...new Set(coerceHandles(parsed?.send_files))]
 			.map((handle) => fileByHandle.get(handle))
 			.filter((f): f is PendingFile => f !== undefined)
-			.map((f) => ({
-				fileId: f.fileId,
-				fileName: f.fileName,
-				contentType: f.contentType,
-				storageId: f.storageId,
-			}));
+			.map((f) => ({ fileId: f.fileId }));
 
 		await ctx.runMutation(internal.api.turn.applyDecisions, {
 			runId,

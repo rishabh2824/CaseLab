@@ -2,13 +2,18 @@
 
 import { downloadBlob } from "../download.js";
 import type { Persona, ReferralEdge } from "../types.js";
-import { createEmptyPersona } from "./draft.js";
+import { createEmptyPersona, reachableFrom } from "./draft.js";
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
 		.replace(/>/g, "&gt;");
+
+// Embedded verbatim (via .toString()) into the generated <script> below, so the exported
+// form's own persona-removal cascade runs graph.svelte.ts's exact reachability algorithm
+// instead of a hand-copied reimplementation that could silently drift from it.
+const REACHABLE_FROM_SOURCE = reachableFrom.toString();
 
 type Graph = {
 	personas: Persona[];
@@ -400,6 +405,11 @@ export function buildHTMLForm({
   var personaTemplate = document.getElementById('persona-template');
   var referralTemplate = document.getElementById('referral-template');
 
+  // The exact same reachability algorithm graph.svelte.ts's CaseGraph is built on --
+  // embedded here, not hand-copied, so this form's removal cascade can't silently drift
+  // from the live app's.
+  var reachableFrom = ${REACHABLE_FROM_SOURCE};
+
   function currentPersonas() {
     return Array.prototype.map.call(
       document.querySelectorAll('[data-persona-id]'),
@@ -410,14 +420,42 @@ export function buildHTMLForm({
     );
   }
 
-  function nextPersonaId() {
-    var max = 0;
-    document.querySelectorAll('[data-persona-id]').forEach(function (el) {
-      var raw = el.getAttribute('data-persona-id') || '';
-      var num = parseInt(raw.replace(/^[A-Z]/, ''), 10);
-      if (!isNaN(num) && num > max) max = num;
+  function currentRoots() {
+    return Array.prototype.map.call(
+      document.querySelectorAll('[data-persona-root="true"]'),
+      function (el) { return el.getAttribute('data-persona-id'); }
+    );
+  }
+
+  function currentReferralEdges() {
+    return Array.prototype.map.call(document.querySelectorAll('.referral-row'), function (row) {
+      return {
+        from_id: row.querySelector('select[data-role="from"]').value,
+        to_id: row.querySelector('select[data-role="to"]').value,
+      };
     });
-    return 'P' + (max + 1);
+  }
+
+  function removeReferralEdgesTouching(id) {
+    document.querySelectorAll('.referral-row').forEach(function (row) {
+      var from = row.querySelector('select[data-role="from"]').value;
+      var to = row.querySelector('select[data-role="to"]').value;
+      if (from === id || to === id) row.remove();
+    });
+  }
+
+  // Removes every persona no longer reachable from a root by following the referral
+  // edges currently in the form -- same rule graph.svelte.ts's removeSubtree/
+  // removeReferralsFrom enforce: a persona introduced only by a referral that's gone
+  // doesn't stay behind as an orphan.
+  function pruneUnreachablePersonas() {
+    var stillReachable = reachableFrom(currentRoots(), currentReferralEdges());
+    document.querySelectorAll('[data-persona-id]').forEach(function (card) {
+      var id = card.getAttribute('data-persona-id');
+      if (stillReachable.has(id)) return;
+      removeReferralEdgesTouching(id);
+      card.remove();
+    });
   }
 
   function refreshReferralOptions() {
@@ -438,11 +476,11 @@ export function buildHTMLForm({
   }
 
   function addPersona() {
-    var id = nextPersonaId();
+    var id = crypto.randomUUID();
     var frag = personaTemplate.content.cloneNode(true);
     var card = frag.querySelector('.persona-card');
     card.setAttribute('data-persona-id', id);
-    card.querySelector('.chip--persona').textContent = id;
+    card.querySelector('.chip--persona').textContent = id.slice(0, 6);
     personasList.appendChild(frag);
     refreshReferralOptions();
   }
@@ -453,12 +491,9 @@ export function buildHTMLForm({
     // personaCardMarkup), but guard here too — it's the case's one
     // mandatory root persona.
     if (id === FIXED_ROOT_ID) return;
-    document.querySelectorAll('.referral-row').forEach(function (row) {
-      var from = row.querySelector('select[data-role="from"]').value;
-      var to = row.querySelector('select[data-role="to"]').value;
-      if (from === id || to === id) row.remove();
-    });
+    removeReferralEdgesTouching(id);
     card.remove();
+    pruneUnreachablePersonas();
     refreshReferralOptions();
   }
 
@@ -470,6 +505,12 @@ export function buildHTMLForm({
     refreshReferralOptions();
   }
 
+  function removeReferral(row) {
+    row.remove();
+    pruneUnreachablePersonas();
+    refreshReferralOptions();
+  }
+
   document.getElementById('add-persona-btn').addEventListener('click', addPersona);
   document.getElementById('add-referral-btn').addEventListener('click', addReferral);
 
@@ -477,7 +518,7 @@ export function buildHTMLForm({
     var action = event.target.getAttribute && event.target.getAttribute('data-action');
     if (!action) return;
     if (action === 'remove-persona') removePersona(event.target.closest('.persona-card'));
-    else if (action === 'remove-referral') event.target.closest('.referral-row').remove();
+    else if (action === 'remove-referral') removeReferral(event.target.closest('.referral-row'));
   });
 
   document.addEventListener('change', function (event) {

@@ -4,7 +4,6 @@
 import { isRedirect } from "@sveltejs/kit";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { requireSuperAdmin } from "../src/lib/auth.js";
-import { ADMIN_ROLE } from "../src/lib/constants.js";
 import { session } from "../src/lib/session.svelte.js";
 
 async function caughtRedirect(fn: () => Promise<void>) {
@@ -29,7 +28,7 @@ describe("requireSuperAdmin", () => {
 
 	it("does not redirect when the session admin is SUPER", () => {
 		session.setAdmin({
-			adminRole: ADMIN_ROLE.SUPER,
+			adminRole: "super",
 			adminEmail: "super@wisc.edu",
 		});
 
@@ -38,7 +37,7 @@ describe("requireSuperAdmin", () => {
 
 	it("redirects to /admin when the session admin is a non-SUPER ADMIN", async () => {
 		session.setAdmin({
-			adminRole: ADMIN_ROLE.ADMIN,
+			adminRole: "admin",
 			adminEmail: "admin@wisc.edu",
 		});
 

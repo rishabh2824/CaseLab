@@ -48,9 +48,8 @@ const UPLOAD_ORIGIN = "https://upload.test";
 // distinguished by whether `caseId` is present -- same as submitCase itself building update's
 // args from create's `scalars` plus that one extra field), and the storage POST each upload
 // URL hands back. `postStatus` lets the upload-failure test reuse this without hand-rolling
-// its own handlers. All three go through the same mocked `mutation()` now (unlike the old
-// Spaces flow, where presigning was a separate `.action()` call), so they're wired together
-// in one place instead of two independent stubs.
+// its own handlers. All three go through the same mocked `mutation()`, so they're wired
+// together in one place instead of independent stubs.
 function stubMutations({ postStatus = 200 }: { postStatus?: number } = {}) {
 	const uploadCountRequests: number[] = [];
 	const postRequests: { url: string; contentType: string | null }[] = [];

@@ -12,9 +12,12 @@ import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
-import { ADMIN_ROLE } from "../../src/lib/constants.js";
 import { session } from "../../src/lib/session.svelte.js";
-import type { PersonaPayload, ReferralEdge } from "../../src/lib/types.js";
+import type {
+	AdminRow,
+	PersonaPayload,
+	ReferralEdge,
+} from "../../src/lib/types.js";
 import { unsavedGuard } from "../../src/lib/unsavedGuard.svelte.js";
 import {
 	makePersonaPayload as makeBasePersonaPayload,
@@ -35,9 +38,6 @@ vi.mock("convex-svelte", () => ({
 		action: mockClientAction,
 	}),
 }));
-
-type AdminRole = "super" | "admin";
-type AdminRow = { _id: string; email: string; name?: string; role: AdminRole };
 
 function makeAdminRow(overrides: Partial<AdminRow> = {}): AdminRow {
 	return {
@@ -61,7 +61,7 @@ function makePersonaPayload(
 }
 
 // The shape api/cases:getForEdit returns: a raw Convex case doc (camelCase scalars,
-// snake_case `structure` -- see backend/convex/models/cases.ts) plus a flattened
+// snake_case `structure` -- see convex/models/cases.ts) plus a flattened
 // collaboratorAdminIds list.
 type ConvexCaseDoc = {
 	_id: string;
@@ -553,7 +553,7 @@ describe("CaseForm", () => {
 
 		it("excludes the signed-in admin (matched by email) as the effective owner in create mode", async () => {
 			session.setAdmin({
-				adminRole: ADMIN_ROLE.ADMIN,
+				adminRole: "admin",
 				adminEmail: "me@wisc.edu",
 			});
 			mockUseQuery.mockReturnValue({

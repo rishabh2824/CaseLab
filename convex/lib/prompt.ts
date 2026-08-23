@@ -124,7 +124,6 @@ export function systemPrompt(
 	return `${stable}\n\n${turn}`;
 }
 
-// Mirrors backend/services/simulation/prompt.py's replyInstructions.
 export function replyInstructions(): string {
 	return (
 		"Return ONLY a single JSON object (no code fences, no prose around it) with " +
@@ -141,8 +140,7 @@ export function replyInstructions(): string {
 	);
 }
 
-// Strip a leading bracketed speaker tag like "[Mary, CFO ...]". Mirrors
-// backend/services/simulation/prompt.py's cleanReply.
+// Strip a leading bracketed speaker tag like "[Mary, CFO ...]".
 export function cleanReply(text: string | null | undefined): string {
 	const reply = (text ?? "").trim();
 	return reply.replace(/^\s*\[[^\]]+\]\s*/, "").trim();
@@ -151,8 +149,7 @@ export function cleanReply(text: string | null | undefined): string {
 // Processes the LLM reply. The provider streams with strict structured-output decoding (see
 // lib/llm.ts's PERSONA_REPLY_SCHEMA), so `raw` is always a bare, valid JSON object -- never
 // wrapped in a code fence or surrounded by prose, which strict decoding can't produce. No
-// fence-stripping or brace-scanning fallback needed. Mirrors backend/services/simulation/
-// prompt.py's parseReply.
+// fence-stripping or brace-scanning fallback needed.
 export function parseReply(
 	raw: string | null | undefined,
 ): Record<string, unknown> | null {
@@ -169,8 +166,7 @@ export function parseReply(
 		: null;
 }
 
-// Normalizes referral/file "handles". Mirrors backend/services/simulation/prompt.py's
-// coerceHandles.
+// Normalizes referral/file "handles".
 export function coerceHandles(value: unknown): string[] {
 	const list =
 		typeof value === "string" ? [value] : Array.isArray(value) ? value : [];

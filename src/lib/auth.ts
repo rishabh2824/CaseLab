@@ -1,6 +1,6 @@
 import { redirect } from "@sveltejs/kit";
-import { ADMIN_ROLE, type AdminRole } from "./constants.js";
 import { session } from "./session.svelte.js";
+import type { AdminRole } from "./types.js";
 
 export type AdminIdentity = { adminRole: AdminRole; adminEmail: string };
 
@@ -9,5 +9,5 @@ export type AdminIdentity = { adminRole: AdminRole; adminEmail: string };
 export type AdminLayoutData = { admin: Promise<AdminIdentity | null> };
 
 export function requireSuperAdmin(): void {
-	if (session.adminRole !== ADMIN_ROLE.SUPER) redirect(302, "/admin");
+	if (session.adminRole !== "super") redirect(302, "/admin");
 }

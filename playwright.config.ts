@@ -6,15 +6,13 @@ import { defineConfig, devices } from "@playwright/test";
 // `E2E: "true"` env var below makes vite.config.ts alias `convex-svelte` to
 // a Node-bridged in-memory mock for this build only — every useQuery/
 // getConvexClient().mutation() call resolves against that mock instead of
-// opening a real WebSocket. Uses build+preview rather than `vite dev`: the
-// landing route is prerendered/SSR'd, so its markup exists before hydration
-// finishes — under the dev server's slower per-request compile, Playwright's
-// click can land before the submit handler attaches, causing a native form
-// GET instead of the SPA navigation. A bundled preview build hydrates fast
-// enough that this race doesn't happen. webServer below runs `pnpm run
-// build`, not a bare `vite build` — the real build pipeline also runs
-// critical-css.mjs, and that step needs coverage same as everything else
-// that ships to production.
+// opening a real WebSocket. Uses build+preview rather than `vite dev`: a
+// bundled build hydrates fast enough that Playwright's click can't land
+// before the submit handler attaches, unlike the dev server's slower
+// per-request compile. webServer below runs `pnpm run build`, not a bare
+// `vite build` — the real build pipeline also runs critical-css.mjs, and
+// that step needs coverage same as everything else that ships to
+// production.
 const PORT = 5199;
 const BASE_URL = `http://localhost:${PORT}`;
 

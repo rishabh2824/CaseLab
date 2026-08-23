@@ -3,6 +3,7 @@ import { makeFunctionReference } from "convex/server";
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import DestructiveConfirmDialog from "$lib/components/DestructiveConfirmDialog.svelte";
+import type { AdminRole, AdminRow } from "$lib/types.js";
 
 // String-based references (not generated `api` imports): the convex/ project lives at
 // the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
@@ -11,9 +12,6 @@ const createRef = makeFunctionReference<"mutation">("api/admins:create");
 const deleteRef = makeFunctionReference<"mutation">(
 	"api/admins:deleteWithCascade",
 );
-
-type AdminRole = "super" | "admin";
-type AdminRow = { _id: string; email: string; name?: string; role: AdminRole };
 
 const ROLE_LABELS: Record<AdminRole, string> = {
 	super: "Super Admin",

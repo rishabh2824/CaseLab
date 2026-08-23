@@ -1,18 +1,18 @@
-// Mirrors backend/infra/llm.py, using raw fetch against OpenRouter's OpenAI-compatible API
-// instead of the `openai` SDK -- Phase 0's spike flagged the SDK's Convex-runtime story
-// (default V8 isolate vs. "use node") as an open question; fetch sidesteps it entirely (no
-// "use node" needed, works in the default runtime, no Node cold start) and drops a
-// dependency, exactly the fallback the migration plan called for.
+// Raw fetch against OpenRouter's OpenAI-compatible API instead of the `openai` SDK: the
+// SDK's Convex-runtime story (default V8 isolate vs. "use node") is an open question, and
+// fetch sidesteps it entirely (no "use node" needed, works in the default runtime, no Node
+// cold start) while also dropping a dependency.
 
 const LLM_BASE_URL = "https://openrouter.ai/api/v1";
 const LLM_MODEL = "anthropic/claude-sonnet-5";
 const LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-4.5";
 
-// Mirrors backend/infra/settings.py's LLM timeout budget -- see its own comment for how
-// these relate (LLM_ATTEMPT_TIMEOUT * PERSONA_REPLY_RETRIES is the worst case before
-// personaReplyStream gives up).
-const LLM_ATTEMPT_TIMEOUT_MS = 30_000;
-const PERSONA_REPLY_RETRIES = 2;
+// See personaReplyStream's own comment for how these relate (LLM_ATTEMPT_TIMEOUT_MS *
+// PERSONA_REPLY_RETRIES is the worst case before it gives up). Exported so services/turn.ts's
+// claimStreamingSlot can derive its stuck-row staleness threshold from the same worst case,
+// instead of a second, independently-chosen number that could silently stop matching this one.
+export const LLM_ATTEMPT_TIMEOUT_MS = 30_000;
+export const PERSONA_REPLY_RETRIES = 2;
 
 function requireLlmKey(): string {
 	const key = process.env.LLM_KEY;
@@ -57,9 +57,9 @@ function isRetryableStatus(status: number): boolean {
 	return status === 429 || status >= 500;
 }
 
-// Mirrors backend/infra/llm.py's chat(). Its only caller is classifyHarassment, a
-// temperature=0 classification gate -- pin routing to Anthropic directly so identical inputs
-// aren't put through whatever upstream OpenRouter happens to pick for a given request.
+// Its only caller is classifyHarassment, a temperature=0 classification gate -- pin routing
+// to Anthropic directly so identical inputs aren't put through whatever upstream OpenRouter
+// happens to pick for a given request.
 async function chat(options: {
 	model: string;
 	messages: ChatMessage[];
@@ -103,9 +103,9 @@ async function chat(options: {
 // send_files are generated as ONE schema-constrained JSON object -- the provider's
 // constrained decoding guarantees introduce/send_files are always present and consistent
 // with the same generation that produced reply, unlike an optional, separately-decided tool
-// call the model can simply skip or contradict. Mirrors backend/infra/llm.py's
-// PERSONA_REPLY_SCHEMA -- descriptions here are deliberately terse field labels, not the
-// full contract (lib/prompt.ts's replyInstructions() already states that in the prompt).
+// call the model can simply skip or contradict. Descriptions here are deliberately terse
+// field labels, not the full contract (lib/prompt.ts's replyInstructions() already states
+// that in the prompt).
 export const PERSONA_REPLY_SCHEMA = {
 	type: "object",
 	properties: {
@@ -129,12 +129,11 @@ export type StreamDelta = { type: "delta"; text: string };
 
 // Streaming persona reply. Yields {type: "delta", text} for each raw fragment of the
 // schema-constrained JSON object as it streams -- the caller (services/turn.ts's runTurn)
-// accumulates the full text and authoritatively parses it once the stream ends, same as the
-// old backend. Mirrors backend/infra/llm.py's personaReplyStream, including its retry
-// policy: retries a fresh attempt (never resumes a partial one) up to PERSONA_REPLY_RETRIES
-// times, but only if nothing has streamed yet and the failure looks transient (connection
-// reset, timeout, 429, 5xx) -- once any text has streamed, silently restarting would risk
-// duplicating/losing content, so the error is raised instead.
+// accumulates the full text and authoritatively parses it once the stream ends. Retries a
+// fresh attempt (never resumes a partial one) up to PERSONA_REPLY_RETRIES times, but only if
+// nothing has streamed yet and the failure looks transient (connection reset, timeout, 429,
+// 5xx) -- once any text has streamed, silently restarting would risk duplicating/losing
+// content, so the error is raised instead.
 export async function* personaReplyStream(
 	messages: ChatMessage[],
 ): AsyncGenerator<StreamDelta> {
@@ -230,7 +229,6 @@ export async function* personaReplyStream(
 export const RECENT_HISTORY_LIMIT = 10;
 
 // Formats the last `limit` non-system turns of a conversation as "role: content" lines.
-// Mirrors backend/infra/llm.py's formatTranscript.
 function formatTranscript(
 	conversation: ChatMessage[],
 	limit = RECENT_HISTORY_LIMIT,
@@ -253,9 +251,9 @@ function formatTranscript(
 
 export type HarassmentLabel = "normal" | "nonsense";
 
-// Mirrors backend/infra/llm.py's classifyHarassment, including its deliberate fail-OPEN
-// default: a classifier outage (timeout, upstream error) must not itself block a student
-// from continuing their case -- the cost of under-flagging one message during an outage is
+// Deliberate fail-OPEN default: a classifier outage (timeout, upstream error) must not
+// itself block a student from continuing their case -- the cost of under-flagging one
+// message during an outage is
 // low, the cost of a wave of "please resend" errors for every student mid-simulation is not.
 // Kept on its own small, unbiased classifier call (Haiku, no persona framing) rather than
 // folded into the persona's own reply generation like referral/file-share eligibility now is

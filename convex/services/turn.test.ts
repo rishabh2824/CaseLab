@@ -522,6 +522,7 @@ describe("referrals", () => {
 				personaKey: "A",
 				text: "",
 				status: "streaming",
+				updatedAt: Date.now(),
 			}),
 		);
 		await t.run((ctx) =>
@@ -653,10 +654,9 @@ describe("referrals", () => {
 });
 
 describe("files", () => {
-	// getTurnContext reads file_id straight off the case's structure blob, and applyDecisions'
-	// sharedFiles input requires a real Id<"files"> -- so the files row has to exist BEFORE the
-	// case is seeded, and the structure's file entry has to reference that real id, not a
-	// placeholder string.
+	// getTurnContext resolves the candidate file by storage id against the `files` table (not
+	// off the structure blob), so the files row has to exist BEFORE the case is seeded, and the
+	// structure's file entry has to reference that same storage id.
 	async function startRunWithOneFile(t: ReturnType<typeof newTestConvex>) {
 		const storageId = await t.run((ctx) =>
 			ctx.storage.store(new Blob(["budget"])),
@@ -673,7 +673,6 @@ describe("files", () => {
 				personaPayload("A", {
 					files: [
 						fileEntry({
-							file_id: fileId,
 							storage_id: storageId,
 							file_name: "budget.pdf",
 							share_conditions: "the user asks about the budget",
@@ -706,7 +705,7 @@ describe("files", () => {
 		);
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(Object.keys(run.sharedFiles)).toContain(fileId);
+		expect(run.sharedFiles).toContain(fileId);
 
 		const live = await t.run((ctx) => getSimulationState(ctx, state.run_id));
 		expect(live.shared_files[0]!.url).toEqual(expect.any(String));
@@ -729,7 +728,6 @@ describe("files", () => {
 				personaPayload("A", {
 					files: [
 						fileEntry({
-							file_id: fileId,
 							storage_id: storageId,
 							file_name: "budget.pdf",
 							share_conditions: "",
@@ -750,15 +748,13 @@ describe("files", () => {
 		);
 		expect(replyCall.body.messages[0].content).not.toContain("budget.pdf");
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.sharedFiles).toEqual({});
+		expect(run.sharedFiles).toEqual([]);
 	});
 
-	it("never offers a file with no file_id, and withholds it from the prompt", async () => {
+	it("never offers a file whose storage id has no matching files row, and withholds it from the prompt", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
-			personas: [
-				personaPayload("A", { files: [fileEntry({ file_id: null })] }),
-			],
+			personas: [personaPayload("A", { files: [fileEntry()] })],
 		});
 		const state = await startRun(t, structure);
 		const { calls } = stubLlm({ replyText: "Sure." });
@@ -780,7 +776,7 @@ describe("files", () => {
 		await send(t, state.run_id, "A", "Can I see the budget?");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.sharedFiles).toEqual({});
+		expect(run.sharedFiles).toEqual([]);
 	});
 
 	it("does not re-offer or re-share an already-shared file", async () => {
@@ -803,7 +799,7 @@ describe("files", () => {
 		);
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(Object.keys(run.sharedFiles)).toHaveLength(1);
+		expect(run.sharedFiles).toHaveLength(1);
 	});
 
 	it("ignores an unknown file handle from the model", async () => {
@@ -817,6 +813,6 @@ describe("files", () => {
 		await send(t, state.run_id, "A", "hi");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.sharedFiles).toEqual({});
+		expect(run.sharedFiles).toEqual([]);
 	});
 });

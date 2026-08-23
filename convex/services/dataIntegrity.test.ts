@@ -226,48 +226,10 @@ describe("a persona that is both a root and a referral target", () => {
 });
 
 describe("file references that don't resolve to a real files row", () => {
-	// Migrated structures carry `file_id` as a plain string, and getTurnContext offers any file
-	// whose file_id is merely truthy. If that string isn't a live Id<"files">, applyDecisions'
-	// `v.id("files")` validator rejects the whole mutation -- so the student gets no reply at
-	// all, rather than a reply that simply doesn't include the file. A broken attachment must
-	// cost the attachment, not the turn.
-	it("REGRESSION: a legacy string file_id costs the file, not the entire reply", async () => {
-		const t = newTestConvex();
-		const storageId = await t.run((ctx) =>
-			ctx.storage.store(new Blob(["budget"])),
-		);
-		const state = await startRunWithStructure(
-			t,
-			caseStructure({
-				personas: [
-					personaPayload("A", {
-						files: [
-							fileEntry({
-								file_id: "1",
-								storage_id: storageId,
-								share_conditions: "the user asks about the budget",
-							}),
-						],
-					}),
-				],
-			}),
-		);
-		stub({ replyText: "Here's the budget.", sendFiles: ["F1"] });
-
-		await send(t, state.run_id, "A", "can I see the budget?");
-
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
-		expect(history.at(-1)).toEqual({
-			role: "assistant",
-			content: "Here's the budget.",
-		});
-	});
-
-	// Same shape, but the storage object has no `files` row at all -- the case was authored
-	// before the row existed, or the row was cleaned up as an orphan. Offering it as a candidate
-	// is pointless: nothing downstream can ever record the share.
+	// The structure blob's file entries carry only a storage id -- getTurnContext resolves the
+	// real `files` row by that storage id, not off any id embedded in the structure. The storage
+	// object having no `files` row at all is pointless to offer as a candidate: nothing
+	// downstream can ever record the share.
 	it("does not offer a file whose storage id has no files row", async () => {
 		const t = newTestConvex();
 		const storageId = await t.run((ctx) =>
@@ -280,7 +242,6 @@ describe("file references that don't resolve to a real files row", () => {
 					personaPayload("A", {
 						files: [
 							fileEntry({
-								file_id: "999",
 								storage_id: storageId,
 								file_name: "orphan.pdf",
 								share_conditions: "the user asks for it",
@@ -300,7 +261,7 @@ describe("file references that don't resolve to a real files row", () => {
 		expect(prompt).not.toContain("orphan.pdf");
 	});
 
-	// Positive control: a properly-resolved file still shares, so the guards above can't pass by
+	// Positive control: a properly-resolved file still shares, so the guard above can't pass by
 	// simply never sharing anything.
 	it("still shares a file whose storage id does resolve to a files row", async () => {
 		const t = newTestConvex();
@@ -317,7 +278,6 @@ describe("file references that don't resolve to a real files row", () => {
 					personaPayload("A", {
 						files: [
 							fileEntry({
-								file_id: "stale-legacy-value",
 								storage_id: storageId,
 								share_conditions: "the user asks about the budget",
 							}),
@@ -331,12 +291,12 @@ describe("file references that don't resolve to a real files row", () => {
 		await send(t, state.run_id, "A", "budget?");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(Object.keys(run.sharedFiles)).toEqual([fileId]);
+		expect(run.sharedFiles).toEqual([fileId]);
 	});
 });
 
 describe("persona ids as Convex record keys", () => {
-	// unlockedAt / sharedFiles / personaChatState are v.record()s keyed by persona id. Convex
+	// unlockedAt / personaChatState are v.record()s keyed by persona id. Convex
 	// rejects a field name starting with "$" or containing non-ASCII, so such an id turns every
 	// state-writing turn into a hard failure -- and persona ids are not generated server-side:
 	// importCase.ts reads them straight out of an uploaded HTML file's data-persona-id

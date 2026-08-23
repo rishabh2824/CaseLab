@@ -5,13 +5,12 @@ import { toast } from "svelte-sonner";
 import SimulationClock from "$lib/components/SimulationClock.svelte";
 import { MAX_MESSAGE_WORDS } from "$lib/constants.js";
 import { downloadBlob } from "$lib/download.js";
-import { countWords } from "$lib/format.js";
+import { countWords, getPersonaInitials } from "$lib/format.js";
 import { session } from "$lib/session.svelte.js";
-import { getPersonaInitials } from "$lib/student/contacts.js";
 import type { ExportRunOut } from "$lib/student/run.svelte.js";
-import { exportRunRef, setRunStore } from "$lib/student/run.svelte.js";
+import { createRunStore, exportRunRef } from "$lib/student/run.svelte.js";
 
-const run = setRunStore();
+const run = createRunStore();
 
 onMount(() => {
 	run.init();

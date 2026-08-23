@@ -1,36 +1,29 @@
 <script lang="ts">
-import { Popover } from "bits-ui";
 import { makeFunctionReference } from "convex/server";
 import { getConvexClient, useQuery } from "convex-svelte";
 import { onDestroy, onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
-import {
-	normalizePersona,
-	normalizeReferral,
-	parseIntOrNull,
-} from "$lib/case/draft.js";
+import { parseCaseStructure } from "$lib/case/draft.js";
 import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
 import { CaseGraph } from "$lib/case/graph.svelte.js";
 import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
 import { submitCase } from "$lib/case/submitCase.js";
 import { session } from "$lib/session.svelte.js";
+import type { AdminRow } from "$lib/types.js";
 import { type SaveResult, unsavedGuard } from "$lib/unsavedGuard.svelte.js";
+import { RUN_LIFETIME_MINUTES } from "../../../convex/schema.js";
 import CaseGraphEditor from "./CaseGraphEditor.svelte";
+import CaseInfoFields from "./CaseInfoFields.svelte";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 
 // String-based references (not generated `api` imports): the convex/ project lives at
 // the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
 const listAllAdminsRef = makeFunctionReference<"query">("api/admins:listAll");
 // Used both to load an existing case for editing and to load one as a create-from-template
-// source -- see its comment in backend/convex/api/cases.ts.
+// source -- see its comment in convex/api/cases.ts.
 const getForEditRef = makeFunctionReference<"query">("api/cases:getForEdit");
 
-const MAX_SIMULATION_DURATION = 120;
-// Mirrors backend/convex/services/cases.ts's ACCESS_CODE_FORMAT.
-const ACCESS_CODE_FORMAT = /^[a-z]+$/;
-
-type AdminRole = "super" | "admin";
-type AdminRow = { _id: string; email: string; name?: string; role: AdminRole };
+const MAX_SIMULATION_DURATION = RUN_LIFETIME_MINUTES;
 
 // mode is explicit (set by the route: /admin/cases/new vs.
 // /admin/cases/[id]/edit), not inferred from which of caseId/templateId
@@ -64,9 +57,9 @@ const graph = new CaseGraph();
 // populated in edit mode (see loadCase). A new case (blank or from a
 // template) always starts with none.
 //
-// Always-subscribed (not fetched lazily on popover open, as this used to be against the
-// old backend's REST endpoint): Convex's reactivity makes a live subscription to a ~10-row
-// table cheap enough that the bookkeeping to defer it isn't worth keeping.
+// Always-subscribed, not fetched lazily on popover open: Convex's reactivity makes a live
+// subscription to a ~10-row table cheap enough that the bookkeeping to defer it isn't worth
+// keeping.
 const adminsQuery = useQuery(listAllAdminsRef, {});
 const allAdmins = $derived((adminsQuery.data ?? []) as AdminRow[]);
 let collaboratorAdminIds = $state<string[]>([]);
@@ -177,25 +170,12 @@ async function loadCase(id: string): Promise<void> {
 	const loadedCase = await getConvexClient().query(getForEditRef, {
 		caseId: id,
 	});
-	const structure = (loadedCase.structure ?? {}) as {
-		personas?: unknown[];
-		referrals?: unknown[];
-		roots?: string[];
-	};
 	caseName = loadedCase.name ?? "";
 	initialBrief = loadedCase.brief ?? "";
 	commonInformation = loadedCase.commonInformation ?? "";
 	simulationDurationMinutes = loadedCase.duration ?? null;
 	accessCode = loadedCase.accessCode ?? "";
-	graph.load({
-		personas: (structure.personas ?? []).map((persona) =>
-			normalizePersona(persona as Parameters<typeof normalizePersona>[0]),
-		),
-		referrals: (structure.referrals ?? []).map((referral) =>
-			normalizeReferral(referral as Parameters<typeof normalizeReferral>[0]),
-		),
-		roots: structure.roots ?? [],
-	});
+	graph.load(parseCaseStructure(loadedCase.structure));
 	if (isEditMode) {
 		collaboratorAdminIds = (loadedCase.collaboratorAdminIds ?? []) as string[];
 		ownerAdminId = (loadedCase.ownerAdminId ?? null) as string | null;
@@ -229,46 +209,15 @@ const effectiveOwnerId = $derived(
 		: (allAdmins.find((admin) => admin.email === session.adminEmail)?._id ??
 				null),
 );
-// SUPER admins already have full access to every case — no need to offer
-// explicitly granting it.
-const selectableAdmins = $derived(
-	allAdmins.filter(
-		(admin) => admin.role !== "super" && admin._id !== effectiveOwnerId,
-	),
-);
 
-const caseNameError = $derived(
-	!caseName.trim() ? "Case name is required." : null,
-);
-const initialBriefError = $derived(
-	!initialBrief.trim() ? "Initial brief is required." : null,
-);
-const accessCodeError = $derived.by(() => {
-	const trimmed = accessCode.trim();
-	if (!trimmed) return "Access code is required.";
-	// Mirrors both Convex's createCase and updateCase mutations -- every access code in the
-	// migrated data is already pure lowercase, so there's no legacy case to carve an
-	// exception out for.
-	if (!ACCESS_CODE_FORMAT.test(trimmed)) {
-		return "Access code must contain only lowercase letters.";
-	}
-	return null;
-});
-const simulationDurationError = $derived(
-	typeof simulationDurationMinutes === "number" &&
-		(simulationDurationMinutes > MAX_SIMULATION_DURATION ||
-			simulationDurationMinutes < 1)
-		? `Simulation duration must be between 1 and ${MAX_SIMULATION_DURATION} minutes (2 hours).`
-		: null,
-);
+// Owned by CaseInfoFields (bound below) -- it computes this from the scalar fields it also
+// owns, the same way graph.validation is computed inside the CaseGraph class rather than
+// re-derived here from the raw persona/referral arrays.
+let caseInfoHasErrors = $state(false);
 
 const graphValidation = $derived(graph.validation);
 const hasValidationErrors = $derived(
-	Boolean(caseNameError) ||
-		Boolean(initialBriefError) ||
-		Boolean(accessCodeError) ||
-		Boolean(simulationDurationError) ||
-		graphValidation.hasErrors,
+	caseInfoHasErrors || graphValidation.hasErrors,
 );
 const displayedError = $derived(submitError || loadErrorMessage);
 
@@ -476,143 +425,21 @@ onDestroy(() => {
 					</div>
 				{/if}
 
-				<details class="rounded-2xl border border-line bg-white" open>
-					<summary class="cursor-pointer select-none px-5 py-4 font-display text-lg font-semibold text-ink">
-						Case Information
-					</summary>
-					<div class="flex flex-col gap-4 border-t border-line-soft px-5 py-5">
-						<div class="flex flex-col gap-1.5">
-							<label for="case-name" class="text-xs font-medium text-stone-soft">Case name</label>
-							<input
-								id="case-name"
-								type="text"
-								required
-								placeholder="Enter case name"
-								bind:value={caseName}
-								oninput={revealErrors}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-							/>
-							{#if showFieldErrors && caseNameError}
-								<p class="text-xs font-medium text-brand">{caseNameError}</p>
-							{/if}
-						</div>
-
-						<div class="flex flex-col gap-1.5">
-							<label for="initial-brief" class="text-xs font-medium text-stone-soft">Initial brief</label>
-							<textarea
-								id="initial-brief"
-								rows="3"
-								required
-								placeholder="Summarize the initial brief"
-								bind:value={initialBrief}
-								oninput={revealErrors}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-							></textarea>
-							{#if showFieldErrors && initialBriefError}
-								<p class="text-xs font-medium text-brand">{initialBriefError}</p>
-							{/if}
-						</div>
-
-						<div class="flex flex-col gap-1.5">
-							<label for="common-information" class="text-xs font-medium text-stone-soft">Enter Case Background</label>
-							<textarea
-								id="common-information"
-								rows="3"
-								placeholder="Describe the common information"
-								bind:value={commonInformation}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-							></textarea>
-						</div>
-
-						<div class="flex flex-col gap-1.5">
-							<label for="simulation-duration" class="text-xs font-medium text-stone-soft">Simulation duration (Minutes)</label>
-							<input
-								id="simulation-duration"
-								type="number"
-								min="1"
-								max={MAX_SIMULATION_DURATION}
-								step="1"
-								placeholder="Leave empty for unlimited"
-								value={simulationDurationMinutes ?? ''}
-								oninput={(event) => {
-									revealErrors()
-									simulationDurationMinutes = parseIntOrNull(event.currentTarget.value)
-								}}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-							/>
-							{#if simulationDurationError}
-								<p class="text-xs font-medium text-brand">{simulationDurationError}</p>
-							{/if}
-						</div>
-
-						<div class="flex flex-col gap-1.5">
-							<label for="access-code" class="text-xs font-medium text-stone-soft">Access code</label>
-							<input
-								id="access-code"
-								type="text"
-								required
-								placeholder="Enter access code"
-								bind:value={accessCode}
-								oninput={revealErrors}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-							/>
-							{#if showFieldErrors && accessCodeError}
-								<p class="text-xs font-medium text-brand">{accessCodeError}</p>
-							{/if}
-						</div>
-
-						<div class="flex flex-col gap-1.5">
-							<span class="text-xs font-medium text-stone-soft">Add collaborators</span>
-							<p class="text-xs text-stone">
-								Collaborators get full edit access to this case, same as the owner.
-							</p>
-							<Popover.Root>
-								<Popover.Trigger
-									class="flex w-fit items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition hover:border-brand hover:text-brand"
-								>
-									Add collaborators
-									{#if collaboratorAdminIds.length > 0}
-										<span class="rounded-full bg-brand-tint px-2 py-0.5 text-xs font-semibold text-brand">
-											{collaboratorAdminIds.length} selected
-										</span>
-									{/if}
-									<span aria-hidden="true">▾</span>
-								</Popover.Trigger>
-								<Popover.Portal>
-									<Popover.Content
-										class="z-50 w-64 rounded-lg border border-line bg-white p-3 shadow-soft"
-										sideOffset={6}
-									>
-										{#if adminsQuery.isLoading}
-											<p class="text-xs text-stone-soft">Loading admins…</p>
-										{:else if selectableAdmins.length === 0}
-											<p class="text-xs text-stone-soft">No other admins available to add.</p>
-										{:else}
-											<div class="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
-												{#each selectableAdmins as admin (admin._id)}
-													<label class="flex items-center gap-2 text-sm text-ink-soft">
-														<input
-															type="checkbox"
-															checked={collaboratorAdminIds.includes(admin._id)}
-															onchange={(event) => {
-																const checked = event.currentTarget.checked
-																collaboratorAdminIds = checked
-																	? [...collaboratorAdminIds, admin._id]
-																	: collaboratorAdminIds.filter((id) => id !== admin._id)
-															}}
-															class="h-4 w-4 rounded border-line text-brand focus:ring-brand/30"
-														/>
-														<span>{admin.name || admin.email}</span>
-													</label>
-												{/each}
-											</div>
-										{/if}
-									</Popover.Content>
-								</Popover.Portal>
-							</Popover.Root>
-						</div>
-					</div>
-				</details>
+				<CaseInfoFields
+					bind:caseName
+					bind:initialBrief
+					bind:commonInformation
+					bind:simulationDurationMinutes
+					bind:accessCode
+					bind:collaboratorAdminIds
+					bind:hasErrors={caseInfoHasErrors}
+					maxSimulationDuration={MAX_SIMULATION_DURATION}
+					{allAdmins}
+					adminsLoading={adminsQuery.isLoading}
+					{effectiveOwnerId}
+					{showFieldErrors}
+					{revealErrors}
+				/>
 
 				<CaseGraphEditor {graph} {showFieldErrors} {revealErrors} />
 

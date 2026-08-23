@@ -1,22 +1,25 @@
 import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { adminRole } from "./models/admin";
 
-// Mirrors backend/models/runtime.py's ChatState.
+// String literals since Convex has no enum type and this is read at every authorization
+// check.
+export const adminRole = v.union(v.literal("super"), v.literal("admin"));
+export type AdminRole = "super" | "admin";
+
+// The cap on how long a run can live even when a case sets no duration -- also the upper
+// bound a case's own `duration` is validated against at save time (services/cases.ts) and
+// CaseForm.svelte's authoring input: a duration a run can never actually reach would leave
+// the student's countdown still running when the run is deleted underneath it. Lives here,
+// not services/simulations.ts, so the frontend can import it directly -- that module pulls
+// in Convex-only side effects (the rate-limiter component, `_generated/api`) that can't be
+// bundled into the browser.
+export const RUN_LIFETIME_MINUTES = 120;
+
 const chatState = v.object({
 	warningCount: v.number(),
 	ended: v.boolean(),
 	endReason: v.optional(v.string()),
-	lastFlagType: v.optional(v.string()),
-});
-
-// Mirrors backend/models/runtime.py's FileRecord (a shared-file entry recorded on a run).
-const fileRecord = v.object({
-	fileId: v.id("files"),
-	fileName: v.string(),
-	contentType: v.optional(v.string()),
-	storageId: v.id("_storage"),
 });
 
 export default defineSchema({
@@ -30,19 +33,17 @@ export default defineSchema({
 		role: adminRole,
 	}).index("by_email", ["email"]),
 
-	// `structure` stays a JSON blob (personas/referrals/roots), same shape as
-	// backend/models/cases.py's CaseStructure — max observed size 15.7 KB, far under
-	// Convex's 1 MiB document limit, so splitting it into per-persona documents buys
+	// `structure` stays a JSON blob (personas/referrals/roots) -- max observed size 15.7 KB,
+	// far under Convex's 1 MiB document limit, so splitting it into per-persona documents buys
 	// nothing. `accessCode`, when set, is validated to `^[a-z]+$` in the case create/update
-	// mutations (services/cases.ts) so it's canonical by construction — no second
-	// normalized column, unlike Postgres's CITEXT-backed column today.
+	// mutations (services/cases.ts) so it's canonical by construction -- no second normalized
+	// column needed.
 	//
-	// No `version`/optimistic-concurrency counter, unlike Case.version in
-	// backend/infra/db_models.py — a deliberate simplification, not an oversight. Two admins
-	// editing the same case at once is rare enough that last-write-wins (whichever
-	// updateCase call runs last simply overwrites) is an acceptable outcome, avoiding
-	// expected-version checks, 409 conflict responses, and a client-side polling/reload UI
-	// for a scenario this rare.
+	// No `version`/optimistic-concurrency counter -- a deliberate simplification, not an
+	// oversight. Two admins editing the same case at once is rare enough that last-write-wins
+	// (whichever updateCase call runs last simply overwrites) is an acceptable outcome,
+	// avoiding expected-version checks, 409 conflict responses, and a client-side
+	// polling/reload UI for a scenario this rare.
 	cases: defineTable({
 		name: v.string(),
 		brief: v.string(),
@@ -69,11 +70,9 @@ export default defineSchema({
 		contentType: v.optional(v.string()),
 	}).index("by_storage_id", ["storageId"]),
 
-	// Replaces backend/services/cases.py's referencedFileIds, which does a
-	// `cast(structure, String) LIKE '%"file_id": "N"%'` scan over serialized JSONB.
-	// This join table makes "is this file still referenced by any case" an indexed
-	// lookup instead, which is also what makes real file deletion (closing the
-	// deferred file-lifecycle leak) cheap enough to do unconditionally.
+	// This join table makes "is this file still referenced by any case" an indexed lookup
+	// instead of a full scan, which is also what makes real file deletion cheap enough to do
+	// unconditionally.
 	caseFiles: defineTable({
 		caseId: v.id("cases"),
 		fileId: v.id("files"),
@@ -81,10 +80,9 @@ export default defineSchema({
 		.index("by_case", ["caseId"])
 		.index("by_file", ["fileId"]),
 
-	// No `snapshot` field: a run stores only `caseId` and reads the case live. This replaces
-	// backend/models/runtime.py's RunSnapshot (case_snapshot + persona_graph duplicated into
-	// every run). updateCase/deleteCase (services/cases.ts) and deleteAdminWithCascade
-	// (services/admins.ts) no longer block on live runs to protect this -- an accepted
+	// No `snapshot` field: a run stores only `caseId` and reads the case live.
+	// updateCase/deleteCase (services/cases.ts) and deleteAdminWithCascade
+	// (services/admins.ts) don't block on live runs to protect this -- an accepted
 	// tradeoff: editing/deleting a case out from under a live run is rare, and the admin doing
 	// it is assumed to know the consequences. The read paths (services/simulationReads.ts,
 	// services/turn.ts) fail cleanly rather than crash if the case (or a persona in its
@@ -97,16 +95,19 @@ export default defineSchema({
 		activePersonaKey: v.string(),
 		unlockedReferredIds: v.array(v.string()),
 		unlockedAt: v.record(v.string(), v.number()),
-		sharedFiles: v.record(v.string(), fileRecord),
+		// Which files (by `files` row id) have been shared into this run -- just the id, not a
+		// name/contentType/storageId snapshot. Case edits/deletes are assumed never to happen
+		// against a live run (see runs' own comment above), so there's no risk of the referenced
+		// `files` row changing out from under an active simulation; getSimulationState resolves
+		// the current name/contentType/storageId live off this id instead of carrying a copy.
+		sharedFiles: v.array(v.id("files")),
 		personaChatState: v.record(v.string(), chatState),
 		// The scheduled-function id for this run's expiry deletion (see
 		// convex/runs.ts's `destroy`), so it can be cancelled/rescheduled if needed.
 		// Optional only during the brief window between insert and the scheduler
 		// call returning.
 		destroyJobId: v.optional(v.id("_scheduled_functions")),
-	})
-		.index("by_case", ["caseId"])
-		.index("by_expiry", ["expiresAt"]),
+	}).index("by_expiry", ["expiresAt"]),
 
 	runMessages: defineTable({
 		runId: v.id("runs"),
@@ -130,5 +131,12 @@ export default defineSchema({
 			v.literal("done"),
 			v.literal("error"),
 		),
+		// Refreshed on every write to this row (claim, preview flush, terminal patch) -- lets
+		// claimStreamingSlot (services/turn.ts) tell "still generating" apart from "the process
+		// that was generating this died" for a row stuck at status "streaming", instead of
+		// treating every "streaming" row as permanently in flight. See claimStreamingSlot's own
+		// comment for why a killed action can otherwise strand this row until the run itself
+		// expires.
+		updatedAt: v.number(),
 	}).index("by_run_persona", ["runId", "personaKey"]),
 });

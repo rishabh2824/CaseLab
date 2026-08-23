@@ -46,12 +46,13 @@ export default defineConfig({
 			// paths) through optionalDependencies — src/lib/student/pdf.ts never
 			// calls those methods, only the plain text API, so these never
 			// actually run. Left un-externalized, Rollup still statically finds
-			// jsPDF's `import("html2canvas")`/`import("canvg")` and emits them as
-			// real (if never-fetched) chunks — ~343KB of dead weight in the
-			// deploy. Externalizing drops them from the build entirely; if `.html()`
-			// is ever actually called, both would need to become real (non-
-			// external) dependencies again first, or that call fails at runtime.
-			external: ["html2canvas", "canvg"],
+			// jsPDF's `import("html2canvas")`/`import("canvg")`/`import("dompurify")`
+			// and emits them as real (if never-fetched) chunks — dead weight in the
+			// deploy (dompurify alone is ~27KB). Externalizing drops all three from
+			// the build entirely; if `.html()` is ever actually called, all three
+			// would need to become real (non-external) dependencies again first, or
+			// that call fails at runtime.
+			external: ["html2canvas", "canvg", "dompurify"],
 		},
 	},
 	plugins: [
@@ -62,9 +63,14 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes("node_modules") ? undefined : true,
 			},
-			// SPA: no server-rendering (see root +layout.js), static-hosted, client
-			// routing needs the same fallback shim SvelteKit gives us for free.
-			adapter: adapter({ fallback: "200.html" }),
+			// SPA: no server-rendering, no prerendering (see root +layout.ts) --
+			// every route, including "/", is client-only, so the fallback shim
+			// SvelteKit gives us for free is the *only* HTML file the build emits.
+			// Naming it index.html (rather than the more common 200.html) matters:
+			// @convex-dev/static-hosting's SPA fallback always serves /index.html
+			// for a path it can't find, with no way to point it elsewhere -- see
+			// convex/http.ts.
+			adapter: adapter({ fallback: "index.html" }),
 		}),
 	],
 	test: {

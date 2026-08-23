@@ -95,10 +95,6 @@ describe("admin-only surface rejects anonymous callers", () => {
 				"uploads.generateUploadUrls",
 				() => t.mutation(api.api.uploads.generateUploadUrls, { count: 2 }),
 			],
-			[
-				"files.resolveFileRefs",
-				() => t.mutation(api.api.files.resolveFileRefs, { fileRefs: [] }),
-			],
 		] as const;
 	}
 

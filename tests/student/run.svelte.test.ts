@@ -93,8 +93,8 @@ const caseData = {
 	simulation_duration: null as number | null,
 };
 
-// RunStore is created fresh per /student mount via context (setRunStore), not a module
-// singleton -- session IS a module singleton these tests share, reset via session.clearRun()/
+// RunStore is created fresh per /student mount (createRunStore), not a module singleton --
+// session IS a module singleton these tests share, reset via session.clearRun()/
 // clearAdmin() in beforeEach below rather than vi.resetModules(): fakeQueryVersion above is a
 // $state declared at this file's top level, which vi.resetModules() would NOT re-evaluate
 // (only subsequently-imported modules get a fresh instance) -- reactivity across that boundary
@@ -258,6 +258,28 @@ describe("session resume / live-query errors", () => {
 		await vi.waitFor(() => expect(run.loadError).toBe("Server exploded."));
 		expect(session.runId).toBe("run-1");
 		expect(goto).not.toHaveBeenCalled();
+	});
+
+	// REGRESSION: loadError used to only ever be set, never cleared, so a transient failure
+	// (network blip, momentary server error) left the error banner up forever even after the
+	// subscription went on to succeed.
+	it("clears loadError once the live subscription recovers", async () => {
+		const { run, session } = await freshRun();
+		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+		setFakeQuery(
+			GET_SIMULATION_STATE,
+			{ runId: "run-1" },
+			{ error: new Error("Server exploded.") },
+		);
+		await vi.waitFor(() => expect(run.loadError).toBe("Server exploded."));
+
+		setFakeQuery(
+			GET_SIMULATION_STATE,
+			{ runId: "run-1" },
+			{ data: makeRunState({ run_id: "run-1" }) },
+		);
+
+		await vi.waitFor(() => expect(run.loadError).toBe(""));
 	});
 });
 

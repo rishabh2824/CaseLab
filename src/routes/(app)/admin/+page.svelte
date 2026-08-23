@@ -1,6 +1,5 @@
 <script lang="ts">
 import { goto } from "$app/navigation";
-import { ADMIN_ROLE } from "$lib/constants.js";
 import { session } from "$lib/session.svelte.js";
 </script>
 
@@ -13,7 +12,7 @@ import { session } from "$lib/session.svelte.js";
 		class="pointer-events-none absolute -bottom-32 -right-32 z-0 w-[34rem] max-w-none select-none opacity-[0.14]"
 	/>
 
-	{#if session.adminRole === ADMIN_ROLE.SUPER}
+	{#if session.adminRole === "super"}
 		<button
 			type="button"
 			onclick={() => goto('/admin/admins')}

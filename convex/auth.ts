@@ -6,9 +6,8 @@ import { getAdminByEmail } from "./services/admins";
 export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
 	providers: [Google],
 	callbacks: {
-		// Mirrors backend/services/admin.py::loginWithGoogleCredential: `admins` is the
-		// authorization gate, not Convex Auth's own `users` table (identity only).
-		// Throwing here rejects the whole sign-in — an authenticated Google account
+		// `admins` is the authorization gate, not Convex Auth's own `users` table (identity
+		// only). Throwing here rejects the whole sign-in — an authenticated Google account
 		// with no matching row never gets a `users` row created for it.
 		async createOrUpdateUser(ctx: MutationCtx, args) {
 			if (args.existingUserId) return args.existingUserId;

@@ -2,7 +2,6 @@
 // session.svelte.ts's sessionStorage branch is live and this file can
 // observe read/write round-trips for real.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ADMIN_ROLE } from "../src/lib/constants.js";
 import { session } from "../src/lib/session.svelte.js";
 
 // Mirrors the private STORAGE_KEY in session.svelte.ts (not exported) — the
@@ -66,8 +65,8 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 	it.each([
 		[3, null],
 		["SUPER", null],
-		[ADMIN_ROLE.SUPER, ADMIN_ROLE.SUPER],
-		[ADMIN_ROLE.ADMIN, ADMIN_ROLE.ADMIN],
+		["super", "super"],
+		["admin", "admin"],
 	])("adminRole %j normalizes to %j", async (stored, expected) => {
 		sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ adminRole: stored }));
 		const { session: fresh } = await import("../src/lib/session.svelte.js");
@@ -118,21 +117,21 @@ describe("SessionStore mutators", () => {
 
 	it("setAdmin persists adminRole and adminEmail", () => {
 		session.setAdmin({
-			adminRole: ADMIN_ROLE.ADMIN,
+			adminRole: "admin",
 			adminEmail: "admin@example.com",
 		});
 
-		expect(session.adminRole).toBe(ADMIN_ROLE.ADMIN);
+		expect(session.adminRole).toBe("admin");
 		expect(session.adminEmail).toBe("admin@example.com");
 		expect(readRaw()).toMatchObject({
-			adminRole: ADMIN_ROLE.ADMIN,
+			adminRole: "admin",
 			adminEmail: "admin@example.com",
 		});
 	});
 
 	it("clearRun clears the run fields but preserves the admin fields", () => {
 		session.setAdmin({
-			adminRole: ADMIN_ROLE.SUPER,
+			adminRole: "super",
 			adminEmail: "super@example.com",
 		});
 		session.startRun({ runId: "run-3", accessCode: "CODE33" });
@@ -142,20 +141,20 @@ describe("SessionStore mutators", () => {
 		expect(session.runId).toBe("");
 		expect(session.accessCode).toBe("");
 		expect(session.startTime).toBeNull();
-		expect(session.adminRole).toBe(ADMIN_ROLE.SUPER);
+		expect(session.adminRole).toBe("super");
 		expect(session.adminEmail).toBe("super@example.com");
 		expect(readRaw()).toMatchObject({
 			runId: "",
 			accessCode: "",
 			startTime: null,
-			adminRole: ADMIN_ROLE.SUPER,
+			adminRole: "super",
 			adminEmail: "super@example.com",
 		});
 	});
 
 	it("clearAdmin clears the admin fields but preserves the run fields", () => {
 		session.setAdmin({
-			adminRole: ADMIN_ROLE.SUPER,
+			adminRole: "super",
 			adminEmail: "super@example.com",
 		});
 		session.startRun({ runId: "run-4", accessCode: "CODE44" });

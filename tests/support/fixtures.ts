@@ -94,9 +94,8 @@ export const message = (
 ): ChatMessage => ({ role, content });
 
 // Returns the raw wire shape verbatim (not the app's draft/renamed Persona type) -- for
-// stubbing Convex responses directly, where the point is catching a backend field
-// rename/type change at compile time. Mirrors backend/convex/models/cases.ts's
-// PersonaPayload.
+// stubbing Convex responses directly, where the point is catching a field rename/type change
+// at compile time (convex/models/cases.ts's PersonaPayload).
 export function makePersonaPayload(
 	overrides: Partial<PersonaPayload> = {},
 ): PersonaPayload {

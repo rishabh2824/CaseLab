@@ -6,7 +6,6 @@ import {
 import { makeFunctionReference } from "convex/server";
 import { setupAuth, useAuth, useQuery } from "convex-svelte";
 import type { Snippet } from "svelte";
-import { ADMIN_ROLE } from "$lib/constants.js";
 import { resolveConvexUrl } from "$lib/convexUrl.js";
 import { session } from "$lib/session.svelte.js";
 
@@ -93,8 +92,7 @@ $effect(() => {
 	if (redirecting || viewer.isLoading) return;
 	if (viewer.data) {
 		session.setAdmin({
-			adminRole:
-				viewer.data.role === "super" ? ADMIN_ROLE.SUPER : ADMIN_ROLE.ADMIN,
+			adminRole: viewer.data.role,
 			adminEmail: viewer.data.email,
 		});
 		navigateToAdmin();

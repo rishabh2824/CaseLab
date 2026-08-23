@@ -17,9 +17,8 @@ import {
 	writeStreamingPreview as writeStreamingPreviewService,
 } from "../services/turn";
 
-// Mirrors backend/api/simulations.py's POST /simulations/{run_id}/message, split at the
-// mutation/action boundary Convex requires -- see services/turn.ts's startTurn for why.
-// Public and unauthenticated, same as the rest of the student-facing simulation API.
+// Split at the mutation/action boundary Convex requires -- see services/turn.ts's startTurn
+// for why. Public and unauthenticated, same as the rest of the student-facing simulation API.
 export const start = mutation({
 	args: { runId: v.id("runs"), personaId: v.string(), message: v.string() },
 	handler: async (ctx, args) =>
@@ -112,14 +111,7 @@ export const applyDecisions = internalMutation({
 		personaId: v.string(),
 		reply: v.string(),
 		unlockedReferrals: v.array(v.object({ referredPersonaId: v.string() })),
-		sharedFiles: v.array(
-			v.object({
-				fileId: v.id("files"),
-				fileName: v.string(),
-				contentType: v.union(v.string(), v.null()),
-				storageId: v.id("_storage"),
-			}),
-		),
+		sharedFiles: v.array(v.object({ fileId: v.id("files") })),
 		streamId: v.id("streamingReplies"),
 	},
 	handler: async (ctx, args) =>

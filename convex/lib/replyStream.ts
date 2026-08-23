@@ -1,5 +1,4 @@
-// Mirrors backend/services/simulation/reply_stream.py's ReplyExtractor, unchanged: the
-// provider streams with strict structured-output decoding (see lib/llm.ts's
+// The provider streams with strict structured-output decoding (see lib/llm.ts's
 // PERSONA_REPLY_SCHEMA), which guarantees the output is always valid JSON, "reply" is always
 // the object's first key (property order in PERSONA_REPLY_SCHEMA), and non-ASCII characters
 // (emoji, accents, etc.) are emitted as raw UTF-8 rather than \uXXXX surrogate-pair escapes.
