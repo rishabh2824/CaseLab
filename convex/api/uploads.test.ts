@@ -1,30 +1,9 @@
 // The upload surface is small but it is a public, authenticated mutation that allocates
-// resources from an unvalidated caller-supplied number. authz.test.ts covers the auth gate on
-// both functions; this covers what the gate lets through.
+// resources from an unvalidated caller-supplied number. authz.test.ts covers the auth gate;
+// this covers what the gate lets through.
 import { describe, expect, it } from "vitest";
 import { api } from "../_generated/api";
 import { newTestConvex, withAdmin } from "../test.setup";
-
-describe("generateUploadUrl", () => {
-	it("returns a usable upload url for a signed-in admin", async () => {
-		const t = newTestConvex();
-		const { asUser } = await withAdmin(t);
-		const url = await asUser.mutation(api.api.uploads.generateUploadUrl, {});
-		expect(typeof url).toBe("string");
-		expect(url.length).toBeGreaterThan(0);
-	});
-
-	it("hands out a distinct url per call so two concurrent uploads cannot collide", async () => {
-		const t = newTestConvex();
-		const { asUser } = await withAdmin(t);
-		const urls = await Promise.all([
-			asUser.mutation(api.api.uploads.generateUploadUrl, {}),
-			asUser.mutation(api.api.uploads.generateUploadUrl, {}),
-			asUser.mutation(api.api.uploads.generateUploadUrl, {}),
-		]);
-		expect(new Set(urls).size).toBe(3);
-	});
-});
 
 describe("generateUploadUrls (batched)", () => {
 	it("returns exactly `count` distinct urls", async () => {

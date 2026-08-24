@@ -16,6 +16,14 @@ export type AdminRole = "super" | "admin";
 // bundled into the browser.
 export const RUN_LIFETIME_MINUTES = 120;
 
+// The chat composer's word cap, enforced both by the Send button (disabled client-side, no
+// round-trip) and by startTurn's server-side rejection (services/turn.ts) -- the same message
+// can't be allowed by one and rejected by the other. Lives here, not services/turn.ts, for the
+// same reason as RUN_LIFETIME_MINUTES above: turn.ts pulls in Convex-only side effects
+// (`_generated/api`, rate-limiter component) that can't be bundled into the browser, so the
+// frontend needs a side-effect-free source to import from.
+export const MAX_MESSAGE_WORDS = 50;
+
 const chatState = v.object({
 	warningCount: v.number(),
 	ended: v.boolean(),

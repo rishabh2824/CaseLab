@@ -226,6 +226,29 @@ describe("normal turn happy path", () => {
 		]);
 	});
 
+	it("updates activePersonaKey on a switch but leaves it alone when messaging the persona already active", async () => {
+		const t = newTestConvex();
+		const state = await startRun(
+			t,
+			caseStructure({
+				personas: [personaPayload("A"), personaPayload("B")],
+				roots: ["A", "B"],
+			}),
+		);
+		stubLlm({ replyText: "ok" });
+
+		// "A" is already active_persona_id (see startSimulation) -- this must not error, and
+		// the field must simply stay put.
+		await send(t, state.run_id, "A", "still talking to A");
+		let run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
+		expect(run.activePersonaKey).toBe("A");
+
+		// Switching to B is the actual write this guard must still perform.
+		await send(t, state.run_id, "B", "now talking to B");
+		run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
+		expect(run.activePersonaKey).toBe("B");
+	});
+
 	it("strips a leading speaker tag before storing the reply", async () => {
 		const t = newTestConvex();
 		const state = await startRun(

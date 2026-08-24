@@ -1,24 +1,17 @@
 import { v } from "convex/values";
 import { adminMutation } from "../lib/adminFunctions";
 
-// Generates a short-lived upload URL backed by Convex's own file storage. Convex hands back
-// no notion of file name/content type/prefix -- just the URL and an `Id<"_storage">` once the
-// client POSTs to it -- so the client keeps the file's name/content type itself and pairs it
-// back up with the returned `storageId` (see frontend/src/lib/case/submitCase.ts).
-export const generateUploadUrl = adminMutation({
-	args: {},
-	handler: async (ctx) => {
-		return await ctx.storage.generateUploadUrl();
-	},
-});
-
 // The largest batch a real case save can need. A case's files are one profile photo plus a
 // handful of attachments per persona, so 200 is far above any legitimate save while still
 // bounding what a single request can allocate.
 const MAX_UPLOAD_BATCH = 200;
 
-// Each URL is independently cheap to generate (no network I/O) -- the batching win is paying
-// for the admin auth check once per case save instead of once per file.
+// Generates count short-lived upload URLs backed by Convex's own file storage. Convex hands
+// back no notion of file name/content type/prefix -- just the URL and an `Id<"_storage">` once
+// the client POSTs to it -- so the client keeps each file's name/content type itself and pairs
+// it back up with the returned `storageId` (see frontend/src/lib/case/submitCase.ts). Each URL
+// is independently cheap to generate (no network I/O) -- the batching win is paying for the
+// admin auth check once per case save instead of once per file.
 export const generateUploadUrls = adminMutation({
 	args: { count: v.number() },
 	handler: async (ctx, args) => {

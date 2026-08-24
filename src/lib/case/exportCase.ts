@@ -2,7 +2,11 @@
 
 import { downloadBlob } from "../download.js";
 import type { Persona, ReferralEdge } from "../types.js";
-import { createEmptyPersona, reachableFrom } from "./draft.js";
+import {
+	createEmptyPersona,
+	createEmptyReferral,
+	reachableFrom,
+} from "./draft.js";
 
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
@@ -333,69 +337,12 @@ export function buildHTMLForm({
             </div>
 
             <template id="persona-template">
-                <article class="persona-card" data-persona-id="" data-persona-root="true">
-                    <div class="persona-card-head">
-                        <span class="chip chip--persona"></span>
-                        <select class="persona-type-select" data-role="persona-type">
-                            <option value="root" selected>Root (available from the start)</option>
-                            <option value="referred">Referred (unlocked later)</option>
-                        </select>
-                        <button type="button" class="btn-text btn-remove" data-action="remove-persona">Remove persona</button>
-                    </div>
-
-                    ${fields({
-											field: "name",
-											label: "Name",
-											value: "",
-											required: true,
-										})}
-                    ${fields({
-											field: "role",
-											label: "Role / Title",
-											value: "",
-											required: true,
-										})}
-                    ${fields({
-											field: "availability_minutes",
-											label: "Available for (minutes)",
-											hint: "Blank = the whole simulation.",
-											value: "",
-										})}
-                    ${fields({
-											field: "known_facts",
-											label: "Persona Related Information",
-											hint: "Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.",
-											value: "",
-											rows: 5,
-										})}
-                    ${fields({
-											field: "personality_traits",
-											label: "Personality Traits",
-											hint: "Tone, temperament, communication style, quirks.",
-											value: "",
-											rows: 3,
-										})}
-                    ${fileShare(null)}
-                </article>
+                ${personaCardMarkup(createEmptyPersona(), true, false)}
             </template>
 
             <template id="referral-template">
-          <div class="referral-row" data-referral="true">
-            <div class="referral-selects">
-              <select class="input select-persona" data-role="from"></select>
-              <span class="referral-arrow">&rarr;</span>
-              <select class="input select-persona" data-role="to"></select>
-              <button type="button" class="btn-text btn-remove" data-action="remove-referral">Remove</button>
-            </div>
-            ${fields({
-							field: "conditions",
-							label: "When",
-							hint: "The condition (in conversation) that makes the first persona introduce the second.",
-							value: "",
-							rows: 2,
-						})}
-          </div>
-        </template>
+                ${referralRowMarkup(createEmptyReferral(), graph.personas)}
+            </template>
 
             <script>
 (function () {

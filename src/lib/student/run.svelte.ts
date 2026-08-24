@@ -455,20 +455,36 @@ export class RunStore {
 			window.clearTimeout(this.#notesSaveTimer);
 			this.#notesSaveTimer = null;
 		}
+		// Without this, #ensureExpiryWatch's interval (armed with THIS run's own start/
+		// totalDurationSeconds, captured in its closure) keeps ticking after this call
+		// navigates away. `session` is a module singleton, so once a later run starts and
+		// this orphaned timer's original deadline arrives, it fires endSimulation() again --
+		// on the CURRENT run: clearNotes(session.runId) deletes the new run's notes, and
+		// session.clearRun() + goto("/") boots the student out of a simulation they're
+		// actively in. See destroy()'s comment for why neither window.setInterval nor
+		// $effect.root is torn down by component unmount on its own.
+		if (this.#expiryInterval) window.clearInterval(this.#expiryInterval);
+		this.#expiryInterval = null;
 		if (session.runId) clearNotes(session.runId);
 		session.clearRun();
 		goto("/");
 	}
 
-	// Tears down this store's reactive subscriptions/effects. Never needed in production --
-	// createRunStore() is called once per page load, and the whole component tree (and its
-	// effect roots) is discarded on navigation anyway -- but a test that constructs several
-	// RunStores against one shared `session` singleton needs to dispose each one, or a
-	// stale instance's effects keep reacting to the next test's session changes.
+	// Tears down this store's reactive subscriptions/effects/timers. Must be called from the
+	// hosting component's onDestroy -- unlike a bare $effect (see SimulationClock.svelte's own
+	// $effect, which returns a cleanup Svelte runs automatically), neither #dispose
+	// ($effect.root's own tree) nor a window.setInterval is torn down by component unmount.
+	// Both deliberately outlive it: that's the entire point of $effect.root, and
+	// window.setInterval is a browser-level timer with no notion of Svelte's component tree at
+	// all. Skipping this call is what let an orphaned #expiryInterval survive navigation and
+	// later fire endSimulation() against a subsequent run -- see endSimulation's own comment.
 	destroy(): void {
 		this.#dispose();
 		if (this.#availabilityTickInterval)
 			window.clearInterval(this.#availabilityTickInterval);
+		if (this.#expiryInterval) window.clearInterval(this.#expiryInterval);
+		this.#availabilityTickInterval = null;
+		this.#expiryInterval = null;
 	}
 
 	sendMessage(rawMessage: string): boolean {

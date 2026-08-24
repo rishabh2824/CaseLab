@@ -88,12 +88,9 @@ export async function deleteCase(
 	await loadCaseForAccess(ctx, caseId, admin);
 
 	await syncCaseFiles(ctx, caseId, new Set());
-
-	const collaboratorRows = await ctx.db
-		.query("collaborators")
-		.withIndex("by_case", (q) => q.eq("caseId", caseId))
-		.collect();
-	for (const row of collaboratorRows) await ctx.db.delete(row._id);
+	// Empty target list -- replaceCollaborators' delete-existing pass does all the work here;
+	// its insert pass is a no-op over an empty array.
+	await replaceCollaborators(ctx, caseId, []);
 	await ctx.db.delete(caseId);
 }
 
@@ -410,17 +407,33 @@ async function replaceCollaborators(
 	}
 }
 
-export async function createCase(
+// Shared by createCase and updateCase below -- validate (access code, duration), resolve
+// (collaborator ids, persona/referral graph -> structure + referenced file ids) is identical
+// between the two; only what happens with the result (insert vs. patch, and whether an
+// existing case's owner/access-code-exclusion applies) differs, which each caller still does
+// itself.
+async function resolveCasePayload(
 	ctx: MutationCtx,
 	payload: CasePayload,
-	admin: Doc<"admins">,
-): Promise<Id<"cases">> {
-	const accessCode = await validateAccessCode(ctx, payload.accessCode);
+	ownerAdminId: Id<"admins">,
+	excludeCaseId?: Id<"cases">,
+): Promise<{
+	accessCode: string | undefined;
+	duration: number | undefined;
+	collaboratorIds: Id<"admins">[];
+	structure: unknown;
+	fileIds: Set<Id<"files">>;
+}> {
+	const accessCode = await validateAccessCode(
+		ctx,
+		payload.accessCode,
+		excludeCaseId,
+	);
 	const duration = validateDuration(payload.duration);
 	const collaboratorIds = await resolveCollaboratorIds(
 		ctx,
 		payload.collaboratorAdminIds,
-		admin._id,
+		ownerAdminId,
 	);
 	const { structure, fileIds } = await buildStructure(
 		ctx,
@@ -428,6 +441,16 @@ export async function createCase(
 		payload.referrals,
 		payload.roots,
 	);
+	return { accessCode, duration, collaboratorIds, structure, fileIds };
+}
+
+export async function createCase(
+	ctx: MutationCtx,
+	payload: CasePayload,
+	admin: Doc<"admins">,
+): Promise<Id<"cases">> {
+	const { accessCode, duration, collaboratorIds, structure, fileIds } =
+		await resolveCasePayload(ctx, payload, admin._id);
 
 	const caseId = await ctx.db.insert("cases", {
 		name: payload.name,
@@ -457,20 +480,9 @@ export async function updateCase(
 ): Promise<void> {
 	const c = await loadCaseForAccess(ctx, caseId, admin);
 
-	const accessCode = await validateAccessCode(ctx, payload.accessCode, caseId);
-	const duration = validateDuration(payload.duration);
 	// The owner never changes via update -- only personas/referrals/collaborators/scalars do.
-	const collaboratorIds = await resolveCollaboratorIds(
-		ctx,
-		payload.collaboratorAdminIds,
-		c.ownerAdminId,
-	);
-	const { structure, fileIds } = await buildStructure(
-		ctx,
-		payload.personas,
-		payload.referrals,
-		payload.roots,
-	);
+	const { accessCode, duration, collaboratorIds, structure, fileIds } =
+		await resolveCasePayload(ctx, payload, c.ownerAdminId, caseId);
 
 	await ctx.db.patch(caseId, {
 		name: payload.name,

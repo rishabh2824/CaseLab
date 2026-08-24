@@ -1,19 +1,29 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
-import { onMount, untrack } from "svelte";
+import { onDestroy, onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import SimulationClock from "$lib/components/SimulationClock.svelte";
-import { MAX_MESSAGE_WORDS } from "$lib/constants.js";
 import { downloadBlob } from "$lib/download.js";
 import { countWords, getPersonaInitials } from "$lib/format.js";
 import { session } from "$lib/session.svelte.js";
 import type { ExportRunOut } from "$lib/student/run.svelte.js";
 import { createRunStore, exportRunRef } from "$lib/student/run.svelte.js";
+import { MAX_MESSAGE_WORDS } from "../../../../convex/schema.js";
 
 const run = createRunStore();
 
 onMount(() => {
 	run.init();
+});
+
+// Without this, run.svelte.ts's #expiryInterval (a window.setInterval) and its $effect.root
+// tree both outlive this component's unmount -- see RunStore.destroy()'s own comment for why
+// neither is torn down automatically the way SimulationClock's bare $effect is. Left running,
+// the orphaned expiry timer can fire endSimulation() against whatever run `session` (a module
+// singleton) points to by the time its original deadline arrives -- a LATER run, if the
+// student has since started a new one.
+onDestroy(() => {
+	run.destroy();
 });
 
 let inputValue = $state("");

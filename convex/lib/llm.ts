@@ -57,6 +57,28 @@ function isRetryableStatus(status: number): boolean {
 	return status === 429 || status >= 500;
 }
 
+// Shared by chat() and personaReplyStream() below -- both POST to the same endpoint with the
+// same headers/auth, and differ only in the request body (buffered vs. streamed, and which
+// model/schema) and the timeout budget. Pure extraction of that identical construction; no
+// behavior change.
+async function postChatCompletions(
+	body: unknown,
+	timeoutMs: number,
+): Promise<{ response: Response; release: () => void }> {
+	return await fetchWithTimeout(
+		`${LLM_BASE_URL}/chat/completions`,
+		{
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Authorization: `Bearer ${requireLlmKey()}`,
+			},
+			body: JSON.stringify(body),
+		},
+		timeoutMs,
+	);
+}
+
 // Its only caller is classifyHarassment, a temperature=0 classification gate -- pin routing
 // to Anthropic directly so identical inputs aren't put through whatever upstream OpenRouter
 // happens to pick for a given request.
@@ -75,16 +97,8 @@ async function chat(options: {
 	};
 	if (options.temperature !== undefined) body.temperature = options.temperature;
 
-	const { response, release } = await fetchWithTimeout(
-		`${LLM_BASE_URL}/chat/completions`,
-		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${requireLlmKey()}`,
-			},
-			body: JSON.stringify(body),
-		},
+	const { response, release } = await postChatCompletions(
+		body,
 		options.timeoutMs,
 	);
 	try {
@@ -158,16 +172,8 @@ export async function* personaReplyStream(
 		let response: Response;
 		let release: () => void;
 		try {
-			({ response, release } = await fetchWithTimeout(
-				`${LLM_BASE_URL}/chat/completions`,
-				{
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						Authorization: `Bearer ${requireLlmKey()}`,
-					},
-					body: JSON.stringify(body),
-				},
+			({ response, release } = await postChatCompletions(
+				body,
 				LLM_ATTEMPT_TIMEOUT_MS,
 			));
 		} catch (err) {

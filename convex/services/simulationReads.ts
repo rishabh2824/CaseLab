@@ -132,14 +132,9 @@ export function referredContactIds(
 	unlockedReferredIds: Iterable<string>,
 ): string[] {
 	const roots = new Set(graph.roots);
-	const seen = new Set<string>();
-	const out: string[] = [];
-	for (const id of unlockedReferredIds) {
-		if (roots.has(id) || seen.has(id)) continue;
-		seen.add(id);
-		out.push(id);
-	}
-	return out;
+	// new Set() already dedupes while preserving first-seen order -- exactly what the manual
+	// seen-set loop this replaced was hand-rolling.
+	return [...new Set(unlockedReferredIds)].filter((id) => !roots.has(id));
 }
 
 // Raw persona for any id in the graph, root or referred.

@@ -88,10 +88,6 @@ describe("admin-only surface rejects anonymous callers", () => {
 				() => t.mutation(api.api.admins.deleteWithCascade, { adminId }),
 			],
 			[
-				"uploads.generateUploadUrl",
-				() => t.mutation(api.api.uploads.generateUploadUrl, {}),
-			],
-			[
 				"uploads.generateUploadUrls",
 				() => t.mutation(api.api.uploads.generateUploadUrls, { count: 2 }),
 			],
@@ -138,10 +134,6 @@ describe("admin-only surface rejects anonymous callers", () => {
 				() => asStranger.mutation(api.api.cases.deleteCase, { caseId }),
 			],
 			["admins.listAll", () => asStranger.query(api.api.admins.listAll, {})],
-			[
-				"uploads.generateUploadUrl",
-				() => asStranger.mutation(api.api.uploads.generateUploadUrl, {}),
-			],
 		];
 		const failures: string[] = [];
 		for (const [name, call] of calls) {

@@ -85,7 +85,6 @@ Sonnet call that decides the referral and file unlock and generates the reply.
 
 
 **File uploads (two-phase, direct-to-Convex-storage).** The browser calls
-`generateUploadUrl` (or the batched `generateUploadUrls`) to get a
-short-lived upload URL, then `POST`s the file straight to Convex storage
-from the browser. Only the resulting `storageId` is submitted with the
-case/persona data.
+`generateUploadUrls` to get a batch of short-lived upload URLs, then `POST`s
+each file straight to Convex storage from the browser. Only the resulting
+`storageId`s are submitted with the case/persona data.

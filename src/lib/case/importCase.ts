@@ -133,12 +133,7 @@ type FlatGraph = {
 // access from here on.
 function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
 	const { personaOrder, personaById, roots, edges } = graph;
-	const edgesFrom = new Map<string, RawEdge[]>();
-	for (const edge of edges) {
-		const bucket = edgesFrom.get(edge.fromId) ?? [];
-		bucket.push(edge);
-		edgesFrom.set(edge.fromId, bucket);
-	}
+	const edgesFrom = Map.groupBy(edges, (edge) => edge.fromId);
 
 	// Pass 1 — 3-color DFS over every persona (not just roots), so a cycle with
 	// no root connection at all still gets caught. Same approach as the
@@ -174,20 +169,15 @@ function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
 	// marked "Referred" with nothing pointing to it, or reachable only through
 	// an edge pass 1 just dropped, is unreachable here even though pass 1
 	// visited it.
-	const edgesFromAccepted = new Map<string, string[]>();
-	for (const edge of acceptedEdges) {
-		const bucket = edgesFromAccepted.get(edge.fromId) ?? [];
-		bucket.push(edge.toId);
-		edgesFromAccepted.set(edge.fromId, bucket);
-	}
+	const edgesFromAccepted = Map.groupBy(acceptedEdges, (edge) => edge.fromId);
 	const reachable = new Set<string>(roots);
 	const queue = [...roots];
 	while (queue.length > 0) {
 		const id = queue.shift() as string;
-		for (const nextId of edgesFromAccepted.get(id) ?? []) {
-			if (!reachable.has(nextId)) {
-				reachable.add(nextId);
-				queue.push(nextId);
+		for (const edge of edgesFromAccepted.get(id) ?? []) {
+			if (!reachable.has(edge.toId)) {
+				reachable.add(edge.toId);
+				queue.push(edge.toId);
 			}
 		}
 	}

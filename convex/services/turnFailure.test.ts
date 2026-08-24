@@ -798,12 +798,35 @@ describe("rate limiting", () => {
 		}
 	});
 
+	// simulationStart is sharded (10 shards -- see lib/rateLimits.ts's own comment) so a class
+	// of students all starting at once doesn't serialize behind one row. That trades away an
+	// exact global count: which call is "the" one that first sees an empty bucket depends on
+	// which of the 10 shards it happens to sample, so a burst can start rejecting a little
+	// before, or keep succeeding a little past, the nominal 200-token capacity. These tests
+	// drive a burst well past that nominal capacity instead of asserting the literal 200th call
+	// is the exact boundary -- since nothing here advances the clock (no refill), 300 attempts
+	// against a 200-token bucket split 10 ways drives every shard negative, not just the first
+	// one a lopsided draw happens to hit.
+	const SIMULATION_START_BURST = 300;
+
+	async function driveSimulationStartToExhaustion(
+		t: T,
+		accessCode: string,
+	): Promise<void> {
+		for (let i = 0; i < SIMULATION_START_BURST; i++) {
+			try {
+				await t.run((ctx) => startSimulation(ctx, accessCode));
+			} catch {
+				// Expected once (a shard of) the bucket is empty -- keep going so the whole
+				// burst drives every shard negative, not just whichever one got hit first.
+			}
+		}
+	}
+
 	it("throttles a burst of simulation starts against one access code", async () => {
 		const t = newTestConvex();
 		await startRun(t);
-		for (let i = 0; i < 199; i++) {
-			await t.run((ctx) => startSimulation(ctx, "sterling"));
-		}
+		await driveSimulationStartToExhaustion(t, "sterling");
 		await expect(
 			t.run((ctx) => startSimulation(ctx, "sterling")),
 		).rejects.toThrow(/Too many simulations/);
@@ -813,9 +836,7 @@ describe("rate limiting", () => {
 	it("cannot be dodged by varying the access code's casing or padding", async () => {
 		const t = newTestConvex();
 		await startRun(t);
-		for (let i = 0; i < 199; i++) {
-			await t.run((ctx) => startSimulation(ctx, "sterling"));
-		}
+		await driveSimulationStartToExhaustion(t, "sterling");
 		await expect(
 			t.run((ctx) => startSimulation(ctx, "  STERLING  ")),
 		).rejects.toThrow(/Too many simulations/);

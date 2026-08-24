@@ -27,6 +27,7 @@ import {
 	NONSENSE_THRESHOLD,
 	personaAvailability,
 } from "../lib/turnState";
+import { MAX_MESSAGE_WORDS } from "../schema";
 import {
 	flattenPersonas,
 	graphPersonaById,
@@ -35,12 +36,28 @@ import {
 } from "./simulationReads";
 import { loadLiveRun } from "./simulations";
 
-const MESSAGE_WORDS = 50;
-
 // The frontend (run.svelte.ts) matches on the plain error message string, same as every
 // other rejection here (rate limited, persona unavailable, etc.), so there's no structured
 // {message, code} shape to preserve.
 const CONVERSATION_ENDED_MESSAGE = "This conversation has ended.";
+
+// Shared by startTurn, applyBoundary, and applyDecisions below -- the only 5-field runMessages
+// insert this file ever does, whether the row is the student's own message or one of the
+// persona's replies (canned boundary or LLM-generated).
+async function appendMessage(
+	ctx: MutationCtx,
+	runId: Id<"runs">,
+	personaId: string,
+	role: "user" | "assistant",
+	content: string,
+): Promise<void> {
+	await ctx.db.insert("runMessages", {
+		runId,
+		personaKey: personaId,
+		role,
+		content,
+	});
+}
 
 // Split at the boundary Convex requires: this mutation covers validation/availability-check/
 // rate-limit/appendMessage -- everything that's pure DB work and needs a transaction. The
@@ -55,9 +72,9 @@ export async function startTurn(
 	const message = rawMessage.trim();
 	if (!personaId || !message)
 		throw new Error("personaId and message are required.");
-	if (message.split(/\s+/).filter(Boolean).length > MESSAGE_WORDS) {
+	if (message.split(/\s+/).filter(Boolean).length > MAX_MESSAGE_WORDS) {
 		throw new Error(
-			`Message is too long (${MESSAGE_WORDS} words max). Please shorten it and try again.`,
+			`Message is too long (${MAX_MESSAGE_WORDS} words max). Please shorten it and try again.`,
 		);
 	}
 
@@ -95,13 +112,15 @@ export async function startTurn(
 	// own comment for why.
 	const streamId = await claimStreamingSlot(ctx, runId, personaId);
 
-	await ctx.db.insert("runMessages", {
-		runId,
-		personaKey: personaId,
-		role: "user",
-		content: message,
-	});
-	await ctx.db.patch(runId, { activePersonaKey: personaId });
+	await appendMessage(ctx, runId, personaId, "user", message);
+	// Skipped when it's already this persona -- the common case, since a student's next
+	// message is usually to whoever they're already talking to. A patch invalidates the
+	// getSimulationState subscription (services/simulations.ts) regardless of whether any
+	// field actually changed, re-pushing the full run state (contacts, photo URLs, shared
+	// files) to that student on every message otherwise.
+	if (run.activePersonaKey !== personaId) {
+		await ctx.db.patch(runId, { activePersonaKey: personaId });
+	}
 
 	await ctx.scheduler.runAfter(0, internal.api.turn.runTurn, {
 		runId,
@@ -238,23 +257,33 @@ export async function getTurnContext(
 	// identity for a file (also what resolveFileRefs in services/files.ts uses), which keys
 	// `sharedFiles` consistently with what applyDecisions writes. An entry whose storage object
 	// has no `files` row at all is simply never offered, since nothing downstream could ever
-	// record the share.
-	const pendingFiles: PendingFile[] = [];
-	for (const entry of persona.files) {
-		const file = entry.file;
-		if (!file || !(entry.share_conditions ?? "").trim()) continue;
-		const row = await ctx.db
-			.query("files")
-			.withIndex("by_storage_id", (q) => q.eq("storageId", file.storage_id))
-			.first();
-		if (!row || run.sharedFiles.includes(row._id)) continue;
-		pendingFiles.push({
-			fileId: row._id,
-			fileName: file.file_name || "file",
-			shareConditions: entry.share_conditions ?? null,
-			perceivedContents: entry.perceived_contents ?? null,
-		});
-	}
+	// record the share. Looked up concurrently (Promise.all), not one `await` per entry in a
+	// loop -- same pattern services/simulations.ts's hydratePersona/toSharedFileOut callers
+	// already use for their own per-item db lookups.
+	const pendingFiles: PendingFile[] = (
+		await Promise.all(
+			persona.files
+				.filter(
+					(entry) => entry.file && (entry.share_conditions ?? "").trim(),
+				)
+				.map(async (entry) => {
+					const file = entry.file!;
+					const row = await ctx.db
+						.query("files")
+						.withIndex("by_storage_id", (q) =>
+							q.eq("storageId", file.storage_id),
+						)
+						.first();
+					if (!row || run.sharedFiles.includes(row._id)) return null;
+					return {
+						fileId: row._id,
+						fileName: file.file_name || "file",
+						shareConditions: entry.share_conditions ?? null,
+						perceivedContents: entry.perceived_contents ?? null,
+					};
+				}),
+		)
+	).filter((f): f is PendingFile => f !== null);
 
 	// Bounded to RECENT_HISTORY_LIMIT -- the widest window anything downstream actually looks
 	// at (llm.ts's classifier transcript and the persona-reply prompt below both use the same
@@ -315,12 +344,7 @@ export async function applyBoundary(
 	});
 
 	const reply = boundaryReply(personaName, ended);
-	await ctx.db.insert("runMessages", {
-		runId,
-		personaKey: personaId,
-		role: "assistant",
-		content: reply,
-	});
+	await appendMessage(ctx, runId, personaId, "assistant", reply);
 	// A boundary reply is generated instantly, without ever streaming through
 	// writeStreamingPreview -- clear the row claimStreamingSlot set to "streaming" anyway, so
 	// every terminal path (this one and applyDecisions below) leaves it consistent.
@@ -375,12 +399,7 @@ export async function applyDecisions(
 		unlockedAt,
 		sharedFiles: [...sharedFileIds],
 	});
-	await ctx.db.insert("runMessages", {
-		runId,
-		personaKey: personaId,
-		role: "assistant",
-		content: reply,
-	});
+	await appendMessage(ctx, runId, personaId, "assistant", reply);
 	await clearStreamingPreview(ctx, streamId);
 }
 

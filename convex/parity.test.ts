@@ -19,7 +19,6 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { isSelectableCollaborator } from "../src/lib/case/draft.js";
 import caseInfoFieldsSource from "../src/lib/components/CaseInfoFields.svelte?raw";
-import { MAX_MESSAGE_WORDS } from "../src/lib/constants.js";
 import { countWords } from "../src/lib/format.js";
 import { personaAvailability as clientAvailability } from "../src/lib/student/availability.js";
 import { personaAvailability as serverAvailability } from "./lib/turnState.js";
@@ -104,16 +103,14 @@ describe("persona availability: src/lib/student/availability.ts vs convex/lib/tu
 	});
 });
 
-describe("message word limit: src/lib/constants.ts vs convex/services/turn.ts", () => {
-	it("uses the same number on both sides", () => {
-		const serverLimit = Number(
-			requireMatch(
-				turnSource,
-				/const MESSAGE_WORDS = (\d+);/,
-				"MESSAGE_WORDS in convex/services/turn.ts",
-			),
-		);
-		expect(MAX_MESSAGE_WORDS).toBe(serverLimit);
+describe("message word limit: convex/schema.ts's MAX_MESSAGE_WORDS", () => {
+	// MAX_MESSAGE_WORDS is single-sourced in convex/schema.ts (see RUN_LIFETIME_MINUTES's
+	// comment there for why) and imported by both the student composer and startTurn, so
+	// there's no second literal left to drift -- only that turn.ts keeps referencing the
+	// shared constant rather than a hard-coded 50 that could silently diverge from it.
+	it("validates the word count against MAX_MESSAGE_WORDS, not a hard-coded literal", () => {
+		expect(turnSource).toContain('from "../schema"');
+		expect(turnSource).toContain(".length > MAX_MESSAGE_WORDS");
 	});
 
 	// The client disables Send using countWords(); the server rejects using an inline

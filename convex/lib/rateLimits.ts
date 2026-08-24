@@ -9,7 +9,21 @@ import type { MutationCtx } from "../_generated/server";
 // boundary-straddling burst is possible.
 const rateLimiter = new RateLimiter(components.rateLimiter, {
 	message: { kind: "token bucket", rate: 15, period: MINUTE },
-	simulationStart: { kind: "token bucket", rate: 200, period: MINUTE },
+	// Sharded, unlike message above: message is keyed by runId, one student's own turn-taking,
+	// so there's no cross-student contention to shard away. simulationStart is keyed by access
+	// code (see simulationLimit below) -- every student in a case shares that one key, so an
+	// instructor's "everyone start now" sends dozens of concurrent mutations at the same
+	// underlying row. The component defaults to shards: 1 (a single row per key) when unset;
+	// splitting into 10 spreads that write contention across 10 rows instead of serializing the
+	// whole class behind one, at the cost of the bucket's capacity/refill being approximate
+	// (spread across shards) rather than exact -- an acceptable tradeoff for a limit whose job
+	// is "stop abuse," not enforce a precise global count.
+	simulationStart: {
+		kind: "token bucket",
+		rate: 200,
+		period: MINUTE,
+		shards: 10,
+	},
 });
 
 // Called by services/turn.ts's startTurn.

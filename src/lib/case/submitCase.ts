@@ -135,16 +135,11 @@ function buildPersonaPayload(
 		}
 		return { ...entry, file: entry.file };
 	});
-	return {
-		id: persona.id,
-		name: persona.name,
-		role: persona.role,
-		profile_photo,
-		known_facts: persona.known_facts,
-		personality_traits: persona.personality_traits,
-		availability_minutes: persona.availability_minutes,
-		files,
-	};
+	// Persona and PersonaPayload agree field-for-field except profile_photo/files (see
+	// types.ts's Persona = Omit<PersonaPayload, ...> & {...}), so spreading persona and
+	// overriding just the two resolved fields can't silently drop a field the way a hand-listed
+	// object literal could if PersonaPayload ever grew one.
+	return { ...persona, profile_photo, files };
 }
 
 export type SubmitCaseInput = {
@@ -188,12 +183,9 @@ export async function submitCase({
 	const personasPayload = normalizedPersonas.map((persona, personaIndex) =>
 		buildPersonaPayload(persona, personaIndex, uploaded),
 	);
-	const referralsPayload = referrals.map((referral) => ({
-		from_id: referral.from_id,
-		to_id: referral.to_id,
-		conditions: referral.conditions,
-	}));
-
+	// referrals is already exactly ReferralEdge[] (= ReferralEdgePayload[], see types.ts) --
+	// no File-valued fields to resolve the way personas above needs, so it needs no mapping,
+	// unlike personasPayload.
 	const scalars = {
 		name: caseName.trim(),
 		brief: initialBrief.trim(),
@@ -201,7 +193,7 @@ export async function submitCase({
 		duration: simulationDurationMinutes ?? undefined,
 		accessCode: accessCode.trim(),
 		personas: personasPayload,
-		referrals: referralsPayload,
+		referrals,
 		roots,
 		collaboratorAdminIds,
 	};
