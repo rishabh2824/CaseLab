@@ -1,19 +1,14 @@
-import { getConvexUrl } from "@convex-dev/static-hosting";
 import { PUBLIC_CONVEX_URL } from "$env/static/public";
 
-// The static build gets uploaded to every Convex deployment (dev, prod, ...) via the
-// same `npm run build`, so a build-time-baked PUBLIC_CONVEX_URL would point every
-// deployment's frontend at whichever backend happened to be configured locally when
-// that build ran -- silently wrong on every deployment except the one that matches.
-// When served from Convex's own static hosting (a `*.convex.site` origin), derive the
-// backend URL from the page's own hostname instead. Falls back to PUBLIC_CONVEX_URL for
-// local dev (`vite dev` on localhost), where there's no `.convex.site` origin to derive from.
+// `npx @convex-dev/static-hosting deploy` builds the frontend itself and injects
+// VITE_CONVEX_URL from the *target* deployment's own CONVEX_CLOUD_URL (see its
+// runFrontendBuild), so this is always correct for whichever deployment -- dev,
+// prod, or prod behind a custom domain -- is actually being deployed to. A
+// hostname-derived or hand-set PUBLIC_CONVEX_URL can't make that distinction:
+// it's shared across every deployment and only matches whichever one happened
+// to be configured locally, and it breaks entirely once prod is served from a
+// custom domain instead of a `*.convex.site` origin. Falls back to
+// PUBLIC_CONVEX_URL for local dev (`vite dev`), where the deploy CLI never runs.
 export function resolveConvexUrl(): string {
-	if (
-		typeof window !== "undefined" &&
-		window.location.hostname.endsWith(".convex.site")
-	) {
-		return getConvexUrl();
-	}
-	return PUBLIC_CONVEX_URL;
+	return import.meta.env.VITE_CONVEX_URL ?? PUBLIC_CONVEX_URL;
 }

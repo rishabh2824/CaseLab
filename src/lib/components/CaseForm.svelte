@@ -126,6 +126,8 @@ function markSaved(): void {
 
 // A brand-new case (no source to load) has nothing to wait on — the empty
 // form itself is the baseline, captured once at setup.
+// svelte-ignore state_referenced_locally -- intentional: sourceCaseId is only
+// checked once here, not tracked reactively.
 if (!sourceCaseId) markSaved();
 
 const scalarsDirty = $derived.by(() => {
