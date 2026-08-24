@@ -1,7 +1,6 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
 import type { Component, Snippet } from "svelte";
-import { browser } from "$app/environment";
 import { goto } from "$app/navigation";
 import { session } from "$lib/session.svelte.js";
 import type { StartedRun } from "$lib/student/run.svelte.js";
@@ -10,25 +9,13 @@ import { startSimulationRef } from "$lib/student/run.svelte.js";
 // The Convex/Google-auth stack (AdminAuth.svelte and everything it pulls in) is loaded
 // on demand instead of imported here, so the vast majority of visitors -- students, who
 // never touch admin login -- don't pay for that JS or have it silently restore a
-// previous admin session from storage just by opening this page.
+// previous admin session from storage just by opening this page. Google's OAuth
+// redirect never lands back on "/" (AdminAuth.svelte sends it straight to /admin), so
+// the only load path for this component is the explicit click below.
 let AdminAuth = $state<Component<{
 	class?: string;
 	children?: Snippet;
-	autoSignIn?: boolean;
 }> | null>(null);
-
-// A `code` query param means Google just redirected back here mid sign-in (the user
-// already clicked "Admin Login" once, before navigating away) -- that page load has to
-// load AdminAuth itself to complete the exchange, since there's no button click on
-// *this* load to hang the import off of. Any other load (a plain tab open, or a reload)
-// leaves AdminAuth unloaded until an explicit click.
-const hasOAuthCode =
-	browser && new URLSearchParams(window.location.search).has("code");
-if (hasOAuthCode) {
-	import("$lib/components/AdminAuth.svelte").then((mod) => {
-		AdminAuth = mod.default;
-	});
-}
 
 async function loadAdminAuth(): Promise<void> {
 	const mod = await import("$lib/components/AdminAuth.svelte");
@@ -146,7 +133,6 @@ function handleSubmit(event: SubmitEvent): void {
 		{#if AdminAuth}
 			<AdminAuth
 				class="rounded-full border-2 border-brand bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-stone shadow-sm backdrop-blur transition hover:bg-brand hover:text-ink"
-				autoSignIn={!hasOAuthCode}
 			>
 				Admin Login
 			</AdminAuth>

@@ -17,20 +17,16 @@ import { session } from "$lib/session.svelte.js";
 type Props = {
 	class?: string;
 	children?: Snippet;
-	// True only when this component was mounted by an explicit "Admin Login" click
-	// (as opposed to the page loading with an in-flight Google OAuth `code` param in
-	// the URL) -- see +page.svelte for why the two mount paths need to behave
-	// differently here.
-	autoSignIn?: boolean;
 };
 
-let { class: className = "", children, autoSignIn = false }: Props = $props();
+let { class: className = "", children }: Props = $props();
 
 // convex-auth-svelte installs its own `beforeunload` listener (inside setupConvexAuth
 // below) that shows the browser's native "leave site?" prompt while it's mid-refresh of
 // the auth token -- meant to protect against losing unsaved work, but it also fires for
-// our OWN deliberate hard navigation to /admin once sign-in succeeds (see
-// navigateToAdmin), since that's a real page unload too. Registering this listener here,
+// our OWN deliberate navigation to Google (see handleSignIn) and to /admin once an
+// already-signed-in visitor lands here (see navigateToAdmin), since both are real page
+// unloads too. Registering this listener here,
 // before setupConvexAuth runs, makes it fire first (same-target listeners run in
 // registration order); stopImmediatePropagation then prevents the library's listener
 // from running at all for navigations we know are intentional, without having to guess
@@ -50,10 +46,9 @@ const viewerRef = makeFunctionReference<"query">("api/admins:viewer");
 // re-authenticates once it does. convex-svelte's own setupAuth() is built exactly for
 // this: it reactively re-calls `client.setAuth` whenever the provider's auth state
 // changes, and exposes the result (used below as `auth`) as an isLoading/isAuthenticated
-// pair already debounced against the transient states its own doc comments call out --
-// e.g. the exact "goto() right after signIn, before the effect catches up" case this
-// component's own OAuth-return flow hits. `authProvider` still holds signIn/signOut,
-// which setupAuth's pared-down return doesn't carry.
+// pair already debounced against the transient states its own doc comments call out.
+// `authProvider` still holds signIn/signOut, which setupAuth's pared-down return
+// doesn't carry.
 const authProvider = useAuthProvider();
 setupAuth(() => authProvider);
 const auth = useAuth();
@@ -65,13 +60,15 @@ let isPending = $state(false);
 async function handleSignIn(): Promise<void> {
 	error = "";
 	isPending = true;
+	// Set before awaiting, not after inspecting the resolved result: convex-auth-svelte's
+	// signIn() performs `window.location.href = ...` itself, before this call returns --
+	// checking `result.redirect` afterward would be too late to suppress the library's
+	// own beforeunload listener for that navigation.
+	intentionalNavigation = true;
 	try {
-		const result = await authProvider.signIn("google");
-		if (result.redirect) {
-			intentionalNavigation = true;
-			window.location.href = result.redirect.toString();
-		}
+		await authProvider.signIn("google", { redirectTo: "/admin" });
 	} catch (err) {
+		intentionalNavigation = false;
 		error = err instanceof Error ? err.message : "Sign-in failed. Try again.";
 	} finally {
 		isPending = false;
@@ -88,6 +85,10 @@ async function handleSignOut(): Promise<void> {
 // none of it matters anymore once we've committed to leaving the page.
 let redirecting = $state(false);
 
+// Google's OAuth redirect now lands directly on /admin (see the redirectTo in
+// handleSignIn), never back here -- so the only way this component ever sees an
+// authenticated admin is a visitor who already had a valid token in storage and clicked
+// "Admin Login" anyway. In that case, skip signing in again and just get them to /admin.
 $effect(() => {
 	if (redirecting || viewer.isLoading) return;
 	if (viewer.data) {
@@ -101,48 +102,27 @@ $effect(() => {
 	}
 });
 
-async function navigateToAdmin(): Promise<void> {
+function navigateToAdmin(): void {
 	redirecting = true;
 	intentionalNavigation = true;
 
-	// Wait for convex-auth-svelte to finish stripping the `?code=` param it consumed
-	// (it does so with a history replace, asynchronously, on the load Google redirects
-	// back to). Navigating while that's still pending races it: a history replace
-	// landing on top of an in-flight navigation cancels the navigation in Chrome, which
-	// bounces back to "/" and remounts this component before the retry finally sticks.
-	// Firefox happens to win the race, which is why it was only visible in Chrome.
-	for (
-		let i = 0;
-		i < 100 && new URLSearchParams(window.location.search).has("code");
-		i++
-	) {
-		await new Promise((resolve) => setTimeout(resolve, 10));
-	}
-
-	// A hard navigation, not `goto()`. This fires right after hydrating from a full
-	// browser navigation (Google's OAuth redirect landing back on "/"), and SvelteKit's
-	// client router doing a same-tick dynamic import of /admin's chunk right then is
-	// unreliable -- it intermittently fails (observed in both Firefox and Chrome,
-	// Firefox surfacing it as a visible error page) and falls back to SvelteKit's own
-	// stale-chunk hard-reload recovery anyway. Since /admin (ssr=false) always renders
-	// correctly from a real page load, going there directly sidesteps the race instead
-	// of relying on that fallback. `replace`, not `href`, so Back from the admin panel
-	// doesn't land on this mid-sign-in landing page.
+	// A hard navigation, not `goto()`. This fires right after this component's own
+	// fresh hydration, and SvelteKit's client router doing a same-tick dynamic import
+	// of /admin's chunk right then is unreliable -- it intermittently fails (observed
+	// in both Firefox and Chrome, Firefox surfacing it as a visible error page) and
+	// falls back to SvelteKit's own stale-chunk hard-reload recovery anyway. Since
+	// /admin (ssr=false) always renders correctly from a real page load, going there
+	// directly sidesteps the race instead of relying on that fallback.
 	window.location.replace("/admin");
 }
 
-// This component only ever mounts as a direct result of a click (or of returning from
-// the Google redirect that click caused), so completing that same gesture with the
-// actual Google sign-in call here -- rather than requiring a second click on whatever
-// this renders as -- is what makes "click once" true end to end.
+// This component only ever mounts as a direct result of an "Admin Login" click, so
+// completing that same gesture with the actual Google sign-in call here -- rather than
+// requiring a second click on whatever this renders as -- is what makes "click once"
+// true end to end.
 let signInTriggered = false;
 $effect(() => {
-	if (
-		autoSignIn &&
-		!signInTriggered &&
-		!auth.isLoading &&
-		!auth.isAuthenticated
-	) {
+	if (!signInTriggered && !auth.isLoading && !auth.isAuthenticated) {
 		signInTriggered = true;
 		handleSignIn();
 	}

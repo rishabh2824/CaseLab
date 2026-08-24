@@ -1,18 +1,19 @@
 <script lang="ts">
 import House from "@lucide/svelte/icons/house";
 import LogOut from "@lucide/svelte/icons/log-out";
-import { useAuth } from "@mmailaender/convex-auth-svelte/svelte";
 import { goto } from "$app/navigation";
 import { session } from "$lib/session.svelte.js";
 import { unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import UnsavedChangesModal from "./UnsavedChangesModal.svelte";
 
-// Available because admin/+layout.svelte (an ancestor of every route this component
-// renders on) calls setupConvexAuth.
-const auth = useAuth();
+// Passed down from admin/+layout.svelte instead of read via convex-auth-svelte's own
+// useAuth() -- that context key ("$$_convexAuth") is shared with, and overwritten by,
+// convex-svelte's setupAuth(), which the layout also calls for its own auth gating.
+type Props = { signOut: () => Promise<void> };
+let { signOut }: Props = $props();
 
 async function signOutAdmin(): Promise<void> {
-	await auth.signOut();
+	await signOut();
 	session.clearAdmin();
 	await goto("/");
 }

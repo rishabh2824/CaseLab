@@ -11,8 +11,9 @@ import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
 // Sterling Industries -- hardcoded until real case selection is built. Update this if the
-// dev deployment is ever reseeded.
-const DEMO_CASE_ID = "k5787w72emrc30bkhxh03e85p98c023g";
+// prod deployment is ever reseeded (the Neon-to-Convex migration already broke this once --
+// Convex mints its own document ids on insert, so they don't survive a re-import).
+const DEMO_CASE_ID = "k574qchhh4hgtdx1rv6ypbpgmx8ckrm4";
 
 const caseRef = makeFunctionReference<"query">("api/cases:get");
 const caseQuery = useQuery(caseRef, { caseId: DEMO_CASE_ID });

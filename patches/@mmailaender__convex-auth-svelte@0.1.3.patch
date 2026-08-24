@@ -11,10 +11,27 @@ index b2d640b28f1353cc88685285c12ecfb9f0ec2e9e..c0a666618dcb49ecfcaed608a0ab9a25
  //# sourceMappingURL=client.svelte.d.ts.map
 \ No newline at end of file
 diff --git a/dist/svelte/client.svelte.js b/dist/svelte/client.svelte.js
-index 5ed613c856a238040e14a6d54139711f24dfbe2e..dd0284d3d310a6cc866a241a7e6964cd0d04d170 100644
+index 5ed613c856a238040e14a6d54139711f24dfbe2e..6ffc80156d6ecf7c3f0fc70799d0b2294d5741f2 100644
 --- a/dist/svelte/client.svelte.js
 +++ b/dist/svelte/client.svelte.js
-@@ -180,29 +180,6 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+@@ -23,7 +23,15 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+     const state = $state({
+         token: getServerState?.()._state.token ?? null,
+         refreshToken: getServerState?.()._state.refreshToken ?? null,
+-        isLoading: getServerState?.()._state.token === null,
++        // `getServerState?.()._state.token === null` was `undefined === null` -> `false`
++        // whenever getServerState is absent (every non-SvelteKit-server caller, i.e. every
++        // caller of the plain `/svelte` entry point this project uses) -- isLoading started
++        // false before the "load tokens from storage" and "check URL for code" effects below
++        // had run at all, not just before they'd finished. Consumers gating on isLoading
++        // (convex-svelte's setupAuth, and this project's own auto-sign-in/redirect effects)
++        // would trust that false reading immediately, racing ahead of a same-tab OAuth code
++        // exchange or a stored-token reload that hadn't started yet, let alone resolved.
++        isLoading: getServerState ? getServerState()._state.token === null : true,
+         isRefreshingToken: false,
+     });
+     const isAuthenticated = $derived(state.token !== null);
+@@ -180,29 +188,6 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
          // Check for code in URL
          void checkUrlForCode();
      });
@@ -44,7 +61,7 @@ index 5ed613c856a238040e14a6d54139711f24dfbe2e..dd0284d3d310a6cc866a241a7e6964cd
      // Prevent accidental navigation away from the page during token refresh.
      $effect(() => {
          if (typeof window === "undefined") {
-@@ -259,6 +236,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+@@ -259,6 +244,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
       * @return {Promise<string | null>} The access token, or null if none is
       *   available.
       */
@@ -55,7 +72,7 @@ index 5ed613c856a238040e14a6d54139711f24dfbe2e..dd0284d3d310a6cc866a241a7e6964cd
      const fetchAccessToken = async (options) => {
          const { forceRefreshToken = false } = options ?? {};
          logVerbose(`fetchAccessToken forceRefreshToken=${forceRefreshToken}`);
-@@ -267,17 +248,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+@@ -267,17 +256,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
              logVerbose(`returning existing token, is null: ${state.token === null}`);
              return state.token;
          }
@@ -77,7 +94,7 @@ index 5ed613c856a238040e14a6d54139711f24dfbe2e..dd0284d3d310a6cc866a241a7e6964cd
              try {
                  state.isRefreshingToken = true;
                  // Get the refresh token from storage
-@@ -312,8 +286,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
+@@ -312,8 +294,10 @@ export function createAuthClient({ client, getServerState, onChange, storage, st
              }
              finally {
                  state.isRefreshingToken = false;
@@ -89,7 +106,7 @@ index 5ed613c856a238040e14a6d54139711f24dfbe2e..dd0284d3d310a6cc866a241a7e6964cd
      };
      const signIn = async (provider, params) => {
          logVerbose(`signIn provider=${provider}`);
-@@ -468,66 +444,6 @@ function useNamespacedStorage(persistentStorage, namespace) {
+@@ -468,66 +452,6 @@ function useNamespacedStorage(persistentStorage, namespace) {
      };
      return { storageSet, storageGet, storageRemove };
  }
