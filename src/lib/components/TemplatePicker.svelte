@@ -6,7 +6,7 @@ import { goto } from "$app/navigation";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 
 // String-based references (not generated `api` imports): the convex/ project lives at
-// the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
+// the repo root, outside this Vite project's root -- see admin/+layout.svelte for why.
 const listAllRef = makeFunctionReference<"query">("api/cases:listAll");
 const deleteCaseRef = makeFunctionReference<"mutation">("api/cases:deleteCase");
 

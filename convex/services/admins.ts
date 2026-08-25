@@ -1,6 +1,6 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { authComponent } from "../auth";
 import type { AdminRole } from "../schema";
 import { syncCaseFiles } from "./files";
 
@@ -34,9 +34,9 @@ export async function getAdminByEmail(
 export async function requireCurrentAdmin(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<Doc<"admins">> {
-	const userId = await getAuthUserId(ctx);
-	if (!userId) throw new Error("Not signed in.");
-	const user = await ctx.db.get(userId);
+	// safeGetAuthUser, not getAuthUser -- the latter throws its own "Unauthenticated" for a
+	// caller with no identity at all, which would shadow the message below.
+	const user = await authComponent.safeGetAuthUser(ctx);
 	if (!user?.email) throw new Error("Not signed in.");
 	const admin = await getAdminByEmail(ctx, user.email);
 	if (!admin) throw new Error("Your account is not authorized.");

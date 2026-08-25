@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
 
+import betterAuthTest from "@convex-dev/better-auth/test";
 import rateLimiter from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
+import { components } from "./_generated/api";
 import schema from "./schema";
 
 // Called from every *.test.ts file to get a fresh in-memory backend. Lives at the convex/
@@ -17,7 +19,57 @@ export function newTestConvex() {
 	// component's own schema/functions on its own, so the component's own test helper
 	// registers them the same way a real deployment's build step would.
 	rateLimiter.register(t);
+	// requireCurrentAdmin/viewer (services/admins.ts) resolve the signed-in identity via
+	// authComponent.safeGetAuthUser, which looks up real rows in the betterAuth component's
+	// own session/user tables -- same registration story as rateLimiter above.
+	betterAuthTest.register(t);
 	return t;
+}
+
+// Seeds betterAuth `user` and `session` rows directly via the component's generic adapter
+// mutation, bypassing Better Auth's own request-handling layer (and so auth.ts's
+// databaseHooks.user.create.before) entirely -- this is test setup standing in for "Google
+// sign-in already happened", not an exercise of the sign-in gate itself. Both rows are
+// required: authComponent.safeGetAuthUser resolves the caller in two steps, session by
+// `identity.sessionId` (and not expired) THEN user by `identity.subject` -- a mocked
+// identity missing either leaves that lookup with nothing to find. Returns a `t` handle
+// whose identity matches both rows, the way a real signed-in request would. Whether the
+// email also has an `admins` row (and so is actually authorized) is entirely up to the
+// caller -- this only seeds the identity side.
+export async function withGoogleIdentity(
+	t: ReturnType<typeof newTestConvex>,
+	email: string,
+) {
+	const now = Date.now();
+	const user = await t.run((ctx) =>
+		ctx.runMutation(components.betterAuth.adapter.create, {
+			input: {
+				model: "user",
+				data: {
+					name: email,
+					email,
+					emailVerified: true,
+					createdAt: now,
+					updatedAt: now,
+				},
+			},
+		}),
+	);
+	const session = await t.run((ctx) =>
+		ctx.runMutation(components.betterAuth.adapter.create, {
+			input: {
+				model: "session",
+				data: {
+					token: `test-session-${Math.random().toString(36).slice(2)}`,
+					userId: user._id,
+					createdAt: now,
+					updatedAt: now,
+					expiresAt: now + 60 * 60 * 1000,
+				},
+			},
+		}),
+	);
+	return t.withIdentity({ subject: user._id, sessionId: session._id });
 }
 
 // A signed-in admin's `t` handle plus the ids convex-test needs to look them up again.
@@ -35,15 +87,21 @@ export async function withAdmin(
 			role: overrides.role ?? "admin",
 		}),
 	);
-	const userId = await t.run(async (ctx) =>
-		ctx.db.insert("users", { email, name: overrides.name }),
-	);
+	const asUser = await withGoogleIdentity(t, email);
 	return {
 		adminId,
-		userId,
 		email,
-		asUser: t.withIdentity({ subject: userId }),
+		asUser,
 	};
+}
+
+// A signed-in Google identity with no matching `admins` row -- the "authenticated but not
+// authorized" case exercised by requireCurrentAdmin/viewer's rejection paths.
+export async function withStranger(
+	t: ReturnType<typeof newTestConvex>,
+	email = `stranger-${Math.random().toString(36).slice(2)}@test.caselab.invalid`,
+) {
+	return withGoogleIdentity(t, email);
 }
 
 // ---------------------------------------------------------------------------

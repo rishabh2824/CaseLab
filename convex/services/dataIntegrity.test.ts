@@ -10,7 +10,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import { makeLlmFetch, newTestConvex, withAdmin } from "../test.setup";
+import {
+	makeLlmFetch,
+	newTestConvex,
+	withAdmin,
+	withGoogleIdentity,
+} from "../test.setup";
 import {
 	caseStructure,
 	fileEntry,
@@ -560,11 +565,9 @@ describe("admin email identity", () => {
 		});
 
 		// Google hands back the lower-cased address at sign-in.
-		const userId = await t.run((ctx) =>
-			ctx.db.insert("users", { email: "jane.doe@wisc.edu" }),
-		);
+		const asJane = await withGoogleIdentity(t, "jane.doe@wisc.edu");
 		await expect(
-			t.withIdentity({ subject: userId }).query(api.api.admins.viewer, {}),
+			asJane.query(api.api.admins.viewer, {}),
 		).resolves.toMatchObject({ role: "admin" });
 	});
 
@@ -596,16 +599,14 @@ describe("admin email identity", () => {
 		await t.run((ctx) =>
 			ctx.db.insert("admins", { email: "jane@wisc.edu", role: "admin" }),
 		);
-		const userId = await t.run((ctx) =>
-			ctx.db.insert("users", { email: "Jane@Wisc.Edu" }),
-		);
+		const asJane = await withGoogleIdentity(t, "Jane@Wisc.Edu");
 
 		await expect(
-			t.withIdentity({ subject: userId }).query(api.api.admins.viewer, {}),
+			asJane.query(api.api.admins.viewer, {}),
 		).resolves.toMatchObject({ email: "jane@wisc.edu", role: "admin" });
-		await expect(
-			t.withIdentity({ subject: userId }).query(api.api.cases.listAll, {}),
-		).resolves.toEqual([]);
+		await expect(asJane.query(api.api.cases.listAll, {})).resolves.toEqual(
+			[],
+		);
 	});
 
 	it("rejects a blank email outright rather than creating an unusable roster row", async () => {

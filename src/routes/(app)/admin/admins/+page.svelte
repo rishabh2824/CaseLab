@@ -6,7 +6,7 @@ import DestructiveConfirmDialog from "$lib/components/DestructiveConfirmDialog.s
 import type { AdminRole, AdminRow } from "$lib/types.js";
 
 // String-based references (not generated `api` imports): the convex/ project lives at
-// the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
+// the repo root, outside this Vite project's root -- see admin/+layout.svelte for why.
 const listAllRef = makeFunctionReference<"query">("api/admins:listAll");
 const createRef = makeFunctionReference<"mutation">("api/admins:create");
 const deleteRef = makeFunctionReference<"mutation">(

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { newTestConvex, withAdmin } from "../test.setup";
+import { newTestConvex, withAdmin, withStranger } from "../test.setup";
 
 describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 	it("rejects an unauthenticated caller", async () => {
@@ -13,11 +13,9 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 
 	it("rejects a signed-in Google user with no matching admins row", async () => {
 		const t = newTestConvex();
-		const userId = await t.run((ctx) =>
-			ctx.db.insert("users", { email: "stranger@test.caselab.invalid" }),
-		);
+		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
 		await expect(
-			t.withIdentity({ subject: userId }).query(api.api.admins.listAll, {}),
+			asStranger.query(api.api.admins.listAll, {}),
 		).rejects.toThrow("Your account is not authorized.");
 	});
 

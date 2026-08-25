@@ -12,3 +12,13 @@ import { PUBLIC_CONVEX_URL } from "$env/static/public";
 export function resolveConvexUrl(): string {
 	return import.meta.env.VITE_CONVEX_URL ?? PUBLIC_CONVEX_URL;
 }
+
+// Derived from resolveConvexUrl() rather than a parallel PUBLIC_CONVEX_SITE_URL/
+// VITE_CONVEX_SITE_URL env var -- the deploy CLI only ever bakes VITE_CONVEX_URL (see
+// above), so a second baked var for the .site domain would just be unset in every real
+// deployment. Every Convex deployment's cloud and site domains differ only in that
+// suffix, so this stays correct for whichever deployment resolveConvexUrl() already
+// resolved to.
+export function resolveConvexSiteUrl(): string {
+	return resolveConvexUrl().replace(/\.convex\.cloud$/, ".convex.site");
+}

@@ -33,7 +33,7 @@ import type { StreamingPreviewOut } from "../../../convex/services/turn.js";
 
 // RunStateOut/ExportSimulationOut as-is, except run_id/case.id come back de-branded to plain
 // `string`. Server-side those are Convex's Id<"runs">/Id<"cases">, but this project
-// deliberately never touches convex's generated `api` object (see AdminAuth.svelte for
+// deliberately never touches convex's generated `api` object (see admin/+layout.svelte for
 // why) -- nothing on the frontend can leverage that branding's compile-time table-matching
 // anyway, so keeping it would only mean every test fixture constructing a fake run/case id
 // needs an `as Id<...>` cast to satisfy a guarantee nothing here actually checks.

@@ -10,7 +10,7 @@ import type {
 import { normalizePersona } from "./draft.js";
 
 // String-based references (not generated `api` imports): the convex/ project lives at
-// the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
+// the repo root, outside this Vite project's root -- see admin/+layout.svelte for why.
 const generateUploadUrlsRef = makeFunctionReference<"mutation">(
 	"api/uploads:generateUploadUrls",
 );

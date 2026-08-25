@@ -17,7 +17,7 @@ import CaseInfoFields from "./CaseInfoFields.svelte";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 
 // String-based references (not generated `api` imports): the convex/ project lives at
-// the repo root, outside this Vite project's root -- see AdminAuth.svelte for why.
+// the repo root, outside this Vite project's root -- see admin/+layout.svelte for why.
 const listAllAdminsRef = makeFunctionReference<"query">("api/admins:listAll");
 // Used both to load an existing case for editing and to load one as a create-from-template
 // source -- see its comment in convex/api/cases.ts.

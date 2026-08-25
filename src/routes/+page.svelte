@@ -1,26 +1,9 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
-import type { Component, Snippet } from "svelte";
 import { goto } from "$app/navigation";
 import { session } from "$lib/session.svelte.js";
 import type { StartedRun } from "$lib/student/run.svelte.js";
 import { startSimulationRef } from "$lib/student/run.svelte.js";
-
-// The Convex/Google-auth stack (AdminAuth.svelte and everything it pulls in) is loaded
-// on demand instead of imported here, so the vast majority of visitors -- students, who
-// never touch admin login -- don't pay for that JS or have it silently restore a
-// previous admin session from storage just by opening this page. Google's OAuth
-// redirect never lands back on "/" (AdminAuth.svelte sends it straight to /admin), so
-// the only load path for this component is the explicit click below.
-let AdminAuth = $state<Component<{
-	class?: string;
-	children?: Snippet;
-}> | null>(null);
-
-async function loadAdminAuth(): Promise<void> {
-	const mod = await import("$lib/components/AdminAuth.svelte");
-	AdminAuth = mod.default;
-}
 
 let accessCode = $state("");
 let error = $state("");
@@ -130,21 +113,12 @@ function handleSubmit(event: SubmitEvent): void {
 	/>
 
 	<div class="absolute right-6 top-6 z-10 sm:right-20 sm:top-12">
-		{#if AdminAuth}
-			<AdminAuth
-				class="rounded-full border-2 border-brand bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-stone shadow-sm backdrop-blur transition hover:bg-brand hover:text-ink"
-			>
-				Admin Login
-			</AdminAuth>
-		{:else}
-			<button
-				type="button"
-				onclick={loadAdminAuth}
-				class="rounded-full border-2 border-brand bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-stone shadow-sm backdrop-blur transition hover:bg-brand hover:text-ink"
-			>
-				Admin Login
-			</button>
-		{/if}
+		<a
+			href="/admin"
+			class="rounded-full border-2 border-brand bg-white/70 px-6 py-3 font-mono text-sm uppercase tracking-[0.2em] text-stone shadow-sm backdrop-blur transition hover:bg-brand hover:text-ink"
+		>
+			Admin Login
+		</a>
 	</div>
 
 	<div class="relative z-10 w-full max-w-lg text-center">

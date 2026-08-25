@@ -26,16 +26,19 @@ export default defineConfig({
 			}
 		: undefined,
 	optimizeDeps: {
-		// AdminAuth.svelte only ever reaches these via a runtime `import()` (see
-		// +page.svelte) so students never fetch them -- but that also means Vite's
-		// dev-server dependency scanner (which only follows static imports) never
-		// discovers them at startup either. Without this, the *first* click on
-		// "Admin Login" in a dev session makes Vite discover them mid-flow and
-		// force a full page reload to re-bundle, which lands right in the middle of
-		// the Google OAuth redirect and shows up as a transient error page.
+		// admin/+layout.svelte (and everything it imports) only ever reaches these via
+		// SvelteKit's own route-level code splitting -- students on "/" never fetch them --
+		// but that also means Vite's dev-server dependency scanner (which only follows
+		// static imports from the entry point) never discovers them at startup either.
+		// Without this, the *first* navigation to "/admin" in a dev session makes Vite
+		// discover them mid-flow and force a full page reload to re-bundle, which lands
+		// right in the middle of the Google OAuth redirect and shows up as a transient
+		// error page.
 		include: [
 			"convex-svelte",
-			"@mmailaender/convex-auth-svelte/svelte",
+			"@mmailaender/convex-better-auth-svelte/svelte",
+			"better-auth/svelte",
+			"@convex-dev/better-auth/client/plugins",
 			"convex/server",
 			"convex/browser",
 		],

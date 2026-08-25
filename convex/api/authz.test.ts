@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { newTestConvex, withAdmin } from "../test.setup";
+import { newTestConvex, withAdmin, withStranger } from "../test.setup";
 import { caseStructure, personaPayload } from "../testFactories";
 
 type T = ReturnType<typeof newTestConvex>;
@@ -110,10 +110,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 
 	it("rejects every admin function for an authenticated Google user with no admins row", async () => {
 		const t = newTestConvex();
-		const userId = await t.run((ctx) =>
-			ctx.db.insert("users", { email: "stranger@test.caselab.invalid" }),
-		);
-		const asStranger = t.withIdentity({ subject: userId });
+		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
 		const adminId = await t.run((ctx) =>
 			ctx.db.insert("admins", {
 				email: "owner@test.caselab.invalid",
@@ -153,14 +150,8 @@ describe("admin-only surface rejects anonymous callers", () => {
 		const t = newTestConvex();
 		expect(await t.query(api.api.admins.viewer, {})).toBeNull();
 
-		const userId = await t.run((ctx) =>
-			ctx.db.insert("users", { email: "stranger@test.caselab.invalid" }),
-		);
-		expect(
-			await t
-				.withIdentity({ subject: userId })
-				.query(api.api.admins.viewer, {}),
-		).toBeNull();
+		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
+		expect(await asStranger.query(api.api.admins.viewer, {})).toBeNull();
 	});
 
 	// A signed-in identity whose users row was deleted (admin removed mid-session) must not

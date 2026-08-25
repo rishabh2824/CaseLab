@@ -2,18 +2,17 @@
 import House from "@lucide/svelte/icons/house";
 import LogOut from "@lucide/svelte/icons/log-out";
 import { goto } from "$app/navigation";
+import { authClient } from "$lib/auth-client.js";
 import { session } from "$lib/session.svelte.js";
 import { unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import UnsavedChangesModal from "./UnsavedChangesModal.svelte";
 
-// Passed down from admin/+layout.svelte instead of read via convex-auth-svelte's own
-// useAuth() -- that context key ("$$_convexAuth") is shared with, and overwritten by,
-// convex-svelte's setupAuth(), which the layout also calls for its own auth gating.
-type Props = { signOut: () => Promise<void> };
-let { signOut }: Props = $props();
-
 async function signOutAdmin(): Promise<void> {
-	await signOut();
+	// Not awaited: crossDomainClient clears the local session synchronously, before the
+	// sign-out request is even sent (see its `init` hook) -- waiting on the network
+	// round-trip here just risks stranding the admin on a blank /admin if that request is
+	// slow or hangs, for no benefit (the local state is already correct by this point).
+	authClient.signOut().catch(() => {});
 	session.clearAdmin();
 	await goto("/");
 }

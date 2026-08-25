@@ -1,6 +1,6 @@
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 import { query } from "../_generated/server";
+import { authComponent } from "../auth";
 import { adminQuery, superAdminMutation } from "../lib/adminFunctions";
 import { adminRole } from "../schema";
 import {
@@ -12,14 +12,12 @@ import {
 
 // The current admin's identity + role, or null if not signed in / not an admin.
 // Gates the frontend UI — the actual authorization enforcement lives in
-// auth.ts's createOrUpdateUser callback, which never lets a non-admin Google
-// account reach a signed-in state in the first place.
+// auth.ts's databaseHooks.user.create.before, which never lets a non-admin
+// Google account reach a signed-in state in the first place.
 export const viewer = query({
 	args: {},
 	handler: async (ctx) => {
-		const userId = await getAuthUserId(ctx);
-		if (!userId) return null;
-		const user = await ctx.db.get(userId);
+		const user = await authComponent.safeGetAuthUser(ctx);
 		if (!user?.email) return null;
 
 		const admin = await getAdminByEmail(ctx, user.email);

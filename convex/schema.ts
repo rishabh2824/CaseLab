@@ -1,4 +1,3 @@
-import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
@@ -31,10 +30,9 @@ const chatState = v.object({
 });
 
 export default defineSchema({
-	...authTables,
-
-	// The authorization gate — Convex Auth's `users` table (from authTables) is identity
-	// only; an authenticated Google account with no matching row here is not an admin.
+	// The authorization gate — Better Auth's own `user` table (managed in its component's
+	// separate storage, not here) is identity only; an authenticated Google account with
+	// no matching row here is not an admin.
 	admins: defineTable({
 		email: v.string(),
 		name: v.optional(v.string()),
