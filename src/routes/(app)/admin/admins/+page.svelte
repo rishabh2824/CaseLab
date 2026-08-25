@@ -2,12 +2,14 @@
 import { makeFunctionReference } from "convex/server";
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
+import { goto } from "$app/navigation";
 import DestructiveConfirmDialog from "$lib/components/DestructiveConfirmDialog.svelte";
 import type { AdminRole, AdminRow } from "$lib/types.js";
 
 // String-based references (not generated `api` imports): the convex/ project lives at
 // the repo root, outside this Vite project's root -- see admin/+layout.svelte for why.
 const listAllRef = makeFunctionReference<"query">("api/admins:listAll");
+const viewerRef = makeFunctionReference<"query">("api/admins:viewer");
 const createRef = makeFunctionReference<"mutation">("api/admins:create");
 const deleteRef = makeFunctionReference<"mutation">(
 	"api/admins:deleteWithCascade",
@@ -22,6 +24,20 @@ const adminsQuery = useQuery(listAllRef, {});
 const admins = $derived((adminsQuery.data ?? []) as AdminRow[]);
 const createAdmin = useMutation(createRef);
 const deleteAdmin = useMutation(deleteRef);
+
+// Re-subscribes to the same query admin/+layout.svelte already resolved (Convex dedupes
+// identical query+arg subscriptions, so this is free) instead of reading session.adminRole --
+// that's a plain sessionStorage-backed store the layout populates via a side-effect one tick
+// behind its own `viewer` query, and on a cold load/reload of this route directly it's still
+// null when this component first mounts (a `+page.ts` load-based redirect using it, the
+// previous approach here, fired before that side-effect had ever run, bouncing a real super
+// admin back to /admin on every hard refresh). Gating on the query itself has no such gap.
+const viewer = useQuery(viewerRef, {});
+const isSuperAdmin = $derived(viewer.data?.role === "super");
+$effect(() => {
+	if (viewer.isLoading) return;
+	if (!isSuperAdmin) goto("/admin", { replaceState: true });
+});
 
 let email = $state("");
 let name = $state("");
@@ -95,6 +111,7 @@ async function confirmDelete(): Promise<void> {
 }
 </script>
 
+{#if isSuperAdmin}
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
 	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<div class="relative z-10 mx-auto max-w-4xl">
@@ -208,6 +225,7 @@ async function confirmDelete(): Promise<void> {
 		</div>
 	</div>
 </div>
+{/if}
 
 <DestructiveConfirmDialog
 	bind:open={() => pendingDelete !== null, (isOpen) => { if (!isOpen) pendingDelete = null }}

@@ -3,7 +3,7 @@ import { ADMIN_ROLE, caseDoc, mockApi, signInAsAdmin } from "./mockApi.js";
 
 // Mirrors DemoCaseView.svelte's own hardcoded DEMO_CASE_ID -- update this alongside that
 // constant if the dev deployment is ever reseeded.
-const DEMO_CASE_ID = "k5787w72emrc30bkhxh03e85p98c023g";
+const DEMO_CASE_ID = "k574qchhh4hgtdx1rv6ypbpgmx8ckrm4";
 
 test("the demo case view renders the case read-only", async ({ page }) => {
 	await mockApi(page, {

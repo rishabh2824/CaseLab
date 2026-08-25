@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { api } from "../_generated/api";
+import { api, components } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { newTestConvex, withAdmin, withStranger } from "../test.setup";
 
@@ -164,5 +164,40 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		});
 		expect(result).toEqual({ ok: true, casesDeleted: 1, casesReassigned: 0 });
 		expect(await t.run((ctx) => ctx.db.get(liveCaseId))).toBeNull();
+	});
+
+	// requireCurrentAdmin already refuses a deleted admin via the (now-gone) `admins` row --
+	// this proves the underlying Better Auth session is actually revoked too, not just left to
+	// expire on its own JWT timer (see deleteAdminWithCascade's own comment on why that gap
+	// matters).
+	it("revokes the deleted admin's Better Auth session", async () => {
+		const t = newTestConvex();
+		const { asUser } = await withAdmin(t, { role: "super" });
+		const { adminId: ownerId, email } = await withAdmin(t, {
+			email: "owner@test.caselab.invalid",
+		});
+
+		await asUser.mutation(api.api.admins.deleteWithCascade, {
+			adminId: ownerId,
+		});
+
+		const users = await t.run((ctx) =>
+			ctx.runQuery(components.betterAuth.adapter.findMany, {
+				model: "user",
+				where: [{ field: "email", value: email }],
+				paginationOpts: { numItems: 1, cursor: null },
+			}),
+		);
+		const user = users.page[0];
+		expect(user).toBeTruthy();
+
+		const sessions = await t.run((ctx) =>
+			ctx.runQuery(components.betterAuth.adapter.findMany, {
+				model: "session",
+				where: [{ field: "userId", value: user._id }],
+				paginationOpts: { numItems: 10, cursor: null },
+			}),
+		);
+		expect(sessions.page).toHaveLength(0);
 	});
 });

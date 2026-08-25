@@ -55,6 +55,19 @@ export async function mockApi(
 ): Promise<void> {
 	const { queries = [], mutations = {}, actions = {} } = config;
 
+	// admin/+layout.svelte's auto sign-in effect calls the real Better Auth client directly
+	// (crossDomain: no SvelteKit server proxy -- see convex/auth.ts), which for an
+	// unauthenticated visit means a real POST to the dev Convex deployment's /api/auth/sign-in
+	// endpoint, and from there a real redirect toward accounts.google.com. This file's own
+	// header comment promises "no server, no database... no real WebSocket" -- a live
+	// dependency on Google OAuth and a real deployment would break that isolation and make
+	// tests flaky/slow on top of it. Aborting keeps every test hermetic: signInAsAdmin fakes
+	// the *result* of a successful sign-in (sessionStorage + a seeded viewer query) rather
+	// than driving a real flow, so a passing test never actually needs this request to
+	// succeed -- a test asserting the unauthenticated redirect attempt itself reads the
+	// request (page.waitForRequest), never a response.
+	await page.route("**/api/auth/**", (route) => route.abort());
+
 	await page.addInitScript((seed) => {
 		(window as unknown as { __e2eConvexSeed: unknown }).__e2eConvexSeed = seed;
 	}, queries);
@@ -122,12 +135,13 @@ export const ADMIN_ROLE = Object.freeze({
 	ADMIN: "admin",
 }) satisfies Record<string, AdminRole>;
 
-// admin/+layout.ts gates purely on `session.adminRole` (sessionStorage's "caseLabSession"
-// key, see src/lib/session.svelte.ts) -- it does NOT re-query Convex's api/admins:viewer on
-// every admin page load (that only happens once, during the real Google-OAuth sign-in flow
-// on the landing page, which AdminAuth.svelte mounts lazily and no E2E test here ever
-// triggers). So faking "already signed in as admin" only needs this same session key seeded
-// directly, exactly like the old REST-era harness did -- nothing Convex-specific to mock.
+// admin/+layout.svelte now gates on TWO things before it renders anything: the mocked auth
+// context's `isAuthenticated` (convexMock.svelte.ts's `setupAuth`, which reads this same
+// sessionStorage key -- see its `isE2EAdminSignedIn`) and a live `api/admins:viewer` query
+// (mocked like any other Convex query, see e2e/support/convexMock.svelte.ts's `useQuery`).
+// Both need seeding here, not just the session key alone -- an unseeded viewer query stays
+// `isLoading` forever in the mock (no real network round trip to eventually resolve it), which
+// would leave the admin shell blank even with sessionStorage faked correctly.
 export async function signInAsAdmin(
 	page: Page,
 	{
@@ -147,6 +161,25 @@ export async function signInAsAdmin(
 					startTime: null,
 				}),
 			);
+			const w = window as unknown as {
+				__e2eConvexSeed?: Array<{
+					name: string;
+					args: unknown;
+					data?: unknown;
+					error?: string;
+				}>;
+			};
+			// Appended, not assigned -- mockApi()'s own addInitScript (always called first in
+			// every spec) already set this to `[]` or a test's own seed list by the time this
+			// runs; overwriting it here would silently drop that test's other seeded queries.
+			w.__e2eConvexSeed = [
+				...(w.__e2eConvexSeed ?? []),
+				{
+					name: "api/admins:viewer",
+					args: {},
+					data: { email: adminEmail, role: adminRole },
+				},
+			];
 		},
 		[role, email] as const,
 	);

@@ -7,18 +7,23 @@
 // (see e2e/mockApi.ts) instead of a vitest mock function, since E2E runs a real bundled
 // build in a real browser with no module-mocking mechanism available.
 //
-// `@mmailaender/convex-auth-svelte` (used by admin/+layout.svelte and AdminAuth.svelte)
-// itself calls `setupConvex` (below) and reads the client back via Svelte context at the
-// hardcoded key "$$_convexClient" -- the exact string convex-svelte's own internals use --
-// so aliasing just this one package is enough to intercept it too, without needing a
-// separate mock for convex-auth-svelte itself. Its `client.setAuth()` call becomes a no-op
-// here since E2E never exercises real Google OAuth (admin sign-in is faked by seeding
-// sessionStorage directly -- see mockApi.ts's signInAsAdmin).
+// `@mmailaender/convex-better-auth-svelte` (used by admin/+layout.svelte) itself calls
+// `setupConvex`/`setupAuth` (below) and reads the client/auth context back via Svelte context
+// at the hardcoded keys "$$_convexClient"/"$$_convexAuth" -- the exact strings convex-svelte's
+// own internals use -- so aliasing just this one package is enough to intercept it too,
+// without needing a separate mock for the Better Auth adapter itself. Real Google OAuth never
+// runs in E2E; `setupAuth` below reports authenticated purely off the sessionStorage key
+// mockApi.ts's signInAsAdmin seeds, and the client's own `.setAuth()` is a no-op on top of
+// that (see its own comment further down).
 import { getFunctionName } from "convex/server";
 import { getContext, setContext } from "svelte";
 
 const CLIENT_CONTEXT_KEY = "$$_convexClient";
-const AUTH_CONTEXT_KEY = "$$_convexAuth";
+// Same string convex-svelte itself exports as `_authContextKey` -- @mmailaender/convex-
+// better-auth-svelte imports that binding directly (not just its value) from 'convex-svelte',
+// so the alias needs the same export name available too, not just a same-valued rename.
+export const _authContextKey = "$$_convexAuth";
+const AUTH_CONTEXT_KEY = _authContextKey;
 
 type QueryEntry = { data: unknown } | { error: string };
 
@@ -228,13 +233,30 @@ export function useAction(action: unknown) {
 }
 
 // Real setupAuth reactively bridges an auth provider's isLoading/isAuthenticated into
-// Convex's own backend-confirmed state. E2E never signs in through this path (AdminAuth.svelte
-// only mounts on an explicit "Admin Login" click, which no spec here triggers -- admin tests
-// fake sign-in by seeding sessionStorage directly, see mockApi.ts's signInAsAdmin), so this
-// is a fixed "not authenticated" stand-in kept only so a stray import doesn't crash if that
-// component ever does mount.
+// Convex's own backend-confirmed state. E2E never signs in through Google -- admin tests fake
+// sign-in by seeding sessionStorage directly (see mockApi.ts's signInAsAdmin) -- so this reads
+// that same key rather than driving any real auth provider. Read once at call time (mount),
+// not reactively: the seed is written by page.addInitScript before the app's own top-level
+// code runs (see this file's header comment), so it's already settled by the time
+// admin/+layout.svelte calls createSvelteAuthClient -> setupAuth, and sign-in/sign-out never
+// happen mid-test.
+function isE2EAdminSignedIn(): boolean {
+	if (typeof sessionStorage === "undefined") return false;
+	try {
+		const raw = sessionStorage.getItem("caseLabSession");
+		if (!raw) return false;
+		const parsed = JSON.parse(raw) as { adminRole?: unknown };
+		return parsed.adminRole === "super" || parsed.adminRole === "admin";
+	} catch {
+		return false;
+	}
+}
+
 export function setupAuth(_authProvider?: unknown, _options?: unknown) {
-	setContext(AUTH_CONTEXT_KEY, { isLoading: false, isAuthenticated: false });
+	setContext(AUTH_CONTEXT_KEY, {
+		isLoading: false,
+		isAuthenticated: isE2EAdminSignedIn(),
+	});
 }
 
 export function useAuth() {
@@ -243,7 +265,7 @@ export function useAuth() {
 			| { isLoading: boolean; isAuthenticated: boolean }
 			| undefined) ?? {
 			isLoading: false,
-			isAuthenticated: false,
+			isAuthenticated: isE2EAdminSignedIn(),
 		}
 	);
 }

@@ -1,3 +1,4 @@
+import { components } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { authComponent } from "../auth";
@@ -133,6 +134,39 @@ export async function deleteAdminWithCascade(
 	for (const row of collaboratingElsewhere) await ctx.db.delete(row._id);
 
 	await ctx.db.delete(adminId);
+	await revokeAdminSessions(ctx, admin.email);
 
 	return { ok: true, casesDeleted, casesReassigned };
+}
+
+// requireCurrentAdmin re-checks the `admins` table on every call, so a deleted admin is
+// already locked out of everything -- but without this, their existing Better Auth session
+// stays live for up to its own JWT expiry (15 minutes, see @convex-dev/better-auth's default
+// jwtExpirationSeconds), since a customJwt is verified cryptographically and Convex never
+// re-checks it against the session row it was minted from. Deleting the `session` rows here
+// makes authComponent.safeGetAuthUser's own re-check of the *session* (not just the JWT)
+// fail on the deleted admin's very next request, closing that window immediately instead of
+// waiting it out. Leaves the Better Auth `user` row itself in place -- it's identity-only
+// (see this file's own header comment), and a re-invited admin with the same Google account
+// should resume as the same user rather than mint a fresh one.
+async function revokeAdminSessions(
+	ctx: MutationCtx,
+	email: string,
+): Promise<void> {
+	const users = await ctx.runQuery(components.betterAuth.adapter.findMany, {
+		model: "user",
+		where: [{ field: "email", value: normalizeEmail(email) }],
+		paginationOpts: { numItems: 1, cursor: null },
+	});
+	const user = users.page[0];
+	if (!user) return;
+	await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
+		input: {
+			model: "session",
+			where: [{ field: "userId", value: user._id }],
+		},
+		// An admin realistically holds a handful of sessions (one per signed-in browser) --
+		// well under one page, so there's no second page to chase.
+		paginationOpts: { numItems: 200, cursor: null },
+	});
 }

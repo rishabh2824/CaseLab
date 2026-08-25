@@ -13,12 +13,21 @@ import {
 
 // --- route guards -----------------------------------------------------------
 
-test("an unauthenticated visit to /admin redirects to the landing page", async ({
+test("an unauthenticated visit to /admin attempts a Google sign-in", async ({
 	page,
 }) => {
+	// admin/+layout.svelte's own gate is a single click end to end (see its comment): an
+	// unauthenticated visitor is sent straight into the Google OAuth flow rather than to a
+	// login page. mockApi() aborts the actual request (see its own comment) so this never
+	// reaches the real dev deployment or Google -- asserting the request itself is what
+	// proves the redirect fires, without depending on either being reachable.
 	await mockApi(page, {});
+	const signInRequest = page.waitForRequest(
+		(req) => req.method() === "POST" && req.url().includes("/sign-in/social"),
+	);
 	await page.goto("/admin");
-	await expect(page).toHaveURL(/\/$/);
+	const request = await signInRequest;
+	expect(request.postDataJSON()).toMatchObject({ provider: "google" });
 });
 
 test("a signed-in ADMIN reaches /admin without the manage-admins control", async ({
@@ -46,12 +55,19 @@ test("a signed-in SUPER admin sees the manage-admins control", async ({
 	).toBeVisible();
 });
 
-test("an unauthenticated visit to /admin/admins redirects to the landing page", async ({
+test("an unauthenticated visit to /admin/admins attempts a Google sign-in", async ({
 	page,
 }) => {
+	// Same gate as the plain /admin case above -- admin/+layout.svelte wraps every admin
+	// route, /admin/admins included -- so an unauthenticated visit here goes through the
+	// identical sign-in attempt rather than reaching the page's own super-admin check.
 	await mockApi(page, {});
+	const signInRequest = page.waitForRequest(
+		(req) => req.method() === "POST" && req.url().includes("/sign-in/social"),
+	);
 	await page.goto("/admin/admins");
-	await expect(page).toHaveURL(/\/$/);
+	const request = await signInRequest;
+	expect(request.postDataJSON()).toMatchObject({ provider: "google" });
 });
 
 test("a non-super admin visiting /admin/admins redirects to /admin", async ({

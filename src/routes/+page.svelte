@@ -9,6 +9,18 @@ let accessCode = $state("");
 let error = $state("");
 let isSubmitting = $state(false);
 
+// startSimulation's own deliberate rejections (services/simulations.ts) -- shown verbatim,
+// since they're written for a student to read. Anything else (a network failure, an
+// unhandled server exception) is a bug, not a bad access code, and got its own generic
+// message here after one such crash was previously mislabeled "Invalid access code.",
+// which sent debugging in exactly the wrong direction.
+const KNOWN_START_ERRORS = new Set([
+	"Access code is required.",
+	"Invalid access code.",
+	"This case has no personas configured.",
+	"Too many simulations have been started with this access code recently. Please wait a moment and try again.",
+]);
+
 async function submit(code: string): Promise<void> {
 	isSubmitting = true;
 	try {
@@ -22,8 +34,11 @@ async function submit(code: string): Promise<void> {
 		});
 		error = "";
 		await goto("/student");
-	} catch {
-		error = "Invalid access code.";
+	} catch (err) {
+		const message = err instanceof Error ? err.message : "";
+		error = KNOWN_START_ERRORS.has(message)
+			? message
+			: "Something went wrong starting the simulation. Please try again.";
 	} finally {
 		isSubmitting = false;
 	}
