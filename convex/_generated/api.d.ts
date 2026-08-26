@@ -23,7 +23,6 @@ import type * as lib_prompt from "../lib/prompt.js";
 import type * as lib_rateLimits from "../lib/rateLimits.js";
 import type * as lib_replyStream from "../lib/replyStream.js";
 import type * as lib_turnState from "../lib/turnState.js";
-import type * as migrateCaseStructures from "../migrateCaseStructures.js";
 import type * as models_cases from "../models/cases.js";
 import type * as services_admins from "../services/admins.js";
 import type * as services_cases from "../services/cases.js";
@@ -55,7 +54,6 @@ declare const fullApi: ApiFromModules<{
   "lib/rateLimits": typeof lib_rateLimits;
   "lib/replyStream": typeof lib_replyStream;
   "lib/turnState": typeof lib_turnState;
-  migrateCaseStructures: typeof migrateCaseStructures;
   "models/cases": typeof models_cases;
   "services/admins": typeof services_admins;
   "services/cases": typeof services_cases;

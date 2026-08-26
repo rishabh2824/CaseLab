@@ -10,6 +10,19 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# `PUBLIC_CONVEX_URL` is a SvelteKit $env/static/public var, resolved at TYPE-CHECK time
+# (svelte-check, the `test` job's "Type check (src/)" step) as well as BUILD time (`vite
+# build`, invoked by the `e2e` job's playwright webServer) -- both fail outright if it's
+# unset, since there's no .env file here (deliberately gitignored, see .gitignore's
+# comment) to supply it. Workflow-level, not per-job: scoping this to just `e2e` (its
+# original home) left `test`'s svelte-check step failing with "has no exported member
+# 'PUBLIC_CONVEX_URL'" the same way the build once failed. A syntactically valid
+# placeholder is enough for both jobs -- svelte-check never reads the value, just needs
+# the export to exist, and every e2e *Spec.ts test replaces convex-svelte with an
+# in-memory mock (see e2e/support/convexMock.svelte.ts) that never opens a real connection.
+env:
+  PUBLIC_CONVEX_URL: https://e2e-placeholder.convex.cloud
+
 jobs:
   test:
     name: test
@@ -52,15 +65,6 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-latest
-    # `pnpm run build` (invoked by playwright.config.ts's webServer) bakes
-    # PUBLIC_CONVEX_URL into the bundle via SvelteKit's $env/static/public, which
-    # fails the build outright if the var is missing -- there's no .env file here
-    # (deliberately gitignored, see .gitignore's comment) to supply it. A
-    # syntactically valid placeholder is enough: every *Spec.ts test replaces
-    # convex-svelte with an in-memory mock (see e2e/support/convexMock.svelte.ts)
-    # that never opens a real connection, so this URL is never actually dialed.
-    env:
-      PUBLIC_CONVEX_URL: https://e2e-placeholder.convex.cloud
 
     steps:
       - uses: actions/checkout@v5
