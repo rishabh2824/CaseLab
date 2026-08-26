@@ -1,6 +1,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type {
+	CaseStructure,
 	FileRefPayload,
 	PersonaPayload,
 	ReferralEdgePayload,
@@ -233,7 +234,7 @@ export async function buildStructure(
 	personas: PersonaPayload[],
 	referrals: ReferralEdgePayload[],
 	roots: string[],
-): Promise<{ structure: unknown; fileIds: Set<Id<"files">> }> {
+): Promise<{ structure: CaseStructure; fileIds: Set<Id<"files">> }> {
 	validateGraph(personas, referrals, roots);
 
 	const fileRefs = personas.flatMap((persona) => [
@@ -421,7 +422,7 @@ async function resolveCasePayload(
 	accessCode: string | undefined;
 	duration: number | undefined;
 	collaboratorIds: Id<"admins">[];
-	structure: unknown;
+	structure: CaseStructure;
 	fileIds: Set<Id<"files">>;
 }> {
 	const accessCode = await validateAccessCode(

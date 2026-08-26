@@ -9,6 +9,7 @@
 // the run.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
+import type { CaseStructure } from "../models/cases";
 import { makeLlmFetch, newTestConvex, sseStream } from "../test.setup";
 import {
 	caseStructure,
@@ -39,7 +40,7 @@ function stub(options: Parameters<typeof makeLlmFetch>[0] = {}) {
 	return calls;
 }
 
-async function startRun(t: T, structure: unknown = caseStructure()) {
+async function startRun(t: T, structure: CaseStructure = caseStructure()) {
 	const ownerAdminId = await t.run((ctx) =>
 		ctx.db.insert("admins", {
 			email: `o-${Math.random().toString(36).slice(2)}@test.caselab.invalid`,

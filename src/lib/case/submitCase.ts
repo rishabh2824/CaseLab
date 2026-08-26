@@ -114,6 +114,27 @@ async function uploadAll(
 	return results;
 }
 
+// An existing (non-File) ref came back from getForEdit/a template load exactly as its case
+// document stored it, and `cases.structure` is untyped (v.any()) server-side -- so a case
+// saved under an older version of this app can still carry a `file_id` key nothing in the
+// current fileRefValidator allows (that field was dropped from the validator at some point,
+// but never cleaned from already-stored documents). Convex mutation-arg validators reject
+// unknown keys outright, so spreading such a ref straight into the outgoing payload crashed
+// every save/duplicate of an affected case with an opaque "Server Error" instead of anything
+// an admin could act on. Rebuilding just the three fields the validator actually wants drops
+// `file_id` (or anything else that accumulates here later) the moment the case is next
+// saved.
+function sanitizeFileRef(
+	ref: FileRefPayload | null | undefined,
+): FileRefPayload | null {
+	if (!ref) return null;
+	return {
+		storage_id: ref.storage_id,
+		file_name: ref.file_name,
+		content_type: ref.content_type,
+	};
+}
+
 function buildPersonaPayload(
 	persona: Persona,
 	personaIndex: number,
@@ -122,7 +143,7 @@ function buildPersonaPayload(
 	const profile_photo =
 		persona.profile_photo instanceof File
 			? (uploaded.get(targetKey({ kind: "photo", personaIndex })) ?? null)
-			: persona.profile_photo;
+			: sanitizeFileRef(persona.profile_photo);
 	const files = persona.files.map((entry, fileIndex) => {
 		if (!entry.file) return { ...entry, file: null };
 		if (entry.file instanceof File) {
@@ -133,7 +154,7 @@ function buildPersonaPayload(
 					null,
 			};
 		}
-		return { ...entry, file: entry.file };
+		return { ...entry, file: sanitizeFileRef(entry.file) };
 	});
 	// Persona and PersonaPayload agree field-for-field except profile_photo/files (see
 	// types.ts's Persona = Omit<PersonaPayload, ...> & {...}), so spreading persona and

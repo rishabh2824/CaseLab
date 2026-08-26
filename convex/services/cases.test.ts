@@ -342,7 +342,7 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 		const storageId = await t.run((ctx) =>
 			ctx.storage.store(new Blob(["shared"])),
 		);
-		const caseId = await t.run((ctx) =>
+		const _caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
 				payload({

@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { caseStructureValidator } from "./models/cases";
 
 // String literals since Convex has no enum type and this is read at every authorization
 // check.
@@ -45,6 +46,16 @@ export default defineSchema({
 	// mutations (services/cases.ts) so it's canonical by construction -- no second normalized
 	// column needed.
 	//
+	// Validated against the exact same personaPayloadValidator/referralEdgeValidator that
+	// gate create/update's own arguments (models/cases.ts) -- not v.any(). Three migrations
+	// (Neon->Convex, Spaces->ctx.storage, Convex Auth->Better Auth) each changed what a
+	// "correct" structure blob looks like without ever rewriting rows written under the
+	// previous shape, and v.any() let that drift sit invisible until an admin hit it live
+	// (see the now-deleted migrateCaseStructures.ts, run once to bring existing rows in line
+	// with this validator before it was added). A real validator here means the *next* shape
+	// change fails `npx convex deploy` outright for any row it would leave non-conforming,
+	// instead of surfacing as an opaque "Server Error" months later.
+	//
 	// No `version`/optimistic-concurrency counter -- a deliberate simplification, not an
 	// oversight. Two admins editing the same case at once is rare enough that last-write-wins
 	// (whichever updateCase call runs last simply overwrites) is an acceptable outcome,
@@ -57,7 +68,7 @@ export default defineSchema({
 		duration: v.optional(v.number()),
 		accessCode: v.optional(v.string()),
 		ownerAdminId: v.id("admins"),
-		structure: v.any(),
+		structure: caseStructureValidator,
 	})
 		.index("by_owner", ["ownerAdminId"])
 		.index("by_access_code", ["accessCode"]),

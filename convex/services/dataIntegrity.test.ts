@@ -1,15 +1,17 @@
 // Data-integrity and hostile-input boundaries across the case -> run -> turn pipeline.
 //
-// The shared theme: `cases.structure` is `v.any()` in the schema, so almost nothing about a
-// persona graph is validated at the wire boundary -- persona ids, availability windows,
-// durations and legacy file references all flow straight from an admin's browser (or from an
-// imported HTML case file, which is genuinely untrusted input) into runtime code that indexes
-// Convex records by those ids and hands them to `v.id()`-validated mutations. Every test here
-// asks what a run does when one of those values is something the authoring UI would never
-// produce.
+// The shared theme: `cases.structure`'s schema validator (caseStructureValidator, see
+// models/cases.ts) constrains its shape, not its VALUES -- a referral can still point at a
+// persona id nothing else references, an availability window can still be nonsensical, a
+// file entry's storage id can still resolve to nothing. Those values all flow straight from
+// an admin's browser (or from an imported HTML case file, which is genuinely untrusted input)
+// into runtime code that indexes Convex records by them and hands them to `v.id()`-validated
+// mutations. Every test here asks what a run does when one of those values is something the
+// authoring UI would never produce -- structurally valid, semantically not.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
+import type { CaseStructure } from "../models/cases";
 import {
 	makeLlmFetch,
 	newTestConvex,
@@ -77,7 +79,7 @@ function payload(overrides: Partial<CasePayload> = {}): CasePayload {
 // data and imported case files can have.
 async function startRunWithStructure(
 	t: T,
-	structure: unknown,
+	structure: CaseStructure,
 	accessCode = "sterling",
 ) {
 	const adminId = await t.run((ctx) =>
@@ -604,9 +606,7 @@ describe("admin email identity", () => {
 		await expect(
 			asJane.query(api.api.admins.viewer, {}),
 		).resolves.toMatchObject({ email: "jane@wisc.edu", role: "admin" });
-		await expect(asJane.query(api.api.cases.listAll, {})).resolves.toEqual(
-			[],
-		);
+		await expect(asJane.query(api.api.cases.listAll, {})).resolves.toEqual([]);
 	});
 
 	it("rejects a blank email outright rather than creating an unusable roster row", async () => {

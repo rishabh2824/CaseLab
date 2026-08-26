@@ -41,7 +41,18 @@ export const referralEdgeValidator = v.object({
 	conditions: nullableString,
 });
 
+// The exact shape of `cases.structure` (schema.ts) -- shared from here rather than restated
+// inline there, so the table's own validator and buildStructure's return type (see
+// services/cases.ts) can never drift from each other or from create/update's own argument
+// validators above.
+export const caseStructureValidator = v.object({
+	personas: v.array(personaPayloadValidator),
+	referrals: v.array(referralEdgeValidator),
+	roots: v.array(v.string()),
+});
+
 export type FileRefPayload = Infer<typeof fileRefValidator>;
 export type FileEntryPayload = Infer<typeof fileEntryValidator>;
 export type PersonaPayload = Infer<typeof personaPayloadValidator>;
 export type ReferralEdgePayload = Infer<typeof referralEdgeValidator>;
+export type CaseStructure = Infer<typeof caseStructureValidator>;

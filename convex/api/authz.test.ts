@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import type { CaseStructure } from "../models/cases";
 import { newTestConvex, withAdmin, withStranger } from "../test.setup";
 import { caseStructure, personaPayload } from "../testFactories";
 
@@ -19,7 +20,7 @@ async function seedCase(
 	overrides: Partial<{
 		name: string;
 		accessCode: string;
-		structure: unknown;
+		structure: CaseStructure;
 	}> = {},
 ): Promise<Id<"cases">> {
 	return await t.run((ctx) =>

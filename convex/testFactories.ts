@@ -3,6 +3,7 @@
 // updating every call site.
 import type { Id } from "./_generated/dataModel";
 import type {
+	CaseStructure,
 	FileEntryPayload,
 	FileRefPayload,
 	PersonaPayload,
@@ -60,7 +61,7 @@ export function caseStructure(
 		referrals: ReferralEdgePayload[];
 		roots: string[];
 	}> = {},
-) {
+): CaseStructure {
 	return {
 		personas: overrides.personas ?? [personaPayload("A")],
 		referrals: overrides.referrals ?? [],

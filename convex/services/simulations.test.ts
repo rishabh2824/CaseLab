@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Id } from "../_generated/dataModel";
+import type { CaseStructure } from "../models/cases";
 import { newTestConvex } from "../test.setup";
 import { caseStructure, personaPayload, referralEdge } from "../testFactories";
 import {
@@ -17,7 +18,7 @@ async function seedCase(
 		brief: string;
 		duration: number;
 		accessCode: string;
-		structure: unknown;
+		structure: CaseStructure;
 	}> = {},
 ): Promise<Id<"cases">> {
 	const ownerAdminId = await t.run((ctx) =>
@@ -217,7 +218,7 @@ describe("startSimulation", () => {
 
 async function startRun(
 	t: ReturnType<typeof newTestConvex>,
-	structure: unknown,
+	structure: CaseStructure,
 	accessCode = "sterling",
 ) {
 	await seedCase(t, { accessCode, structure });

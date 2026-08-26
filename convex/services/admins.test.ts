@@ -14,9 +14,9 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 	it("rejects a signed-in Google user with no matching admins row", async () => {
 		const t = newTestConvex();
 		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
-		await expect(
-			asStranger.query(api.api.admins.listAll, {}),
-		).rejects.toThrow("Your account is not authorized.");
+		await expect(asStranger.query(api.api.admins.listAll, {})).rejects.toThrow(
+			"Your account is not authorized.",
+		);
 	});
 
 	it("allows any signed-in admin to list the roster", async () => {

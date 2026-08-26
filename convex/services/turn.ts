@@ -263,9 +263,7 @@ export async function getTurnContext(
 	const pendingFiles: PendingFile[] = (
 		await Promise.all(
 			persona.files
-				.filter(
-					(entry) => entry.file && (entry.share_conditions ?? "").trim(),
-				)
+				.filter((entry) => entry.file && (entry.share_conditions ?? "").trim())
 				.map(async (entry) => {
 					const file = entry.file!;
 					const row = await ctx.db

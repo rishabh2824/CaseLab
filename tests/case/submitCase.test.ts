@@ -172,6 +172,31 @@ describe("submitCase — profile photo upload", () => {
 		const personas = createRequests[0]?.personas as PersonaPayload[];
 		expect(personas[0]?.profile_photo).toEqual(existingPhoto);
 	});
+
+	// Regression test: a case saved under an older version of this app can have a
+	// `file_id` key on its stored profile_photo that the current fileRefValidator
+	// (convex/models/cases.ts) no longer allows -- getForEdit/a template load returns it
+	// exactly as stored, and passing it straight through crashed create/update with
+	// "Value does not match validator" instead of anything an admin could act on.
+	it("drops unrecognized keys (e.g. a stale file_id) from an existing profile photo", async () => {
+		const { createRequests } = stubMutations();
+		const legacyPhoto = {
+			storage_id: "storage-existing" as GenericId<"_storage">,
+			file_name: "old.png",
+			content_type: "image/png",
+			file_id: "stale-files-row-id",
+		} as FileRefPayload;
+		const persona = makePersona({ profile_photo: legacyPhoto });
+
+		await submitCase(baseInput({ personas: [persona] }));
+
+		const personas = createRequests[0]?.personas as PersonaPayload[];
+		expect(personas[0]?.profile_photo).toEqual({
+			storage_id: "storage-existing",
+			file_name: "old.png",
+			content_type: "image/png",
+		});
+	});
 });
 
 describe("submitCase — file attachments", () => {
@@ -216,6 +241,36 @@ describe("submitCase — file attachments", () => {
 		expect(createRequests).toHaveLength(1);
 		const personas = createRequests[0]?.personas as PersonaPayload[];
 		expect(personas[0]?.files?.[0]?.file).toBeNull();
+	});
+
+	// Same legacy-shape hazard as the profile photo test above -- an existing attachment
+	// round-tripped through getForEdit/a template load can carry a stale `file_id` too.
+	it("drops unrecognized keys (e.g. a stale file_id) from an existing attachment", async () => {
+		const { createRequests } = stubMutations();
+		const legacyFile = {
+			storage_id: "storage-existing" as GenericId<"_storage">,
+			file_name: "invoice.xlsx",
+			content_type: "application/vnd.ms-excel",
+			file_id: "stale-files-row-id",
+		} as FileRefPayload;
+		const persona = makePersona({
+			files: [
+				{
+					file: legacyFile,
+					share_conditions: "always",
+					perceived_contents: "",
+				},
+			],
+		});
+
+		await submitCase(baseInput({ personas: [persona] }));
+
+		const personas = createRequests[0]?.personas as PersonaPayload[];
+		expect(personas[0]?.files?.[0]?.file).toEqual({
+			storage_id: "storage-existing",
+			file_name: "invoice.xlsx",
+			content_type: "application/vnd.ms-excel",
+		});
 	});
 });
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { RECENT_HISTORY_LIMIT } from "../lib/llm";
 import { NONSENSE_THRESHOLD } from "../lib/turnState";
+import type { CaseStructure } from "../models/cases";
 import { newTestConvex } from "../test.setup";
 import {
 	caseStructure,
@@ -96,7 +97,7 @@ afterEach(() => {
 
 async function startRun(
 	t: ReturnType<typeof newTestConvex>,
-	structure: unknown,
+	structure: CaseStructure,
 	accessCode = "sterling",
 ) {
 	const ownerAdminId = await t.run((ctx) =>
@@ -739,7 +740,7 @@ describe("files", () => {
 		const storageId = await t.run((ctx) =>
 			ctx.storage.store(new Blob(["budget"])),
 		);
-		const fileId = await t.run((ctx) =>
+		const _fileId = await t.run((ctx) =>
 			ctx.db.insert("files", {
 				storageId,
 				name: "budget.pdf",
@@ -776,8 +777,18 @@ describe("files", () => {
 
 	it("never offers a file whose storage id has no matching files row, and withholds it from the prompt", async () => {
 		const t = newTestConvex();
+		// A real (not fabricated) storage id -- v.id("_storage") on cases.structure now
+		// validates the id's own format, so it has to come from an actual ctx.storage.store,
+		// same as dataIntegrity.test.ts's equivalent case. The scenario under test is "no
+		// `files` row references it", not "the id itself is malformed" -- so no `files` insert
+		// follows.
+		const storageId = await t.run((ctx) =>
+			ctx.storage.store(new Blob(["orphan"])),
+		);
 		const structure = caseStructure({
-			personas: [personaPayload("A", { files: [fileEntry()] })],
+			personas: [
+				personaPayload("A", { files: [fileEntry({ storage_id: storageId })] }),
+			],
 		});
 		const state = await startRun(t, structure);
 		const { calls } = stubLlm({ replyText: "Sure." });
