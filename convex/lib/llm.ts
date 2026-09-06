@@ -149,11 +149,33 @@ export type StreamDelta = { type: "delta"; text: string };
 // 5xx) -- once any text has streamed, silently restarting would risk duplicating/losing
 // content, so the error is raised instead.
 export async function* personaReplyStream(
-	messages: ChatMessage[],
+	systemPrompt: { cacheable: string; dynamic: string },
+	history: ChatMessage[],
 ): AsyncGenerator<StreamDelta> {
 	const body = {
 		model: LLM_MODEL,
-		messages,
+		messages: [
+			{
+				role: "system",
+				// Anthropic (via OpenRouter) caches everything up to and including a block marked
+				// cache_control, at a 90% discount on every subsequent read within the (default
+				// 5-minute) TTL -- and since the cache key is just a content hash, not scoped to
+				// this conversation, every OTHER student concurrently talking to this same persona
+				// hits it too. `dynamic` (redacted knownFacts, referral/file candidates -- see
+				// prompt.ts's SystemPromptParts) stays in its own uncached block after the
+				// breakpoint, since it changes as referrals unlock and would otherwise invalidate
+				// the whole cached prefix on every turn.
+				content: [
+					{
+						type: "text",
+						text: systemPrompt.cacheable,
+						cache_control: { type: "ephemeral" },
+					},
+					{ type: "text", text: systemPrompt.dynamic },
+				],
+			},
+			...history,
+		],
 		max_tokens: 600,
 		stream: true,
 		response_format: {

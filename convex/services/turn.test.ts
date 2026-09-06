@@ -65,6 +65,15 @@ function stubLlm(options: LlmStubOptions = {}) {
 	const calls: { kind: string; body: any }[] = [];
 	const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
 		const body = JSON.parse(init.body as string);
+		// The reply call's system message is a [{text, cache_control}, {text}] content-block pair
+		// (llm.ts's personaReplyStream, cache boundary between the two), not a plain string --
+		// flattened back to one string here so every assertion below can keep treating
+		// `messages[0].content` as plain text, same as the classify call's.
+		if (Array.isArray(body.messages[0].content)) {
+			body.messages[0].content = body.messages[0].content
+				.map((block: { text: string }) => block.text)
+				.join("\n\n");
+		}
 		calls.push({ kind: body.stream ? "reply" : "classify", body });
 		if (body.stream) {
 			const envelope = JSON.stringify({

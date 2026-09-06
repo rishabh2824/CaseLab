@@ -165,6 +165,15 @@ export function makeLlmFetch(options: LlmStub = {}): {
 	): Promise<Response> {
 		const body = JSON.parse(init.body as string);
 		const kind: "classify" | "reply" = body.stream ? "reply" : "classify";
+		// The reply call's system message is a [{text, cache_control}, {text}] content-block pair
+		// (llm.ts's personaReplyStream, cache boundary between the two), not a plain string --
+		// flattened back to one string so every caller of this helper can keep treating
+		// `messages[0].content` as plain text, same as the classify call's.
+		if (Array.isArray(body.messages[0].content)) {
+			body.messages[0].content = body.messages[0].content
+				.map((block: { text: string }) => block.text)
+				.join("\n\n");
+		}
 		calls.push({ kind, body });
 
 		if (kind === "classify") {

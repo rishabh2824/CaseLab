@@ -83,6 +83,10 @@ describe("classifyHarassment (fail-open contract)", () => {
 	});
 });
 
+// Cache boundary content is irrelevant to every test below -- they only care about how the
+// SSE response is processed, not what was sent -- so one fixed stand-in covers every call.
+const NOOP_SYSTEM_PROMPT = { cacheable: "system", dynamic: "" };
+
 describe("personaReplyStream", () => {
 	it("yields text deltas in order", async () => {
 		vi.stubGlobal(
@@ -94,7 +98,7 @@ describe("personaReplyStream", () => {
 				),
 		);
 		const events = [];
-		for await (const event of personaReplyStream([
+		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [
 			{ role: "user", content: "hi" },
 		]))
 			events.push(event);
@@ -114,7 +118,7 @@ describe("personaReplyStream", () => {
 				),
 		);
 		const events = [];
-		for await (const event of personaReplyStream([])) events.push(event);
+		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
 		expect(events).toEqual([{ type: "delta", text: "Hi" }]);
 	});
 
@@ -125,7 +129,7 @@ describe("personaReplyStream", () => {
 			.mockResolvedValueOnce(sseResponse([deltaLine("Recovered"), "[DONE]"]));
 		vi.stubGlobal("fetch", fetchMock);
 		const events = [];
-		for await (const event of personaReplyStream([])) events.push(event);
+		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(events).toEqual([{ type: "delta", text: "Recovered" }]);
 	});
@@ -137,7 +141,7 @@ describe("personaReplyStream", () => {
 			.mockResolvedValueOnce(sseResponse([deltaLine("Recovered"), "[DONE]"]));
 		vi.stubGlobal("fetch", fetchMock);
 		const events = [];
-		for await (const event of personaReplyStream([])) events.push(event);
+		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(events).toEqual([{ type: "delta", text: "Recovered" }]);
 	});
@@ -149,7 +153,7 @@ describe("personaReplyStream", () => {
 		);
 		await expect(
 			(async () => {
-				for await (const _ of personaReplyStream([])) {
+				for await (const _ of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) {
 					/* drain */
 				}
 			})(),
@@ -196,7 +200,7 @@ describe("personaReplyStream", () => {
 		const events: unknown[] = [];
 		await expect(
 			(async () => {
-				for await (const event of personaReplyStream([])) events.push(event);
+				for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
 			})(),
 		).rejects.toThrow(/connection reset mid-stream/);
 
@@ -231,7 +235,7 @@ describe("personaReplyStream", () => {
 
 			const events: unknown[] = [];
 			const consumed = (async () => {
-				for await (const event of personaReplyStream([])) events.push(event);
+				for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
 			})();
 			const assertion = expect(consumed).rejects.toThrow(/abort/i);
 
@@ -274,7 +278,7 @@ describe("personaReplyStream", () => {
 
 			const events: { text: string }[] = [];
 			const consumed = (async () => {
-				for await (const event of personaReplyStream([]))
+				for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
 					events.push(event as { text: string });
 			})();
 			await vi.advanceTimersByTimeAsync(1_000);

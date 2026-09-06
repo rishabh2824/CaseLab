@@ -21,6 +21,15 @@ function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Split into `stable` (identical for this persona on every turn, by every student, for as
+// long as the case itself doesn't change -- case brief, common info, name/role/personality)
+// and `dynamic` (redacted knownFacts plus referral/file candidates, which shift as referrals
+// unlock) instead of one concatenated string: llm.ts's personaReplyStream puts a cache_control
+// breakpoint right after `stable`, so Anthropic caches that block once per persona instead of
+// once per message -- concatenating the two back together before caching would invalidate the
+// whole thing every time `dynamic` changes.
+export type SystemPromptParts = { stable: string; dynamic: string };
+
 // Builds the persona's system prompt, including the referral/file candidates it must judge
 // eligibility for itself this turn -- see CandidateReferral/CandidateFile above for why this
 // is no longer a pre-filtered "eligible" list.
@@ -30,7 +39,7 @@ export function systemPrompt(
 	persona: PersonaDetail,
 	candidateReferrals: CandidateReferral[],
 	candidateFiles: CandidateFile[],
-): string {
+): SystemPromptParts {
 	// --- referral guidance ---
 	// referralOptions is only actually read in the "candidates exist" branch below, but it's
 	// cheap (empty array -> "") to compute unconditionally, which lets referralSection collapse
@@ -109,7 +118,7 @@ export function systemPrompt(
 		"ones you may ever introduce or send, and only by listing their handle. Never " +
 		"promise, imply, or offer any referral or file you are not enacting this turn.";
 
-	return `${stable}\n\n${turn}`;
+	return { stable, dynamic: turn };
 }
 
 export function replyInstructions(): string {

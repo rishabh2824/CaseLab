@@ -11,9 +11,7 @@ import {
 } from "../services/admins";
 
 // The current admin's identity + role, or null if not signed in / not an admin.
-// Gates the frontend UI — the actual authorization enforcement lives in
-// auth.ts's databaseHooks.user.create.before, which never lets a non-admin
-// Google account reach a signed-in state in the first place.
+// Gates the frontend UI — the actual authorization enforcement lives in auth.ts
 export const viewer = query({
 	args: {},
 	handler: async (ctx) => {

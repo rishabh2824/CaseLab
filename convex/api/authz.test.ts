@@ -1,10 +1,3 @@
-// Authorization tested at the ACTUAL enforcement boundary -- the public `query`/`mutation`
-// wrappers in convex/api/*, called the way a hostile client calls them (a raw function
-// reference plus hand-crafted args), not through the service functions the rest of the suite
-// exercises via `t.run`. `t.run` bypasses every wrapper, so a service-level test proves
-// nothing about whether the exported function actually gates the caller: deleting
-// `await requireCurrentAdmin(ctx)` from an api/ handler would leave every existing
-// services/*.test.ts case green. These tests fail instead.
 import { describe, expect, it } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -145,8 +138,6 @@ describe("admin-only surface rejects anonymous callers", () => {
 		expect(failures).toEqual([]);
 	});
 
-	// viewer is the one query deliberately callable by anyone -- it must answer "null", never
-	// throw and never leak, so the frontend can distinguish "signed out" from "error".
 	it("viewer returns null (rather than throwing or leaking) for anonymous and non-admin callers", async () => {
 		const t = newTestConvex();
 		expect(await t.query(api.api.admins.viewer, {})).toBeNull();
@@ -155,8 +146,6 @@ describe("admin-only surface rejects anonymous callers", () => {
 		expect(await asStranger.query(api.api.admins.viewer, {})).toBeNull();
 	});
 
-	// A signed-in identity whose users row was deleted (admin removed mid-session) must not
-	// keep working off the stale session.
 	it("stops authorizing a signed-in admin once their admins row is deleted", async () => {
 		const t = newTestConvex();
 		const { asUser, adminId } = await withAdmin(t, { role: "admin" });
@@ -199,13 +188,6 @@ describe("cross-admin case isolation (object ownership)", () => {
 		).resolves.toEqual([]);
 	});
 
-	// SECURITY: api/cases.ts's `get` runs requireCurrentAdmin but NO requireCaseAccess, so any
-	// signed-in admin can read any other admin's entire case document by id -- including its
-	// access code (which is all a student needs to launch the simulation) and every persona's
-	// `known_facts`, the case's confidential content. `getForEdit` right beside it does gate on
-	// ownership; `get` exists only for DemoCaseView.svelte's one hardcoded demo case id.
-	// The fix is a caseAccess check in `get` too; until then this test pins the exposure so it
-	// can't silently widen.
 	it("REGRESSION: cases.get must not hand another admin's access code and persona secrets to an unrelated admin", async () => {
 		const t = newTestConvex();
 		const owner = await withAdmin(t, { email: "owner2@test.caselab.invalid" });
@@ -254,9 +236,6 @@ describe("cross-admin case isolation (object ownership)", () => {
 		).rejects.toThrow("You do not have access to this case.");
 	});
 
-	// A collaborator has full edit rights but must not be able to hand the case to themselves:
-	// updateCase never writes ownerAdminId, so an `ownerAdminId` smuggled into the payload is
-	// simply not a field the mutation accepts.
 	it("a collaborator cannot take ownership of a case through update", async () => {
 		const t = newTestConvex();
 		const owner = await withAdmin(t, { email: "owner4@test.caselab.invalid" });
@@ -306,7 +285,6 @@ describe("role boundaries", () => {
 			}),
 		).rejects.toThrow("Only a super admin can do this.");
 
-		// And nothing was written despite the rejection.
 		const roster = await regular.asUser.query(api.api.admins.listAll, {});
 		expect(roster.map((a) => a.email).sort()).toEqual([
 			"regular@test.caselab.invalid",
@@ -387,8 +365,6 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		).resolves.toBeNull();
 	});
 
-	// Run ids are the only capability protecting a student's transcript. Holding one run's id
-	// must never surface another run's messages, even for the same case and persona key.
 	it("one run's id never reads another run's transcript, contacts, or export", async () => {
 		const t = newTestConvex();
 		const a = await startRun(t, "alpha");
@@ -415,15 +391,6 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		expect(JSON.stringify(bExport)).not.toContain("run A private message");
 	});
 
-	// The state-mutating half of a turn (applyDecisions, applyBoundary, writeStreamingPreview,
-	// markStreamingError) and the run-deleting half of simulations (destroy, deleteExpiredRuns)
-	// are only safe because they are `internal*` and therefore unreachable from a browser. If
-	// any of them were ever exported as a plain `mutation`/`action`/`query`, an unauthenticated
-	// client could forge referral unlocks and file shares (applyDecisions takes both as plain
-	// args), end anyone's chat (applyBoundary), or wipe a run mid-simulation (destroy) -- the
-	// student surface has no identity to check them against. convex-test resolves a function
-	// reference regardless of visibility, so no runtime call can assert this; the declaration
-	// itself is the security boundary, and this pins it.
 	it("keeps every state-mutating turn/simulation function declared internal, not public", async () => {
 		const [turnSource, simulationsSource] = await Promise.all([
 			import("./turn?raw").then((m) => m.default as string),

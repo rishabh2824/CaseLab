@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { PersonaDetail } from "../services/simulationReads";
-import { cleanReply, coerceHandles, parseReply, systemPrompt } from "./prompt";
+import {
+	cleanReply,
+	coerceHandles,
+	parseReply,
+	systemPrompt as buildSystemPrompt,
+} from "./prompt";
+
+// These tests only care about substring presence, not which of the two cached/uncached blocks
+// (see prompt.ts's SystemPromptParts) a given fact landed in -- so join them back into one
+// string, the same shape systemPrompt returned before the split.
+function systemPrompt(...args: Parameters<typeof buildSystemPrompt>): string {
+	const { stable, dynamic } = buildSystemPrompt(...args);
+	return `${stable}\n\n${dynamic}`;
+}
 
 function personaDetail(overrides: Partial<PersonaDetail> = {}): PersonaDetail {
 	return {

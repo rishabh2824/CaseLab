@@ -567,29 +567,30 @@ export async function runTurn(
 			},
 		);
 
-		const prompt = systemPrompt(
+		const { stable, dynamic } = systemPrompt(
 			context.caseBrief,
 			context.commonInformation,
 			context.persona,
 			candidateReferrals,
 			candidateFiles,
 		);
-		// context.decisionHistory is already bounded to RECENT_HISTORY_LIMIT at the query level
-		// (getTurnContext above), so no further slicing is needed here.
-		const messages = [
-			{
-				role: "system" as const,
-				content: `${replyInstructions()}\n\n---\n\n${prompt}`,
-			},
-			...context.decisionHistory,
-		];
+		// replyInstructions() is static across every persona/case in the whole app, so folding it
+		// into the cached block only grows the shared cache hit, never narrows it -- see
+		// prompt.ts's SystemPromptParts and llm.ts's personaReplyStream for the cache boundary
+		// itself.
+		const cacheableSystemPrompt = `${replyInstructions()}\n\n---\n\n${stable}`;
 
 		let fullText = "";
 		const extractor = new ReplyExtractor();
 		let previewText = "";
 		let flushedText = "";
 		let lastFlushedAt = 0;
-		for await (const delta of personaReplyStream(messages)) {
+		// context.decisionHistory is already bounded to RECENT_HISTORY_LIMIT at the query level
+		// (getTurnContext above), so no further slicing is needed here.
+		for await (const delta of personaReplyStream(
+			{ cacheable: cacheableSystemPrompt, dynamic },
+			context.decisionHistory,
+		)) {
 			fullText += delta.text;
 			previewText += extractor.feed(delta.text);
 			if (!cleared) continue;
