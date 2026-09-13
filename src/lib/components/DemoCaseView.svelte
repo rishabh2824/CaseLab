@@ -8,16 +8,13 @@ import {
 } from "$lib/case/draft.js";
 import { getErrorMessage } from "$lib/errors.js";
 import { api } from "../../../convex/_generated/api.js";
-import type { Id } from "../../../convex/_generated/dataModel.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
-// Sterling Industries -- hardcoded until real case selection is built. Update this if the
-// prod deployment is ever reseeded (the Neon-to-Convex migration already broke this once --
-// Convex mints its own document ids on insert, so they don't survive a re-import).
-const DEMO_CASE_ID = "k574qchhh4hgtdx1rv6ypbpgmx8ckrm4" as Id<"cases">;
-
-const caseQuery = useQuery(api.api.cases.get, { caseId: DEMO_CASE_ID });
+// Sterling Industries, resolved server-side from the DEMO_CASE_ID app env var
+// (convex.config.ts) -- see getDemo's own comment (api/cases.ts) for why this can be shown to
+// any signed-in admin without an owner/collaborator check, unlike every other case read.
+const caseQuery = useQuery(api.api.cases.getDemo, {});
 
 const parsedStructure = $derived(parseCaseStructure(caseQuery.data?.structure));
 const personas = $derived(parsedStructure.personas);
@@ -120,6 +117,10 @@ const referredPersonas = $derived(
 					</div>
 				</details>
 			</div>
+		{:else}
+			<p class="text-center text-sm text-stone">
+				No demo case is set up for this deployment.
+			</p>
 		{/if}
 	</div>
 </div>

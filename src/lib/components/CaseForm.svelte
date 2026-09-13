@@ -3,6 +3,7 @@ import { getConvexClient, useQuery } from "convex-svelte";
 import { onDestroy, onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import { beforeNavigate, goto } from "$app/navigation";
+import { getViewerContext } from "$lib/adminViewer.js";
 import {
 	getCaseInfoErrors,
 	hasFieldErrors,
@@ -61,10 +62,9 @@ const graph = new CaseGraph();
 // keeping.
 const adminsQuery = useQuery(api.api.admins.listAll, {});
 const allAdmins = $derived(adminsQuery.data ?? []);
-// admin/+layout.svelte already subscribes to this same query+args -- Convex dedupes the
-// subscription, so this isn't a second network round trip, just a second read of a value
-// already being kept live.
-const viewerQuery = useQuery(api.api.admins.viewer, {});
+// Shared with admin/+layout.svelte via context (see adminViewer.ts) rather than a second
+// useQuery(api.api.admins.viewer, {}) call.
+const viewerQuery = getViewerContext();
 let collaboratorAdminIds = $state<string[]>([]);
 let ownerAdminId = $state<string | null>(null);
 
@@ -162,6 +162,12 @@ let isLoadingSource = $state(untrack(() => Boolean(sourceCaseId)));
 let loadErrorMessage = $state("");
 let submitError = $state("");
 let submitSuccess = $state("");
+// Set right before navigating away after a create-mode save (see handleSubmit): the toast
+// fired there is what's meant to carry submitSuccess across the navigation, so the inline
+// paragraph below has nothing left to do except flash alongside it for a moment before this
+// component unmounts -- which is exactly what produced two "Case saved successfully." texts
+// on screen at once.
+let suppressInlineSuccess = $state(false);
 let isSubmitting = $state(false);
 let importWarnings = $state<string[]>([]);
 let pendingImportFile = $state<File | null>(null);
@@ -195,7 +201,7 @@ async function loadCase(id: string): Promise<void> {
 	// Edit mode keeps the case's own code; a template load starts blank -- the source case's
 	// code is already claimed by that case, so carrying it over here just guarantees the new
 	// case's first save fails on it (createCase rejects a duplicate access code).
-	accessCode = isEditMode ? (loadedCase.accessCode ?? "") : "";
+	accessCode = isEditMode ? loadedCase.accessCode : "";
 	graph.load(parseCaseStructure(loadedCase.structure));
 	if (isEditMode) {
 		collaboratorAdminIds = loadedCase.collaboratorAdminIds ?? [];
@@ -365,6 +371,7 @@ async function runSave(): Promise<SaveResult> {
 	loadErrorMessage = "";
 	submitError = "";
 	submitSuccess = "";
+	suppressInlineSuccess = false;
 	isSubmitting = true;
 	try {
 		const result = await submitCase({
@@ -425,6 +432,7 @@ async function handleSubmit(event: SubmitEvent): Promise<void> {
 	// against a case that already saved -- which fails outright once its access code is
 	// already taken (see resolveCasePayload's own conflict check).
 	if (result.ok && !isEditMode && lastSavedCaseId) {
+		suppressInlineSuccess = true;
 		toast(submitSuccess);
 		await goto(`/admin/cases/${lastSavedCaseId}/edit`);
 	}
@@ -448,7 +456,18 @@ beforeNavigate((navigation) => {
 	const targetUrl = navigation.to?.url;
 	if (!targetUrl) return;
 	navigation.cancel();
-	unsavedGuard.requestNavigation(() => goto(targetUrl));
+	// A browser Back/Forward click (type "popstate") that gets cancelled here has its history
+	// entry restored by SvelteKit automatically -- re-issuing it as a plain goto(targetUrl)
+	// once the admin confirms would then PUSH a new entry instead of actually moving the
+	// history pointer, leaving Back/Forward needing an extra press or landing somewhere
+	// unexpected. history.go(navigation.delta) replays the exact popstate that was
+	// interrupted; every other navigation type (a link, a programmatic goto) still resumes via
+	// goto(targetUrl) as before.
+	const resume =
+		navigation.type === "popstate" && navigation.delta !== undefined
+			? () => history.go(navigation.delta)
+			: () => goto(targetUrl);
+	unsavedGuard.requestNavigation(resume);
 });
 
 onMount(() => {
@@ -573,7 +592,7 @@ onDestroy(() => {
 				{#if displayedError}
 					<p class="text-sm font-medium text-brand">{displayedError}</p>
 				{/if}
-				{#if submitSuccess}
+				{#if submitSuccess && !suppressInlineSuccess}
 					<p class="text-sm font-medium text-success">{submitSuccess}</p>
 				{/if}
 				{#if showFieldErrors && hasValidationErrors}
@@ -582,9 +601,14 @@ onDestroy(() => {
 					</p>
 				{/if}
 
+				<!-- No disabled here: isSubmitting/isLoadingSource are already covered by the
+				     surrounding fieldset, and disabling on hasValidationErrors made a blank new-case
+				     form's Submit button unclickable with no feedback -- revealErrors() (which is
+				     what actually shows the validation messages) never got a chance to run. runSave
+				     itself already checks hasValidationErrors and bails out with a message before
+				     doing anything else, so clicking a currently-invalid form here is safe. -->
 				<button
 					type="submit"
-					disabled={isLoadingSource || isSubmitting || hasValidationErrors}
 					class="self-start rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
 				>
 					{isSubmitting ? 'Submitting…' : 'Submit'}

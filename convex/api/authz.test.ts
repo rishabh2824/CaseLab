@@ -20,7 +20,7 @@ async function seedCase(
 		ctx.db.insert("cases", {
 			name: overrides.name ?? "Owned Case",
 			brief: "A brief.",
-			accessCode: overrides.accessCode,
+			accessCode: overrides.accessCode ?? "seedcode",
 			ownerAdminId,
 			structure: overrides.structure ?? caseStructure(),
 		}),
@@ -57,7 +57,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 		);
 		const caseId = await seedCase(t, adminId);
 		return [
-			["cases.get", () => t.query(api.api.cases.get, { caseId })],
+			["cases.getDemo", () => t.query(api.api.cases.getDemo, {})],
 			["cases.getForEdit", () => t.query(api.api.cases.getForEdit, { caseId })],
 			["cases.listAll", () => t.query(api.api.cases.listAll, {})],
 			[
@@ -90,6 +90,10 @@ describe("admin-only surface rejects anonymous callers", () => {
 				"uploads.generateUploadUrls",
 				() => t.mutation(api.api.uploads.generateUploadUrls, { count: 2 }),
 			],
+			[
+				"uploads.discardUploads",
+				() => t.mutation(api.api.uploads.discardUploads, { storageIds: [] }),
+			],
 		] as const;
 	}
 
@@ -119,7 +123,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 		const caseId = await seedCase(t, adminId);
 
 		const calls: [string, () => Promise<unknown>][] = [
-			["cases.get", () => asStranger.query(api.api.cases.get, { caseId })],
+			["cases.getDemo", () => asStranger.query(api.api.cases.getDemo, {})],
 			["cases.listAll", () => asStranger.query(api.api.cases.listAll, {})],
 			[
 				"cases.create",
@@ -193,7 +197,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 		).resolves.toEqual([]);
 	});
 
-	it("REGRESSION: cases.get must not hand another admin's access code and persona secrets to an unrelated admin", async () => {
+	it("REGRESSION: cases.getForEdit must not hand another admin's access code and persona secrets to an unrelated admin", async () => {
 		const t = newTestConvex();
 		const owner = await withAdmin(t, { email: "owner2@test.caselab.invalid" });
 		const outsider = await withAdmin(t, {
@@ -211,8 +215,19 @@ describe("cross-admin case isolation (object ownership)", () => {
 		});
 
 		await expect(
-			outsider.asUser.query(api.api.cases.get, { caseId }),
+			outsider.asUser.query(api.api.cases.getForEdit, { caseId }),
 		).rejects.toThrow(/access/i);
+	});
+
+	// getDemo is the one case-read that deliberately skips this ownership check -- see its own
+	// comment (api/cases.ts) for why that's safe: unlike every id-taking query above, it takes
+	// no caseId argument, so a caller can never point it at another admin's case.
+	it("getDemo cannot be pointed at another admin's case -- it takes no caseId at all", async () => {
+		const source = await import("./cases?raw").then((m) => m.default as string);
+		const getDemoBlock = source.slice(source.indexOf("export const getDemo"));
+		expect(getDemoBlock.slice(0, getDemoBlock.indexOf("handler"))).not.toMatch(
+			/caseId/,
+		);
 	});
 
 	it("gives a collaborator access but still refuses an admin who was never added", async () => {
@@ -415,5 +430,49 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 			"getPersonaHistory",
 			"start",
 		]);
+	});
+});
+
+describe("every export in the admin-facing api/ modules is gated or internal", () => {
+	// Reads each module's own exports directly from source rather than relying only on the
+	// hand-maintained anonymousCallers list above -- that list is exercised for real (it proves
+	// the gate actually rejects a bad caller at runtime), but it's maintained by hand and had
+	// already drifted once (missing uploads.discardUploads). This structural check can't drift:
+	// it walks every export in these four files itself, so a new admin function that forgets a
+	// wrapper fails here immediately instead of silently passing as "not covered yet."
+	const ADMIN_WRAPPERS = new Set([
+		"adminQuery",
+		"adminMutation",
+		"superAdminMutation",
+	]);
+	// The one deliberate exception: viewer returns null instead of throwing (see its own
+	// comment in api/admins.ts), so it can't use a wrapper that throws on an unauthorized
+	// caller -- it's plain `query`, gated by hand inside its own body instead.
+	const UNGATED_EXCEPTIONS = new Set(["admins.viewer"]);
+
+	it("uses an admin wrapper, or is internal, for every export in admins/cases/uploads/files", async () => {
+		const moduleNames = ["admins", "cases", "uploads", "files"];
+		const sources = await Promise.all(
+			moduleNames.map((name) =>
+				import(`./${name}.ts?raw`).then((m) => m.default as string),
+			),
+		);
+
+		const ungated: string[] = [];
+		moduleNames.forEach((moduleName, i) => {
+			for (const [, name, wrapper] of sources[i]!.matchAll(
+				/export const (\w+) = (\w+)\(/g,
+			)) {
+				const qualified = `${moduleName}.${name}`;
+				if (UNGATED_EXCEPTIONS.has(qualified)) {
+					expect(wrapper).toBe("query");
+					continue;
+				}
+				if (!ADMIN_WRAPPERS.has(wrapper!) && !wrapper!.startsWith("internal")) {
+					ungated.push(`${qualified} (${wrapper})`);
+				}
+			}
+		});
+		expect(ungated).toEqual([]);
 	});
 });

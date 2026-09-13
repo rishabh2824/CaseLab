@@ -1,16 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { ADMIN_ROLE, caseDoc, mockApi, signInAsAdmin } from "./mockApi.js";
 
-// Mirrors DemoCaseView.svelte's own hardcoded DEMO_CASE_ID -- update this alongside that
-// constant if the dev deployment is ever reseeded.
-const DEMO_CASE_ID = "k574qchhh4hgtdx1rv6ypbpgmx8ckrm4";
-
 test("the demo case view renders the case read-only", async ({ page }) => {
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/cases:get",
-				args: { caseId: DEMO_CASE_ID },
+				name: "api/cases:getDemo",
+				args: {},
 				data: caseDoc(),
 			},
 		],
@@ -31,8 +27,8 @@ test("a failed demo-case load surfaces an inline error", async ({ page }) => {
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/cases:get",
-				args: { caseId: DEMO_CASE_ID },
+				name: "api/cases:getDemo",
+				args: {},
 				error: "Failed to load demo.",
 			},
 		],
@@ -41,6 +37,22 @@ test("a failed demo-case load surfaces an inline error", async ({ page }) => {
 	await page.goto("/admin/new/demo");
 
 	await expect(page.getByText("Failed to load demo.")).toBeVisible();
+});
+
+// getDemo returns null (rather than throwing) when DEMO_CASE_ID isn't set for this
+// deployment -- distinct from the error case above, which is a real query failure.
+test("no demo case configured shows a plain message, not an error", async ({
+	page,
+}) => {
+	await mockApi(page, {
+		queries: [{ name: "api/cases:getDemo", args: {}, data: null }],
+	});
+	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
+	await page.goto("/admin/new/demo");
+
+	await expect(
+		page.getByText("No demo case is set up for this deployment."),
+	).toBeVisible();
 });
 
 test("choosing a template seeds a new case form", async ({ page }) => {
@@ -61,11 +73,13 @@ test("choosing a template seeds a new case form", async ({ page }) => {
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
 	await page.goto("/admin/new/template");
 
-	await page.getByRole("button", { name: /Sterling Industries/ }).click();
+	await page.getByRole("link", { name: /Sterling Industries/ }).click();
 
 	await expect(page).toHaveURL(/\/admin\/cases\/new\?template=case5/);
 	await expect(page.getByLabel("Case name")).toHaveValue("Sterling Industries");
-	await expect(page.getByLabel("Access code")).toHaveValue("sterling");
+	// Not carried over from the template: the source case's code is already claimed, so copying
+	// it here would just guarantee the new case's first save fails (see CaseForm's loadCase).
+	await expect(page.getByLabel("Access code")).toHaveValue("");
 });
 
 test("the template picker shows an empty state when there are no cases", async ({

@@ -118,7 +118,8 @@ describe("personaReplyStream", () => {
 				),
 		);
 		const events = [];
-		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
+		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
+			events.push(event);
 		expect(events).toEqual([{ type: "delta", text: "Hi" }]);
 	});
 
@@ -129,7 +130,8 @@ describe("personaReplyStream", () => {
 			.mockResolvedValueOnce(sseResponse([deltaLine("Recovered"), "[DONE]"]));
 		vi.stubGlobal("fetch", fetchMock);
 		const events = [];
-		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
+		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
+			events.push(event);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(events).toEqual([{ type: "delta", text: "Recovered" }]);
 	});
@@ -141,7 +143,8 @@ describe("personaReplyStream", () => {
 			.mockResolvedValueOnce(sseResponse([deltaLine("Recovered"), "[DONE]"]));
 		vi.stubGlobal("fetch", fetchMock);
 		const events = [];
-		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
+		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
+			events.push(event);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 		expect(events).toEqual([{ type: "delta", text: "Recovered" }]);
 	});
@@ -200,7 +203,8 @@ describe("personaReplyStream", () => {
 		const events: unknown[] = [];
 		await expect(
 			(async () => {
-				for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
+				for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
+					events.push(event);
 			})(),
 		).rejects.toThrow(/connection reset mid-stream/);
 
@@ -235,7 +239,8 @@ describe("personaReplyStream", () => {
 
 			const events: unknown[] = [];
 			const consumed = (async () => {
-				for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) events.push(event);
+				for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
+					events.push(event);
 			})();
 			const assertion = expect(consumed).rejects.toThrow(/abort/i);
 

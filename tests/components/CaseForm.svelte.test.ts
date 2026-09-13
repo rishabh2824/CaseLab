@@ -8,11 +8,10 @@
 // goes through Convex now, so convex-svelte is mocked here rather than MSW.
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import type { FunctionReference } from "convex/server";
-import { getFunctionName } from "convex/server";
 import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { beforeNavigate } from "$app/navigation";
+import { VIEWER_CONTEXT_KEY } from "../../src/lib/adminViewer.js";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
 import type {
@@ -41,14 +40,35 @@ vi.mock("convex-svelte", () => ({
 	}),
 }));
 
-function makeAdminRow(overrides: Partial<AdminRow> = {}): AdminRow {
+// CaseForm reads the signed-in admin (api/admins:viewer) from Svelte context now, set by
+// admin/+layout.svelte in the real app (see adminViewer.ts) -- this builds the same context
+// shape directly for a component test, which mounts CaseForm without that layout. `null`
+// (nobody signed in, effectively) is the default: most tests don't care who's viewing, only
+// the "excludes the signed-in admin" test below overrides it with a real admin.
+function viewerContext(
+	data: AdminRow | null = null,
+): Map<typeof VIEWER_CONTEXT_KEY, unknown> {
+	return new Map([
+		[
+			VIEWER_CONTEXT_KEY,
+			{ data, error: undefined, isLoading: false, isStale: false },
+		],
+	]);
+}
+
+// overrides takes a plain string `_id` (test ids like "9" read better than a cast at every
+// call site) even though AdminRow's own `_id` is the branded Id<"admins"> -- the cast to
+// AdminRow below is the one place that boundary is crossed.
+function makeAdminRow(
+	overrides: Partial<Omit<AdminRow, "_id">> & { _id?: string } = {},
+): AdminRow {
 	return {
 		_id: "admin-1",
 		email: "admin@wisc.edu",
 		name: "Admin One",
 		role: "admin",
 		...overrides,
-	};
+	} as AdminRow;
 }
 
 function makePersonaPayload(
@@ -133,15 +153,20 @@ function stubMutations() {
 // Mirrors what the /admin/cases/new and /admin/cases/[id]/edit route files
 // pass CaseForm — editCaseId here stands in for those routes' page.params.id.
 function renderForm(
-	props: { editCaseId?: string | null; templateId?: string | null } = {},
+	props: {
+		editCaseId?: string | null;
+		templateId?: string | null;
+		viewer?: AdminRow | null;
+	} = {},
 ) {
-	const { editCaseId = null, templateId = null } = props;
+	const { editCaseId = null, templateId = null, viewer = null } = props;
 	return render(CaseForm, {
 		props: {
 			mode: editCaseId ? "edit" : "create",
 			caseId: editCaseId,
 			templateId,
 		},
+		context: viewerContext(viewer),
 	});
 }
 
@@ -214,9 +239,15 @@ describe("CaseForm", () => {
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 
-			expect(
-				await screen.findByText("Case saved successfully."),
-			).toBeInTheDocument();
+			// A create-mode success leaves this route for the edit route (see CaseForm's own
+			// handleSubmit) -- the toast is what's meant to carry the message across that
+			// navigation, so it's the signal to check here, not the inline paragraph (which this
+			// unmocked-router test harness would otherwise show forever, since goto is a no-op).
+			await waitFor(() => {
+				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
+					"Case saved successfully.",
+				);
+			});
 			expect(createRequests).toHaveLength(1);
 			expect(createRequests[0]?.name).toBe("Sterling Industries");
 			expect(
@@ -341,7 +372,11 @@ describe("CaseForm", () => {
 
 			expect(mockClientMutation).toHaveBeenCalledTimes(1);
 			expect(secondResult).toEqual({ ok: true });
-			await screen.findByText("Case saved successfully.");
+			await waitFor(() => {
+				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
+					"Case saved successfully.",
+				);
+			});
 		});
 
 		// Regression test for a real bug: only the Submit button disabled itself while a save was
@@ -383,7 +418,11 @@ describe("CaseForm", () => {
 			).toBeDisabled();
 
 			resolveMutation?.({ caseId: "convex-case-1" });
-			await screen.findByText("Case saved successfully.");
+			await waitFor(() => {
+				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
+					"Case saved successfully.",
+				);
+			});
 
 			expect(screen.getByLabelText("Case name")).not.toBeDisabled();
 		});
@@ -414,7 +453,11 @@ describe("CaseForm", () => {
 			await user.type(screen.getByLabelText("Title/Role"), "CFO");
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 
-			await screen.findByText("Case saved successfully.");
+			await waitFor(() => {
+				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
+					"Case saved successfully.",
+				);
+			});
 			expect(unsavedGuard.isDirty).toBe(false);
 			expect(createRequests).toHaveLength(1);
 		});
@@ -555,7 +598,7 @@ describe("CaseForm", () => {
 				// The root's availability_minutes field renders as exactly "45" —
 				// corrupting it to non-numeric text exercises parseNumberField's
 				// warning path (see importCase.ts) without hand-building HTML.
-				.replace(">45\n    </textarea>", ">not-a-number\n    </textarea>");
+				.replace(">45</textarea>", ">not-a-number</textarea>");
 			const file = new File([tweaked], "export.html", { type: "text/html" });
 			const user = userEvent.setup();
 			const { container } = renderForm();
@@ -710,36 +753,24 @@ describe("CaseForm", () => {
 		});
 
 		it("excludes the signed-in admin (api/admins:viewer) as the effective owner in create mode", async () => {
-			// effectiveOwnerId in create mode comes from api/admins:viewer, a second
-			// useQuery call alongside the admin-roster one -- dispatch by function name so
-			// each gets its own fixture, unlike every other test in this file (which only
-			// ever needs the roster call, so a single mockReturnValue covers it).
-			mockUseQuery.mockImplementation((ref: unknown) =>
-				getFunctionName(ref as FunctionReference<"query">) ===
-				"api/admins:viewer"
-					? {
-							data: makeAdminRow({
-								_id: "1",
-								name: "Me",
-								email: "me@wisc.edu",
-							}),
-							isLoading: false,
-							error: undefined,
-						}
-					: {
-							data: [
-								makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
-								makeAdminRow({
-									_id: "2",
-									name: "Rank Rita",
-									email: "rita@wisc.edu",
-								}),
-							],
-							isLoading: false,
-							error: undefined,
-						},
-			);
-			renderForm();
+			// effectiveOwnerId in create mode comes from api/admins:viewer -- via context now
+			// (see adminViewer.ts), not a second useQuery call, so it's set through
+			// renderForm's own `viewer` option rather than dispatching mockUseQuery by name.
+			mockUseQuery.mockReturnValue({
+				data: [
+					makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
+					makeAdminRow({
+						_id: "2",
+						name: "Rank Rita",
+						email: "rita@wisc.edu",
+					}),
+				],
+				isLoading: false,
+				error: undefined,
+			});
+			renderForm({
+				viewer: makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
+			});
 
 			await openPicker();
 
@@ -781,7 +812,11 @@ describe("CaseForm", () => {
 			expect(checkbox).toBeChecked();
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
-			await screen.findByText("Case saved successfully.");
+			await waitFor(() => {
+				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
+					"Case saved successfully.",
+				);
+			});
 
 			expect(createRequests[0]?.collaboratorAdminIds).toEqual(["9"]);
 

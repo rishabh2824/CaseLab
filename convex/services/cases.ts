@@ -41,7 +41,7 @@ export async function loadCaseForAccess(
 	caseId: Id<"cases">,
 	admin: Doc<"admins">,
 ): Promise<Doc<"cases">> {
-	const c = await ctx.db.get(caseId);
+	const c = await ctx.db.get("cases", caseId);
 	if (!c) throw new ConvexError("Case not found.");
 	await requireCaseAccess(ctx, c, admin);
 	return c;
@@ -56,7 +56,7 @@ export async function loadCaseForAccess(
 export type CaseSummary = {
 	_id: Id<"cases">;
 	name: string;
-	accessCode: string | undefined;
+	accessCode: string;
 };
 
 function toCaseSummary(c: Doc<"cases">): CaseSummary {
@@ -84,7 +84,7 @@ export async function listCases(
 		.withIndex("by_admin", (q) => q.eq("adminId", admin._id))
 		.collect();
 	const collaboratingCases = await Promise.all(
-		collaboratingRows.map((row) => ctx.db.get(row.caseId)),
+		collaboratingRows.map((row) => ctx.db.get("cases", row.caseId)),
 	);
 
 	const byId = new Map<Id<"cases">, Doc<"cases">>();
@@ -344,7 +344,13 @@ export async function buildStructure(
 			// forgetting to attach something before submitting.
 			if (!entry.file) return [];
 			const resolvedFile = lookup(entry.file);
-			if (resolvedFile) fileIds.add(resolvedFile.fileId);
+			// A ref that fails to resolve (e.g. its storage object no longer exists -- see
+			// resolveFileRefs' own comment) is exactly as unusable as never having attached a
+			// file at all, so it's dropped the same way instead of persisted as `{file: null,
+			// ...}` -- an entry the rest of the app would otherwise have to treat as
+			// never-usable anyway.
+			if (!resolvedFile) return [];
+			fileIds.add(resolvedFile.fileId);
 			return [
 				{
 					file: toFileRefPayload(resolvedFile),
@@ -384,25 +390,6 @@ export async function buildStructure(
 	};
 }
 
-function normalizeAccessCode(
-	accessCode: string | undefined,
-): string | undefined {
-	const trimmed = accessCode?.trim();
-	return trimmed ? trimmed : undefined;
-}
-
-async function isAccessCodeTaken(
-	ctx: QueryCtx | MutationCtx,
-	accessCode: string,
-	excludeCaseId?: Id<"cases">,
-): Promise<boolean> {
-	const existing = await ctx.db
-		.query("cases")
-		.withIndex("by_access_code", (q) => q.eq("accessCode", accessCode))
-		.first();
-	return existing !== null && existing._id !== excludeCaseId;
-}
-
 // Dedupes, rejects the case owner appearing in their own collaborator list, rejects unknown
 // admin ids, and rejects SUPER admins (they already have full access everywhere).
 async function resolveCollaboratorIds(
@@ -417,7 +404,9 @@ async function resolveCollaboratorIds(
 			"The case owner cannot also be listed as a collaborator.",
 		);
 	}
-	const admins = await Promise.all(deduped.map((id) => ctx.db.get(id)));
+	const admins = await Promise.all(
+		deduped.map((id) => ctx.db.get("admins", id)),
+	);
 	const missing = deduped.filter((_, i) => admins[i] === null);
 	if (missing.length > 0)
 		throw new ConvexError(`Unknown admin id(s): ${missing.join(", ")}`);
@@ -474,22 +463,26 @@ function validateDuration(duration: number | undefined): number | undefined {
 	return duration;
 }
 
-// Normalizes + validates an access code for create/update alike: required, then format, then
-// uniqueness (excluding the case being updated, if any, so a case keeping its own code doesn't
+// Validates an access code for create/update alike: required, then format, then uniqueness
+// (excluding the case being updated, if any, so a case keeping its own code doesn't
 // self-conflict). Every case must have one -- a case with no code can never be launched
 // (startSimulation looks a run up by accessCode alone), so this is a required field, same as
 // name/brief above, not merely a validated-if-present one.
 async function validateAccessCode(
 	ctx: QueryCtx | MutationCtx,
-	accessCode: string | undefined,
+	accessCode: string,
 	excludeCaseId?: Id<"cases">,
 ): Promise<string> {
-	const normalized = normalizeAccessCode(accessCode);
+	const normalized = accessCode.trim();
 	if (!normalized) throw new ConvexError("Access code is required.");
 	if (!ACCESS_CODE_FORMAT.test(normalized)) {
 		throw new ConvexError("Access code must contain only lowercase letters.");
 	}
-	if (await isAccessCodeTaken(ctx, normalized, excludeCaseId)) {
+	const existing = await ctx.db
+		.query("cases")
+		.withIndex("by_access_code", (q) => q.eq("accessCode", normalized))
+		.first();
+	if (existing !== null && existing._id !== excludeCaseId) {
 		throw new ConvexError(ACCESS_CODE_CONFLICT);
 	}
 	return normalized;

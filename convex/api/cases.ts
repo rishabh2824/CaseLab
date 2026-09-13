@@ -1,4 +1,6 @@
 import { v } from "convex/values";
+import type { Id } from "../_generated/dataModel";
+import { env } from "../_generated/server";
 import { adminMutation, adminQuery } from "../lib/adminFunctions";
 import {
 	personaPayloadValidator,
@@ -12,17 +14,24 @@ import {
 	updateCase,
 } from "../services/cases";
 
-// Read-only single-case fetch -- used by DemoCaseView.svelte for its hardcoded demo case.
-// Enforces the same owner-or-collaborator-or-super access as getForEdit below, and for the
-// same reason: `caseId` is caller-supplied, so an "any signed-in admin" exemption here isn't
-// scoped to the demo case -- it hands ANY admin ANY other admin's whole case document,
-// including its `accessCode` (all a student needs to launch that simulation) and every
-// persona's `known_facts`. A case meant to be a shared example is shared via the normal
-// collaborator mechanism (or is visible to super admins), not by exempting the read path.
-export const get = adminQuery({
-	args: { caseId: v.id("cases") },
-	handler: async (ctx, args) => {
-		return await loadCaseForAccess(ctx, args.caseId, ctx.admin);
+// The one shared example case every signed-in admin can see, read-only, regardless of
+// ownership/collaborator status -- used by DemoCaseView.svelte. This is safe to expose without
+// requireCaseAccess (unlike getForEdit below) specifically BECAUSE the id comes from the
+// DEMO_CASE_ID app env var (convex.config.ts, set per deployment via `npx convex env set`),
+// not a caller-supplied argument -- an admin has no way to point this at any other case's
+// document, so there's nothing for an "any signed-in admin" exemption to leak. Returns null
+// (not an error) when DEMO_CASE_ID isn't set for this deployment, or resolves to nothing --
+// a missing demo case is a deployment-configuration gap, not something to surface as a broken
+// query.
+export const getDemo = adminQuery({
+	args: {},
+	handler: async (ctx) => {
+		if (!env.DEMO_CASE_ID) return null;
+		try {
+			return await ctx.db.get("cases", env.DEMO_CASE_ID as Id<"cases">);
+		} catch {
+			return null;
+		}
 	},
 });
 

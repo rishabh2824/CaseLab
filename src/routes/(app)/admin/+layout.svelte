@@ -7,8 +7,10 @@ import { getConvexClient, useQuery } from "convex-svelte";
 import type { Snippet } from "svelte";
 import { browser } from "$app/environment";
 import { goto } from "$app/navigation";
+import { setViewerContext } from "$lib/adminViewer.js";
 import { authClient } from "$lib/auth-client.js";
 import AdminTopBar from "$lib/components/AdminTopBar.svelte";
+import { getErrorMessage } from "$lib/errors.js";
 import { api } from "../../../../convex/_generated/api.js";
 
 type Props = { children: Snippet };
@@ -23,6 +25,10 @@ createSvelteAuthClient({ authClient, convexClient: getConvexClient() });
 
 const auth = useAuth();
 const viewer = useQuery(api.api.admins.viewer, {});
+// Shared with every descendant route/component via context -- see adminViewer.ts's own
+// comment for why this replaces three separate useQuery(api.api.admins.viewer, {}) calls
+// elsewhere.
+setViewerContext(viewer);
 
 // Google's redirect lands back here as /admin?ott=... -- the cross-domain one-time-token
 // exchange that turns that into a real session (createSvelteAuthClient's internal
@@ -117,6 +123,18 @@ async function signOutNotAuthorized(): Promise<void> {
 {:else if auth.isLoading || viewer.isLoading || !auth.isAuthenticated}
 	<!-- Loading, or the effect above is about to redirect to Google -- render nothing so
 	     there's no flash of "Not authorized." before that redirect happens. -->
+{:else if viewer.error}
+	<!-- A real query failure (e.g. a network blip), not an authorization decision -- shown
+	     distinctly from "Not authorized." below so a transient error doesn't get misread as
+	     "your account was rejected" and debugged in the wrong direction. -->
+	<div class="flex h-screen flex-col items-center justify-center gap-3">
+		<p class="text-sm font-medium text-brand">
+			{getErrorMessage(viewer.error, "Something went wrong loading your admin account.")}
+		</p>
+		<button type="button" onclick={() => location.reload()} class="text-sm underline">
+			Reload
+		</button>
+	</div>
 {:else if !viewer.data}
 	<div class="flex h-screen flex-col items-center justify-center gap-3">
 		<p class="text-sm font-medium text-brand">Not authorized.</p>

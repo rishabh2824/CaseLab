@@ -50,9 +50,9 @@ export default defineSchema({
 
 	// `structure` stays a JSON blob (personas/referrals/roots) -- max observed size 15.7 KB,
 	// far under Convex's 1 MiB document limit, so splitting it into per-persona documents buys
-	// nothing. `accessCode`, when set, is validated to `^[a-z]+$` in the case create/update
-	// mutations (services/cases.ts) so it's canonical by construction -- no second normalized
-	// column needed.
+	// nothing. `accessCode` is required (every case must be launchable) and validated to
+	// `^[a-z]+$` in the case create/update mutations (services/cases.ts) so it's canonical by
+	// construction -- no second normalized column needed.
 	//
 	// Validated against the exact same personaPayloadValidator/referralEdgeValidator that
 	// gate create/update's own arguments (models/cases.ts) -- not v.any(). Three migrations
@@ -74,7 +74,7 @@ export default defineSchema({
 		brief: v.string(),
 		commonInformation: v.optional(v.string()),
 		duration: v.optional(v.number()),
-		accessCode: v.optional(v.string()),
+		accessCode: v.string(),
 		ownerAdminId: v.id("admins"),
 		structure: caseStructureValidator,
 	})

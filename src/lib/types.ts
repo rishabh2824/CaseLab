@@ -18,6 +18,7 @@ export type {
 	SharedFileOut as SharedFile,
 } from "../../convex/services/simulations.js";
 
+import type { Id } from "../../convex/_generated/dataModel.js";
 import type {
 	FileEntryPayload,
 	FileRefPayload,
@@ -43,9 +44,11 @@ export type PersonaFieldErrors = Partial<
 	Record<"name" | "role" | "availability", string>
 >;
 
-// A Convex `admins` document as api/admins:listAll returns it.
+// A Convex `admins` document as api/admins:listAll returns it. `_id` is the real branded
+// Id<"admins"> (not a plain string) so a value read off this type -- e.g. in a collaborator
+// picker -- slots directly into an Id<"admins">-typed argument without a cast.
 export type AdminRow = {
-	_id: string;
+	_id: Id<"admins">;
 	email: string;
 	name?: string;
 	role: AdminRole;

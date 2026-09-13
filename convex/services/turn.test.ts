@@ -412,9 +412,9 @@ describe("harassment/boundary escalation", () => {
 		const sentContents = replyCall.body.messages.map(
 			(m: { content: string }) => m.content,
 		);
-		expect(
-			sentContents.some((c: string) => c.includes("SYSTEM NOTE")),
-		).toBe(false);
+		expect(sentContents.some((c: string) => c.includes("SYSTEM NOTE"))).toBe(
+			false,
+		);
 	});
 
 	it("ends the chat once NONSENSE_THRESHOLD is reached", async () => {

@@ -70,6 +70,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 			ctx.db.insert("cases", {
 				name: "Case",
 				brief: "Brief",
+				accessCode: "seedcode",
 				ownerAdminId: ownerAdminId as Id<"admins">,
 				structure: { personas: [], referrals: [], roots: [] },
 			}),

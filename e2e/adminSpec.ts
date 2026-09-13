@@ -39,7 +39,7 @@ test("a signed-in ADMIN reaches /admin without the manage-admins control", async
 	await expect(
 		page.getByRole("heading", { name: "Choose what you want to work on" }),
 	).toBeVisible();
-	await expect(page.getByRole("button", { name: "Manage admins" })).toHaveCount(
+	await expect(page.getByRole("link", { name: "Manage admins" })).toHaveCount(
 		0,
 	);
 });
@@ -50,9 +50,7 @@ test("a signed-in SUPER admin sees the manage-admins control", async ({
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.SUPER });
 	await page.goto("/admin");
-	await expect(
-		page.getByRole("button", { name: "Manage admins" }),
-	).toBeVisible();
+	await expect(page.getByRole("link", { name: "Manage admins" })).toBeVisible();
 });
 
 test("an unauthenticated visit to /admin/admins attempts a Google sign-in", async ({
@@ -173,10 +171,11 @@ test("submitting with required fields empty does not issue a request and reveals
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
 	await page.goto("/admin/cases/new");
 
-	// The Submit button is disabled from load (hasValidationErrors is true on
-	// a blank form), so it can never actually be clicked into submitting.
-	// Typing then clearing a field is what flips showFieldErrors, the same
-	// gate a real admin would trip by touching any required field.
+	// The Submit button is a native `type="submit"` next to `required` inputs, so clicking it
+	// on a blank form gets intercepted by the browser's own constraint validation before
+	// CaseForm's JS ever runs -- it wouldn't reveal the app's own field-error text at all.
+	// Typing then clearing a field is what flips showFieldErrors, the same gate a real admin
+	// would trip by touching any required field.
 	const nameInput = page.getByLabel("Case name");
 	await nameInput.fill("x");
 	await nameInput.fill("");
@@ -185,7 +184,10 @@ test("submitting with required fields empty does not issue a request and reveals
 	await expect(page.getByText("Initial brief is required.")).toBeVisible();
 	await expect(page.getByText("Access code is required.")).toBeVisible();
 	await expect(page.getByText("At least 1 persona is required")).toBeVisible();
-	await expect(page.getByRole("button", { name: "Submit" })).toBeDisabled();
+	// The Submit button intentionally stays enabled even with errors showing (see CaseForm's
+	// own comment: disabling it here left revealErrors() with no gesture to trigger it from --
+	// runSave's own hasValidationErrors check is what actually blocks the save).
+	await expect(page.getByRole("button", { name: "Submit" })).toBeEnabled();
 });
 
 // --- edit ----------------------------------------------------------------

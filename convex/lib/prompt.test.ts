@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PersonaDetail } from "../services/simulationReads";
 import {
+	systemPrompt as buildSystemPrompt,
 	cleanReply,
 	coerceHandles,
 	parseReply,
-	systemPrompt as buildSystemPrompt,
 } from "./prompt";
 
 // These tests only care about substring presence, not which of the two cached/uncached blocks

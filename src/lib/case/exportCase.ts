@@ -81,8 +81,7 @@ function fields({
     <label class="field-label">${escapeHtml(label)}${required ? '<span class="required-mark"> *</span>' : ""}</label>
     ${hint ? `<p class="field-hint">${escapeHtml(hint)}</p>` : ""}
     <textarea class="input ${rows === 1 ? "input--line" : "input--area"}"
-        data-field="${field}" rows="${rows}">${escapeHtml(value)}
-    </textarea>
+        data-field="${field}" rows="${rows}">${escapeHtml(value)}</textarea>
   </div>`;
 }
 
@@ -94,7 +93,10 @@ function fields({
 // so re-numbering on add/remove (see the inline script's renumberFiles) is
 // what keeps "File 3" in the form pointing at the third entry on import.
 function fileRowMarkup(
-	file: { share_conditions?: string | null; perceived_contents?: string | null },
+	file: {
+		share_conditions?: string | null;
+		perceived_contents?: string | null;
+	},
 	index: number,
 ): string {
 	return `<div class="file-row" data-file="true">
@@ -104,7 +106,8 @@ function fileRowMarkup(
     </div>
     ${fields({
 			field: "share_conditions",
-			label: "Describe the conditions under which the persona will share the file",
+			label:
+				"Describe the conditions under which the persona will share the file",
 			value: file.share_conditions ?? "",
 			rows: 2,
 		})}
@@ -473,17 +476,25 @@ export function buildHTMLForm({
     });
   }
 
+  // Built with the Option constructor, not innerHTML + string-concatenated markup: a persona
+  // name is admin-authored text that reaches here unescaped (unlike personaOptions() above,
+  // which builds the export's INITIAL <option>s server-side through escapeHtml), and the
+  // Option constructor always sets its label as a text node -- never parsed as HTML -- so an
+  // id or name containing '"', '<', or '>' can't break out of an attribute or inject markup
+  // into whichever admin's browser has this file open. Same threat PERSONA_ID_FORMAT's own
+  // comment (services/cases.ts) defends against for ids; this closes the matching gap for
+  // names, which that format restriction doesn't cover.
   function refreshReferralOptions() {
     var personas = currentPersonas();
     document.querySelectorAll('.referral-row').forEach(function (row) {
       ['from', 'to'].forEach(function (role) {
         var select = row.querySelector('select[data-role="' + role + '"]');
         var current = select.value;
-        select.innerHTML = personas.map(function (persona) {
-          var sel = persona.id === current ? ' selected' : '';
+        select.innerHTML = '';
+        personas.forEach(function (persona) {
           var label = persona.name || ('Persona ' + persona.id.slice(0, 6));
-          return '<option value="' + persona.id + '"' + sel + '>' + label + '</option>';
-        }).join('');
+          select.appendChild(new Option(label, persona.id, false, persona.id === current));
+        });
         var ids = personas.map(function (p) { return p.id; });
         if (!ids.includes(current) && ids.length) select.value = ids[0];
       });

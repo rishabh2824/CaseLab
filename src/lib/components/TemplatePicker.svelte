@@ -1,7 +1,6 @@
 <script lang="ts">
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
-import { goto } from "$app/navigation";
 import { getErrorMessage } from "$lib/errors.js";
 import type { CaseSummary } from "$lib/types.js";
 import { api } from "../../../convex/_generated/api.js";
@@ -22,12 +21,10 @@ const deleteCase = useMutation(api.api.cases.deleteCase);
 let pendingDelete = $state<CaseSummary | null>(null);
 let isDeleting = $state(false);
 
-function openCase(caseItem: CaseSummary) {
-	if (mode === "edit") {
-		goto(`/admin/cases/${caseItem._id}/edit`);
-	} else {
-		goto(`/admin/cases/new?template=${caseItem._id}`);
-	}
+function caseHref(caseItem: CaseSummary): string {
+	return mode === "edit"
+		? `/admin/cases/${caseItem._id}/edit`
+		: `/admin/cases/new?template=${caseItem._id}`;
 }
 
 // No stopPropagation here: this button sits in a sibling <div> below the
@@ -90,20 +87,17 @@ const isEditMode = $derived(mode === "edit");
 			{:else}
 				{#each casesQuery.data as caseItem (caseItem._id)}
 					<div>
-						<button
-							type="button"
-							onclick={() => openCase(caseItem)}
+						<a
+							href={caseHref(caseItem)}
 							class="group block w-full rounded-2xl border border-line bg-white p-5 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-brand hover:shadow-premium"
 						>
 							<p class="font-display text-lg font-semibold text-ink transition group-hover:text-brand">
 								{caseItem.name}
 							</p>
-							{#if caseItem.accessCode}
-								<p class="mt-1 font-mono text-xs uppercase tracking-[0.18em] text-stone-soft">
-									Access code: {caseItem.accessCode}
-								</p>
-							{/if}
-						</button>
+							<p class="mt-1 font-mono text-xs uppercase tracking-[0.18em] text-stone-soft">
+								Access code: {caseItem.accessCode}
+							</p>
+						</a>
 						{#if isEditMode}
 							<div class="mt-1.5 flex justify-end px-1">
 								<button

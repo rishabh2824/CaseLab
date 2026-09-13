@@ -368,7 +368,12 @@ describe("collaborator validation (via createCase)", () => {
 	it("rejects an unknown admin id", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
-		const bogusId = "k17bogus0000000000000000" as Id<"admins">;
+		// A well-formed id (convex-test's own internal id shape is
+		// `<numeric sequence><table name>` -- see its tableNameFromId) that just doesn't
+		// resolve to any row, not a syntactically-invalid string -- ctx.db.get("admins", id)
+		// validates the latter itself and throws before resolveCollaboratorIds' own "Unknown
+		// admin id(s)" check ever runs, same as real Convex would for a malformed id.
+		const bogusId = "999999999admins" as Id<"admins">;
 		await expect(
 			t.run((ctx) =>
 				createCase(ctx, payload({ collaboratorAdminIds: [bogusId] }), owner),

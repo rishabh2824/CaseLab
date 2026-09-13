@@ -1,7 +1,3 @@
-<script lang="ts">
-import { goto } from "$app/navigation";
-</script>
-
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
 	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<img
@@ -27,9 +23,8 @@ import { goto } from "$app/navigation";
 		</div>
 
 		<div class="mt-12 grid gap-6 md:grid-cols-2">
-			<button
-				type="button"
-				onclick={() => goto('/admin/cases/new')}
+			<a
+				href="/admin/cases/new"
 				class="group rounded-3xl border border-line bg-white p-8 text-left shadow-soft transition hover:-translate-y-1 hover:border-brand hover:shadow-premium"
 			>
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
@@ -45,11 +40,10 @@ import { goto } from "$app/navigation";
 					Open blank form
 					<span aria-hidden="true">&rarr;</span>
 				</div>
-			</button>
+			</a>
 
-			<button
-				type="button"
-				onclick={() => goto('/admin/new/template')}
+			<a
+				href="/admin/new/template"
 				class="group rounded-3xl border border-line bg-cream p-8 text-left shadow-soft transition hover:-translate-y-1 hover:border-brand hover:shadow-premium"
 			>
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
@@ -67,12 +61,11 @@ import { goto } from "$app/navigation";
 					Choose a case
 					<span aria-hidden="true">&rarr;</span>
 				</div>
-			</button>
+			</a>
 		</div>
 
-		<button
-			type="button"
-			onclick={() => goto('/admin/new/demo')}
+		<a
+			href="/admin/new/demo"
 			class="group mt-6 flex w-full items-center justify-between gap-4 rounded-2xl border border-line-soft bg-white px-6 py-5 text-left transition hover:border-brand hover:bg-cream/70"
 		>
 			<div>
@@ -90,6 +83,6 @@ import { goto } from "$app/navigation";
 			>
 				&rarr;
 			</span>
-		</button>
+		</a>
 	</div>
 </div>

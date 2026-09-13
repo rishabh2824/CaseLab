@@ -1,14 +1,10 @@
 <script lang="ts">
-import { useQuery } from "convex-svelte";
-import { goto } from "$app/navigation";
-import { api } from "../../../../convex/_generated/api.js";
+import { getViewerContext } from "$lib/adminViewer.js";
 
-// Re-subscribes to the same query admin/+layout.svelte already resolved (Convex dedupes
-// identical query+arg subscriptions, so this is free) instead of reading a session-stored
-// role -- see admin/admins/+page.svelte's own identical comment for why that's the right
-// call: a plain sessionStorage-backed copy is one tick behind this query's own side effect,
+// Shared with admin/+layout.svelte via context (see adminViewer.ts) instead of a session-
+// stored role: a plain sessionStorage-backed copy is one tick behind the layout's own query,
 // and is unreliable on a cold load/reload of this route directly.
-const viewer = useQuery(api.api.admins.viewer, {});
+const viewer = getViewerContext();
 const isSuperAdmin = $derived(viewer.data?.role === "super");
 </script>
 
@@ -22,13 +18,12 @@ const isSuperAdmin = $derived(viewer.data?.role === "super");
 	/>
 
 	{#if isSuperAdmin}
-		<button
-			type="button"
-			onclick={() => goto('/admin/admins')}
+		<a
+			href="/admin/admins"
 			class="fixed bottom-6 right-6 z-20 rounded-full border border-line bg-white px-6 py-3 text-sm font-semibold text-brand shadow-soft transition hover:border-brand hover:bg-brand-tint sm:bottom-auto sm:right-20 sm:top-12"
 		>
 			Manage admins
-		</button>
+		</a>
 	{/if}
 
 	<div class="relative z-10 mx-auto flex min-h-[80vh] max-w-5xl flex-col justify-center">
@@ -48,9 +43,8 @@ const isSuperAdmin = $derived(viewer.data?.role === "super");
 		</div>
 
 		<div class="mt-12 grid gap-6 md:grid-cols-2">
-			<button
-				type="button"
-				onclick={() => goto('/admin/new')}
+			<a
+				href="/admin/new"
 				class="group rounded-3xl border border-line bg-white p-8 text-left shadow-soft transition hover:-translate-y-1 hover:border-brand hover:shadow-premium"
 			>
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
@@ -66,11 +60,10 @@ const isSuperAdmin = $derived(viewer.data?.role === "super");
 					Open case builder
 					<span aria-hidden="true">&rarr;</span>
 				</div>
-			</button>
+			</a>
 
-			<button
-				type="button"
-				onclick={() => goto('/admin/edit')}
+			<a
+				href="/admin/edit"
 				class="group rounded-3xl border border-line bg-cream p-8 text-left shadow-soft transition hover:-translate-y-1 hover:border-brand hover:shadow-premium"
 			>
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">
@@ -86,7 +79,7 @@ const isSuperAdmin = $derived(viewer.data?.role === "super");
 					Open case list
 					<span aria-hidden="true">&rarr;</span>
 				</div>
-			</button>
+			</a>
 		</div>
 	</div>
 </div>

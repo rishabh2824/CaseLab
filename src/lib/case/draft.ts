@@ -1,4 +1,5 @@
 // Pure data-shaping helpers for the case form
+import type { CaseStructure } from "../../../convex/models/cases.js";
 import { ACCESS_CODE_FORMAT } from "../../../convex/schema.js";
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
 
@@ -50,31 +51,27 @@ export const normalizeReferral = (
 });
 
 // A case document's `structure` field (personas/referrals/roots) as read back from Convex --
-// validated server-side against caseStructureValidator (models/cases.ts), but that validator
-// constrains shape, not the specific Persona/ReferralEdge display types this frontend wants
-// (e.g. defaulting a field an older-shaped row never had). CaseForm.svelte (loading a case to
-// edit or use as a template) and DemoCaseView.svelte (the read-only demo) both need this exact
-// normalization; sharing it here means there's one place that knows how to turn a raw
-// `structure` blob into display-ready Personas/Referrals, not two independently-written casts
-// that could drift.
-export function parseCaseStructure(structure: unknown): {
+// already shaped exactly like CaseStructure by caseStructureValidator (models/cases.ts), so
+// there's no untrusted shape to defend against here, only display-only defaults
+// normalizePersona/normalizeReferral fill in (e.g. a field an older-shaped row never had).
+// CaseForm.svelte (loading a case to edit or use as a template) and DemoCaseView.svelte (the
+// read-only demo) both need this exact normalization; sharing it here means there's one place
+// that knows how to turn a `structure` blob into display-ready Personas/Referrals, not two
+// independently-written copies that could drift. `structure` is optional only because a live
+// query's `.data` is undefined before it first loads, not because its shape is ever in doubt.
+export function parseCaseStructure(structure: CaseStructure | undefined): {
 	personas: Persona[];
 	referrals: ReferralEdge[];
 	roots: string[];
 } {
-	const s = (structure ?? {}) as {
-		personas?: unknown[];
-		referrals?: unknown[];
-		roots?: string[];
-	};
 	return {
-		personas: (s.personas ?? []).map((persona) =>
-			normalizePersona(persona as Parameters<typeof normalizePersona>[0]),
+		personas: (structure?.personas ?? []).map((persona) =>
+			normalizePersona(persona),
 		),
-		referrals: (s.referrals ?? []).map((referral) =>
-			normalizeReferral(referral as Parameters<typeof normalizeReferral>[0]),
+		referrals: (structure?.referrals ?? []).map((referral) =>
+			normalizeReferral(referral),
 		),
-		roots: s.roots ?? [],
+		roots: structure?.roots ?? [],
 	};
 }
 

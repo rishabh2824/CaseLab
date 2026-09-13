@@ -81,7 +81,7 @@ export async function createAdmin(
 	// stored and shown as "Jane Doe", not carry the pasted whitespace around forever.
 	const name = args.name?.trim() || undefined;
 	const id = await ctx.db.insert("admins", { email, name, role: args.role });
-	const created = await ctx.db.get(id);
+	const created = await ctx.db.get("admins", id);
 	if (!created) throw new Error("Failed to create admin.");
 	return created;
 }
@@ -94,7 +94,7 @@ export async function deleteAdminWithCascade(
 	ctx: MutationCtx,
 	adminId: Id<"admins">,
 ): Promise<{ ok: true; casesDeleted: number; casesReassigned: number }> {
-	const admin = await ctx.db.get(adminId);
+	const admin = await ctx.db.get("admins", adminId);
 	if (!admin) throw new ConvexError("Admin not found.");
 	if (admin.role === "super")
 		throw new ConvexError("Super admins cannot be deleted.");
