@@ -1,29 +1,22 @@
 <script lang="ts">
-import { makeFunctionReference } from "convex/server";
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
 import DestructiveConfirmDialog from "$lib/components/DestructiveConfirmDialog.svelte";
-import type { AdminRole, AdminRow } from "$lib/types.js";
-
-// String-based references (not generated `api` imports): the convex/ project lives at
-// the repo root, outside this Vite project's root -- see admin/+layout.svelte for why.
-const listAllRef = makeFunctionReference<"query">("api/admins:listAll");
-const viewerRef = makeFunctionReference<"query">("api/admins:viewer");
-const createRef = makeFunctionReference<"mutation">("api/admins:create");
-const deleteRef = makeFunctionReference<"mutation">(
-	"api/admins:deleteWithCascade",
-);
+import { getErrorMessage } from "$lib/errors.js";
+import type { AdminRole } from "$lib/types.js";
+import { api } from "../../../../../convex/_generated/api.js";
+import type { Doc } from "../../../../../convex/_generated/dataModel.js";
 
 const ROLE_LABELS: Record<AdminRole, string> = {
 	super: "Super Admin",
 	admin: "Admin",
 };
 
-const adminsQuery = useQuery(listAllRef, {});
-const admins = $derived((adminsQuery.data ?? []) as AdminRow[]);
-const createAdmin = useMutation(createRef);
-const deleteAdmin = useMutation(deleteRef);
+const adminsQuery = useQuery(api.api.admins.listAll, {});
+const admins = $derived(adminsQuery.data ?? []);
+const createAdmin = useMutation(api.api.admins.create);
+const deleteAdmin = useMutation(api.api.admins.deleteWithCascade);
 
 // Re-subscribes to the same query admin/+layout.svelte already resolved (Convex dedupes
 // identical query+arg subscriptions, so this is free) instead of reading session.adminRole --
@@ -32,7 +25,7 @@ const deleteAdmin = useMutation(deleteRef);
 // null when this component first mounts (a `+page.ts` load-based redirect using it, the
 // previous approach here, fired before that side-effect had ever run, bouncing a real super
 // admin back to /admin on every hard refresh). Gating on the query itself has no such gap.
-const viewer = useQuery(viewerRef, {});
+const viewer = useQuery(api.api.admins.viewer, {});
 const isSuperAdmin = $derived(viewer.data?.role === "super");
 $effect(() => {
 	if (viewer.isLoading) return;
@@ -43,7 +36,7 @@ let email = $state("");
 let name = $state("");
 let role = $state<AdminRole>("admin");
 let isAdding = $state(false);
-let pendingDelete = $state<AdminRow | null>(null);
+let pendingDelete = $state<Doc<"admins"> | null>(null);
 let isDeleting = $state(false);
 
 async function handleAdd(event: SubmitEvent): Promise<void> {
@@ -65,18 +58,14 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 		role = "admin";
 		toast(`Added ${trimmedEmail}.`, { duration: 4000 });
 	} catch (err) {
-		toast((err instanceof Error && err.message) || "Failed to add admin.");
+		toast(getErrorMessage(err, "Failed to add admin."));
 	} finally {
 		isAdding = false;
 	}
 }
 
-function requestDelete(admin: AdminRow): void {
+function requestDelete(admin: Doc<"admins">): void {
 	pendingDelete = admin;
-}
-
-function cancelDelete(): void {
-	pendingDelete = null;
 }
 
 async function confirmDelete(): Promise<void> {
@@ -104,7 +93,7 @@ async function confirmDelete(): Promise<void> {
 		);
 		pendingDelete = null;
 	} catch (err) {
-		toast((err instanceof Error && err.message) || "Failed to delete admin.");
+		toast(getErrorMessage(err, "Failed to delete admin."));
 	} finally {
 		isDeleting = false;
 	}
@@ -181,7 +170,7 @@ async function confirmDelete(): Promise<void> {
 				<p class="p-5 text-sm text-stone">Loading admins…</p>
 			{:else if adminsQuery.error}
 				<p class="p-5 text-sm text-brand">
-					{adminsQuery.error.message || "Failed to load admins."}
+					{getErrorMessage(adminsQuery.error, "Failed to load admins.")}
 				</p>
 			{:else if admins.length === 0}
 				<p class="p-5 text-sm text-stone">No admins yet.</p>
@@ -233,5 +222,4 @@ async function confirmDelete(): Promise<void> {
 	description="This cannot be undone. Any case they own with no collaborators is deleted; a case they own that has collaborators is reassigned to the longest-standing collaborator."
 	confirming={isDeleting}
 	onConfirm={confirmDelete}
-	onCancel={cancelDelete}
 />

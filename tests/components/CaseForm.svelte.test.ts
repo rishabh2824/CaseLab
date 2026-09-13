@@ -8,11 +8,13 @@
 // goes through Convex now, so convex-svelte is mocked here rather than MSW.
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import type { FunctionReference } from "convex/server";
+import { getFunctionName } from "convex/server";
 import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeNavigate } from "$app/navigation";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
-import { session } from "../../src/lib/session.svelte.js";
 import type {
 	AdminRow,
 	PersonaPayload,
@@ -267,6 +269,124 @@ describe("CaseForm", () => {
 				await screen.findByText("Access code already in use."),
 			).toBeInTheDocument();
 		});
+
+		// After a successful update, the form's own in-memory persona/file state still holds
+		// whatever the admin last typed/picked -- not what the server actually persisted
+		// (submitCase.ts already swapped every picked File for a FileRef before this mutation
+		// ran, and buildStructure trims/normalizes fields server-side). Reloading from
+		// api/cases:getForEdit is what keeps the form showing the real, saved state instead of
+		// silently drifting from it -- proven here by having the reload's response differ from
+		// the initial load's.
+		it("reloads the case from the server after a successful update", async () => {
+			const doc = makeCaseDoc();
+			let queryCalls = 0;
+			mockClientQuery.mockImplementation(
+				async (_ref: unknown, args: { caseId: string }) => {
+					queryCalls += 1;
+					if (args.caseId !== doc._id) throw new Error("Case not found.");
+					return queryCalls === 1
+						? doc
+						: { ...doc, name: "Sterling Industries (saved)" };
+				},
+			);
+			const { updateRequests } = stubMutations();
+			const user = userEvent.setup();
+			renderForm({ editCaseId: doc._id });
+			await screen.findByDisplayValue("Sterling Industries");
+
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+
+			expect(
+				await screen.findByDisplayValue("Sterling Industries (saved)"),
+			).toBeInTheDocument();
+			expect(updateRequests).toHaveLength(1);
+			expect(queryCalls).toBe(2);
+		});
+	});
+
+	describe("concurrent saves", () => {
+		// The Submit button disables itself while isSubmitting, so a second click can't reach
+		// performSave again -- but AdminTopBar's own "Save changes" action (via
+		// unsavedGuard.save()) is a separate gesture the disabled button can't block. Without
+		// its own dedup, that second call would race a second submitCase call against the
+		// first's still-in-flight one.
+		it("reuses the in-flight save instead of issuing a second mutation call", async () => {
+			let resolveMutation: ((value: unknown) => void) | undefined;
+			mockClientMutation.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						resolveMutation = resolve;
+					}),
+			);
+			const user = userEvent.setup();
+			renderForm();
+
+			await user.type(
+				screen.getByLabelText("Case name"),
+				"Sterling Industries",
+			);
+			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
+			await user.type(screen.getByLabelText("Access code"), "sterling");
+			await user.click(
+				screen.getByRole("button", { name: "+ Add root persona" }),
+			);
+			await user.type(screen.getByLabelText("Persona name"), "Mary");
+			await user.type(screen.getByLabelText("Title/Role"), "CFO");
+
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+			const secondSave = unsavedGuard.save();
+
+			resolveMutation?.({ caseId: "convex-case-1" });
+			const secondResult = await secondSave;
+
+			expect(mockClientMutation).toHaveBeenCalledTimes(1);
+			expect(secondResult).toEqual({ ok: true });
+			await screen.findByText("Case saved successfully.");
+		});
+
+		// Regression test for a real bug: only the Submit button disabled itself while a save was
+		// in flight. Typing into a field (or importing a new template) while that save was still
+		// running was either silently overwritten by the reload loadCase() does afterward in edit
+		// mode, or -- in create mode -- counted as already-saved by markSaved() and then dropped
+		// without a prompt by the redirect to the edit route. Wrapping the form's fields in a
+		// <fieldset disabled={isSubmitting || isLoadingSource}> closes both: every input this
+		// fieldset contains (not just the Submit button) is inert while a save is running.
+		it("disables every field, not just Submit, while a save is in flight", async () => {
+			let resolveMutation: ((value: unknown) => void) | undefined;
+			mockClientMutation.mockImplementation(
+				() =>
+					new Promise((resolve) => {
+						resolveMutation = resolve;
+					}),
+			);
+			const user = userEvent.setup();
+			renderForm();
+
+			await user.type(
+				screen.getByLabelText("Case name"),
+				"Sterling Industries",
+			);
+			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
+			await user.type(screen.getByLabelText("Access code"), "sterling");
+			await user.click(
+				screen.getByRole("button", { name: "+ Add root persona" }),
+			);
+			await user.type(screen.getByLabelText("Persona name"), "Mary");
+			await user.type(screen.getByLabelText("Title/Role"), "CFO");
+
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+
+			expect(screen.getByLabelText("Case name")).toBeDisabled();
+			expect(screen.getByLabelText("Persona name")).toBeDisabled();
+			expect(
+				screen.getByRole("button", { name: "Export template" }),
+			).toBeDisabled();
+
+			resolveMutation?.({ caseId: "convex-case-1" });
+			await screen.findByText("Case saved successfully.");
+
+			expect(screen.getByLabelText("Case name")).not.toBeDisabled();
+		});
 	});
 
 	describe("dirty tracking", () => {
@@ -297,6 +417,48 @@ describe("CaseForm", () => {
 			await screen.findByText("Case saved successfully.");
 			expect(unsavedGuard.isDirty).toBe(false);
 			expect(createRequests).toHaveLength(1);
+		});
+	});
+
+	describe("unsaved-changes navigation guard", () => {
+		// Regression test for a real bug: beforeNavigate's callback used to gate on the form's
+		// own local `isDirty` derived value, not unsavedGuard.isDirty. unsavedGuard.discard()
+		// unregisters the form from the guard (so unsavedGuard.isDirty flips to false) but never
+		// touches the form's own baseline, so the local value stayed true — the very goto() that
+		// discard() issues re-entered this same beforeNavigate callback, which cancelled it and
+		// re-issued it as a new prompt, forever. Drives the mocked beforeNavigate callback
+		// directly (the same way SvelteKit's router invokes it) since no router is mounted here.
+		it("cancels a dirty navigation, but lets navigation through once discarded instead of re-blocking it", async () => {
+			const user = userEvent.setup();
+			renderForm();
+
+			const guardCallback = vi.mocked(beforeNavigate).mock.calls.at(-1)?.[0];
+			if (!guardCallback) throw new Error("expected a beforeNavigate callback");
+
+			await user.type(
+				screen.getByLabelText("Case name"),
+				"Sterling Industries",
+			);
+			expect(unsavedGuard.isDirty).toBe(true);
+
+			const firstCancel = vi.fn();
+			guardCallback({
+				to: { url: new URL("http://localhost/admin") },
+				cancel: firstCancel,
+			} as never);
+			expect(firstCancel).toHaveBeenCalledTimes(1);
+			expect(unsavedGuard.showModal).toBe(true);
+
+			// Same effect as clicking "Discard changes" in the modal.
+			await unsavedGuard.discard();
+			expect(unsavedGuard.isDirty).toBe(false);
+
+			const secondCancel = vi.fn();
+			guardCallback({
+				to: { url: new URL("http://localhost/admin") },
+				cancel: secondCancel,
+			} as never);
+			expect(secondCancel).not.toHaveBeenCalled();
 		});
 	});
 
@@ -504,10 +666,6 @@ describe("CaseForm", () => {
 	});
 
 	describe("collaborator picker", () => {
-		afterEach(() => {
-			session.clearAdmin();
-		});
-
 		async function openPicker() {
 			const user = userEvent.setup();
 			await user.click(
@@ -551,19 +709,36 @@ describe("CaseForm", () => {
 			expect(screen.queryByText("Super Sam")).not.toBeInTheDocument();
 		});
 
-		it("excludes the signed-in admin (matched by email) as the effective owner in create mode", async () => {
-			session.setAdmin({
-				adminRole: "admin",
-				adminEmail: "me@wisc.edu",
-			});
-			mockUseQuery.mockReturnValue({
-				data: [
-					makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
-					makeAdminRow({ _id: "2", name: "Rank Rita", email: "rita@wisc.edu" }),
-				],
-				isLoading: false,
-				error: undefined,
-			});
+		it("excludes the signed-in admin (api/admins:viewer) as the effective owner in create mode", async () => {
+			// effectiveOwnerId in create mode comes from api/admins:viewer, a second
+			// useQuery call alongside the admin-roster one -- dispatch by function name so
+			// each gets its own fixture, unlike every other test in this file (which only
+			// ever needs the roster call, so a single mockReturnValue covers it).
+			mockUseQuery.mockImplementation((ref: unknown) =>
+				getFunctionName(ref as FunctionReference<"query">) ===
+				"api/admins:viewer"
+					? {
+							data: makeAdminRow({
+								_id: "1",
+								name: "Me",
+								email: "me@wisc.edu",
+							}),
+							isLoading: false,
+							error: undefined,
+						}
+					: {
+							data: [
+								makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
+								makeAdminRow({
+									_id: "2",
+									name: "Rank Rita",
+									email: "rita@wisc.edu",
+								}),
+							],
+							isLoading: false,
+							error: undefined,
+						},
+			);
 			renderForm();
 
 			await openPicker();

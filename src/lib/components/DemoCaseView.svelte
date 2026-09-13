@@ -1,5 +1,4 @@
 <script lang="ts">
-import { makeFunctionReference } from "convex/server";
 import { useQuery } from "convex-svelte";
 import {
 	getPersonaLabel,
@@ -7,16 +6,18 @@ import {
 	referredWithParents,
 	rootPersonas as rootPersonasOf,
 } from "$lib/case/draft.js";
+import { getErrorMessage } from "$lib/errors.js";
+import { api } from "../../../convex/_generated/api.js";
+import type { Id } from "../../../convex/_generated/dataModel.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
 // Sterling Industries -- hardcoded until real case selection is built. Update this if the
 // prod deployment is ever reseeded (the Neon-to-Convex migration already broke this once --
 // Convex mints its own document ids on insert, so they don't survive a re-import).
-const DEMO_CASE_ID = "k574qchhh4hgtdx1rv6ypbpgmx8ckrm4";
+const DEMO_CASE_ID = "k574qchhh4hgtdx1rv6ypbpgmx8ckrm4" as Id<"cases">;
 
-const caseRef = makeFunctionReference<"query">("api/cases:get");
-const caseQuery = useQuery(caseRef, { caseId: DEMO_CASE_ID });
+const caseQuery = useQuery(api.api.cases.get, { caseId: DEMO_CASE_ID });
 
 const parsedStructure = $derived(parseCaseStructure(caseQuery.data?.structure));
 const personas = $derived(parsedStructure.personas);
@@ -35,7 +36,7 @@ const referredPersonas = $derived(
 			<p class="text-center text-sm text-stone">Loading demo case...</p>
 		{:else if caseQuery.error}
 			<div class="rounded-2xl border border-brand/20 bg-brand-tint px-4 py-3 text-sm text-brand">
-				{caseQuery.error.message || "Failed to load the demo case."}
+				{getErrorMessage(caseQuery.error, "Failed to load the demo case.")}
 			</div>
 		{:else if caseQuery.data}
 			<div class="rounded-2xl border border-line bg-white p-8 shadow-soft">

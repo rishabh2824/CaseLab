@@ -50,11 +50,21 @@ const UPLOAD_ORIGIN = "https://upload.test";
 // URL hands back. `postStatus` lets the upload-failure test reuse this without hand-rolling
 // its own handlers. All three go through the same mocked `mutation()`, so they're wired
 // together in one place instead of independent stubs.
-function stubMutations({ postStatus = 200 }: { postStatus?: number } = {}) {
+// `failSave` makes the create/update branch below throw instead of succeeding -- used by the
+// "cleans up its own uploads" test to prove submitCase's catch calls discardUploads with
+// exactly the storage ids that same attempt just uploaded, before rethrowing.
+function stubMutations({
+	postStatus = 200,
+	failSave,
+}: {
+	postStatus?: number;
+	failSave?: Error;
+} = {}) {
 	const uploadCountRequests: number[] = [];
 	const postRequests: { url: string; contentType: string | null }[] = [];
 	const createRequests: Record<string, unknown>[] = [];
 	const updateRequests: Record<string, unknown>[] = [];
+	const discardRequests: unknown[][] = [];
 	let counter = 0;
 
 	mockMutation.mockImplementation(
@@ -67,6 +77,11 @@ function stubMutations({ postStatus = 200 }: { postStatus?: number } = {}) {
 					return `${UPLOAD_ORIGIN}/upload/${counter}`;
 				});
 			}
+			if ("storageIds" in args) {
+				discardRequests.push(args.storageIds as unknown[]);
+				return null;
+			}
+			if (failSave) throw failSave;
 			if ("caseId" in args) {
 				updateRequests.push(args);
 				return { caseId: args.caseId };
@@ -94,12 +109,12 @@ function stubMutations({ postStatus = 200 }: { postStatus?: number } = {}) {
 		postRequests,
 		createRequests,
 		updateRequests,
+		discardRequests,
 	};
 }
 
 function baseInput(overrides: Partial<SubmitCaseInput> = {}): SubmitCaseInput {
 	return {
-		isEditMode: false,
 		editCaseId: null,
 		caseName: "Sterling Industries",
 		initialBrief: "Reduce office supply costs.",
@@ -127,7 +142,7 @@ describe("submitCase — create vs. edit routing", () => {
 	it("updates a case via the Convex updateCase mutation, passing its caseId", async () => {
 		const { updateRequests } = stubMutations();
 
-		await submitCase(baseInput({ isEditMode: true, editCaseId: "42" }));
+		await submitCase(baseInput({ editCaseId: "42" }));
 
 		expect(updateRequests).toHaveLength(1);
 		expect(updateRequests[0]?.caseId).toBe("42");
@@ -171,31 +186,6 @@ describe("submitCase — profile photo upload", () => {
 		expect(createRequests).toHaveLength(1);
 		const personas = createRequests[0]?.personas as PersonaPayload[];
 		expect(personas[0]?.profile_photo).toEqual(existingPhoto);
-	});
-
-	// Regression test: a case saved under an older version of this app can have a
-	// `file_id` key on its stored profile_photo that the current fileRefValidator
-	// (convex/models/cases.ts) no longer allows -- getForEdit/a template load returns it
-	// exactly as stored, and passing it straight through crashed create/update with
-	// "Value does not match validator" instead of anything an admin could act on.
-	it("drops unrecognized keys (e.g. a stale file_id) from an existing profile photo", async () => {
-		const { createRequests } = stubMutations();
-		const legacyPhoto = {
-			storage_id: "storage-existing" as GenericId<"_storage">,
-			file_name: "old.png",
-			content_type: "image/png",
-			file_id: "stale-files-row-id",
-		} as FileRefPayload;
-		const persona = makePersona({ profile_photo: legacyPhoto });
-
-		await submitCase(baseInput({ personas: [persona] }));
-
-		const personas = createRequests[0]?.personas as PersonaPayload[];
-		expect(personas[0]?.profile_photo).toEqual({
-			storage_id: "storage-existing",
-			file_name: "old.png",
-			content_type: "image/png",
-		});
 	});
 });
 
@@ -241,36 +231,6 @@ describe("submitCase — file attachments", () => {
 		expect(createRequests).toHaveLength(1);
 		const personas = createRequests[0]?.personas as PersonaPayload[];
 		expect(personas[0]?.files?.[0]?.file).toBeNull();
-	});
-
-	// Same legacy-shape hazard as the profile photo test above -- an existing attachment
-	// round-tripped through getForEdit/a template load can carry a stale `file_id` too.
-	it("drops unrecognized keys (e.g. a stale file_id) from an existing attachment", async () => {
-		const { createRequests } = stubMutations();
-		const legacyFile = {
-			storage_id: "storage-existing" as GenericId<"_storage">,
-			file_name: "invoice.xlsx",
-			content_type: "application/vnd.ms-excel",
-			file_id: "stale-files-row-id",
-		} as FileRefPayload;
-		const persona = makePersona({
-			files: [
-				{
-					file: legacyFile,
-					share_conditions: "always",
-					perceived_contents: "",
-				},
-			],
-		});
-
-		await submitCase(baseInput({ personas: [persona] }));
-
-		const personas = createRequests[0]?.personas as PersonaPayload[];
-		expect(personas[0]?.files?.[0]?.file).toEqual({
-			storage_id: "storage-existing",
-			file_name: "invoice.xlsx",
-			content_type: "application/vnd.ms-excel",
-		});
 	});
 });
 
@@ -376,6 +336,69 @@ describe("submitCase — upload failures", () => {
 
 		expect(err).toBeInstanceOf(Error);
 		expect((err as Error).message).toBe("Upload URL request failed.");
+	});
+
+	// The uploads themselves already landed in Convex storage by the time create/update
+	// rejects (a taken access code, say) -- submitCase's catch block cleans those up via
+	// discardUploads rather than leaving them stranded, so a fixed-and-resubmitted save
+	// doesn't multiply orphaned storage on every attempt.
+	it("cleans up its own uploads via discardUploads when the save itself fails", async () => {
+		const { createRequests, discardRequests } = stubMutations({
+			failSave: new Error(
+				"An access code with this value already exists on another case.",
+			),
+		});
+		const persona = makePersona({
+			profile_photo: new File(["a"], "photo.png", { type: "image/png" }),
+		});
+
+		await expect(
+			submitCase(baseInput({ personas: [persona] })),
+		).rejects.toThrow(
+			"An access code with this value already exists on another case.",
+		);
+		expect(createRequests).toHaveLength(0);
+		expect(discardRequests).toEqual([["storage-1"]]);
+	});
+
+	it("calls discardUploads with nothing when the save fails but nothing was uploaded", async () => {
+		const { discardRequests } = stubMutations({
+			failSave: new Error("Case name is required."),
+		});
+
+		await expect(submitCase(baseInput())).rejects.toThrow(
+			"Case name is required.",
+		);
+		expect(discardRequests).toEqual([]);
+	});
+
+	// A batch of several uploads where only one fails: without Promise.allSettled, the ones
+	// that already succeeded would be discarded along with the batch's rejection -- nothing
+	// would know their storage ids, leaving them orphaned until the weekly sweep. uploadAll
+	// settles the whole batch first, discards exactly what succeeded, then rethrows, so the
+	// case is never created/updated at all (a partial upload can't produce a partial save).
+	it("discards only the uploads that already succeeded when a later upload in the same batch fails", async () => {
+		const { createRequests, discardRequests } = stubMutations();
+		server.use(
+			http.post(`${UPLOAD_ORIGIN}/upload/2`, () => {
+				return new HttpResponse(null, { status: 500 });
+			}),
+		);
+		const persona1 = makePersona({
+			id: "p1",
+			profile_photo: new File(["a"], "p1-photo.png", { type: "image/png" }),
+		});
+		const persona2 = makePersona({
+			id: "p2",
+			profile_photo: new File(["b"], "p2-photo.png", { type: "image/png" }),
+		});
+
+		await expect(
+			submitCase(baseInput({ personas: [persona1, persona2] })),
+		).rejects.toThrow("Failed to upload file.");
+
+		expect(createRequests).toHaveLength(0);
+		expect(discardRequests).toEqual([["storage-1"]]);
 	});
 });
 

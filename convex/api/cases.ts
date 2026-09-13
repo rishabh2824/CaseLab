@@ -67,7 +67,12 @@ const casePayloadArgs = {
 	brief: v.string(),
 	commonInformation: v.optional(v.string()),
 	duration: v.optional(v.number()),
-	accessCode: v.optional(v.string()),
+	// Every case must have a unique access code -- see validateAccessCode (services/cases.ts)
+	// for the actual required-and-unique enforcement. Required here too (not v.optional like
+	// commonInformation/duration) so a direct call missing the field entirely is rejected by
+	// argument validation, matching name/brief above rather than accessCode's old optional
+	// shape from when a case could be saved without a launchable code.
+	accessCode: v.string(),
 	personas: v.array(personaPayloadValidator),
 	referrals: v.array(referralEdgeValidator),
 	roots: v.array(v.string()),

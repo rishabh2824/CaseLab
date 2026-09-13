@@ -57,6 +57,18 @@ function buildDoc(input: Parameters<typeof buildHTMLForm>[0]): Document {
 	return new DOMParser().parseFromString(buildHTMLForm(input), "text/html");
 }
 
+// Imported personas get fresh ids on every parse (mintFreshPersonaIds in importCase.ts), so
+// a test can't compare a returned id against the source persona's original `.id` — it has
+// to look the new id up some other way instead. Name is stable across that remap and
+// (via makePersona's auto-incrementing default) unique per fixture in these tests, so it
+// doubles as the stand-in identity for assertions that need to name a specific persona.
+function idsByName(
+	personas: { id: string; name: string }[],
+): (name: string) => string {
+	const byName = new Map(personas.map((p) => [p.name, p.id]));
+	return (name: string) => byName.get(name) as string;
+}
+
 const baseCaseFields = {
 	caseName: "Case",
 	accessCode: "ABC123",
@@ -203,10 +215,35 @@ describe("parseHTMLForm — persona graph validation", () => {
 		doc.getElementById("referrals-list")?.appendChild(danglingRow);
 
 		const { data, warnings } = parseHTMLForm(serialize(doc));
+		// Imported personas get fresh ids (see mintFreshPersonaIds in importCase.ts) --
+		// looked up here by name, which stays put across that remap.
+		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual([
-			{ from_id: a.id, to_id: b.id, conditions: "" },
+			{ from_id: byName(a.name), to_id: byName(b.name), conditions: "" },
 		]);
 		expect(warnings.some((w) => w.includes("wasn't found"))).toBe(true);
+	});
+
+	it("skips a duplicate referral (same from/to pair twice), keeping only the first", () => {
+		const a = makePersona();
+		const b = makePersona();
+		const doc = buildDoc({
+			...baseCaseFields,
+			personas: [a, b],
+			referrals: [makeReferral(a.id, b.id, "first")],
+			roots: [a.id],
+		});
+		const validRow = doc.querySelector(".referral-row") as Element;
+		const duplicateRow = validRow.cloneNode(true) as Element;
+		setField(duplicateRow, "conditions", "second");
+		doc.getElementById("referrals-list")?.appendChild(duplicateRow);
+
+		const { data, warnings } = parseHTMLForm(serialize(doc));
+		const byName = idsByName(data.personas);
+		expect(data.referrals).toEqual([
+			{ from_id: byName(a.name), to_id: byName(b.name), conditions: "first" },
+		]);
+		expect(warnings.some((w) => w.includes("duplicate referral"))).toBe(true);
 	});
 
 	it("skips a self-referral (from === to), with a warning", () => {
@@ -231,8 +268,9 @@ describe("parseHTMLForm — persona graph validation", () => {
 		doc.getElementById("referrals-list")?.appendChild(selfRow);
 
 		const { data, warnings } = parseHTMLForm(serialize(doc));
+		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual([
-			{ from_id: a.id, to_id: b.id, conditions: "" },
+			{ from_id: byName(a.name), to_id: byName(b.name), conditions: "" },
 		]);
 		expect(warnings.some((w) => w.includes("refers to itself"))).toBe(true);
 	});
@@ -264,9 +302,10 @@ describe("parseHTMLForm — persona graph validation", () => {
 		});
 		const { data, warnings } = parseHTMLForm(html);
 
-		expect(data.personas.map((p) => p.id)).toEqual([p1.id, p2.id]);
+		expect(data.personas.map((p) => p.name)).toEqual([p1.name, p2.name]);
+		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual([
-			{ from_id: p1.id, to_id: p2.id, conditions: "" },
+			{ from_id: byName(p1.name), to_id: byName(p2.name), conditions: "" },
 		]);
 		expect(warnings.some((w) => w.includes("Cycle detected"))).toBe(true);
 		expect(warnings.some((w) => w.includes(p3.id))).toBe(true);
@@ -283,7 +322,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 			roots: [root.id],
 		});
 		const { data, warnings } = parseHTMLForm(html);
-		expect(data.personas.map((p) => p.id)).toEqual([root.id]);
+		expect(data.personas.map((p) => p.name)).toEqual([root.name]);
 		expect(
 			warnings.some((w) => w.includes(orphan.id) && w.includes("Orphan")),
 		).toBe(true);
@@ -303,14 +342,23 @@ describe("parseHTMLForm — persona graph validation", () => {
 			roots: [parentA.id, parentB.id],
 		});
 		const { data, warnings } = parseHTMLForm(html);
-		expect(data.personas.map((p) => p.id).sort()).toEqual(
-			[parentA.id, parentB.id, shared.id].sort(),
+		expect(data.personas.map((p) => p.name).sort()).toEqual(
+			[parentA.name, parentB.name, shared.name].sort(),
 		);
 		expect(data.referrals).toHaveLength(2);
+		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual(
 			expect.arrayContaining([
-				{ from_id: parentA.id, to_id: shared.id, conditions: "" },
-				{ from_id: parentB.id, to_id: shared.id, conditions: "" },
+				{
+					from_id: byName(parentA.name),
+					to_id: byName(shared.name),
+					conditions: "",
+				},
+				{
+					from_id: byName(parentB.name),
+					to_id: byName(shared.name),
+					conditions: "",
+				},
 			]),
 		);
 		expect(warnings).toEqual([]);
@@ -318,12 +366,12 @@ describe("parseHTMLForm — persona graph validation", () => {
 });
 
 describe("parseHTMLForm — file sharing", () => {
-	it("produces one placeholder file entry when can_share_files is yes", () => {
-		// Only files.length > 0 drives the exported "yes"/"no" toggle (see
-		// fileShare() in exportCase.ts) — the entry's own content never makes
-		// it into the export, so a minimal DraftFileEntry is enough here.
+	it("round-trips each file's share_conditions and perceived_contents, with file left null", () => {
 		const persona = makePersona({
-			files: [{ share_conditions: "Ask first." }],
+			files: [
+				{ share_conditions: "Ask first.", perceived_contents: "A memo." },
+				{ share_conditions: "Only if pressed.", perceived_contents: "Photos." },
+			],
 		});
 		const html = buildHTMLForm({
 			...baseCaseFields,
@@ -333,11 +381,20 @@ describe("parseHTMLForm — file sharing", () => {
 		});
 		const { data } = parseHTMLForm(html);
 		expect(data.personas[0]?.files).toEqual([
-			{ file: null, share_conditions: "", perceived_contents: "" },
+			{
+				file: null,
+				share_conditions: "Ask first.",
+				perceived_contents: "A memo.",
+			},
+			{
+				file: null,
+				share_conditions: "Only if pressed.",
+				perceived_contents: "Photos.",
+			},
 		]);
 	});
 
-	it("produces no files when can_share_files is no", () => {
+	it("produces no files when the persona has none", () => {
 		const persona = makePersona({ files: [] });
 		const html = buildHTMLForm({
 			...baseCaseFields,

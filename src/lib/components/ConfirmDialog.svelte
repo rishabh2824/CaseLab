@@ -27,10 +27,26 @@ type Props = {
 	title: string;
 	description?: string;
 	errorMessage?: string;
+	// True while a confirm/save/discard action from this dialog is in flight. Every caller
+	// already disables its own Cancel/Confirm buttons on this, but Escape bypasses both --
+	// bits-ui's default AlertDialog.Content closes on Escape regardless of button state, which
+	// let Escape dismiss the dialog mid-request (e.g. clearing UnsavedChangesModal's pending
+	// navigation right as its save was about to complete, so the save then had nothing to
+	// navigate to; or re-enabling a case/admin row's Delete button before its in-flight delete
+	// had actually finished, so a second click raced the first). Defaults to false so a caller
+	// that never sets it keeps bits-ui's normal Escape-to-close behavior.
+	confirming?: boolean;
 	actions: Snippet;
 };
 
-let { open = $bindable(false), title, description, errorMessage, actions }: Props = $props();
+let {
+	open = $bindable(false),
+	title,
+	description,
+	errorMessage,
+	confirming = false,
+	actions,
+}: Props = $props();
 </script>
 
 <AlertDialog.Root bind:open>
@@ -39,6 +55,7 @@ let { open = $bindable(false), title, description, errorMessage, actions }: Prop
 			class="fixed inset-0 z-50 bg-ink/40 data-[state=closed]:hidden"
 		/>
 		<AlertDialog.Content
+			escapeKeydownBehavior={confirming ? "ignore" : "close"}
 			class="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-line bg-white p-6 shadow-soft data-[state=closed]:hidden"
 		>
 			<AlertDialog.Title class="font-display text-lg font-semibold text-ink">

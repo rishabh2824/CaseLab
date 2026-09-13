@@ -8,16 +8,35 @@ import {
 	reachableFrom,
 } from "./draft.js";
 
+// Escapes quotes too, not just `&`/`<`/`>` -- every call site below that used to embed this
+// unescaped landed a value straight inside a double-quoted HTML attribute (persona ids in
+// data-persona-id and an <option>'s value), so a value containing `"` could close that
+// attribute early and inject markup of its own into whichever admin's browser opens the
+// exported file. See PERSONA_ID_FORMAT's own comment (services/cases.ts) for why a persona id
+// is the concrete way an id like that reaches here: this escaping is the second, independent
+// line of defense for an id already stored under that format's older, wider charset.
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
 		.replace(/&/g, "&amp;")
 		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;");
 
 // Embedded verbatim (via .toString()) into the generated <script> below, so the exported
 // form's own persona-removal cascade runs graph.svelte.ts's exact reachability algorithm
 // instead of a hand-copied reimplementation that could silently drift from it.
 const REACHABLE_FROM_SOURCE = reachableFrom.toString();
+
+// JSON.stringify escapes quotes/backslashes/control characters for JS syntax, but not `<` --
+// so a value containing the literal text "</script>" would still close the <script> block this
+// gets embedded into early once interpolated into the template below, letting whatever text
+// follows it in the exported file run as markup (or script) of its own instead of staying
+// data. Escaping `<` to its Unicode escape keeps the result valid, semantically identical JS
+// while making that sequence inert. Same defense-in-depth reasoning as escapeHtml above: the
+// one call site below embeds a persona id (see PERSONA_ID_FORMAT's comment, services/cases.ts),
+// and this is what protects an id already stored under that format's older, wider charset.
+const jsonForInlineScript = (value: unknown): string =>
+	JSON.stringify(value).replace(/</g, "\\u003c");
 
 type Graph = {
 	personas: Persona[];
@@ -67,15 +86,51 @@ function fields({
   </div>`;
 }
 
-function fileShare(persona: Persona | null | undefined): string {
-	const canShare = (persona?.files ?? []).length > 0 ? "yes" : "no";
-	return `<div class="field">
-    <label class="field-label">Can this Persona share files?</label>
-    <p class="field-hint">Details will be entered in app.</p>
-    <select class="input select-yesno" data-field="can_share_files">
-      <option value="no" ${canShare === "no" ? "selected" : ""}>No</option>
-      <option value="yes" ${canShare === "yes" ? "selected" : ""}>Yes</option>
-    </select>
+// A file entry's actual attachment can't round-trip through this text form
+// (there's no way to embed a real File in HTML an LLM edits as text), so this
+// renders a placeholder per file — just the two describing fields — and the
+// admin attaches the real file to each slot in-app after importing. Slots are
+// matched by position, not id (FileEntryPayload carries no name/label field),
+// so re-numbering on add/remove (see the inline script's renumberFiles) is
+// what keeps "File 3" in the form pointing at the third entry on import.
+function fileRowMarkup(
+	file: { share_conditions?: string | null; perceived_contents?: string | null },
+	index: number,
+): string {
+	return `<div class="file-row" data-file="true">
+    <div class="file-row-head">
+      <span class="file-row-title">File ${index + 1}</span>
+      <button type="button" class="btn-text btn-remove" data-action="remove-file">Remove</button>
+    </div>
+    ${fields({
+			field: "share_conditions",
+			label: "Describe the conditions under which the persona will share the file",
+			value: file.share_conditions ?? "",
+			rows: 2,
+		})}
+    ${fields({
+			field: "perceived_contents",
+			label: "What does the persona think is in this file?",
+			value: file.perceived_contents ?? "",
+			rows: 2,
+		})}
+  </div>`;
+}
+
+function filesBlockMarkup(persona: Persona | null | undefined): string {
+	const rows = (persona?.files ?? [])
+		.map((file, index) => fileRowMarkup(file, index))
+		.join("\n");
+	return `<div class="files-block">
+    <div class="files-header">
+      <span class="files-label">Files this persona can share</span>
+      <button type="button" class="btn-add btn-add-sm" data-action="add-file">+ Add file</button>
+    </div>
+    <p class="field-hint">
+      One entry per file this persona can share. The actual attachment is uploaded back in the
+      app after import — matched by position, so upload them in the same order shown here.
+    </p>
+    <div class="file-list" data-role="file-list">${rows}</div>
   </div>`;
 }
 
@@ -96,7 +151,7 @@ function personaCardMarkup(
       </select>
       <button type="button" class="btn-text btn-remove" data-action="remove-persona">Remove persona</button>`;
 
-	return `<article class="persona-card" data-persona-id="${persona.id}" data-persona-root="${isRoot}" data-fixed-root="${isFixedRoot}">
+	return `<article class="persona-card" data-persona-id="${escapeHtml(persona.id)}" data-persona-root="${isRoot}" data-fixed-root="${isFixedRoot}">
     <div class="persona-card-head">
       <span class="chip chip--persona">${escapeHtml(persona.id.slice(0, 6))}</span>
       ${headControls}
@@ -123,7 +178,7 @@ function personaCardMarkup(
 			value: persona.personality_traits,
 			rows: 3,
 		})}
-    ${fileShare(persona)}
+    ${filesBlockMarkup(persona)}
   </article>`;
 }
 
@@ -131,7 +186,7 @@ function personaOptions(personas: Persona[], selectedId: string): string {
 	return personas
 		.map(
 			(persona) =>
-				`<option value="${persona.id}" ${persona.id === selectedId ? "selected" : ""}>${escapeHtml(personaLabel(persona))}</option>`,
+				`<option value="${escapeHtml(persona.id)}" ${persona.id === selectedId ? "selected" : ""}>${escapeHtml(personaLabel(persona))}</option>`,
 		)
 		.join("");
 }
@@ -198,6 +253,14 @@ const STYLES = `
   .btn-text:hover { color: var(--brand-dark); text-decoration: underline; }
   .btn-add { border: 1px dashed var(--line-strong); background: none; color: var(--muted); font-family: var(--font-body); font-weight: 600; font-size: 12.5px; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
   .btn-add:hover { border-color: var(--brand); color: var(--brand); }
+  .btn-add-sm { padding: 5px 10px; font-size: 11.5px; }
+  .files-block { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+  .files-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .files-label { font-weight: 600; font-size: 13px; color: var(--ink); }
+  .file-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+  .file-row { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .file-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .file-row-title { font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
   .referral-row { border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
   .referral-selects { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
   .select-persona { width: auto; min-width: 90px; flex: none; }
@@ -344,13 +407,18 @@ export function buildHTMLForm({
                 ${referralRowMarkup(createEmptyReferral(), graph.personas)}
             </template>
 
+            <template id="file-template">
+                ${fileRowMarkup({ share_conditions: "", perceived_contents: "" }, 0)}
+            </template>
+
             <script>
 (function () {
-  var FIXED_ROOT_ID = ${JSON.stringify(fixedRootId)};
+  var FIXED_ROOT_ID = ${jsonForInlineScript(fixedRootId)};
   var personasList = document.getElementById('personas-list');
   var referralsList = document.getElementById('referrals-list');
   var personaTemplate = document.getElementById('persona-template');
   var referralTemplate = document.getElementById('referral-template');
+  var fileTemplate = document.getElementById('file-template');
 
   // The exact same reachability algorithm graph.svelte.ts's CaseGraph is built on --
   // embedded here, not hand-copied, so this form's removal cascade can't silently drift
@@ -458,6 +526,26 @@ export function buildHTMLForm({
     refreshReferralOptions();
   }
 
+  // Files carry no id of their own (see fileRowMarkup's comment) — the label
+  // just tracks DOM position, so it has to be recomputed after every add/remove.
+  function renumberFiles(fileList) {
+    fileList.querySelectorAll('.file-row').forEach(function (row, index) {
+      row.querySelector('.file-row-title').textContent = 'File ' + (index + 1);
+    });
+  }
+
+  function addFile(fileList) {
+    var frag = fileTemplate.content.cloneNode(true);
+    fileList.appendChild(frag);
+    renumberFiles(fileList);
+  }
+
+  function removeFile(row) {
+    var fileList = row.closest('.file-list');
+    row.remove();
+    renumberFiles(fileList);
+  }
+
   document.getElementById('add-persona-btn').addEventListener('click', addPersona);
   document.getElementById('add-referral-btn').addEventListener('click', addReferral);
 
@@ -466,6 +554,10 @@ export function buildHTMLForm({
     if (!action) return;
     if (action === 'remove-persona') removePersona(event.target.closest('.persona-card'));
     else if (action === 'remove-referral') removeReferral(event.target.closest('.referral-row'));
+    else if (action === 'add-file') {
+      var card = event.target.closest('.persona-card');
+      addFile(card.querySelector('[data-role="file-list"]'));
+    } else if (action === 'remove-file') removeFile(event.target.closest('.file-row'));
   });
 
   document.addEventListener('change', function (event) {

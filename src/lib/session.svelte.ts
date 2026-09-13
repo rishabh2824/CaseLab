@@ -1,34 +1,30 @@
 import { browser } from "$app/environment";
-import type { AdminRole } from "./types.js";
 
 const STORAGE_KEY = "caseLabSession";
 
+// Student-run identity only -- there used to be an admin identity here too
+// (adminRole/adminEmail, set from api/admins:viewer on sign-in), but nothing
+// actually needed a sessionStorage-backed copy of it: the one real reader
+// (admin/+page.svelte's "Manage admins" gate) now subscribes to that same
+// live query directly, the same way admin/admins/+page.svelte's own gate
+// already did (see its comment on why a stored copy is unreliable there --
+// one tick behind the query, and still null on a cold reload).
 export interface PersistedSession {
-	adminRole: AdminRole | null;
-	adminEmail: string;
 	runId: string;
 	accessCode: string;
 	startTime: number | null;
 }
 
 const defaults: PersistedSession = Object.freeze({
-	adminRole: null,
-	adminEmail: "",
 	runId: "",
 	accessCode: "",
 	startTime: null,
 });
 
-const isAdminRole = (value: unknown): value is AdminRole =>
-	value === "super" || value === "admin";
-
 function normalizePersisted(value: unknown): PersistedSession {
 	if (typeof value !== "object" || value === null) return defaults;
 	const v = value as Record<string, unknown>;
 	return {
-		adminRole: isAdminRole(v.adminRole) ? v.adminRole : defaults.adminRole,
-		adminEmail:
-			typeof v.adminEmail === "string" ? v.adminEmail : defaults.adminEmail,
 		runId: typeof v.runId === "string" ? v.runId : defaults.runId,
 		accessCode:
 			typeof v.accessCode === "string" ? v.accessCode : defaults.accessCode,
@@ -51,8 +47,6 @@ function readPersisted(): PersistedSession {
 const initial = readPersisted();
 
 class SessionStore {
-	adminRole = $state<AdminRole | null>(initial.adminRole);
-	adminEmail = $state<string>(initial.adminEmail);
 	runId = $state<string>(initial.runId);
 	accessCode = $state<string>(initial.accessCode);
 	startTime = $state<number | null>(initial.startTime);
@@ -60,25 +54,11 @@ class SessionStore {
 	#persist() {
 		if (!browser) return;
 		const persisted: PersistedSession = {
-			adminRole: this.adminRole,
-			adminEmail: this.adminEmail,
 			runId: this.runId,
 			accessCode: this.accessCode,
 			startTime: this.startTime,
 		};
 		sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
-	}
-
-	setAdmin({
-		adminRole,
-		adminEmail,
-	}: {
-		adminRole: AdminRole | null;
-		adminEmail: string;
-	}) {
-		this.adminRole = adminRole ?? null;
-		this.adminEmail = adminEmail ?? "";
-		this.#persist();
 	}
 
 	// Called when a student simulation starts
@@ -102,18 +82,11 @@ class SessionStore {
 		this.#persist();
 	}
 
-	// Clear a student run (keeps admin session).
+	// Clear a student run.
 	clearRun() {
 		this.runId = "";
 		this.accessCode = "";
 		this.startTime = null;
-		this.#persist();
-	}
-
-	// Clear the admin UI state
-	clearAdmin() {
-		this.adminRole = null;
-		this.adminEmail = "";
 		this.#persist();
 	}
 }

@@ -62,8 +62,17 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 			);
 			continue;
 		}
-		const canShareFiles =
-			fieldValue(card, "can_share_files").trim().toLowerCase() === "yes";
+		// Files carry no id of their own in the exported form (see exportCase.ts's
+		// fileRowMarkup) — each `.file-row` becomes one placeholder entry, in DOM
+		// order, with `file: null`. The admin attaches the real attachment to each
+		// slot in-app after import; matching them up is on them, by position.
+		const files = Array.from(
+			card.querySelectorAll(".files-block .file-row"),
+		).map((row) => ({
+			file: null,
+			share_conditions: fieldValue(row, "share_conditions").trim(),
+			perceived_contents: fieldValue(row, "perceived_contents").trim(),
+		}));
 		personaOrder.push(id);
 		personaById.set(id, {
 			id,
@@ -77,9 +86,7 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 				warnings,
 			),
 			profile_photo: null,
-			files: canShareFiles
-				? [{ file: null, share_conditions: "", perceived_contents: "" }]
-				: [],
+			files,
 		});
 		// data-persona-root is the admin's explicit root/referred choice — kept
 		// live-accurate by the exported file's own type-select toggle (see
@@ -90,6 +97,12 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 	}
 
 	const edges: RawEdge[] = [];
+	// Same (from, to) pair seen twice — a hand-edited export can produce this even though the
+	// exported form's own selects never duplicate a referral row on their own. Tracked as a
+	// per-pair Set, not just personaById, since the flat model still allows a persona to be
+	// referred by more than one *other* persona — only an exact repeat of the same edge is
+	// rejected.
+	const seenEdges = new Set<string>();
 	for (const row of doc.querySelectorAll(
 		'.referral-row[data-referral="true"]',
 	)) {
@@ -111,6 +124,14 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 			warnings.push(`Skipped a referral where ${fromId} refers to itself.`);
 			continue;
 		}
+		const edgeKey = JSON.stringify([fromId, toId]);
+		if (seenEdges.has(edgeKey)) {
+			warnings.push(
+				`Skipped a duplicate referral (${fromId} → ${toId}) — kept the first one.`,
+			);
+			continue;
+		}
+		seenEdges.add(edgeKey);
 		// No "one parent" restriction here — the flat model allows a persona to
 		// be referred by more than one other persona.
 		edges.push({ fromId, toId, conditions });
@@ -125,6 +146,64 @@ type FlatGraph = {
 	roots: string[];
 };
 
+// Pass 1 of validateCaseGraph below, split out as its own function purely for
+// readability. 3-color DFS over every persona (not just roots), so a cycle with no root
+// connection at all still gets caught. Same approach as the backend's validateGraph —
+// correct even with multiple parents into the same persona, unlike a per-path ancestry
+// set, which can miss a cycle only reachable via a persona's second parent.
+//
+// Iterative, not recursive: mirrors the backend's own iterative three-colour DFS
+// (services/cases.ts's validateGraph) for the same reason — a long referral chain is a
+// perfectly legal shape for a real import to produce, and recursing once per node risks
+// blowing the call stack on a large file. The explicit stack holds (node,
+// next-edge-index) so a node is only marked DONE once every one of its outgoing edges has
+// been walked, exactly as the recursive version (still visible in git history) did on
+// return.
+function acceptNonCyclicEdges(
+	personaOrder: string[],
+	edgesFrom: Map<string, RawEdge[]>,
+	warnings: string[],
+): RawEdge[] {
+	const UNVISITED = 0;
+	const IN_PROGRESS = 1;
+	const DONE = 2;
+	const state = new Map<string, number>(
+		personaOrder.map((id) => [id, UNVISITED]),
+	);
+	const acceptedEdges: RawEdge[] = [];
+
+	const stack: { node: string; edge: number }[] = [];
+	for (const startId of personaOrder) {
+		if (state.get(startId) !== UNVISITED) continue;
+		state.set(startId, IN_PROGRESS);
+		stack.push({ node: startId, edge: 0 });
+
+		while (stack.length > 0) {
+			const frame = stack[stack.length - 1]!;
+			const outgoing = edgesFrom.get(frame.node) ?? [];
+			if (frame.edge >= outgoing.length) {
+				state.set(frame.node, DONE);
+				stack.pop();
+				continue;
+			}
+			const edge = outgoing[frame.edge]!;
+			frame.edge += 1;
+			if (state.get(edge.toId) === IN_PROGRESS) {
+				warnings.push(
+					`Cycle detected involving ${edge.toId} — that referral was dropped.`,
+				);
+				continue;
+			}
+			acceptedEdges.push(edge);
+			if (state.get(edge.toId) === UNVISITED) {
+				state.set(edge.toId, IN_PROGRESS);
+				stack.push({ node: edge.toId, edge: 0 });
+			}
+		}
+	}
+	return acceptedEdges;
+}
+
 // Pure-data validation over the already-built graph. Two separate passes —
 // conflating them is a real bug: a cycle entirely disconnected from any root
 // still needs walking so its cycle-forming edge gets dropped, but "visited by
@@ -135,34 +214,8 @@ function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
 	const { personaOrder, personaById, roots, edges } = graph;
 	const edgesFrom = Map.groupBy(edges, (edge) => edge.fromId);
 
-	// Pass 1 — 3-color DFS over every persona (not just roots), so a cycle with
-	// no root connection at all still gets caught. Same approach as the
-	// backend's validateGraph — correct even with multiple parents into the
-	// same persona, unlike a per-path ancestry set, which can miss a cycle only
-	// reachable via a persona's second parent.
-	const UNVISITED = 0;
-	const IN_PROGRESS = 1;
-	const DONE = 2;
-	const state = new Map<string, number>(
-		personaOrder.map((id) => [id, UNVISITED]),
-	);
-	const acceptedEdges: RawEdge[] = [];
-
-	function visit(id: string): void {
-		state.set(id, IN_PROGRESS);
-		for (const edge of edgesFrom.get(id) ?? []) {
-			if (state.get(edge.toId) === IN_PROGRESS) {
-				warnings.push(
-					`Cycle detected involving ${edge.toId} — that referral was dropped.`,
-				);
-				continue;
-			}
-			acceptedEdges.push(edge);
-			if (state.get(edge.toId) === UNVISITED) visit(edge.toId);
-		}
-		state.set(id, DONE);
-	}
-	for (const id of personaOrder) if (state.get(id) === UNVISITED) visit(id);
+	// Pass 1 (see acceptNonCyclicEdges above).
+	const acceptedEdges = acceptNonCyclicEdges(personaOrder, edgesFrom, warnings);
 
 	// Pass 2 — reachability from an explicit root, over the now-cycle-free
 	// edge set. This is what actually decides which personas survive: one
@@ -203,6 +256,35 @@ function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
 				conditions: edge.conditions,
 			})),
 		roots: roots.filter((id) => reachable.has(id)),
+	};
+}
+
+// The exported HTML's `data-persona-id` attribute exists only so this file's own referral
+// <select>s and root toggles can point at "this card" while an admin (or an LLM) fills in
+// the visible fields around it -- an admin never sees or needs to type the value itself.
+// Left alone, it's also the original persona's real id, carried over unedited by a normal
+// export/re-import round trip. But it's untrusted input once it reaches here (see
+// validatePersonaId's comment in services/cases.ts): a hand-edited attribute containing a
+// character outside printable ASCII, or a leading "$", saves fine client-side and then fails
+// at the server with "Invalid persona id" -- a failure this form has no way to preempt.
+// Minting a fresh id per persona removes that failure mode entirely, and is also more honest
+// about what an import produces: a brand-new case with its own new personas, not a
+// resurrection of the source file's exact identities.
+function mintFreshPersonaIds(graph: FlatGraph): FlatGraph {
+	const idMap = new Map(
+		graph.personas.map((persona) => [persona.id, crypto.randomUUID()]),
+	);
+	return {
+		personas: graph.personas.map((persona) => ({
+			...persona,
+			id: idMap.get(persona.id) as string,
+		})),
+		referrals: graph.referrals.map((referral) => ({
+			...referral,
+			from_id: idMap.get(referral.from_id) as string,
+			to_id: idMap.get(referral.to_id) as string,
+		})),
+		roots: graph.roots.map((id) => idMap.get(id) as string),
 	};
 }
 
@@ -250,7 +332,9 @@ export function parseHTMLForm(htmlText: string): ParsedHTMLForm {
 			"No personas found in this file — add at least one before importing.",
 		);
 	}
-	const { personas, referrals, roots } = validateCaseGraph(rawGraph, warnings);
+	const { personas, referrals, roots } = mintFreshPersonaIds(
+		validateCaseGraph(rawGraph, warnings),
+	);
 	if (roots.length === 0) {
 		throw new CaseImportError(
 			"This file has no root personas — every persona is referred.",

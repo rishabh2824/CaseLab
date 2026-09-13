@@ -3,14 +3,13 @@ import {
 	createSvelteAuthClient,
 	useAuth,
 } from "@mmailaender/convex-better-auth-svelte/svelte";
-import { makeFunctionReference } from "convex/server";
 import { getConvexClient, useQuery } from "convex-svelte";
 import type { Snippet } from "svelte";
 import { browser } from "$app/environment";
 import { goto } from "$app/navigation";
 import { authClient } from "$lib/auth-client.js";
 import AdminTopBar from "$lib/components/AdminTopBar.svelte";
-import { session } from "$lib/session.svelte.js";
+import { api } from "../../../../convex/_generated/api.js";
 
 type Props = { children: Snippet };
 let { children }: Props = $props();
@@ -22,13 +21,8 @@ let { children }: Props = $props();
 // removal -- the landing page's "Admin Login" button is now a plain link to /admin).
 createSvelteAuthClient({ authClient, convexClient: getConvexClient() });
 
-// String-based reference (not a generated `api` import): the convex/ project lives at
-// the repo root, outside this Vite project's root, so `_generated/api` doesn't resolve
-// cleanly from here. Referenced from elsewhere in the frontend as "see admin/+layout.svelte
-// for why".
-const viewerRef = makeFunctionReference<"query">("api/admins:viewer");
 const auth = useAuth();
-const viewer = useQuery(viewerRef, {});
+const viewer = useQuery(api.api.admins.viewer, {});
 
 // Google's redirect lands back here as /admin?ott=... -- the cross-domain one-time-token
 // exchange that turns that into a real session (createSvelteAuthClient's internal
@@ -101,22 +95,9 @@ function retrySignIn(): void {
 	startGoogleSignIn();
 }
 
-$effect(() => {
-	if (auth.isLoading || viewer.isLoading) return;
-	if (auth.isAuthenticated && viewer.data) {
-		session.setAdmin({
-			adminRole: viewer.data.role,
-			adminEmail: viewer.data.email,
-		});
-	} else if (!auth.isAuthenticated) {
-		session.clearAdmin();
-	}
-});
-
 // See AdminTopBar.svelte's signOutAdmin for why this isn't awaited before navigating.
 async function signOutNotAuthorized(): Promise<void> {
 	authClient.signOut().catch(() => {});
-	session.clearAdmin();
 	await goto("/");
 }
 </script>

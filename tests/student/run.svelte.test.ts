@@ -94,8 +94,8 @@ const caseData = {
 };
 
 // RunStore is created fresh per /student mount (createRunStore), not a module singleton --
-// session IS a module singleton these tests share, reset via session.clearRun()/
-// clearAdmin() in beforeEach below rather than vi.resetModules(): fakeQueryVersion above is a
+// session IS a module singleton these tests share, reset via session.clearRun() in beforeEach
+// below rather than vi.resetModules(): fakeQueryVersion above is a
 // $state declared at this file's top level, which vi.resetModules() would NOT re-evaluate
 // (only subsequently-imported modules get a fresh instance) -- reactivity across that boundary
 // silently doesn't propagate, since a freshly re-imported run.svelte.ts would run under a
@@ -140,7 +140,6 @@ async function primeRun(
 
 beforeEach(() => {
 	session.clearRun();
-	session.clearAdmin();
 	mockClientMutation.mockReset();
 	mockClientQuery.mockReset();
 	mockUseQuery.mockClear();

@@ -120,6 +120,38 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
 	});
 
+	// Regression test for a real bug: bits-ui's AlertDialog.Content closes on Escape by
+	// default regardless of button disabled state -- Cancel/Delete were disabled while a
+	// delete was in flight, but Escape bypassed both, closing the dialog and re-enabling the
+	// row's Delete button before the in-flight request had actually finished. A second click
+	// then raced the first delete. ConfirmDialog now passes escapeKeydownBehavior={confirming
+	// ? "ignore" : "close"} down to AlertDialog.Content to close that gap.
+	it("ignores Escape while a delete is in flight, but honors it once idle", async () => {
+		stubCaseList([makeCaseSummary()]);
+		let resolveDelete: (() => void) | undefined;
+		mockDeleteCase.mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveDelete = resolve;
+				}),
+		);
+		const user = userEvent.setup();
+		render(TemplatePicker, { props: { mode: "edit" } });
+		await screen.findByText("Sterling Industries");
+
+		await user.click(screen.getByRole("button", { name: "Delete case" }));
+		const dialogTitle = await screen.findByText(
+			'Delete "Sterling Industries"?',
+		);
+		await user.click(screen.getByRole("button", { name: "Delete" }));
+
+		await user.keyboard("{Escape}");
+		expect(dialogTitle).toBeInTheDocument();
+
+		resolveDelete?.();
+		await waitFor(() => expect(dialogTitle).not.toBeInTheDocument());
+	});
+
 	it("does not offer a delete button in template (create) mode", async () => {
 		stubCaseList([makeCaseSummary()]);
 		render(TemplatePicker, { props: { mode: "template" } });

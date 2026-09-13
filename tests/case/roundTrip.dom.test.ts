@@ -41,12 +41,11 @@ const availabilityArb = fc.option(fc.integer({ min: -10, max: 999 }), {
 	nil: null,
 });
 
-// Whether a persona can share files is exported/imported as a plain
-// yes/no toggle (fileShare() in exportCase.ts checks only `files.length >
-// 0`) — the entries' own content never survives the round trip. Generating
-// non-placeholder content here is what proves that lossiness is real and
-// bounded to exactly the file entries, not silently affecting anything
-// else.
+// Each file entry round-trips as a positional placeholder — share_conditions
+// and perceived_contents survive, `file` itself never does (there's no way to
+// carry a real attachment through a text form; see fileRowMarkup in
+// exportCase.ts). Generating real text here (not just presence/absence) is
+// what proves the two describing fields actually make the trip intact.
 const filesArb = fc.oneof(
 	fc.constant<Persona["files"]>([]),
 	fc
@@ -55,7 +54,7 @@ const filesArb = fc.oneof(
 				share_conditions: textArb,
 				perceived_contents: textArb,
 			}),
-			{ minLength: 1, maxLength: 2 },
+			{ minLength: 1, maxLength: 5 },
 		)
 		.map((entries) => entries as Persona["files"]),
 );
@@ -226,11 +225,20 @@ describe("buildHTMLForm / parseHTMLForm round trip", () => {
 					generated.simulationDurationMinutes,
 				);
 
-				expect(data.roots).toEqual(generated.roots);
-
-				expect(data.personas.map((p) => p.id)).toEqual(
-					generated.personas.map((p) => p.id),
+				// Imported personas get fresh ids (mintFreshPersonaIds in importCase.ts), so
+				// `data`'s ids never equal `generated`'s -- what has to hold instead is that
+				// the SAME remapping (by original persona, position-for-position via `zip`
+				// below) makes every root and referral endpoint agree. `idMap` is exactly that
+				// remapping, read off the personas array itself rather than re-derived, since
+				// buildHTMLForm/parseHTMLForm preserve document order end to end.
+				expect(data.personas).toHaveLength(generated.personas.length);
+				const idMap = new Map(
+					generated.personas.map((original, i) => [
+						original.id,
+						data.personas[i]?.id,
+					]),
 				);
+				expect(data.roots).toEqual(generated.roots.map((id) => idMap.get(id)));
 				for (const [imported, original] of zip(
 					data.personas,
 					generated.personas,
@@ -244,17 +252,29 @@ describe("buildHTMLForm / parseHTMLForm round trip", () => {
 					expect(imported.availability_minutes).toBe(
 						original.availability_minutes,
 					);
-					// Expected lossiness: the exporter reduces `files` to a yes/no
-					// toggle (fileShare() only checks `.length > 0`) and the
-					// importer resynthesizes a single blank placeholder entry —
-					// entry content and count beyond one are never carried. See
-					// the dedicated file-sharing tests in importCase.dom.test.ts
-					// for the exact placeholder shape.
-					expect(imported.files.length > 0).toBe(original.files.length > 0);
+					// Expected lossiness: `file` itself never survives (see filesArb's
+					// comment above) — everything else about each entry does, in
+					// order. See importCase.dom.test.ts for the exact placeholder
+					// shape.
+					expect(imported.files).toEqual(
+						original.files.map((file) => ({
+							file: null,
+							share_conditions: (file.share_conditions ?? "").trim(),
+							perceived_contents: (file.perceived_contents ?? "").trim(),
+						})),
+					);
 				}
 
 				const importedEdgeKeys = data.referrals.map(edgeKey).sort();
-				const originalEdgeKeys = generated.referrals.map(edgeKey).sort();
+				const originalEdgeKeys = generated.referrals
+					.map((edge) =>
+						edgeKey({
+							from_id: idMap.get(edge.from_id) as string,
+							to_id: idMap.get(edge.to_id) as string,
+							conditions: edge.conditions,
+						}),
+					)
+					.sort();
 				expect(importedEdgeKeys).toEqual(originalEdgeKeys);
 			}),
 			FC_CONFIG,

@@ -13,4 +13,13 @@ crons.interval(
 	{},
 );
 
+// Backstop for api/uploads.ts's discardUploads -- see sweepOrphanedStorage's own comment
+// (api/files.ts) for what this catches that the primary path can't.
+crons.interval(
+	"sweep orphaned storage uploads",
+	{ hours: 24 * 7 },
+	internal.api.files.sweepOrphanedStorage,
+	{},
+);
+
 export default crons;

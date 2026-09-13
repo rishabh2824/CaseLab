@@ -1,9 +1,10 @@
+import { ConvexError } from "convex/values";
 import { components } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { authComponent } from "../auth";
 import type { AdminRole } from "../schema";
-import { syncCaseFiles } from "./files";
+import { deleteCaseUnchecked } from "./cases";
 
 // Email addresses are matched case-insensitively, so `admins.email` is stored and looked up
 // in exactly one canonical form. Convex has no case-insensitive index, so normalization has
@@ -17,9 +18,10 @@ export function normalizeEmail(email: string): string {
 }
 
 // The `admins` table is the authorization gate everywhere an admin identity is needed --
-// Convex Auth's own `users` table (from authTables in schema.ts) is identity only. Shared by
-// auth.ts's createOrUpdateUser callback (gates sign-in) and api/admins.ts's viewer query
-// (gates the UI), so the lookup logic lives in exactly one place.
+// Better Auth's own `user` table (managed in its component's separate storage, not here) is
+// identity only. Shared by auth.ts's databaseHooks.user.create.before (gates sign-in) and
+// api/admins.ts's viewer query (gates the UI), so the lookup logic lives in exactly one
+// place.
 export async function getAdminByEmail(
 	ctx: QueryCtx | MutationCtx,
 	email: string,
@@ -38,9 +40,9 @@ export async function requireCurrentAdmin(
 	// safeGetAuthUser, not getAuthUser -- the latter throws its own "Unauthenticated" for a
 	// caller with no identity at all, which would shadow the message below.
 	const user = await authComponent.safeGetAuthUser(ctx);
-	if (!user?.email) throw new Error("Not signed in.");
+	if (!user?.email) throw new ConvexError("Not signed in.");
 	const admin = await getAdminByEmail(ctx, user.email);
-	if (!admin) throw new Error("Your account is not authorized.");
+	if (!admin) throw new ConvexError("Your account is not authorized.");
 	return admin;
 }
 
@@ -51,7 +53,7 @@ export async function requireSuperAdmin(
 ): Promise<Doc<"admins">> {
 	const admin = await requireCurrentAdmin(ctx);
 	if (admin.role !== "super")
-		throw new Error("Only a super admin can do this.");
+		throw new ConvexError("Only a super admin can do this.");
 	return admin;
 }
 
@@ -70,11 +72,15 @@ export async function createAdmin(
 	// A blank email would create a roster row nobody can ever sign in as (requireCurrentAdmin
 	// refuses an identity with no email), while still occupying the roster and the by_email
 	// index.
-	if (!email) throw new Error("An admin email is required.");
+	if (!email) throw new ConvexError("An admin email is required.");
 	if (await getAdminByEmail(ctx, email)) {
-		throw new Error("An admin with this email already exists.");
+		throw new ConvexError("An admin with this email already exists.");
 	}
-	const id = await ctx.db.insert("admins", { ...args, email });
+	// Trimmed on the way in, same as every other free-text field this app stores (see e.g.
+	// validateRequiredText, services/cases.ts) -- an admin invited as "  Jane Doe  " should be
+	// stored and shown as "Jane Doe", not carry the pasted whitespace around forever.
+	const name = args.name?.trim() || undefined;
+	const id = await ctx.db.insert("admins", { email, name, role: args.role });
 	const created = await ctx.db.get(id);
 	if (!created) throw new Error("Failed to create admin.");
 	return created;
@@ -89,9 +95,9 @@ export async function deleteAdminWithCascade(
 	adminId: Id<"admins">,
 ): Promise<{ ok: true; casesDeleted: number; casesReassigned: number }> {
 	const admin = await ctx.db.get(adminId);
-	if (!admin) throw new Error("Admin not found.");
+	if (!admin) throw new ConvexError("Admin not found.");
 	if (admin.role === "super")
-		throw new Error("Super admins cannot be deleted.");
+		throw new ConvexError("Super admins cannot be deleted.");
 
 	const ownedCases = await ctx.db
 		.query("cases")
@@ -110,10 +116,10 @@ export async function deleteAdminWithCascade(
 		).sort((a, b) => a.addedAt - b.addedAt);
 
 		if (collaborators.length === 0) {
-			// Empty desired set: removes every caseFiles row for this case and schedules
-			// storage/`files` cleanup for anything that was only referenced here.
-			await syncCaseFiles(ctx, c._id, new Set());
-			await ctx.db.delete(c._id);
+			// Same deletion services/cases.ts's own deleteCase performs, shared via
+			// deleteCaseUnchecked -- see its comment for why this cascade skips the access
+			// check that helper's caller (deleteCase) normally runs first.
+			await deleteCaseUnchecked(ctx, c._id);
 			casesDeleted++;
 		} else {
 			const oldest = collaborators[0]!;

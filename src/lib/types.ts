@@ -10,6 +10,7 @@ export type {
 	ReferralEdgePayload as ReferralEdge,
 } from "../../convex/models/cases.js";
 export type { AdminRole } from "../../convex/schema.js";
+export type { CaseSummary } from "../../convex/services/cases.js";
 export type {
 	ChatMessageOut as ChatMessage,
 	ContactOut as Contact,

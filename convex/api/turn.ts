@@ -7,6 +7,7 @@ import {
 	query,
 } from "../_generated/server";
 import {
+	appendUserMessage as appendUserMessageService,
 	applyBoundary as applyBoundaryService,
 	applyDecisions as applyDecisionsService,
 	getStreamingPreview as getStreamingPreviewService,
@@ -50,6 +51,20 @@ export const runTurn = internalAction({
 			args.personaId,
 			args.message,
 			args.streamId,
+		),
+});
+
+// Not client-callable. Called by runTurn the instant classifyHarassment clears the message as
+// "normal" -- not by start (above), so a flagged message never enters this persona's persisted
+// history in the first place. See services/turn.ts's appendUserMessage for why.
+export const appendUserMessage = internalMutation({
+	args: { runId: v.id("runs"), personaId: v.string(), message: v.string() },
+	handler: async (ctx, args) =>
+		await appendUserMessageService(
+			ctx,
+			args.runId,
+			args.personaId,
+			args.message,
 		),
 });
 

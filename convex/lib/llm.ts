@@ -177,6 +177,12 @@ export async function* personaReplyStream(
 			...history,
 		],
 		max_tokens: 600,
+		// Explicit, not left at the provider default (1.0) -- a rare degenerate sample at 1.0
+		// combines badly with strict schema-constrained decoding below: when a sampled token is
+		// masked out by the JSON-schema grammar, the constrained sampler falls back into
+		// whatever's left, which at high temperature produces word-fragment garbage inside an
+		// otherwise-valid `reply` string rather than a clean retry-worthy failure.
+		temperature: 0.7,
 		stream: true,
 		response_format: {
 			type: "json_schema",

@@ -23,6 +23,7 @@ import {
 	fileEntry,
 	personaPayload,
 	referralEdge,
+	uniqueAccessCode,
 } from "../testFactories";
 import { type CasePayload, createCase, validateGraph } from "./cases";
 import {
@@ -66,6 +67,7 @@ function payload(overrides: Partial<CasePayload> = {}): CasePayload {
 	return {
 		name: "Sterling Industries",
 		brief: "Reduce office supply costs.",
+		accessCode: uniqueAccessCode(),
 		personas: [personaPayload("A")],
 		referrals: [],
 		roots: ["A"],
@@ -344,6 +346,7 @@ describe("persona ids as Convex record keys", () => {
 			asUser.mutation(api.api.cases.create, {
 				name: "C",
 				brief: "B",
+				accessCode: uniqueAccessCode(),
 				personas: [personaPayload("$boss")],
 				referrals: [],
 				roots: ["$boss"],
@@ -522,20 +525,18 @@ describe("access codes", () => {
 		},
 	);
 
-	it("treats a blank or whitespace-only access code as no code, not as an empty one", async () => {
+	// Every case must have a real, unique access code (see services/cases.ts's
+	// validateAccessCode) -- a blank or whitespace-only one is rejected outright, the same as
+	// name/brief being blank, rather than silently normalized to "no code."
+	it("rejects a blank or whitespace-only access code -- every case needs a real one", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
-		const caseId = await t.run((ctx) =>
-			createCase(ctx, payload({ accessCode: "   " }), admin),
-		);
-		expect(
-			(await t.run((ctx) => ctx.db.get(caseId)))!.accessCode,
-		).toBeUndefined();
-
-		// And two such cases don't collide with each other over an "empty" code.
+		await expect(
+			t.run((ctx) => createCase(ctx, payload({ accessCode: "   " }), admin)),
+		).rejects.toThrow("Access code is required.");
 		await expect(
 			t.run((ctx) => createCase(ctx, payload({ accessCode: "" }), admin)),
-		).resolves.toBeDefined();
+		).rejects.toThrow("Access code is required.");
 	});
 
 	it("never starts a run from a blank code even if a case somehow stored one", async () => {

@@ -10,8 +10,13 @@ import {
 	listAdmins,
 } from "../services/admins";
 
-// The current admin's identity + role, or null if not signed in / not an admin.
-// Gates the frontend UI — the actual authorization enforcement lives in auth.ts
+// The current admin's identity + role, or null if not signed in / not an admin. Gates the
+// frontend UI -- the actual authorization enforcement is per-request, in
+// services/admins.ts's requireCurrentAdmin/requireSuperAdmin (run by every adminQuery/
+// adminMutation/superAdminMutation handler, see lib/adminFunctions.ts), not here or in
+// auth.ts (which only gates a brand-new Google account at sign-in time). `_id` lets a caller
+// (e.g. CaseForm.svelte's effectiveOwnerId) identify "this admin" directly, instead of
+// matching this query's own email against the full admin roster to find the same row.
 export const viewer = query({
 	args: {},
 	handler: async (ctx) => {
@@ -21,7 +26,12 @@ export const viewer = query({
 		const admin = await getAdminByEmail(ctx, user.email);
 		if (!admin) return null;
 
-		return { email: admin.email, name: admin.name, role: admin.role };
+		return {
+			_id: admin._id,
+			email: admin.email,
+			name: admin.name,
+			role: admin.role,
+		};
 	},
 });
 

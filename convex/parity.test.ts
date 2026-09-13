@@ -18,7 +18,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { isSelectableCollaborator } from "../src/lib/case/draft.js";
-import caseInfoFieldsSource from "../src/lib/components/CaseInfoFields.svelte?raw";
+import draftSource from "../src/lib/case/draft.ts?raw";
 import { countWords } from "../src/lib/format.js";
 import { personaAvailability as clientAvailability } from "../src/lib/student/availability.js";
 import { personaAvailability as serverAvailability } from "./lib/turnState.js";
@@ -27,16 +27,6 @@ import { personaAvailability as serverAvailability } from "./lib/turnState.js";
 // a test-only seam into production code.
 import casesSource from "./services/cases.ts?raw";
 import turnSource from "./services/turn.ts?raw";
-
-function requireMatch(source: string, pattern: RegExp, what: string): string {
-	const match = pattern.exec(source);
-	if (!match?.[1]) {
-		throw new Error(
-			`Could not find ${what}. This parity test reads it out of source text, so it needs updating alongside whatever renamed or moved it.`,
-		);
-	}
-	return match[1];
-}
 
 describe("persona availability: src/lib/student/availability.ts vs convex/lib/turnState.ts", () => {
 	// Exhaustive over the interesting integer neighbourhood rather than sampled: the whole
@@ -162,19 +152,18 @@ describe("message word limit: convex/schema.ts's MAX_MESSAGE_WORDS", () => {
 	});
 });
 
-describe("access code format: CaseInfoFields.svelte vs convex/services/cases.ts", () => {
-	it("uses the same regex literal on both sides", () => {
-		const serverRegex = requireMatch(
-			casesSource,
-			/const ACCESS_CODE_FORMAT = (\/.+\/);/,
-			"ACCESS_CODE_FORMAT in convex/services/cases.ts",
+describe("access code format: src/lib/case/draft.ts's getCaseInfoErrors vs convex/schema.ts", () => {
+	// Same shape as the simulation-duration-bound test below: draft.ts's getCaseInfoErrors
+	// (called by both CaseInfoFields.svelte, for its own per-field message, and CaseForm.svelte,
+	// to decide whether Submit should be disabled -- see its own comment) imports
+	// ACCESS_CODE_FORMAT directly from schema.ts rather than declaring a second regex literal,
+	// so there's no client/server copy left to drift -- this just pins that it stays an
+	// import, not a reintroduced local literal.
+	it("imports the shared constant instead of a second literal", () => {
+		expect(draftSource).toContain(
+			'import { ACCESS_CODE_FORMAT } from "../../../convex/schema.js"',
 		);
-		const clientRegex = requireMatch(
-			caseInfoFieldsSource,
-			/const ACCESS_CODE_FORMAT = (\/.+\/);/,
-			"ACCESS_CODE_FORMAT in src/lib/components/CaseInfoFields.svelte",
-		);
-		expect(clientRegex).toBe(serverRegex);
+		expect(draftSource).not.toMatch(/const ACCESS_CODE_FORMAT =/);
 	});
 });
 

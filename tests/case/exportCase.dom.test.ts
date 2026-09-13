@@ -153,6 +153,34 @@ describe("buildHTMLForm", () => {
 			expect(field.value.trim()).toBe(dangerous);
 			expect(doc.querySelectorAll("script")).toHaveLength(1);
 		});
+
+		// services/cases.ts's PERSONA_ID_FORMAT rejects a value like this at save time going
+		// forward, but this function has no way to know whether the id it's handed came from a
+		// case saved before that restriction existed -- it has to escape unconditionally, as its
+		// own independent line of defense. A persona id lands in an HTML attribute (unlike the
+		// free-text fields above, which land in a <textarea>'s text content), so the attack here
+		// is different: not "inject a script tag" but "close this attribute early and add an
+		// attribute of our own."
+		it("escapes a quote in a persona id so it can't break out of the data-persona-id attribute", () => {
+			const dangerousId = `p1" onmouseover="alert(1)`;
+			const persona = makePersona({ id: dangerousId });
+			const doc = parseForm(
+				buildHTMLForm({
+					caseName: "Case",
+					accessCode: "ABC",
+					simulationDurationMinutes: null,
+					initialBrief: "Brief",
+					commonInformation: "",
+					personas: [persona],
+					referrals: [],
+					roots: [persona.id],
+				}),
+			);
+			const card = doc.querySelector(".persona-card") as Element;
+			expect(card.getAttribute("data-persona-id")).toBe(dangerousId);
+			expect(card.hasAttribute("onmouseover")).toBe(false);
+			expect(doc.querySelectorAll("script")).toHaveLength(1);
+		});
 	});
 });
 
@@ -269,6 +297,34 @@ describe("buildHTMLForm's embedded script", () => {
 		expect(doc.querySelector(`[data-persona-id="${c.id}"]`)).toBeNull();
 		expect(doc.querySelector(`[data-persona-id="${a.id}"]`)).not.toBeNull();
 		expect(doc.querySelector(`[data-persona-id="${d.id}"]`)).not.toBeNull();
+	});
+
+	// Regression test for a real bug: FIXED_ROOT_ID used to be embedded via plain
+	// JSON.stringify(fixedRootId), which escapes quotes/backslashes for JS syntax but not `<`.
+	// A root persona id containing the literal text "</script>" closed this inline <script>
+	// block early -- the HTML parser has no notion of JS string literals, so it reads
+	// "</script>" as a real closing tag regardless of where it sits inside the source text --
+	// and whatever <script> tag followed inside that id then became a second, real script
+	// element the browser actually parsed and ran. jsonForInlineScript's `<` escaping keeps
+	// the id inert as string data instead.
+	it("keeps a dangerous fixed-root persona id inert as string data, not markup, in the inline script", () => {
+		const dangerousId = "</script><script>window.__pwned=1</script>";
+		const persona = makePersona({ id: dangerousId });
+		const dom = loadInteractive(
+			buildHTMLForm({
+				caseName: "Case",
+				accessCode: "ABC",
+				simulationDurationMinutes: null,
+				initialBrief: "Brief",
+				commonInformation: "",
+				personas: [persona],
+				referrals: [],
+				roots: [persona.id],
+			}),
+		);
+		expect(
+			(dom.window as unknown as { __pwned?: number }).__pwned,
+		).toBeUndefined();
 	});
 
 	it("refreshes referral dropdown options after a persona is added", () => {

@@ -1,6 +1,15 @@
 <script lang="ts">
+import { useQuery } from "convex-svelte";
 import { goto } from "$app/navigation";
-import { session } from "$lib/session.svelte.js";
+import { api } from "../../../../convex/_generated/api.js";
+
+// Re-subscribes to the same query admin/+layout.svelte already resolved (Convex dedupes
+// identical query+arg subscriptions, so this is free) instead of reading a session-stored
+// role -- see admin/admins/+page.svelte's own identical comment for why that's the right
+// call: a plain sessionStorage-backed copy is one tick behind this query's own side effect,
+// and is unreliable on a cold load/reload of this route directly.
+const viewer = useQuery(api.api.admins.viewer, {});
+const isSuperAdmin = $derived(viewer.data?.role === "super");
 </script>
 
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
@@ -12,7 +21,7 @@ import { session } from "$lib/session.svelte.js";
 		class="pointer-events-none absolute -bottom-32 -right-32 z-0 w-[34rem] max-w-none select-none opacity-[0.14]"
 	/>
 
-	{#if session.adminRole === "super"}
+	{#if isSuperAdmin}
 		<button
 			type="button"
 			onclick={() => goto('/admin/admins')}

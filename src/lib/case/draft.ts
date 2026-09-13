@@ -1,4 +1,5 @@
 // Pure data-shaping helpers for the case form
+import { ACCESS_CODE_FORMAT } from "../../../convex/schema.js";
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
 
 export function parseIntOrNull(raw: string): number | null {
@@ -49,11 +50,13 @@ export const normalizeReferral = (
 });
 
 // A case document's `structure` field (personas/referrals/roots) as read back from Convex --
-// untyped (`v.any()` server-side), so every reader has to shape-guess it the same way.
-// CaseForm.svelte (loading a case to edit or use as a template) and DemoCaseView.svelte
-// (the read-only demo) both need this exact normalization; sharing it here means there's one
-// place that knows how to turn a raw `structure` blob into display-ready Personas/Referrals,
-// not two independently-written casts that could drift.
+// validated server-side against caseStructureValidator (models/cases.ts), but that validator
+// constrains shape, not the specific Persona/ReferralEdge display types this frontend wants
+// (e.g. defaulting a field an older-shaped row never had). CaseForm.svelte (loading a case to
+// edit or use as a template) and DemoCaseView.svelte (the read-only demo) both need this exact
+// normalization; sharing it here means there's one place that knows how to turn a raw
+// `structure` blob into display-ready Personas/Referrals, not two independently-written casts
+// that could drift.
 export function parseCaseStructure(structure: unknown): {
 	personas: Persona[];
 	referrals: ReferralEdge[];
@@ -105,8 +108,69 @@ export const getPersonaFieldErrors = (persona: Persona): PersonaFieldErrors => {
 	return errors;
 };
 
-export const hasFieldErrors = (errors: PersonaFieldErrors): boolean =>
-	Object.values(errors).some(Boolean);
+// Shared by any per-field error record this form produces (PersonaFieldErrors,
+// CaseInfoFieldErrors below) -- both are just "field name -> message or absent",
+// so there's one predicate for "does this record have any errors at all" rather
+// than a copy per shape.
+export const hasFieldErrors = (
+	errors: Record<string, string | undefined>,
+): boolean => Object.values(errors).some(Boolean);
+
+export type CaseInfoFieldErrors = Partial<
+	Record<
+		"caseName" | "initialBrief" | "accessCode" | "simulationDuration",
+		string
+	>
+>;
+
+// A pure function of the case-info scalar fields, computed the same way
+// getPersonaFieldErrors is: CaseForm.svelte calls this directly (via a $derived, like
+// graph.validation) to decide whether Submit should be disabled, and CaseInfoFields.svelte
+// calls the exact same function for its own per-field messages -- one place that knows what
+// "invalid" means here, not two independently-derived copies that could disagree.
+export function getCaseInfoErrors({
+	caseName,
+	initialBrief,
+	accessCode,
+	simulationDurationMinutes,
+	maxSimulationDuration,
+}: {
+	caseName: string;
+	initialBrief: string;
+	accessCode: string;
+	simulationDurationMinutes: number | null;
+	maxSimulationDuration: number;
+}): CaseInfoFieldErrors {
+	const errors: CaseInfoFieldErrors = {};
+	if (!caseName.trim()) errors.caseName = "Case name is required.";
+	if (!initialBrief.trim()) errors.initialBrief = "Initial brief is required.";
+
+	const trimmedCode = accessCode.trim();
+	if (!trimmedCode) {
+		errors.accessCode = "Access code is required.";
+	} else if (!ACCESS_CODE_FORMAT.test(trimmedCode)) {
+		errors.accessCode = "Access code must contain only lowercase letters.";
+	}
+
+	if (
+		typeof simulationDurationMinutes === "number" &&
+		(simulationDurationMinutes > maxSimulationDuration ||
+			simulationDurationMinutes < 1)
+	) {
+		// Derived from maxSimulationDuration, not hardcoded -- this message used to always say
+		// "(2 hours)", which only happened to match RUN_LIFETIME_MINUTES's current value of 120
+		// and would have silently gone wrong the moment that constant changed.
+		const maxHours = maxSimulationDuration / 60;
+		const hoursLabel = Number.isInteger(maxHours)
+			? String(maxHours)
+			: maxHours.toFixed(1);
+		errors.simulationDuration =
+			`Simulation duration must be between 1 and ${maxSimulationDuration} minutes ` +
+			`(${hoursLabel} hour${maxHours === 1 ? "" : "s"}).`;
+	}
+
+	return errors;
+}
 
 // Referral edges authored by a given persona (its "refers out to" list).
 export const referralsFrom = (

@@ -24,6 +24,14 @@ export const RUN_LIFETIME_MINUTES = 120;
 // frontend needs a side-effect-free source to import from.
 export const MAX_MESSAGE_WORDS = 50;
 
+// Convex has no case-insensitive column type, so codes are constrained to lowercase letters
+// at write time instead (services/cases.ts), making storage canonical by construction.
+// Lives here, not services/cases.ts, so CaseInfoFields.svelte can mirror the exact same
+// format client-side without pulling in that module's Convex-only side effects
+// (`_generated/api`, the rate-limiter component) -- same reason as RUN_LIFETIME_MINUTES
+// above.
+export const ACCESS_CODE_FORMAT = /^[a-z]+$/;
+
 const chatState = v.object({
 	warningCount: v.number(),
 	ended: v.boolean(),
@@ -79,7 +87,11 @@ export default defineSchema({
 		addedAt: v.number(),
 	})
 		.index("by_case", ["caseId"])
-		.index("by_admin", ["adminId"]),
+		.index("by_admin", ["adminId"])
+		// requireCaseAccess (services/cases.ts) needs exactly "is this admin a collaborator on
+		// this case" -- a direct point lookup, not by_case's scan-then-filter-in-code over
+		// every collaborator row on the case.
+		.index("by_case_and_admin", ["caseId", "adminId"]),
 
 	files: defineTable({
 		storageId: v.id("_storage"),
@@ -120,7 +132,7 @@ export default defineSchema({
 		sharedFiles: v.array(v.id("files")),
 		personaChatState: v.record(v.string(), chatState),
 		// The scheduled-function id for this run's expiry deletion (see
-		// convex/runs.ts's `destroy`), so it can be cancelled/rescheduled if needed.
+		// convex/api/simulations.ts's `destroy`), so it can be cancelled/rescheduled if needed.
 		// Optional only during the brief window between insert and the scheduler
 		// call returning.
 		destroyJobId: v.optional(v.id("_scheduled_functions")),
@@ -134,7 +146,7 @@ export default defineSchema({
 	}).index("by_run_persona", ["runId", "personaKey"]),
 
 	// Live in-progress persona replies, batched-written by the streaming action
-	// (convex/simulation/turn.ts's runTurn) and subscribed to by the frontend instead
+	// (convex/api/turn.ts's runTurn) and subscribed to by the frontend instead
 	// of an SSE connection. Deliberately its own table, not a field on `runs`: if
 	// deltas instead touched the run document, every delta would re-push the whole
 	// run state (contacts, histories, etc.) to every subscriber instead of ~40 bytes

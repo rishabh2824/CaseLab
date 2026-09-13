@@ -55,3 +55,56 @@ describe("generateUploadUrls (batched)", () => {
 		).resolves.toHaveLength(200);
 	});
 });
+
+describe("discardUploads (undoing a failed create/update's uploads)", () => {
+	it("deletes a storage object no `files` row claims", async () => {
+		const t = newTestConvex();
+		const { asUser } = await withAdmin(t);
+		const storageId = await t.run((ctx) =>
+			ctx.storage.store(new Blob(["orphan"])),
+		);
+
+		await asUser.mutation(api.api.uploads.discardUploads, {
+			storageIds: [storageId],
+		});
+
+		expect(
+			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
+		).toBeNull();
+	});
+
+	// A save's own retry can win the race and successfully claim a storage id (via
+	// createCase/updateCase's resolveFileRefs inserting a `files` row for it) before
+	// submitCase.ts's catch-block cleanup call for the earlier failed attempt reaches the
+	// server -- discardUploads must not delete out from under that.
+	it("leaves a storage object alone once a `files` row claims it", async () => {
+		const t = newTestConvex();
+		const { asUser } = await withAdmin(t);
+		const storageId = await t.run((ctx) =>
+			ctx.storage.store(new Blob(["claimed"])),
+		);
+		await t.run((ctx) =>
+			ctx.db.insert("files", {
+				storageId,
+				name: "claimed.pdf",
+				contentType: "application/pdf",
+			}),
+		);
+
+		await asUser.mutation(api.api.uploads.discardUploads, {
+			storageIds: [storageId],
+		});
+
+		expect(
+			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
+		).not.toBeNull();
+	});
+
+	it("is a no-op for an empty list", async () => {
+		const t = newTestConvex();
+		const { asUser } = await withAdmin(t);
+		await expect(
+			asUser.mutation(api.api.uploads.discardUploads, { storageIds: [] }),
+		).resolves.toBeNull();
+	});
+});

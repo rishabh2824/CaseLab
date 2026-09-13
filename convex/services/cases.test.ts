@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import { newTestConvex } from "../test.setup";
-import { personaPayload, referralEdge } from "../testFactories";
+import {
+	personaPayload,
+	referralEdge,
+	uniqueAccessCode,
+} from "../testFactories";
 import {
 	type CasePayload,
 	createCase,
@@ -16,6 +20,7 @@ function payload(overrides: Partial<CasePayload> = {}): CasePayload {
 	return {
 		name: "Sterling Industries",
 		brief: "Reduce office supply costs.",
+		accessCode: uniqueAccessCode(),
 		personas: [personaPayload("A")],
 		referrals: [],
 		roots: ["A"],
@@ -65,6 +70,85 @@ describe("validateGraph (pure)", () => {
 		expect(() =>
 			validateGraph([personaPayload("A"), personaPayload("A")], [], ["A"]),
 		).toThrow(/Duplicate persona/);
+	});
+
+	// PersonaFields.svelte's `{#each ownReferrals as referral (referral.to_id)}` keys on
+	// exactly this pair -- a duplicate would break Svelte's keyed reconciliation the next time
+	// the case is loaded back into the editor.
+	it("rejects a duplicate (from_id, to_id) referral pair", () => {
+		expect(() =>
+			validateGraph(
+				[personaPayload("A"), personaPayload("B")],
+				[referralEdge("A", "B"), referralEdge("A", "B")],
+				["A"],
+			),
+		).toThrow(/Duplicate referral/);
+	});
+
+	// CaseGraphEditor.svelte's `{#each graph.roots as rootId (rootId)}` keys on the root id
+	// alone -- same failure mode as the duplicate-referral case above.
+	it("rejects a duplicate root persona id", () => {
+		expect(() => validateGraph([personaPayload("A")], [], ["A", "A"])).toThrow(
+			/Duplicate root/,
+		);
+	});
+
+	it("rejects a persona with a blank name", () => {
+		expect(() =>
+			validateGraph([personaPayload("A", { name: "  " })], [], ["A"]),
+		).toThrow(/missing a name/);
+	});
+
+	it("rejects a persona with a blank role", () => {
+		expect(() =>
+			validateGraph([personaPayload("A", { role: "" })], [], ["A"]),
+		).toThrow(/missing a role/);
+	});
+
+	it.each([0, -5, 2.5])(
+		"rejects a persona availability of %s minutes",
+		(availability_minutes) => {
+			expect(() =>
+				validateGraph(
+					[personaPayload("A", { availability_minutes })],
+					[],
+					["A"],
+				),
+			).toThrow(/availability/);
+		},
+	);
+
+	it("accepts a persona with no availability set at all", () => {
+		expect(() =>
+			validateGraph(
+				[personaPayload("A", { availability_minutes: null })],
+				[],
+				["A"],
+			),
+		).not.toThrow();
+	});
+
+	// A persona id is written straight into an HTML attribute (data-persona-id, an <option>'s
+	// value) and, for a case's root persona, into an inline <script> block when an admin
+	// exports a template (exportCase.ts) -- see PERSONA_ID_FORMAT's own comment for the attack
+	// this format restriction closes off at the source. A wider charset previously accepted
+	// anything printable and non-"$"; this pins that a value like this is rejected here, at
+	// save time, rather than only being caught by exportCase.ts's own (separate) escaping.
+	it("rejects a persona id containing characters unsafe for an HTML attribute", () => {
+		const dangerousId = `"><script>alert(1)</script>`;
+		expect(() =>
+			validateGraph([personaPayload(dangerousId)], [], [dangerousId]),
+		).toThrow(/Invalid persona id/);
+	});
+
+	it("accepts a persona id made only of letters, digits, hyphens, and underscores", () => {
+		expect(() =>
+			validateGraph(
+				[personaPayload("00000000-0000-4000-8000-000000000001")],
+				[],
+				["00000000-0000-4000-8000-000000000001"],
+			),
+		).not.toThrow();
 	});
 });
 
@@ -188,6 +272,86 @@ describe("case access control", () => {
 	});
 });
 
+describe("replaceCollaborators addedAt (via updateCase)", () => {
+	it("preserves an existing collaborator's addedAt across an unrelated save", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const collaborator = await makeAdmin(t);
+		const caseId = await t.run((ctx) =>
+			createCase(
+				ctx,
+				payload({ collaboratorAdminIds: [collaborator._id] }),
+				owner,
+			),
+		);
+		const rowBefore = await t.run((ctx) =>
+			ctx.db
+				.query("collaborators")
+				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.first(),
+		);
+
+		// Same collaborator list, unrelated field changed -- the row (and its addedAt)
+		// should survive untouched, not get deleted and reinserted.
+		await t.run((ctx) =>
+			updateCase(
+				ctx,
+				caseId,
+				payload({
+					collaboratorAdminIds: [collaborator._id],
+					name: "Renamed",
+				}),
+				owner,
+			),
+		);
+		const rowAfter = await t.run((ctx) =>
+			ctx.db
+				.query("collaborators")
+				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.first(),
+		);
+
+		expect(rowAfter?._id).toBe(rowBefore?._id);
+		expect(rowAfter?.addedAt).toBe(rowBefore?.addedAt);
+	});
+
+	it("inserts a row only for a newly added collaborator, leaving existing ones alone", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const original = await makeAdmin(t);
+		const added = await makeAdmin(t);
+		const caseId = await t.run((ctx) =>
+			createCase(ctx, payload({ collaboratorAdminIds: [original._id] }), owner),
+		);
+		const originalRowBefore = await t.run((ctx) =>
+			ctx.db
+				.query("collaborators")
+				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.first(),
+		);
+
+		await t.run((ctx) =>
+			updateCase(
+				ctx,
+				caseId,
+				payload({ collaboratorAdminIds: [original._id, added._id] }),
+				owner,
+			),
+		);
+
+		const rows = await t.run((ctx) =>
+			ctx.db
+				.query("collaborators")
+				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.collect(),
+		);
+		expect(rows).toHaveLength(2);
+		const originalRowAfter = rows.find((row) => row.adminId === original._id);
+		expect(originalRowAfter?._id).toBe(originalRowBefore?._id);
+		expect(originalRowAfter?.addedAt).toBe(originalRowBefore?.addedAt);
+	});
+});
+
 describe("collaborator validation (via createCase)", () => {
 	it("rejects the owner appearing in their own collaborator list", async () => {
 		const t = newTestConvex();
@@ -228,6 +392,70 @@ describe("collaborator validation (via createCase)", () => {
 	});
 });
 
+describe("required fields (via createCase)", () => {
+	it("rejects a blank name", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		await expect(
+			t.run((ctx) => createCase(ctx, payload({ name: "   " }), owner)),
+		).rejects.toThrow("Case name is required.");
+	});
+
+	it("rejects a blank brief", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		await expect(
+			t.run((ctx) => createCase(ctx, payload({ brief: "" }), owner)),
+		).rejects.toThrow("Initial brief is required.");
+	});
+
+	it("trims a name/brief with surrounding whitespace before storing it", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const caseId = await t.run((ctx) =>
+			createCase(
+				ctx,
+				payload({ name: "  Sterling Industries  ", brief: "  Do it.  " }),
+				owner,
+			),
+		);
+		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		expect(c.name).toBe("Sterling Industries");
+		expect(c.brief).toBe("Do it.");
+	});
+
+	it("trims common information and every persona's name/role before storing them", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const caseId = await t.run((ctx) =>
+			createCase(
+				ctx,
+				payload({
+					commonInformation: "  Shared context.  ",
+					personas: [
+						personaPayload("A", { name: "  Mary  ", role: "  CFO  " }),
+					],
+				}),
+				owner,
+			),
+		);
+		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		expect(c.commonInformation).toBe("Shared context.");
+		const structure = c.structure as {
+			personas: { name: string; role: string }[];
+		};
+		expect(structure.personas[0]).toMatchObject({ name: "Mary", role: "CFO" });
+	});
+
+	it("leaves common information unset when the payload doesn't provide it", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const caseId = await t.run((ctx) => createCase(ctx, payload(), owner));
+		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		expect(c.commonInformation).toBeUndefined();
+	});
+});
+
 describe("access code validation", () => {
 	it("rejects a code with anything other than lowercase letters", async () => {
 		const t = newTestConvex();
@@ -237,6 +465,14 @@ describe("access code validation", () => {
 				createCase(ctx, payload({ accessCode: "Sterling1" }), owner),
 			),
 		).rejects.toThrow("Access code must contain only lowercase letters.");
+	});
+
+	it("rejects a blank or whitespace-only access code -- every case needs a real one", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		await expect(
+			t.run((ctx) => createCase(ctx, payload({ accessCode: "   " }), owner)),
+		).rejects.toThrow("Access code is required.");
 	});
 
 	it("rejects a duplicate access code on a second case", async () => {
@@ -421,6 +657,59 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 				.collect(),
 		);
 		expect(rows).toHaveLength(1);
+	});
+});
+
+describe("resolveFileRefs against a storage id with no backing object", () => {
+	// A ref pointing at a storage id that never existed, or existed and was since deleted (e.g.
+	// a template load carried over a photo whose object the orphan sweep since cleaned up) --
+	// resolveFileRefs must not insert a `files` row for something ctx.storage can't actually
+	// serve. buildStructure's lookup then treats the ref as unset (same tradeoff already
+	// documented for a fileless attachment slot), dropping just that one photo rather than
+	// failing the whole save.
+	it("drops a photo ref whose storage id doesn't exist, saving the rest of the case fine", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		// A validly-shaped storage id that genuinely no longer resolves to anything -- stored,
+		// then deleted, rather than a hand-typed string, since the real failure mode is "the
+		// object existed and was since cleaned up" (e.g. a template's photo the orphan sweep
+		// already reclaimed), not a malformed id.
+		const ghostStorageId = await t.run((ctx) =>
+			ctx.storage.store(new Blob(["gone"])),
+		);
+		await t.run((ctx) => ctx.storage.delete(ghostStorageId));
+
+		const caseId = await t.run((ctx) =>
+			createCase(
+				ctx,
+				payload({
+					personas: [
+						personaPayload("A", {
+							profile_photo: {
+								storage_id: ghostStorageId,
+								file_name: "gone.pdf",
+								content_type: "application/pdf",
+							},
+						}),
+					],
+					roots: ["A"],
+				}),
+				owner,
+			),
+		);
+
+		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
+		const structure = c.structure as {
+			personas: { profile_photo: unknown }[];
+		};
+		expect(structure.personas[0]?.profile_photo).toBeNull();
+		const rows = await t.run((ctx) =>
+			ctx.db
+				.query("files")
+				.withIndex("by_storage_id", (q) => q.eq("storageId", ghostStorageId))
+				.collect(),
+		);
+		expect(rows).toHaveLength(0);
 	});
 });
 

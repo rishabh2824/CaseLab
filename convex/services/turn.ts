@@ -41,9 +41,9 @@ import { loadLiveRun } from "./simulations";
 // {message, code} shape to preserve.
 const CONVERSATION_ENDED_MESSAGE = "This conversation has ended.";
 
-// Shared by startTurn, applyBoundary, and applyDecisions below -- the only 5-field runMessages
-// insert this file ever does, whether the row is the student's own message or one of the
-// persona's replies (canned boundary or LLM-generated).
+// Shared by appendUserMessage, applyBoundary, and applyDecisions below -- the only 5-field
+// runMessages insert this file ever does, whether the row is the student's own message or one
+// of the persona's replies (canned boundary or LLM-generated).
 async function appendMessage(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
@@ -57,6 +57,21 @@ async function appendMessage(
 		role,
 		content,
 	});
+}
+
+// Called by runTurn only once classifyHarassment has cleared the message as "normal" -- NOT by
+// startTurn. A message that never clears (nonsense/harassment) must never enter a persona's
+// persisted history: getTurnContext replays the last RECENT_HISTORY_LIMIT runMessages rows as
+// trusted prior-turn context into every later generation, so a flagged message stored anyway
+// would keep re-poisoning that context window turn after turn even though it was never treated
+// as valid input the first time.
+export async function appendUserMessage(
+	ctx: MutationCtx,
+	runId: Id<"runs">,
+	personaId: string,
+	message: string,
+): Promise<void> {
+	await appendMessage(ctx, runId, personaId, "user", message);
 }
 
 // Split at the boundary Convex requires: this mutation covers validation/availability-check/
@@ -112,7 +127,10 @@ export async function startTurn(
 	// own comment for why.
 	const streamId = await claimStreamingSlot(ctx, runId, personaId);
 
-	await appendMessage(ctx, runId, personaId, "user", message);
+	// The raw message is NOT persisted here -- runTurn only writes it once classifyHarassment
+	// clears it as "normal" (see appendUserMessage's own comment for why). It's still passed
+	// through to the scheduled action below so the reply generation has it even before it's
+	// stored.
 	// Skipped when it's already this persona -- the common case, since a student's next
 	// message is usually to whoever they're already talking to. A patch invalidates the
 	// getSimulationState subscription (services/simulations.ts) regardless of whether any
@@ -503,6 +521,12 @@ export async function getStreamingPreview(
 // entirely and applyBoundary's canned reply is used instead, with no visible flicker either
 // way, at the cost of occasionally paying for a Sonnet generation that goes unused.
 //
+// The same "normal" resolution also gates persisting the student's own message (see
+// appendUserMessage): `appendUserMessagePromise` fires the instant the classifier clears, in
+// parallel with the still-streaming reply, and is awaited (both on the success path and in the
+// catch below) before runTurn returns -- so a flagged message never touches runMessages, but a
+// cleared one is durably stored even if the reply generation itself goes on to fail.
+//
 // The whole body is one try/catch, not one per I/O stage: this is a scheduled action
 // nothing awaits (startTurn just fires it via ctx.scheduler.runAfter), so an uncaught throw
 // anywhere in here is otherwise invisible -- it fails the scheduled job silently, in Convex's
@@ -520,6 +544,9 @@ export async function runTurn(
 	message: string,
 	streamId: Id<"streamingReplies">,
 ): Promise<void> {
+	// Declared outside the try so the catch below can still await it -- a failure partway
+	// through the reply stream must not strand this mid-flight (see its own comment).
+	let appendUserMessagePromise: Promise<void> = Promise.resolve();
 	try {
 		const context = await ctx.runQuery(internal.api.turn.getTurnContext, {
 			runId,
@@ -536,8 +563,14 @@ export async function runTurn(
 		// so this callback is guaranteed to have run by the time any later `await` resumes and
 		// the loop re-checks it, same as any other microtask-ordering guarantee in JS.
 		let cleared = false;
-		void harassmentPromise.then((label) => {
-			if (label === "normal") cleared = true;
+		appendUserMessagePromise = harassmentPromise.then(async (label) => {
+			if (label !== "normal") return;
+			cleared = true;
+			await ctx.runMutation(internal.api.turn.appendUserMessage, {
+				runId,
+				personaId,
+				message,
+			});
 		});
 
 		const referralByHandle = new Map<string, PendingReferral>();
@@ -586,10 +619,17 @@ export async function runTurn(
 		let flushedText = "";
 		let lastFlushedAt = 0;
 		// context.decisionHistory is already bounded to RECENT_HISTORY_LIMIT at the query level
-		// (getTurnContext above), so no further slicing is needed here.
+		// (getTurnContext above), so no further slicing is needed here. It holds only PRIOR
+		// turns now -- the current message is appended in-memory rather than fetched back from
+		// runMessages, since appendUserMessage (above) may not have written it yet (or, if the
+		// classifier flags this message, ever).
+		const replyHistory = [
+			...context.decisionHistory,
+			{ role: "user" as const, content: message },
+		];
 		for await (const delta of personaReplyStream(
 			{ cacheable: cacheableSystemPrompt, dynamic },
-			context.decisionHistory,
+			replyHistory,
 		)) {
 			fullText += delta.text;
 			previewText += extractor.feed(delta.text);
@@ -609,6 +649,10 @@ export async function runTurn(
 		}
 
 		const label = await harassmentPromise;
+		// Guaranteed to already be settled by now (it resolves off the same harassmentPromise
+		// this just awaited), but awaited explicitly anyway so nothing below can ever run ahead
+		// of the user's own message actually landing in runMessages.
+		await appendUserMessagePromise;
 		if (label !== "normal") {
 			await ctx.runMutation(internal.api.turn.applyBoundary, {
 				runId,
@@ -649,6 +693,12 @@ export async function runTurn(
 			streamId,
 		});
 	} catch (err) {
+		// Swallow (don't let a failure here shadow the real error below), but still wait for
+		// it: classifyHarassment fails open (lib/llm.ts), so it can resolve "normal" and start
+		// this write even when the failure below is the reply stream's own fetch throwing --
+		// without this await, runTurn could return/throw while that write is still in flight
+		// and the student's own message would be silently dropped.
+		await appendUserMessagePromise.catch(() => {});
 		await ctx.runMutation(internal.api.turn.markStreamingError, { streamId });
 		throw err instanceof Error
 			? err

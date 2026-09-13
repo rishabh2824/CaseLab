@@ -57,14 +57,13 @@ export class CaseGraph {
 		};
 	});
 
+	// Replaces the whole graph -- used both to load a case for editing/templating and to
+	// apply a parsed import (CaseForm.svelte), which need no different handling here: both
+	// hand in a complete, already-validated {personas, referrals, roots}.
 	load(input: GraphInput): void {
 		this.personas = input.personas;
 		this.referrals = input.referrals;
 		this.roots = input.roots;
-	}
-
-	applyImport(input: GraphInput): void {
-		this.load(input);
 	}
 
 	addRoot(overrides?: Partial<Persona>): Persona {

@@ -22,8 +22,6 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 		const { session: fresh } = await import("../src/lib/session.svelte.js");
 		expect(fresh.runId).toBe("");
 		expect(fresh.accessCode).toBe("");
-		expect(fresh.adminRole).toBeNull();
-		expect(fresh.adminEmail).toBe("");
 		expect(fresh.startTime).toBeNull();
 	});
 
@@ -46,7 +44,6 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 		const { session: fresh } = await import("../src/lib/session.svelte.js");
 		expect(fresh.runId).toBe("");
 		expect(fresh.accessCode).toBe("");
-		expect(fresh.adminRole).toBeNull();
 	});
 
 	// The documented per-field fallback: a blob that's an object but has one
@@ -62,15 +59,17 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 		expect(fresh.accessCode).toBe("ABC123"); // valid string -> kept
 	});
 
-	it.each([
-		[3, null],
-		["SUPER", null],
-		["super", "super"],
-		["admin", "admin"],
-	])("adminRole %j normalizes to %j", async (stored, expected) => {
-		sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ adminRole: stored }));
+	// Unknown fields in the stored blob (e.g. e2e's own sessionStorage-based auth fake --
+	// see e2e/mockApi.ts's signInAsAdmin -- seeds an adminRole/adminEmail pair alongside
+	// these) are silently ignored rather than treated as invalid, since normalizePersisted
+	// only ever reads the fields it knows about.
+	it("ignores unknown fields in the stored blob instead of rejecting it", async () => {
+		sessionStorage.setItem(
+			STORAGE_KEY,
+			JSON.stringify({ runId: "run-1", adminRole: "super" }),
+		);
 		const { session: fresh } = await import("../src/lib/session.svelte.js");
-		expect(fresh.adminRole).toBe(expected);
+		expect(fresh.runId).toBe("run-1");
 	});
 });
 
@@ -80,7 +79,6 @@ describe("SessionStore mutators", () => {
 	// for the normalizePersisted-at-load-time tests above).
 	beforeEach(() => {
 		session.clearRun();
-		session.clearAdmin();
 	});
 
 	afterEach(() => {
@@ -115,25 +113,7 @@ describe("SessionStore mutators", () => {
 		expect(readRaw().startTime).toBe(1_700_000_000_000);
 	});
 
-	it("setAdmin persists adminRole and adminEmail", () => {
-		session.setAdmin({
-			adminRole: "admin",
-			adminEmail: "admin@example.com",
-		});
-
-		expect(session.adminRole).toBe("admin");
-		expect(session.adminEmail).toBe("admin@example.com");
-		expect(readRaw()).toMatchObject({
-			adminRole: "admin",
-			adminEmail: "admin@example.com",
-		});
-	});
-
-	it("clearRun clears the run fields but preserves the admin fields", () => {
-		session.setAdmin({
-			adminRole: "super",
-			adminEmail: "super@example.com",
-		});
+	it("clearRun clears the run fields", () => {
 		session.startRun({ runId: "run-3", accessCode: "CODE33" });
 
 		session.clearRun();
@@ -141,35 +121,10 @@ describe("SessionStore mutators", () => {
 		expect(session.runId).toBe("");
 		expect(session.accessCode).toBe("");
 		expect(session.startTime).toBeNull();
-		expect(session.adminRole).toBe("super");
-		expect(session.adminEmail).toBe("super@example.com");
 		expect(readRaw()).toMatchObject({
 			runId: "",
 			accessCode: "",
 			startTime: null,
-			adminRole: "super",
-			adminEmail: "super@example.com",
-		});
-	});
-
-	it("clearAdmin clears the admin fields but preserves the run fields", () => {
-		session.setAdmin({
-			adminRole: "super",
-			adminEmail: "super@example.com",
-		});
-		session.startRun({ runId: "run-4", accessCode: "CODE44" });
-
-		session.clearAdmin();
-
-		expect(session.adminRole).toBeNull();
-		expect(session.adminEmail).toBe("");
-		expect(session.runId).toBe("run-4");
-		expect(session.accessCode).toBe("CODE44");
-		expect(readRaw()).toMatchObject({
-			adminRole: null,
-			adminEmail: "",
-			runId: "run-4",
-			accessCode: "CODE44",
 		});
 	});
 

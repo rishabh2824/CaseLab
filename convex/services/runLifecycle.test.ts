@@ -48,6 +48,10 @@ function payload(overrides: Record<string, unknown> = {}) {
 	return {
 		name: "Sterling Industries",
 		brief: "Reduce office supply costs.",
+		// Matches seedCase's own default so an update in these tests keeps the case's own code
+		// (self-exclusion in validateAccessCode means that's never a conflict) rather than
+		// needing every caller to pass one through.
+		accessCode: "sterling",
 		personas: [personaPayload("A")],
 		referrals: [],
 		roots: ["A"],

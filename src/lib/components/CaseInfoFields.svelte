@@ -1,6 +1,10 @@
 <script lang="ts">
 import { Popover } from "bits-ui";
-import { isSelectableCollaborator, parseIntOrNull } from "$lib/case/draft.js";
+import {
+	getCaseInfoErrors,
+	isSelectableCollaborator,
+	parseIntOrNull,
+} from "$lib/case/draft.js";
 import type { AdminRow } from "$lib/types.js";
 
 type Props = {
@@ -16,7 +20,6 @@ type Props = {
 	effectiveOwnerId: string | null;
 	showFieldErrors: boolean;
 	revealErrors: () => void;
-	hasErrors: boolean;
 };
 
 let {
@@ -32,11 +35,7 @@ let {
 	effectiveOwnerId,
 	showFieldErrors,
 	revealErrors,
-	hasErrors = $bindable(false),
 }: Props = $props();
-
-// Mirrors convex/services/cases.ts's ACCESS_CODE_FORMAT.
-const ACCESS_CODE_FORMAT = /^[a-z]+$/;
 
 const selectableAdmins = $derived(
 	allAdmins.filter((admin) =>
@@ -44,39 +43,26 @@ const selectableAdmins = $derived(
 	),
 );
 
-const caseNameError = $derived(
-	!caseName.trim() ? "Case name is required." : null,
+// Derived off just these scalar fields, not pushed up to CaseForm.svelte via a
+// bind:hasErrors + $effect -- CaseForm.svelte computes the same "does this case info have
+// any errors" boolean itself, from the exact same getCaseInfoErrors call, the same way
+// PersonaFields.svelte's own per-persona `errors` and graph.svelte.ts's graph-wide
+// `validation` are two independent readers of one shared pure function rather than one
+// pushing its answer up into the other's state. Gated on showFieldErrors here (an empty
+// object when it's false) the same way PersonaFields.svelte gates its own `errors` --
+// consistently across every field, including simulation duration, which previously showed
+// its error regardless of showFieldErrors.
+const errors = $derived(
+	showFieldErrors
+		? getCaseInfoErrors({
+				caseName,
+				initialBrief,
+				accessCode,
+				simulationDurationMinutes,
+				maxSimulationDuration,
+			})
+		: {},
 );
-const initialBriefError = $derived(
-	!initialBrief.trim() ? "Initial brief is required." : null,
-);
-const accessCodeError = $derived.by(() => {
-	const trimmed = accessCode.trim();
-	if (!trimmed) return "Access code is required.";
-	// Mirrors both Convex's createCase and updateCase mutations -- every access code in the
-	// migrated data is already pure lowercase, so there's no legacy case to carve an
-	// exception out for.
-	if (!ACCESS_CODE_FORMAT.test(trimmed)) {
-		return "Access code must contain only lowercase letters.";
-	}
-	return null;
-});
-const simulationDurationError = $derived(
-	typeof simulationDurationMinutes === "number" &&
-		(simulationDurationMinutes > maxSimulationDuration ||
-			simulationDurationMinutes < 1)
-		? `Simulation duration must be between 1 and ${maxSimulationDuration} minutes (2 hours).`
-		: null,
-);
-
-$effect(() => {
-	hasErrors = Boolean(
-		caseNameError ||
-			initialBriefError ||
-			accessCodeError ||
-			simulationDurationError,
-	);
-});
 </script>
 
 <details class="rounded-2xl border border-line bg-white" open>
@@ -95,8 +81,8 @@ $effect(() => {
 				oninput={revealErrors}
 				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 			/>
-			{#if showFieldErrors && caseNameError}
-				<p class="text-xs font-medium text-brand">{caseNameError}</p>
+			{#if errors.caseName}
+				<p class="text-xs font-medium text-brand">{errors.caseName}</p>
 			{/if}
 		</div>
 
@@ -111,8 +97,8 @@ $effect(() => {
 				oninput={revealErrors}
 				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 			></textarea>
-			{#if showFieldErrors && initialBriefError}
-				<p class="text-xs font-medium text-brand">{initialBriefError}</p>
+			{#if errors.initialBrief}
+				<p class="text-xs font-medium text-brand">{errors.initialBrief}</p>
 			{/if}
 		</div>
 
@@ -143,8 +129,8 @@ $effect(() => {
 				}}
 				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 			/>
-			{#if simulationDurationError}
-				<p class="text-xs font-medium text-brand">{simulationDurationError}</p>
+			{#if errors.simulationDuration}
+				<p class="text-xs font-medium text-brand">{errors.simulationDuration}</p>
 			{/if}
 		</div>
 
@@ -159,8 +145,8 @@ $effect(() => {
 				oninput={revealErrors}
 				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 			/>
-			{#if showFieldErrors && accessCodeError}
-				<p class="text-xs font-medium text-brand">{accessCodeError}</p>
+			{#if errors.accessCode}
+				<p class="text-xs font-medium text-brand">{errors.accessCode}</p>
 			{/if}
 		</div>
 

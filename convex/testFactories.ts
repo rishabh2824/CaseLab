@@ -27,6 +27,26 @@ export function personaPayload(
 	};
 }
 
+// Every case needs a real, unique access code now (see services/cases.ts's validateAccessCode),
+// so a test payload builder that creates more than one case in the same test can no longer
+// leave accessCode unset and rely on it defaulting to "no code" -- each needs its own. A plain
+// incrementing counter can't be stringified directly (ACCESS_CODE_FORMAT only allows
+// lowercase letters, no digits), hence the base-26 conversion. Module-level, so it's shared by
+// every test file that imports this -- fine since uniqueness only ever has to hold within one
+// test (each gets its own fresh in-memory database via newTestConvex()), not across the suite.
+let accessCodeCounter = 0;
+export function uniqueAccessCode(): string {
+	accessCodeCounter += 1;
+	let n = accessCodeCounter;
+	let letters = "";
+	while (n > 0) {
+		n -= 1;
+		letters = String.fromCharCode(97 + (n % 26)) + letters;
+		n = Math.floor(n / 26);
+	}
+	return `code${letters}`;
+}
+
 export function referralEdge(
 	from_id: string,
 	to_id: string,

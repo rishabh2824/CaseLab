@@ -31,6 +31,11 @@ function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 	return {
 		name: "Case",
 		brief: "Brief",
+		// Every call in this file either gets rejected before ever reaching
+		// validateAccessCode (the auth/ownership gates this file actually tests) or is the sole
+		// case created/updated in its own isolated test -- so one fixed code is fine, no
+		// per-call uniqueness needed the way a file that creates several cases per test would.
+		accessCode: "authztestcode",
 		personas: [personaPayload("A")],
 		referrals: [],
 		roots: ["A"],

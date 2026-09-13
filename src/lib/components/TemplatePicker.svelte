@@ -1,16 +1,11 @@
 <script lang="ts">
-import { makeFunctionReference } from "convex/server";
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
+import { getErrorMessage } from "$lib/errors.js";
+import type { CaseSummary } from "$lib/types.js";
+import { api } from "../../../convex/_generated/api.js";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
-
-// String-based references (not generated `api` imports): the convex/ project lives at
-// the repo root, outside this Vite project's root -- see admin/+layout.svelte for why.
-const listAllRef = makeFunctionReference<"query">("api/cases:listAll");
-const deleteCaseRef = makeFunctionReference<"mutation">("api/cases:deleteCase");
-
-type CaseSummary = { _id: string; name: string; accessCode?: string };
 
 type Props = {
 	mode?: "template" | "edit";
@@ -21,8 +16,8 @@ let { mode = "template" }: Props = $props();
 // A live subscription, not a fetch-once cache: Convex pushes an updated list to every
 // subscriber automatically whenever a case is created/deleted/edited (including from
 // deleteCase below), so there's no manual invalidate-and-refetch bookkeeping to maintain.
-const casesQuery = useQuery(listAllRef, {});
-const deleteCase = useMutation(deleteCaseRef);
+const casesQuery = useQuery(api.api.cases.listAll, {});
+const deleteCase = useMutation(api.api.cases.deleteCase);
 
 let pendingDelete = $state<CaseSummary | null>(null);
 let isDeleting = $state(false);
@@ -35,13 +30,11 @@ function openCase(caseItem: CaseSummary) {
 	}
 }
 
-function requestDelete(event: MouseEvent, caseItem: CaseSummary) {
-	event.stopPropagation();
+// No stopPropagation here: this button sits in a sibling <div> below the
+// open-for-edit button, not nested inside it, so a click here was never
+// going to reach that button's own handler regardless.
+function requestDelete(caseItem: CaseSummary) {
 	pendingDelete = caseItem;
-}
-
-function cancelDelete(): void {
-	pendingDelete = null;
 }
 
 async function confirmDelete(): Promise<void> {
@@ -52,7 +45,7 @@ async function confirmDelete(): Promise<void> {
 		await deleteCase({ caseId: caseItem._id });
 		pendingDelete = null;
 	} catch (err) {
-		toast((err instanceof Error && err.message) || "Failed to delete case.");
+		toast(getErrorMessage(err, "Failed to delete case."));
 	} finally {
 		isDeleting = false;
 	}
@@ -88,7 +81,7 @@ const isEditMode = $derived(mode === "edit");
 				</div>
 			{:else if casesQuery.error}
 				<div class="rounded-2xl border border-brand/20 bg-brand-tint p-5 text-sm text-brand">
-					{casesQuery.error.message || "Failed to load cases."}
+					{getErrorMessage(casesQuery.error, "Failed to load cases.")}
 				</div>
 			{:else if casesQuery.data.length === 0}
 				<div class="rounded-2xl border border-line bg-white p-5 text-sm text-stone">
@@ -115,7 +108,7 @@ const isEditMode = $derived(mode === "edit");
 							<div class="mt-1.5 flex justify-end px-1">
 								<button
 									type="button"
-									onclick={(event) => requestDelete(event, caseItem)}
+									onclick={() => requestDelete(caseItem)}
 									disabled={isDeleting && pendingDelete?._id === caseItem._id}
 									class="text-xs font-semibold text-stone-soft transition hover:text-brand disabled:opacity-60"
 								>
@@ -136,5 +129,4 @@ const isEditMode = $derived(mode === "edit");
 	description="This also frees its access code for reuse. This cannot be undone."
 	confirming={isDeleting}
 	onConfirm={confirmDelete}
-	onCancel={cancelDelete}
 />

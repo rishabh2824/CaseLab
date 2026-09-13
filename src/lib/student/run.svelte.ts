@@ -32,11 +32,12 @@ import type {
 import type { StreamingPreviewOut } from "../../../convex/services/turn.js";
 
 // RunStateOut/ExportSimulationOut as-is, except run_id/case.id come back de-branded to plain
-// `string`. Server-side those are Convex's Id<"runs">/Id<"cases">, but this project
-// deliberately never touches convex's generated `api` object (see admin/+layout.svelte for
-// why) -- nothing on the frontend can leverage that branding's compile-time table-matching
-// anyway, so keeping it would only mean every test fixture constructing a fake run/case id
-// needs an `as Id<...>` cast to satisfy a guarantee nothing here actually checks.
+// `string`. Server-side those are Convex's Id<"runs">/Id<"cases">, but the student flow
+// deliberately keeps its own function references string-based rather than switching to
+// convex's generated `api` object the way the admin panel does -- nothing on the frontend can
+// leverage that branding's compile-time table-matching anyway, so keeping it would only mean
+// every test fixture constructing a fake run/case id needs an `as Id<...>` cast to satisfy a
+// guarantee nothing here actually checks.
 export type StartedRun = Omit<RunStateOut, "run_id" | "case"> & {
 	run_id: string;
 	case: Omit<RunStateOut["case"], "id"> & { id: string };
