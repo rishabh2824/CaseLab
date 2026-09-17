@@ -148,12 +148,9 @@ function handleSubmit(event: SubmitEvent): void {
 		<h1 class="mt-4 font-display text-4xl font-bold leading-[1.02] tracking-tight text-ink sm:text-5xl">
 			Wisconsin Case Lab
 		</h1>
-		<p class="mx-auto mt-4 max-w-md text-[15px] leading-relaxed text-stone">
-			Enter your access code to start the simulation.
-		</p>
 
 		<div
-			class="mx-auto mt-9 max-w-sm overflow-hidden rounded-2xl border border-line bg-white text-left shadow-premium"
+			class="mx-auto mt-14 max-w-sm overflow-hidden rounded-2xl border border-line bg-white text-left shadow-premium"
 		>
 			<div class="flex items-center justify-between border-b border-line-soft bg-cream px-5 py-2.5">
 				<span class="font-mono text-[10px] font-medium uppercase tracking-[0.22em] text-brand">
@@ -181,5 +178,15 @@ function handleSubmit(event: SubmitEvent): void {
 				</button>
 			</form>
 		</div>
+
+		<a
+			href="https://wisconsin210.com/case-lab.html"
+			target="_blank"
+			rel="noopener noreferrer"
+			class="mt-6 inline-flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.2em] text-stone transition hover:text-brand"
+		>
+			About Wisconsin Case Lab
+			<span aria-hidden="true">&rarr;</span>
+		</a>
 	</div>
 </div>
