@@ -614,7 +614,7 @@ export async function runTurn(
 		const cacheableSystemPrompt = `${replyInstructions()}\n\n---\n\n${stable}`;
 
 		let fullText = "";
-		const extractor = new ReplyExtractor();
+		let extractor = new ReplyExtractor();
 		let previewText = "";
 		let flushedText = "";
 		let lastFlushedAt = 0;
@@ -631,6 +631,21 @@ export async function runTurn(
 			{ cacheable: cacheableSystemPrompt, dynamic },
 			replyHistory,
 		)) {
+			if (delta.type === "reset") {
+				// The stream retried after a failed attempt -- drop everything that attempt
+				// produced, including what it already flushed to the client's preview.
+				fullText = "";
+				previewText = "";
+				extractor = new ReplyExtractor();
+				if (cleared && flushedText !== "") {
+					flushedText = "";
+					await ctx.runMutation(internal.api.turn.writeStreamingPreview, {
+						streamId,
+						text: "",
+					});
+				}
+				continue;
+			}
 			fullText += delta.text;
 			previewText += extractor.feed(delta.text);
 			if (!cleared) continue;

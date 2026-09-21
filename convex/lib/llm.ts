@@ -53,10 +53,6 @@ async function fetchWithTimeout(
 	}
 }
 
-function isRetryableStatus(status: number): boolean {
-	return status === 429 || status >= 500;
-}
-
 // Shared by chat() and personaReplyStream() below -- both POST to the same endpoint with the
 // same headers/auth, and differ only in the request body (buffered vs. streamed, and which
 // model/schema) and the timeout budget. Pure extraction of that identical construction; no
@@ -139,15 +135,22 @@ export const PERSONA_REPLY_SCHEMA = {
 	additionalProperties: false,
 };
 
-export type StreamDelta = { type: "delta"; text: string };
+// "reset" tells the consumer to throw away everything streamed so far: the attempt that
+// produced it failed and a fresh one is about to start from scratch.
+export type StreamDelta = { type: "delta"; text: string } | { type: "reset" };
+
+// A failure the stream loop should retry regardless of whether text already streamed.
+class StreamRetryError extends Error {}
 
 // Streaming persona reply. Yields {type: "delta", text} for each raw fragment of the
 // schema-constrained JSON object as it streams -- the caller (services/turn.ts's runTurn)
 // accumulates the full text and authoritatively parses it once the stream ends. Retries a
-// fresh attempt (never resumes a partial one) up to PERSONA_REPLY_RETRIES times, but only if
-// nothing has streamed yet and the failure looks transient (connection reset, timeout, 429,
-// 5xx) -- once any text has streamed, silently restarting would risk duplicating/losing
-// content, so the error is raised instead.
+// fresh attempt (never resumes a partial one) up to PERSONA_REPLY_RETRIES times on: a failed
+// fetch or any non-OK status, a mid-stream error frame, a stream that ends with no content, and
+// a stream that ends with unparseable (truncated) JSON. If the failed attempt had already
+// yielded text, a {type: "reset"} is yielded first so the caller discards it rather than
+// concatenating it onto the retry. A read error mid-stream is still only retried while nothing
+// has streamed, since it gives no signal the text so far is bad.
 export async function* personaReplyStream(
 	systemPrompt: { cacheable: string; dynamic: string },
 	history: ChatMessage[],
@@ -176,7 +179,7 @@ export async function* personaReplyStream(
 			},
 			...history,
 		],
-		max_tokens: 600,
+		max_tokens: 1000,
 		// Explicit, not left at the provider default (1.0) -- a rare degenerate sample at 1.0
 		// combines badly with strict schema-constrained decoding below: when a sampled token is
 		// masked out by the JSON-schema grammar, the constrained sampler falls back into
@@ -210,18 +213,40 @@ export async function* personaReplyStream(
 		}
 		if (!response.ok || !response.body) {
 			release();
-			if (canRetry && isRetryableStatus(response.status)) continue;
+			if (canRetry) continue;
 			throw new Error(`LLM request failed (HTTP ${response.status}).`);
 		}
 
 		let yieldedAny = false;
+		let attemptText = "";
+		let finishReason: string | null = null;
+		// A stream can end "successfully" (headers 200, [DONE] received) and still be unusable:
+		// nothing was generated (e.g. max_tokens exhausted before any content), or what was
+		// generated is cut-off JSON. Neither throws on its own, so without this check the
+		// retry below never sees them as failures.
+		const assertUsableAttempt = () => {
+			if (!attemptText)
+				throw new StreamRetryError(
+					`LLM stream ended with no content (finish_reason: ${finishReason}).`,
+				);
+			try {
+				JSON.parse(attemptText);
+			} catch {
+				throw new StreamRetryError(
+					`LLM stream ended with truncated or invalid JSON (finish_reason: ${finishReason}).`,
+				);
+			}
+		};
 		const reader = response.body.getReader();
 		const decoder = new TextDecoder();
 		let buffer = "";
 		try {
 			while (true) {
 				const { done, value } = await reader.read();
-				if (done) return;
+				if (done) {
+					assertUsableAttempt();
+					return;
+				}
 				buffer += decoder.decode(value, { stream: true });
 				const lines = buffer.split("\n");
 				buffer = lines.pop() ?? "";
@@ -229,22 +254,45 @@ export async function* personaReplyStream(
 					const trimmed = line.trim();
 					if (!trimmed.startsWith("data:")) continue;
 					const payload = trimmed.slice("data:".length).trim();
-					if (payload === "[DONE]") return;
-					let parsed: { choices?: { delta?: { content?: string } }[] };
+					if (payload === "[DONE]") {
+						assertUsableAttempt();
+						return;
+					}
+					let parsed: {
+						error?: unknown;
+						choices?: {
+							delta?: { content?: string };
+							finish_reason?: string | null;
+						}[];
+					};
 					try {
 						parsed = JSON.parse(payload);
 					} catch {
 						continue;
 					}
+					// OpenRouter reports a failure after the 200 has already been sent as an
+					// `error` frame in the stream, with no `choices`.
+					if (parsed.error)
+						throw new StreamRetryError(
+							`LLM stream error frame: ${JSON.stringify(parsed.error).slice(0, 300)}`,
+						);
+					finishReason = parsed.choices?.[0]?.finish_reason ?? finishReason;
 					const text = parsed.choices?.[0]?.delta?.content;
 					if (text) {
 						yieldedAny = true;
+						attemptText += text;
 						yield { type: "delta", text };
 					}
 				}
 			}
 		} catch (err) {
-			if (!yieldedAny && canRetry) continue;
+			// A StreamRetryError is retried even after text has streamed, since the consumer is
+			// told to discard that text via "reset"; any other error (e.g. the connection
+			// dropping mid-stream) is only retried while nothing has streamed yet.
+			if (canRetry && (!yieldedAny || err instanceof StreamRetryError)) {
+				if (yieldedAny) yield { type: "reset" };
+				continue;
+			}
 			throw err;
 		} finally {
 			// Runs on every exit -- the `[DONE]`/end-of-stream returns above, a thrown error, and
@@ -319,7 +367,7 @@ export async function classifyHarassment(
 				{ role: "user", content: userPrompt },
 			],
 			temperature: 0,
-			maxTokens: 10,
+			maxTokens: 50,
 			timeoutMs: LLM_ATTEMPT_TIMEOUT_MS,
 		});
 	} catch {

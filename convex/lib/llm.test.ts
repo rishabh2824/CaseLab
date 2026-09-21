@@ -19,6 +19,29 @@ function deltaLine(text: string | null): string {
 	return JSON.stringify({ choices: [{ delta: { content: text } }] });
 }
 
+// personaReplyStream now rejects a stream whose accumulated text isn't valid JSON, so fixtures
+// that stand in for a successful generation must be one.
+const REPLY_JSON = JSON.stringify({
+	reply: "Hi",
+	introduce: [],
+	send_files: [],
+});
+
+const REPLY_JSON_CHUNKS = [
+	REPLY_JSON.slice(0, 10),
+	REPLY_JSON.slice(10, 20),
+	REPLY_JSON.slice(20),
+];
+
+async function drain(
+	systemPrompt = NOOP_SYSTEM_PROMPT,
+): Promise<{ type: string; text?: string }[]> {
+	const events: { type: string; text?: string }[] = [];
+	for await (const event of personaReplyStream(systemPrompt, []))
+		events.push(event);
+	return events;
+}
+
 beforeEach(() => {
 	vi.stubEnv("LLM_KEY", "test-key");
 });
@@ -94,7 +117,11 @@ describe("personaReplyStream", () => {
 			vi
 				.fn()
 				.mockResolvedValue(
-					sseResponse([deltaLine("Hello"), deltaLine(" there."), "[DONE]"]),
+					sseResponse([
+						deltaLine(REPLY_JSON.slice(0, 5)),
+						deltaLine(REPLY_JSON.slice(5)),
+						"[DONE]",
+					]),
 				),
 		);
 		const events = [];
@@ -103,8 +130,8 @@ describe("personaReplyStream", () => {
 		]))
 			events.push(event);
 		expect(events).toEqual([
-			{ type: "delta", text: "Hello" },
-			{ type: "delta", text: " there." },
+			{ type: "delta", text: REPLY_JSON.slice(0, 5) },
+			{ type: "delta", text: REPLY_JSON.slice(5) },
 		]);
 	});
 
@@ -114,53 +141,107 @@ describe("personaReplyStream", () => {
 			vi
 				.fn()
 				.mockResolvedValue(
-					sseResponse([deltaLine(null), deltaLine("Hi"), "[DONE]"]),
+					sseResponse([deltaLine(null), deltaLine(REPLY_JSON), "[DONE]"]),
 				),
 		);
 		const events = [];
 		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
 			events.push(event);
-		expect(events).toEqual([{ type: "delta", text: "Hi" }]);
+		expect(events).toEqual([{ type: "delta", text: REPLY_JSON }]);
 	});
 
 	it("retries a transient connection failure before any text has streamed", async () => {
 		const fetchMock = vi
 			.fn()
 			.mockRejectedValueOnce(new TypeError("network error"))
-			.mockResolvedValueOnce(sseResponse([deltaLine("Recovered"), "[DONE]"]));
+			.mockResolvedValueOnce(sseResponse([deltaLine(REPLY_JSON), "[DONE]"]));
 		vi.stubGlobal("fetch", fetchMock);
 		const events = [];
 		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
 			events.push(event);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
-		expect(events).toEqual([{ type: "delta", text: "Recovered" }]);
+		expect(events).toEqual([{ type: "delta", text: REPLY_JSON }]);
 	});
 
 	it("retries a retryable HTTP status (429/5xx) before any text has streamed", async () => {
 		const fetchMock = vi
 			.fn()
 			.mockResolvedValueOnce(new Response("rate limited", { status: 429 }))
-			.mockResolvedValueOnce(sseResponse([deltaLine("Recovered"), "[DONE]"]));
+			.mockResolvedValueOnce(sseResponse([deltaLine(REPLY_JSON), "[DONE]"]));
 		vi.stubGlobal("fetch", fetchMock);
 		const events = [];
 		for await (const event of personaReplyStream(NOOP_SYSTEM_PROMPT, []))
 			events.push(event);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
-		expect(events).toEqual([{ type: "delta", text: "Recovered" }]);
+		expect(events).toEqual([{ type: "delta", text: REPLY_JSON }]);
 	});
 
-	it("does not retry a non-retryable HTTP status", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(new Response("bad request", { status: 400 })),
-		);
-		await expect(
-			(async () => {
-				for await (const _ of personaReplyStream(NOOP_SYSTEM_PROMPT, [])) {
-					/* drain */
-				}
-			})(),
-		).rejects.toThrow(/HTTP 400/);
+	it("retries a non-retryable HTTP status once, then fails with it", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockImplementation(async () => new Response("bad", { status: 400 }));
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(drain()).rejects.toThrow(/HTTP 400/);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("retries a stream that ends with no content", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				sseResponse([
+					JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] }),
+					"[DONE]",
+				]),
+			)
+			.mockResolvedValueOnce(sseResponse([deltaLine(REPLY_JSON), "[DONE]"]));
+		vi.stubGlobal("fetch", fetchMock);
+		expect(await drain()).toEqual([{ type: "delta", text: REPLY_JSON }]);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("retries a stream truncated mid-JSON, telling the consumer to reset first", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				sseResponse([
+					deltaLine(REPLY_JSON.slice(0, 12)),
+					JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] }),
+					"[DONE]",
+				]),
+			)
+			.mockResolvedValueOnce(sseResponse([deltaLine(REPLY_JSON), "[DONE]"]));
+		vi.stubGlobal("fetch", fetchMock);
+		expect(await drain()).toEqual([
+			{ type: "delta", text: REPLY_JSON.slice(0, 12) },
+			{ type: "reset" },
+			{ type: "delta", text: REPLY_JSON },
+		]);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("retries when OpenRouter puts an error frame in a 200 stream", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(
+				sseResponse([
+					JSON.stringify({ error: { code: 502, message: "upstream" } }),
+					"[DONE]",
+				]),
+			)
+			.mockResolvedValueOnce(sseResponse([deltaLine(REPLY_JSON), "[DONE]"]));
+		vi.stubGlobal("fetch", fetchMock);
+		expect(await drain()).toEqual([{ type: "delta", text: REPLY_JSON }]);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("fails the turn when every attempt ends empty or truncated", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockImplementation(async () => sseResponse(["[DONE]"]));
+		vi.stubGlobal("fetch", fetchMock);
+		await expect(drain()).rejects.toThrow(/no content/);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
 	// The retry policy is only safe because it never restarts a generation that already emitted
@@ -272,7 +353,7 @@ describe("personaReplyStream", () => {
 							}
 							controller.enqueue(
 								new TextEncoder().encode(
-									`data: ${deltaLine(`chunk${pulls}`)}\n\n`,
+									`data: ${deltaLine(REPLY_JSON_CHUNKS[pulls - 1] ?? "")}\n\n`,
 								),
 							);
 						},
@@ -289,7 +370,7 @@ describe("personaReplyStream", () => {
 			await vi.advanceTimersByTimeAsync(1_000);
 			await consumed;
 
-			expect(events.map((e) => e.text)).toEqual(["chunk1", "chunk2", "chunk3"]);
+			expect(events.map((e) => e.text)).toEqual(REPLY_JSON_CHUNKS);
 			// The timer is released on the normal exit path too -- an un-disarmed timer would
 			// still be pending here and fire into a completed request.
 			expect(vi.getTimerCount()).toBe(0);

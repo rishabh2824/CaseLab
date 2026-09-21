@@ -325,14 +325,14 @@ describe("transport-level provider failures", () => {
 		await expectTurnFailedCleanly(t, state.run_id);
 	});
 
-	it("does not retry a non-retryable 4xx, and still fails cleanly", async () => {
+	it("retries a 4xx once, and still fails cleanly when it persists", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		const calls = stub({ replyStatus: 400 });
 
 		await send(t, state.run_id, "A", "hi");
 
-		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(1);
+		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(2);
 		await expectTurnFailedCleanly(t, state.run_id);
 	});
 
