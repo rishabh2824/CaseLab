@@ -30,8 +30,8 @@ vi.mock("svelte-sonner", () => {
 	return { toast };
 });
 
-// jsdom implements neither of these, and both are load-bearing: the case form
-// generates persona ids with randomUUID, and downloadForm revokes an object URL
+// jsdom lacks (or has an incompatible) implementation of these, and both are load-bearing: the
+// case form generates persona ids with randomUUID, and downloadForm revokes an object URL
 // after triggering the download.
 if (!globalThis.crypto?.randomUUID) {
 	let counter = 0;
@@ -41,10 +41,10 @@ if (!globalThis.crypto?.randomUUID) {
 			`00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}` as const,
 	});
 }
-if (!URL.createObjectURL) {
-	URL.createObjectURL = vi.fn(() => "blob:mock");
-	URL.revokeObjectURL = vi.fn();
-}
+// Stubbed unconditionally: newer jsdom versions ship a real createObjectURL that only accepts
+// jsdom's own Blob, so it throws on the Blob global the app code constructs.
+URL.createObjectURL = vi.fn(() => "blob:mock");
+URL.revokeObjectURL = vi.fn();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => {
