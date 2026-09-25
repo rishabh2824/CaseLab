@@ -196,6 +196,14 @@ export async function* personaReplyStream(
 			},
 		},
 		provider: { order: ["anthropic"], allow_fallbacks: false },
+		// A persona reply is straight-line generation against a schema, not a problem that
+		// benefits from extended thinking -- but left unset, Anthropic's own default for this
+		// model is adaptive thinking *on*, which eats into LLM_ATTEMPT_TIMEOUT_MS's 30s budget
+		// before any schema content starts streaming and was observed driving a chunk of the
+		// "please resend your message" failures (timeout aborts / provider rate limits from the
+		// extra reasoning tokens). Explicit > relying on whatever OpenRouter infers when the
+		// field is omitted.
+		reasoning: { enabled: false },
 	};
 
 	for (let attempt = 1; attempt <= PERSONA_REPLY_RETRIES; attempt++) {

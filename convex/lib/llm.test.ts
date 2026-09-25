@@ -135,6 +135,16 @@ describe("personaReplyStream", () => {
 		]);
 	});
 
+	it("explicitly disables reasoning -- adaptive thinking left on by default eats into the 30s attempt timeout", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(sseResponse([deltaLine(REPLY_JSON), "[DONE]"]));
+		vi.stubGlobal("fetch", fetchMock);
+		await drain();
+		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
+		expect(body.reasoning).toEqual({ enabled: false });
+	});
+
 	it("skips delta lines with no text content", async () => {
 		vi.stubGlobal(
 			"fetch",
