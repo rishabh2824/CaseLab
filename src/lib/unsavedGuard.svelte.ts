@@ -1,13 +1,6 @@
 export type SaveResult = { ok: true } | { ok: false; error: string };
 export type SaveFn = () => Promise<SaveResult>;
 
-// Owns both the dirty/save registration (as before) and the "you have unsaved changes, save or
-// discard before leaving?" prompt's own state -- previously that modal's open/isSaving/error
-// state lived in AdminTopBar.svelte alone, reachable only from its own Home/Sign-out buttons.
-// Centralizing it here lets ANY navigation attempt route through the same prompt, not just
-// those two -- CaseForm.svelte's own beforeNavigate/beforeunload guards (browser back/forward,
-// a link click elsewhere, closing the tab) call requestNavigation the same way AdminTopBar's
-// buttons do, so there's one gate instead of two independently-maintained ones.
 class UnsavedGuard {
 	#dirtySource: (() => boolean) | null = $state(null);
 	#saveFn: SaveFn | null = null;
@@ -17,23 +10,24 @@ class UnsavedGuard {
 	saveError = $state("");
 	#pendingAction: (() => void | Promise<void>) | null = null;
 
+	// Returns whether the registered form currently has unsaved changes.
 	get isDirty(): boolean {
 		return this.#dirtySource?.() ?? false;
 	}
 
+	// Registers the form's dirty check and save function.
 	register(dirtySource: () => boolean, save: SaveFn): void {
 		this.#dirtySource = dirtySource;
 		this.#saveFn = save;
 	}
 
+	// Removes the registered dirty check and save function.
 	unregister(): void {
 		this.#dirtySource = null;
 		this.#saveFn = null;
 	}
 
-	// Routes a navigation-or-similar action (go home, sign out, follow a link, go back) through
-	// the unsaved-changes prompt when there's something to lose; runs it immediately otherwise,
-	// so a caller doesn't have to check isDirty itself before deciding whether to call this.
+	// Runs a navigation action right away if the form is clean, otherwise asks the user via the modal.
 	requestNavigation(action: () => void | Promise<void>): void {
 		if (!this.isDirty) {
 			void action();
@@ -44,12 +38,14 @@ class UnsavedGuard {
 		this.showModal = true;
 	}
 
+	// Closes the unsaved-changes modal and forgets the pending navigation.
 	closeModal(): void {
 		this.showModal = false;
 		this.#pendingAction = null;
 		this.saveError = "";
 	}
 
+	// Drops the unsaved changes and continues with the pending navigation.
 	async discard(): Promise<void> {
 		const action = this.#pendingAction;
 		this.closeModal();
@@ -57,6 +53,7 @@ class UnsavedGuard {
 		if (action) await action();
 	}
 
+	// Saves the form and, if that succeeds, continues with the pending navigation.
 	async saveAndContinue(): Promise<void> {
 		this.isSaving = true;
 		this.saveError = "";
@@ -74,6 +71,7 @@ class UnsavedGuard {
 		}
 	}
 
+	// Runs the registered save function, or reports there is nothing to save.
 	async save(): Promise<SaveResult> {
 		if (!this.#saveFn) return { ok: false, error: "Nothing to save." };
 		return this.#saveFn();

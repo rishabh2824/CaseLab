@@ -1,13 +1,3 @@
-// Data-integrity and hostile-input boundaries across the case -> run -> turn pipeline.
-//
-// The shared theme: `cases.structure`'s schema validator (caseStructureValidator, see
-// models/cases.ts) constrains its shape, not its VALUES -- a referral can still point at a
-// persona id nothing else references, an availability window can still be nonsensical, a
-// file entry's storage id can still resolve to nothing. Those values all flow straight from
-// an admin's browser (or from an imported HTML case file, which is genuinely untrusted input)
-// into runtime code that indexes Convex records by them and hands them to `v.id()`-validated
-// mutations. Every test here asks what a run does when one of those values is something the
-// authoring UI would never produce -- structurally valid, semantically not.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -45,12 +35,14 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+// Stubs the global fetch with the fake LLM and returns its recorded calls.
 function stub(options: Parameters<typeof makeLlmFetch>[0] = {}) {
 	const { calls, fetch } = makeLlmFetch(options);
 	vi.stubGlobal("fetch", vi.fn(fetch));
 	return calls;
 }
 
+// Inserts an admin with the given role and returns the document.
 async function makeAdmin(
 	t: T,
 	role: "super" | "admin" = "admin",
@@ -64,6 +56,7 @@ async function makeAdmin(
 	return (await t.run((ctx) => ctx.db.get(id)))!;
 }
 
+// Builds a valid case payload with a unique access code and optional overrides.
 function payload(overrides: Partial<CasePayload> = {}): CasePayload {
 	return {
 		name: "Sterling Industries",
@@ -77,9 +70,7 @@ function payload(overrides: Partial<CasePayload> = {}): CasePayload {
 	};
 }
 
-// Seeds a case by direct insert (bypassing createCase's validation) so a run can be started
-// against a structure the authoring path would reject -- which is exactly the shape migrated
-// data and imported case files can have.
+// Seeds a case with the given structure and access code and starts a run on it.
 async function startRunWithStructure(
 	t: T,
 	structure: CaseStructure,
@@ -103,6 +94,7 @@ async function startRunWithStructure(
 	return await t.run((ctx) => startSimulation(ctx, accessCode));
 }
 
+// Starts a turn and drives its reply stream to completion.
 async function send(
 	t: T,
 	runId: Id<"runs">,
@@ -114,12 +106,6 @@ async function send(
 }
 
 describe("a persona that is both a root and a referral target", () => {
-	// simulationReads.test.ts already proves flattenPersonas stores such a persona once. Its
-	// consumers don't: getSimulationState concatenates root personas with unlocked referred
-	// personas, and exportSimulation concatenates graph.roots with unlockedReferredIds -- neither
-	// dedupes, so the same persona surfaces twice the moment a referral to an existing root
-	// fires. The student sees a duplicate contact card, and the exported PDF contains that
-	// persona's entire transcript twice.
 	async function unlockRootViaReferral(t: T) {
 		const state = await startRunWithStructure(
 			t,
@@ -136,6 +122,7 @@ describe("a persona that is both a root and a referral target", () => {
 		return state;
 	}
 
+	// Tests that a persona that is both a root and a referral target appears exactly once in the contact list.
 	it("REGRESSION: appears exactly once in the contact list", async () => {
 		const t = newTestConvex();
 		const state = await unlockRootViaReferral(t);
@@ -144,6 +131,7 @@ describe("a persona that is both a root and a referral target", () => {
 		expect(live.contacts.map((c) => c.id)).toEqual(["A", "B"]);
 	});
 
+	// Tests that a persona that is both a root and a referral target appears exactly once in the export.
 	it("REGRESSION: appears exactly once in the export, with one copy of its transcript", async () => {
 		const t = newTestConvex();
 		const state = await unlockRootViaReferral(t);
@@ -157,11 +145,7 @@ describe("a persona that is both a root and a referral target", () => {
 		);
 	});
 
-	// The two tests above are satisfied by the SOURCE fix (getTurnContext never offers a root as
-	// a referral candidate, so unlockedReferredIds can no longer acquire one). That leaves the
-	// read-path dedupe -- which exists for runs whose state ALREADY contains such an id, saved
-	// before that fix or by a direct write -- with nothing exercising it. Mutation-testing the
-	// dedupe away left the suite green, so this seeds that legacy state directly.
+	// Tests that a root id already recorded in unlockedReferredIds is deduped.
 	it("dedupes a root id that is already recorded in a run's unlockedReferredIds", async () => {
 		const t = newTestConvex();
 		const state = await startRunWithStructure(
@@ -174,7 +158,6 @@ describe("a persona that is both a root and a referral target", () => {
 				roots: ["A", "B"],
 			}),
 		);
-		// The exact state a pre-fix run would be left in.
 		await t.run((ctx) =>
 			ctx.db.patch(state.run_id, {
 				unlockedReferredIds: ["B", "B"],
@@ -189,8 +172,7 @@ describe("a persona that is both a root and a referral target", () => {
 		expect(exported.personas.map((p) => p.id)).toEqual(["A", "B"]);
 	});
 
-	// Same idea for a plain duplicate that isn't a root: an applyDecisions retry that recorded
-	// the same referral twice must still render one contact.
+	// Tests that a repeated non-root id in unlockedReferredIds is deduped.
 	it("dedupes a repeated non-root id in unlockedReferredIds", async () => {
 		const t = newTestConvex();
 		const state = await startRunWithStructure(
@@ -212,8 +194,7 @@ describe("a persona that is both a root and a referral target", () => {
 		expect(live.contacts.map((c) => c.id)).toEqual(["A", "B"]);
 	});
 
-	// The root fix: a root persona is reachable from minute 0, so offering a referral to it is a
-	// no-op that only wastes prompt budget and invites the duplicate above.
+	// Tests that a persona that is already a root is never offered as a referral candidate.
 	it("is never offered as a referral candidate in the first place", async () => {
 		const t = newTestConvex();
 		const state = await startRunWithStructure(
@@ -236,10 +217,7 @@ describe("a persona that is both a root and a referral target", () => {
 });
 
 describe("file references that don't resolve to a real files row", () => {
-	// The structure blob's file entries carry only a storage id -- getTurnContext resolves the
-	// real `files` row by that storage id, not off any id embedded in the structure. The storage
-	// object having no `files` row at all is pointless to offer as a candidate: nothing
-	// downstream can ever record the share.
+	// Tests that a file whose storage id has no files row is not offered.
 	it("does not offer a file whose storage id has no files row", async () => {
 		const t = newTestConvex();
 		const storageId = await t.run((ctx) =>
@@ -271,8 +249,7 @@ describe("file references that don't resolve to a real files row", () => {
 		expect(prompt).not.toContain("orphan.pdf");
 	});
 
-	// Positive control: a properly-resolved file still shares, so the guard above can't pass by
-	// simply never sharing anything.
+	// Tests that a file whose storage id resolves to a files row is still shared.
 	it("still shares a file whose storage id does resolve to a files row", async () => {
 		const t = newTestConvex();
 		const storageId = await t.run((ctx) =>
@@ -306,14 +283,9 @@ describe("file references that don't resolve to a real files row", () => {
 });
 
 describe("persona ids as Convex record keys", () => {
-	// unlockedAt / personaChatState are v.record()s keyed by persona id. Convex
-	// rejects a field name starting with "$" or containing non-ASCII, so such an id turns every
-	// state-writing turn into a hard failure -- and persona ids are not generated server-side:
-	// importCase.ts reads them straight out of an uploaded HTML file's data-persona-id
-	// attributes. The authoring path is where this has to be caught, since by run time the only
-	// options are "crash" and "silently drop the student's progress".
 	const illegal = ["$boss", "café", "persona id", "emoji-🙂"];
 
+	// Tests that persona ids unsafe as Convex record keys are rejected at case-save time.
 	it.each(illegal)(
 		"rejects %s as a persona id at case-save time",
 		async (badId) => {
@@ -323,6 +295,7 @@ describe("persona ids as Convex record keys", () => {
 		},
 	);
 
+	// Tests that the id shapes produced by the authoring UI and old data are still accepted.
 	it("still accepts the id shapes the authoring UI and old data actually produce", () => {
 		const ok = [
 			"550e8400-e29b-41d4-a716-446655440000",
@@ -340,6 +313,7 @@ describe("persona ids as Convex record keys", () => {
 		).not.toThrow();
 	});
 
+	// Tests that a bad persona id is rejected through the public create mutation, not just the helper.
 	it("rejects the bad id through the public create mutation, not just the pure helper", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t);
@@ -356,8 +330,7 @@ describe("persona ids as Convex record keys", () => {
 		).rejects.toThrow(/persona id/i);
 	});
 
-	// Defense in depth: a case already in the database with such an id (saved before the
-	// validation existed) must still fail loudly at save time rather than at turn time.
+	// Tests that re-saving a legacy case with an illegal persona id is refused.
 	it("refuses to re-save a legacy case carrying an illegal persona id", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
@@ -374,9 +347,6 @@ describe("persona ids as Convex record keys", () => {
 });
 
 describe("simulation duration", () => {
-	// The 1..120 bound exists only in CaseForm.svelte. Nothing server-side enforces it, so a
-	// direct API call (or a bypassed client) can persist a duration that makes the case
-	// unusable or makes the student's own countdown lie to them.
 	const rejected: [label: string, duration: number][] = [
 		["negative", -5],
 		["zero", 0],
@@ -385,6 +355,7 @@ describe("simulation duration", () => {
 		["absurd", Number.MAX_SAFE_INTEGER],
 	];
 
+	// Tests that invalid simulation durations are rejected at save time.
 	it.each(rejected)(
 		"REGRESSION: rejects a %s duration at save time",
 		async (_label, duration) => {
@@ -396,6 +367,7 @@ describe("simulation duration", () => {
 		},
 	);
 
+	// Tests that the boundary durations the authoring UI allows are accepted.
 	it("accepts the boundary values the authoring UI allows", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
@@ -406,6 +378,7 @@ describe("simulation duration", () => {
 		}
 	});
 
+	// Tests that a case with no duration (an untimed run) is still accepted.
 	it("still accepts a case with no duration at all (an untimed run)", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
@@ -414,10 +387,7 @@ describe("simulation duration", () => {
 		).resolves.toBeDefined();
 	});
 
-	// The reason the upper bound matters: a run's real lifetime is hard-capped at
-	// RUN_LIFETIME_MINUTES, but the student's countdown is driven by the case's own duration. A
-	// case saved with a longer duration produces a clock that never reaches zero while the run
-	// is deleted out from under it.
+	// Tests that a saved duration stays within the lifetime a run can actually reach.
 	it("keeps a saved duration within the lifetime a run can actually reach", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
@@ -434,6 +404,7 @@ describe("simulation duration", () => {
 });
 
 describe("student message boundaries", () => {
+	// Tests that unicode, emoji, newlines and punctuation in a message are accepted unchanged.
 	it("accepts unicode, emoji, newlines and punctuation without mangling them", async () => {
 		const t = newTestConvex();
 		const state = await startRunWithStructure(t, caseStructure());
@@ -448,11 +419,11 @@ describe("student message boundaries", () => {
 		expect(history[0]).toEqual({ role: "user", content: message });
 	});
 
+	// Tests that words are counted across every kind of whitespace, not just spaces.
 	it("counts words across every kind of whitespace, not just spaces", async () => {
 		const t = newTestConvex();
 		const state = await startRunWithStructure(t, caseStructure());
 		stub({ replyText: "ok" });
-		// 51 words separated by tabs/newlines -- a space-only split would see one word.
 		const tooLong = Array.from({ length: 51 }, (_, i) => `w${i}`).join("\n\t ");
 
 		await expect(
@@ -460,6 +431,7 @@ describe("student message boundaries", () => {
 		).rejects.toThrow(/too long/);
 	});
 
+	// Tests that a message of exactly the word limit is accepted and one more word is rejected.
 	it("accepts exactly the word limit and rejects one more", async () => {
 		const t = newTestConvex();
 		const state = await startRunWithStructure(t, caseStructure());
@@ -478,9 +450,7 @@ describe("student message boundaries", () => {
 		).rejects.toThrow(/too long/);
 	});
 
-	// The only length gate is a WORD count, so 50 "words" can still be megabytes. That reaches
-	// a runMessages insert (Convex caps a document at 1 MiB) and the LLM prompt. Pinned as a
-	// known limitation: the failure is at least loud and leaves the run usable.
+	// Tests that a 50-word message of enormous words fails loudly while leaving the run usable.
 	it("fails loudly, and leaves the run usable, for a 50-word message of enormous words", async () => {
 		const t = newTestConvex();
 		const state = await startRunWithStructure(t, caseStructure());
@@ -492,7 +462,6 @@ describe("student message boundaries", () => {
 			.catch(() => {});
 		await driveTurn(t, state.run_id, "A").catch(() => {});
 
-		// Whatever happened, a normal follow-up message still works.
 		await expect(
 			t.run((ctx) => startTurn(ctx, state.run_id, "A", "a normal question")),
 		).resolves.toBeNull();
@@ -500,6 +469,7 @@ describe("student message boundaries", () => {
 });
 
 describe("access codes", () => {
+	// Tests that a student's access code matches regardless of casing and surrounding whitespace.
 	it("matches a student's code regardless of casing and surrounding whitespace", async () => {
 		const t = newTestConvex();
 		await startRunWithStructure(t, caseStructure(), "sterling");
@@ -508,6 +478,7 @@ describe("access codes", () => {
 		).resolves.toMatchObject({ case: { case_name: "Case" } });
 	});
 
+	// Tests that access codes with digits, uppercase, hyphens, spaces, unicode or emoji are rejected at save time.
 	it.each([
 		["digits", "case1"],
 		["uppercase", "Sterling"],
@@ -526,9 +497,7 @@ describe("access codes", () => {
 		},
 	);
 
-	// Every case must have a real, unique access code (see services/cases.ts's
-	// validateAccessCode) -- a blank or whitespace-only one is rejected outright, the same as
-	// name/brief being blank, rather than silently normalized to "no code."
+	// Tests that a blank or whitespace-only access code is rejected at save time.
 	it("rejects a blank or whitespace-only access code -- every case needs a real one", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
@@ -540,6 +509,7 @@ describe("access codes", () => {
 		).rejects.toThrow("Access code is required.");
 	});
 
+	// Tests that a run never starts from a blank code even if a case somehow stored one.
 	it("never starts a run from a blank code even if a case somehow stored one", async () => {
 		const t = newTestConvex();
 		await expect(t.run((ctx) => startSimulation(ctx, ""))).rejects.toThrow(
@@ -552,11 +522,7 @@ describe("access codes", () => {
 });
 
 describe("admin email identity", () => {
-	// getAdminByEmail is an exact, case-sensitive index lookup, used both by the create-time
-	// duplicate check and by auth.ts's sign-in gate. A super admin who types "Jane.Doe@wisc.edu"
-	// creates a roster entry that Google's lower-cased profile email can never match -- the
-	// invited admin is told "Your account is not authorized." with nothing in the UI to explain
-	// why. The same gap lets two rows exist for the same human.
+	// Tests that an admin invited with a mixed-case email can still sign in.
 	it("REGRESSION: an admin invited with mixed-case email can still sign in", async () => {
 		const t = newTestConvex();
 		const superAdmin = await withAdmin(t, {
@@ -568,13 +534,13 @@ describe("admin email identity", () => {
 			role: "admin",
 		});
 
-		// Google hands back the lower-cased address at sign-in.
 		const asJane = await withGoogleIdentity(t, "jane.doe@wisc.edu");
 		await expect(
 			asJane.query(api.api.admins.viewer, {}),
 		).resolves.toMatchObject({ role: "admin" });
 	});
 
+	// Tests that a duplicate admin email differing only in casing or padding is rejected.
 	it("REGRESSION: rejects a duplicate that differs only in casing or padding", async () => {
 		const t = newTestConvex();
 		const superAdmin = await withAdmin(t, {
@@ -593,11 +559,7 @@ describe("admin email identity", () => {
 		).rejects.toThrow("An admin with this email already exists.");
 	});
 
-	// The write side normalizes too, so a test that only goes create -> sign-in never exercises
-	// normalization on the READ side -- mutation-testing it away left the suite green. This is
-	// the case that actually depends on it: the roster row is already canonical, and it is the
-	// IDENTITY whose email arrives differently cased, which is exactly what an OAuth provider is
-	// free to do.
+	// Tests that an admin is resolved when the signed-in email differs only in casing.
 	it("resolves an admin when the signed-in identity's email differs only in casing", async () => {
 		const t = newTestConvex();
 		await t.run((ctx) =>
@@ -611,6 +573,7 @@ describe("admin email identity", () => {
 		await expect(asJane.query(api.api.cases.listAll, {})).resolves.toEqual([]);
 	});
 
+	// Tests that a blank admin email is rejected instead of creating an unusable roster row.
 	it("rejects a blank email outright rather than creating an unusable roster row", async () => {
 		const t = newTestConvex();
 		const superAdmin = await withAdmin(t, {
@@ -627,8 +590,7 @@ describe("admin email identity", () => {
 });
 
 describe("persona graph structure", () => {
-	// Cycle detection recurses once per node. A long referral chain is a perfectly legal case
-	// shape (and trivially producible by an imported file), so it must not blow the stack.
+	// Tests that a 5000-deep referral chain validates without overflowing the stack.
 	it("validates a 5000-deep referral chain without overflowing the stack", () => {
 		const personas = Array.from({ length: 5000 }, (_, i) =>
 			personaPayload(`p${i}`),
@@ -639,6 +601,7 @@ describe("persona graph structure", () => {
 		expect(() => validateGraph(personas, referrals, ["p0"])).not.toThrow();
 	});
 
+	// Tests that a cycle at the end of a long chain is still detected.
 	it("still detects a cycle buried at the end of a long chain", () => {
 		const personas = Array.from({ length: 500 }, (_, i) =>
 			personaPayload(`p${i}`),
@@ -652,6 +615,7 @@ describe("persona graph structure", () => {
 		expect(() => validateGraph(personas, referrals, ["p0"])).toThrow(/cycle/i);
 	});
 
+	// Tests that a self-referral is rejected as a one-node cycle.
 	it("rejects a self-referral, which is a one-node cycle", () => {
 		expect(() =>
 			validateGraph(
@@ -662,8 +626,7 @@ describe("persona graph structure", () => {
 		).toThrow(/cycle/i);
 	});
 
-	// A case with personas but no roots is unreachable: startSimulation refuses it, so it should
-	// never have been savable in the first place.
+	// Tests that a case with no root personas is rejected at save time.
 	it("REGRESSION: rejects a case with no root personas at save time", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
@@ -672,6 +635,7 @@ describe("persona graph structure", () => {
 		).rejects.toThrow(/root/i);
 	});
 
+	// Tests that an empty persona list is rejected at save time.
 	it("rejects an empty persona list, which can only ever produce an unusable case", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);

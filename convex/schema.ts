@@ -2,34 +2,13 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { caseStructureValidator } from "./models/cases";
 
-// String literals since Convex has no enum type and this is read at every authorization
-// check.
 export const adminRole = v.union(v.literal("super"), v.literal("admin"));
 export type AdminRole = "super" | "admin";
 
-// The cap on how long a run can live even when a case sets no duration -- also the upper
-// bound a case's own `duration` is validated against at save time (services/cases.ts) and
-// CaseForm.svelte's authoring input: a duration a run can never actually reach would leave
-// the student's countdown still running when the run is deleted underneath it. Lives here,
-// not services/simulations.ts, so the frontend can import it directly -- that module pulls
-// in Convex-only side effects (the rate-limiter component, `_generated/api`) that can't be
-// bundled into the browser.
 export const RUN_LIFETIME_MINUTES = 120;
 
-// The chat composer's word cap, enforced both by the Send button (disabled client-side, no
-// round-trip) and by startTurn's server-side rejection (services/turn.ts) -- the same message
-// can't be allowed by one and rejected by the other. Lives here, not services/turn.ts, for the
-// same reason as RUN_LIFETIME_MINUTES above: turn.ts pulls in Convex-only side effects
-// (`_generated/api`, rate-limiter component) that can't be bundled into the browser, so the
-// frontend needs a side-effect-free source to import from.
 export const MAX_MESSAGE_WORDS = 50;
 
-// Convex has no case-insensitive column type, so codes are constrained to lowercase letters
-// at write time instead (services/cases.ts), making storage canonical by construction.
-// Lives here, not services/cases.ts, so CaseInfoFields.svelte can mirror the exact same
-// format client-side without pulling in that module's Convex-only side effects
-// (`_generated/api`, the rate-limiter component) -- same reason as RUN_LIFETIME_MINUTES
-// above.
 export const ACCESS_CODE_FORMAT = /^[a-z]+$/;
 
 const chatState = v.object({
@@ -39,36 +18,12 @@ const chatState = v.object({
 });
 
 export default defineSchema({
-	// The authorization gate — Better Auth's own `user` table (managed in its component's
-	// separate storage, not here) is identity only; an authenticated Google account with
-	// no matching row here is not an admin.
 	admins: defineTable({
 		email: v.string(),
 		name: v.optional(v.string()),
 		role: adminRole,
 	}).index("by_email", ["email"]),
 
-	// `structure` stays a JSON blob (personas/referrals/roots) -- max observed size 15.7 KB,
-	// far under Convex's 1 MiB document limit, so splitting it into per-persona documents buys
-	// nothing. `accessCode` is required (every case must be launchable) and validated to
-	// `^[a-z]+$` in the case create/update mutations (services/cases.ts) so it's canonical by
-	// construction -- no second normalized column needed.
-	//
-	// Validated against the exact same personaPayloadValidator/referralEdgeValidator that
-	// gate create/update's own arguments (models/cases.ts) -- not v.any(). Three migrations
-	// (Neon->Convex, Spaces->ctx.storage, Convex Auth->Better Auth) each changed what a
-	// "correct" structure blob looks like without ever rewriting rows written under the
-	// previous shape, and v.any() let that drift sit invisible until an admin hit it live
-	// (see the now-deleted migrateCaseStructures.ts, run once to bring existing rows in line
-	// with this validator before it was added). A real validator here means the *next* shape
-	// change fails `npx convex deploy` outright for any row it would leave non-conforming,
-	// instead of surfacing as an opaque "Server Error" months later.
-	//
-	// No `version`/optimistic-concurrency counter -- a deliberate simplification, not an
-	// oversight. Two admins editing the same case at once is rare enough that last-write-wins
-	// (whichever updateCase call runs last simply overwrites) is an acceptable outcome,
-	// avoiding expected-version checks, 409 conflict responses, and a client-side
-	// polling/reload UI for a scenario this rare.
 	cases: defineTable({
 		name: v.string(),
 		brief: v.string(),
@@ -88,9 +43,6 @@ export default defineSchema({
 	})
 		.index("by_case", ["caseId"])
 		.index("by_admin", ["adminId"])
-		// requireCaseAccess (services/cases.ts) needs exactly "is this admin a collaborator on
-		// this case" -- a direct point lookup, not by_case's scan-then-filter-in-code over
-		// every collaborator row on the case.
 		.index("by_case_and_admin", ["caseId", "adminId"]),
 
 	files: defineTable({
@@ -99,9 +51,6 @@ export default defineSchema({
 		contentType: v.optional(v.string()),
 	}).index("by_storage_id", ["storageId"]),
 
-	// This join table makes "is this file still referenced by any case" an indexed lookup
-	// instead of a full scan, which is also what makes real file deletion cheap enough to do
-	// unconditionally.
 	caseFiles: defineTable({
 		caseId: v.id("cases"),
 		fileId: v.id("files"),
@@ -109,32 +58,14 @@ export default defineSchema({
 		.index("by_case", ["caseId"])
 		.index("by_file", ["fileId"]),
 
-	// No `snapshot` field: a run stores only `caseId` and reads the case live.
-	// updateCase/deleteCase (services/cases.ts) and deleteAdminWithCascade
-	// (services/admins.ts) don't block on live runs to protect this -- an accepted
-	// tradeoff: editing/deleting a case out from under a live run is rare, and the admin doing
-	// it is assumed to know the consequences. The read paths (services/simulationReads.ts,
-	// services/turn.ts) fail cleanly rather than crash if the case (or a persona in its
-	// structure) has changed or disappeared underneath a run -- see runLifecycle.test.ts's
-	// "a run whose case was somehow removed reports a case error, not a crash".
 	runs: defineTable({
 		caseId: v.id("cases"),
 		startTime: v.number(),
 		expiresAt: v.number(),
-		activePersonaKey: v.string(),
 		unlockedReferredIds: v.array(v.string()),
 		unlockedAt: v.record(v.string(), v.number()),
-		// Which files (by `files` row id) have been shared into this run -- just the id, not a
-		// name/contentType/storageId snapshot. Case edits/deletes are assumed never to happen
-		// against a live run (see runs' own comment above), so there's no risk of the referenced
-		// `files` row changing out from under an active simulation; getSimulationState resolves
-		// the current name/contentType/storageId live off this id instead of carrying a copy.
 		sharedFiles: v.array(v.id("files")),
 		personaChatState: v.record(v.string(), chatState),
-		// The scheduled-function id for this run's expiry deletion (see
-		// convex/api/simulations.ts's `destroy`), so it can be cancelled/rescheduled if needed.
-		// Optional only during the brief window between insert and the scheduler
-		// call returning.
 		destroyJobId: v.optional(v.id("_scheduled_functions")),
 	}).index("by_expiry", ["expiresAt"]),
 
@@ -145,22 +76,12 @@ export default defineSchema({
 		content: v.string(),
 	}).index("by_run_persona", ["runId", "personaKey"]),
 
-	// One row per (run, persona): that persona's latest turn -- its persistentTextStreaming
-	// stream (lib/streaming.ts), and the turn lock (services/turn.ts's claimTurnSlot). The reply
-	// text itself lives in the component. Deliberately its own table, not a field on `runs`:
-	// a turn's writes here would otherwise re-push the whole run state to every subscriber.
 	turnStreams: defineTable({
 		runId: v.id("runs"),
 		personaKey: v.string(),
 		streamId: v.string(),
-		// When this turn was claimed -- claimTurnSlot treats a still-open stream older than
-		// STREAMING_SLOT_STALE_MS as dead (its action was killed) rather than in flight.
 		startedAt: v.number(),
-		// The student's message, held until /turn-stream's claimTurn takes it. Present means
-		// no tab has started generating this turn yet (see getTurnStream's `claimable`).
 		message: v.optional(v.string()),
-		// Set by applyDecisions/applyBoundary in the same transaction as the persona's reply
-		// insert, so the live bubble disappears exactly as the persisted reply appears.
 		settled: v.boolean(),
 	})
 		.index("by_run_persona", ["runId", "personaKey"])

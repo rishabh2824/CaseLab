@@ -1,20 +1,14 @@
-// The LLM is untrusted external input and an unreliable dependency. turn.test.ts covers the
-// two failure shapes the design anticipated (an empty reply, and fetch throwing outright);
-// this suite covers what a real provider actually does wrong -- valid JSON of the wrong shape,
-// truncated generations, SSE frames that aren't deltas, error envelopes returned with HTTP 200,
-// and adversarial content inside the reply -- and asserts the same invariant for every one of
-// them: a bad generation may cost the student a turn, but must never corrupt run state (no
-// referral unlocked, no file shared, no blank assistant bubble) and must never leave the
-// persona's turn stuck open, which is what locks that contact.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { components } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { STUDENT_ERROR } from "../lib/studentErrors";
 import type { CaseStructure } from "../models/cases";
 import {
 	driveTurn,
 	makeLlmFetch,
 	newTestConvex,
 	sseStream,
+	studentRejection,
 } from "../test.setup";
 import {
 	caseStructure,
@@ -35,12 +29,14 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+// Stubs the global fetch with the fake LLM and returns its recorded calls.
 function stub(options: Parameters<typeof makeLlmFetch>[0] = {}) {
 	const { calls, fetch } = makeLlmFetch(options);
 	vi.stubGlobal("fetch", vi.fn(fetch));
 	return calls;
 }
 
+// Seeds a case with the given structure and starts a run on it.
 async function startRun(t: T, structure: CaseStructure = caseStructure()) {
 	const ownerAdminId = await t.run((ctx) =>
 		ctx.db.insert("admins", {
@@ -60,6 +56,7 @@ async function startRun(t: T, structure: CaseStructure = caseStructure()) {
 	return await t.run((ctx) => startSimulation(ctx, "sterling"));
 }
 
+// Starts a turn and drives its reply stream to completion.
 async function send(
 	t: T,
 	runId: Id<"runs">,
@@ -70,7 +67,7 @@ async function send(
 	return await driveTurn(t, runId, personaId);
 }
 
-// The invariant every malformed-generation case below has to satisfy.
+// Asserts a failed turn left no assistant reply, an errored stream and no persisted user message.
 async function expectTurnFailedCleanly(
 	t: T,
 	runId: Id<"runs">,
@@ -84,8 +81,6 @@ async function expectTurnFailedCleanly(
 	const turn = await t.run((ctx) =>
 		getTurnStream(ctx, runId, personaId, false),
 	);
-	// Ended "error", never left open -- claimTurnSlot rejects a new turn on a persona whose
-	// stream is still open, so a stuck one locks that contact.
 	expect(turn?.status).toBe("error");
 
 	const run = (await t.run((ctx) => ctx.db.get(runId)))!;
@@ -98,8 +93,7 @@ async function expectTurnFailedCleanly(
 	});
 }
 
-// A run whose persona has both a referral and a file the model could unlock/share -- so a
-// malformed generation has something to corrupt if the parsing is too permissive.
+// Starts a run whose first persona has a referral and a shareable file as candidates.
 async function startRunWithCandidates(t: T) {
 	const storageId = await t.run((ctx) =>
 		ctx.storage.store(new Blob(["budget"])),
@@ -157,6 +151,7 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 		["an empty generation", ""],
 	];
 
+	// Tests that malformed generations are discarded without unlocking, sharing or persisting a reply.
 	it.each(malformed)(
 		"discards %s without unlocking a referral, sharing a file, or persisting a reply",
 		async (_name, raw) => {
@@ -170,8 +165,7 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 		},
 	);
 
-	// A failed turn tells the student to resend, so the message it already stored is taken back
-	// out -- otherwise the resend would leave it in the persona's history twice.
+	// Tests that a failed turn removes the student's message so a resend is not stored twice.
 	it("takes the student's message back out so a resend isn't stored twice", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -185,8 +179,7 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 		expect(history).toEqual([]);
 	});
 
-	// A failed turn must not brick the contact: the next attempt has to be able to re-claim the
-	// streaming slot and succeed.
+	// Tests that the student can retry the same persona successfully after a malformed generation.
 	it("lets the student retry the same persona successfully after a malformed generation", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -207,6 +200,7 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 });
 
 describe("hostile / off-schema decision fields", () => {
+	// Tests that handles supplied as nested arrays, objects, booleans or nulls are ignored.
 	it("ignores handles supplied as nested arrays, objects, booleans, and nulls", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -229,8 +223,7 @@ describe("hostile / off-schema decision fields", () => {
 		}).toEqual({ unlocked: [], shared: [] });
 	});
 
-	// coerceHandles accepts numbers, and handles are "R1"/"F1" -- a numeric 1 must not be
-	// coerced into R1/F1 by any downstream lookup.
+	// Tests that a bare index cannot stand in for a handle.
 	it("does not let a bare index stand in for a handle", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -247,9 +240,7 @@ describe("hostile / off-schema decision fields", () => {
 		expect(run.sharedFiles).toEqual([]);
 	});
 
-	// A single well-formed generation naming both handles is the positive control for the
-	// negative cases above -- without it they'd also pass against an implementation that simply
-	// never unlocks anything.
+	// Tests that a well-formed generation naming both handles does unlock and share (positive control).
 	it("positive control: a well-formed generation naming both handles does unlock and share", async () => {
 		const t = newTestConvex();
 		const { state, fileId } = await startRunWithCandidates(t);
@@ -266,8 +257,7 @@ describe("hostile / off-schema decision fields", () => {
 		expect(run.sharedFiles).toEqual([fileId]);
 	});
 
-	// An enormous handle list must not turn into an enormous write or a partial unlock -- only
-	// the handles actually offered this turn may resolve.
+	// Tests that thousands of hallucinated handles are ignored and only the real one unlocks.
 	it("survives thousands of hallucinated handles, unlocking only the real one", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -284,9 +274,7 @@ describe("hostile / off-schema decision fields", () => {
 		expect(run.unlockedReferredIds).toEqual(["B"]);
 	});
 
-	// Prompt injection landing in the OUTPUT: the reply text is stored and re-shown verbatim,
-	// so it must be treated as data. What matters is that instructions inside it change no
-	// state -- only the structured handle arrays do.
+	// Tests that adversarial instruction text in a reply is stored as plain content without being acted on.
 	it("stores adversarial instruction text as plain content without acting on it", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -311,6 +299,7 @@ describe("hostile / off-schema decision fields", () => {
 });
 
 describe("transport-level provider failures", () => {
+	// Tests that the turn fails cleanly when every reply attempt returns a retryable 5xx.
 	it("fails the turn cleanly when every reply attempt returns a retryable 5xx", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -322,6 +311,7 @@ describe("transport-level provider failures", () => {
 		await expectTurnFailedCleanly(t, state.run_id);
 	});
 
+	// Tests that a 4xx is retried once and the turn still fails cleanly if it persists.
 	it("retries a 4xx once, and still fails cleanly when it persists", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -333,6 +323,7 @@ describe("transport-level provider failures", () => {
 		await expectTurnFailedCleanly(t, state.run_id);
 	});
 
+	// Tests that the turn fails cleanly when the connection drops before any byte streams.
 	it("fails cleanly when the connection drops before any byte streams", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -343,8 +334,7 @@ describe("transport-level provider failures", () => {
 		await expectTurnFailedCleanly(t, state.run_id);
 	});
 
-	// OpenRouter can answer HTTP 200 and then put the failure in the stream body. Nothing
-	// downstream sees a delta, so this lands in the same "empty generation" path.
+	// Tests that an error envelope delivered inside a 200 stream is treated as a failed turn.
 	it("treats an error envelope delivered inside a 200 stream as a failed turn", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -358,6 +348,7 @@ describe("transport-level provider failures", () => {
 		await expectTurnFailedCleanly(t, state.run_id);
 	});
 
+	// Tests that SSE noise around the real deltas (comments, blank frames, bad payloads) is ignored.
 	it("ignores SSE noise (comments, blank frames, unparseable payloads) around the real deltas", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -386,9 +377,7 @@ describe("transport-level provider failures", () => {
 		});
 	});
 
-	// A stream that stops mid-JSON is the single most likely real-world malformation (token
-	// budget exhausted). Partial text may already have been previewed to the client; the
-	// authoritative parse must still reject it rather than persisting half a sentence.
+	// Tests that a generation truncated by the token limit is discarded even after partial text streamed.
 	it("discards a generation truncated by the token limit, even after partial text streamed", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -406,6 +395,7 @@ describe("transport-level provider failures", () => {
 });
 
 describe("the harassment classifier is a separate, fail-open dependency", () => {
+	// Tests that a normal reply is still produced when the classifier call fails.
 	it("still produces a normal reply when the classifier call itself fails", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -422,6 +412,7 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 		expect(history.at(-1)).toEqual({ role: "assistant", content: "All good." });
 	});
 
+	// Tests that a classifier response with no choices is treated as normal instead of crashing.
 	it("treats a classifier response with no choices as normal rather than crashing the turn", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -438,8 +429,7 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 		expect(history.at(-1)).toEqual({ role: "assistant", content: "Fine." });
 	});
 
-	// The Sonnet generation runs concurrently with the classifier and is discarded when the
-	// classifier flags -- including its referral/file decisions, which must not leak through.
+	// Tests that a flagged turn's unlocks and shares are discarded along with its reply text.
 	it("discards a flagged turn's unlocks and shares, not just its reply text", async () => {
 		const t = newTestConvex();
 		const { state, fileId } = await startRunWithCandidates(t);
@@ -461,8 +451,7 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 		expect(history.at(-1)?.content).not.toContain("Meet B");
 	});
 
-	// endReason latches to whatever ended the chat; a later flag of a different type must not
-	// rewrite the record of why it ended.
+	// Tests that the end reason is taken from the flag that actually ended the chat.
 	it("latches the end reason from the flag that actually ended the chat", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -479,6 +468,7 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 });
 
 describe("turn stream lifecycle", () => {
+	// Tests that a successful turn settles its stream so no live bubble is left behind.
 	it("settles the turn on success so no live bubble is left behind", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -492,6 +482,7 @@ describe("turn stream lifecycle", () => {
 		).toMatchObject({ status: "done", settled: true, claimable: false });
 	});
 
+	// Tests that a failed generation marks the stream errored rather than leaving it open.
 	it("marks the stream errored (never left open) when generation fails", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -504,9 +495,7 @@ describe("turn stream lifecycle", () => {
 		).toMatchObject({ status: "error", settled: false });
 	});
 
-	// A run destroyed mid-turn (expiry racing a slow generation) deletes the run out from under
-	// the generation -- getTurnContext's loadLiveRun throws "Run not found." before anything
-	// streams. The turn must still end cleanly, not hang the driving tab's request.
+	// Tests that the turn fails cleanly when the run is destroyed mid-generation.
 	it("fails the turn cleanly when the run is destroyed mid-generation", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -521,9 +510,6 @@ describe("turn stream lifecycle", () => {
 		});
 	});
 
-	// Reply attempts answer with `bodies` in order (the classifier still goes through
-	// makeLlmFetch), each after a short delay so the harassment classifier has already cleared
-	// by the time any reply text arrives -- otherwise nothing would be appended either way.
 	function stubReplyAttempts(bodies: string[]) {
 		const { calls, fetch } = makeLlmFetch();
 		let attempt = 0;
@@ -541,11 +527,10 @@ describe("turn stream lifecycle", () => {
 	const envelope = (reply: string) =>
 		sseStream([JSON.stringify({ reply, introduce: [], send_files: [] })]);
 
+	// Tests that a failed attempt that showed the student nothing is retried silently.
 	it("retries silently when the failed attempt showed the student nothing", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
-		// Truncated before a single reply character -- only the JSON prefix, which the student
-		// never sees.
 		const calls = stubReplyAttempts([
 			sseStream(['{"reply": "']),
 			envelope("Second try."),
@@ -561,8 +546,7 @@ describe("turn stream lifecycle", () => {
 		expect(history.map((m) => m.content)).toEqual(["hi", "Second try."]);
 	});
 
-	// Appended text can't be taken back, so a retry at this point would show the student the
-	// dead attempt's text followed by the new one. The turn fails instead.
+	// Tests that a failure is not retried once text has reached the student.
 	it("fails instead of retrying once text has reached the student", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -581,8 +565,7 @@ describe("turn stream lifecycle", () => {
 		).toEqual([]);
 	});
 
-	// Once a turn settles its reply lives in runMessages, so each persona keeps at most one
-	// stream: the next turn deletes the previous one's.
+	// Tests that the previous turn's stream is deleted when the next one starts.
 	it("deletes the previous turn's stream when the next one starts", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -602,8 +585,7 @@ describe("turn stream lifecycle", () => {
 		).rejects.toThrow("Stream not found");
 	});
 
-	// Only one tab gets to generate a turn: claimTurn hands the message to the first POST and
-	// every later one gets 409 (and follows the persisted copy instead).
+	// Tests that exactly one request drives a turn.
 	it("lets exactly one request drive a turn", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -620,6 +602,7 @@ describe("turn stream lifecycle", () => {
 });
 
 describe("the concurrency guard is the real serialization point", () => {
+	// Tests that a second turn on the same persona is rejected without consuming the first.
 	it("rejects a second turn on the same persona while one is in flight, without consuming the first", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -637,8 +620,7 @@ describe("the concurrency guard is the real serialization point", () => {
 		expect(history.map((m) => m.content)).toEqual(["first message", "first"]);
 	});
 
-	// The rejected second turn must not have written anything: no orphan user message, and in
-	// particular no second generation that would interleave writes with the first.
+	// Tests that a rejected second turn writes nothing at all.
 	it("writes nothing at all for the rejected second turn", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -654,7 +636,7 @@ describe("the concurrency guard is the real serialization point", () => {
 		expect(rows.map((r) => r.content)).not.toContain("second message");
 	});
 
-	// Different personas are independent -- one in-flight turn must not lock the whole run.
+	// Tests that concurrent turns on two different personas are allowed.
 	it("allows concurrent turns on two different personas", async () => {
 		const t = newTestConvex();
 		const state = await startRun(
@@ -680,8 +662,7 @@ describe("the concurrency guard is the real serialization point", () => {
 		expect([a.length, b.length]).toEqual([2, 2]);
 	});
 
-	// Two personas each unlocking a different referral in overlapping turns: both writes patch
-	// the same run document, so a lost update would silently drop one unlock.
+	// Tests that one persona's unlock is not lost when two turns patch the run around each other.
 	it("does not lose one persona's unlock when two turns patch the run around each other", async () => {
 		const t = newTestConvex();
 		const state = await startRun(
@@ -717,10 +698,6 @@ describe("the concurrency guard is the real serialization point", () => {
 });
 
 describe("a stuck turn is reclaimed once it's stale", () => {
-	// A platform-level kill (a deploy racing an in-flight turn, an enforced max-duration, an OOM)
-	// skips runTurn's own catch, so the turn's stream is never closed. Modeled here by a turn no
-	// tab ever drives: claimTurnSlot only looks at whether the stream is still open and when the
-	// turn started, so an undriven turn is an equally faithful stand-in.
 	async function leaveTurnOpen(t: T) {
 		const state = await startRun(t);
 		stub({ replyText: "first" });
@@ -736,6 +713,7 @@ describe("a stuck turn is reclaimed once it's stale", () => {
 		return { state, turnId: turn!._id };
 	}
 
+	// Tests that a second turn is still rejected while the open turn is fresh.
 	it("still rejects a second turn while the turn is fresh", async () => {
 		const t = newTestConvex();
 		const { state } = await leaveTurnOpen(t);
@@ -745,6 +723,7 @@ describe("a stuck turn is reclaimed once it's stale", () => {
 		).rejects.toThrow(/already being generated/);
 	});
 
+	// Tests that a turn open for just under the staleness threshold is still rejected.
 	it("still rejects a turn open for just under the staleness threshold", async () => {
 		const t = newTestConvex();
 		const { state, turnId } = await leaveTurnOpen(t);
@@ -759,8 +738,7 @@ describe("a stuck turn is reclaimed once it's stale", () => {
 		).rejects.toThrow(/already being generated/);
 	});
 
-	// Without this, the persona above stays locked until the component's own 20-minute timeout
-	// sweep, with no way for the student to recover it.
+	// Tests that a turn open past the staleness threshold is reclaimed instead of rejected.
 	it("reclaims a turn open past the staleness threshold, instead of rejecting", async () => {
 		const t = newTestConvex();
 		const { state, turnId } = await leaveTurnOpen(t);
@@ -781,15 +759,11 @@ describe("a stuck turn is reclaimed once it's stale", () => {
 });
 
 describe("rate limiting", () => {
-	// A token bucket refills continuously (15/minute == one token every 4 seconds), so a
-	// real-clock test of exhaustion is inherently flaky: 15 sequential sends take long enough to
-	// earn a token back. Freeze only Date (not setTimeout) -- the rate limiter reads the clock
-	// through Date.now(), and a fully-faked clock advanced far enough would also fire the run's
-	// own scheduled destroy job and delete the run mid-test.
 	function freezeClock() {
 		vi.useFakeTimers({ toFake: ["Date"] });
 	}
 
+	// Tests that the 16th message in a minute is rejected and the run continues after the limit refills.
 	it("rejects the 16th message in a minute and lets the run continue after refill", async () => {
 		freezeClock();
 		try {
@@ -800,9 +774,11 @@ describe("rate limiting", () => {
 			for (let i = 0; i < 15; i++) {
 				await send(t, state.run_id, "A", `message ${i}`);
 			}
-			await expect(
-				t.run((ctx) => startTurn(ctx, state.run_id, "A", "one too many")),
-			).rejects.toThrow("Rate limit exceeded.");
+			expect(
+				await studentRejection(
+					t.run((ctx) => startTurn(ctx, state.run_id, "A", "one too many")),
+				),
+			).toMatchObject({ code: STUDENT_ERROR.MESSAGE_RATE_LIMITED });
 
 			vi.setSystemTime(Date.now() + 60_000);
 			await expect(
@@ -813,8 +789,7 @@ describe("rate limiting", () => {
 		}
 	});
 
-	// The message limit is keyed per run, so one student burning their budget must not throttle
-	// a different student's run of the same case.
+	// Tests that the message rate limit is keyed per run, not per case.
 	it("keys the message limit per run, not per case", async () => {
 		freezeClock();
 		try {
@@ -824,9 +799,11 @@ describe("rate limiting", () => {
 			stub({ replyText: "ok" });
 
 			for (let i = 0; i < 15; i++) await send(t, a.run_id, "A", `msg ${i}`);
-			await expect(
-				t.run((ctx) => startTurn(ctx, a.run_id, "A", "over")),
-			).rejects.toThrow("Rate limit exceeded.");
+			expect(
+				await studentRejection(
+					t.run((ctx) => startTurn(ctx, a.run_id, "A", "over")),
+				),
+			).toMatchObject({ code: STUDENT_ERROR.MESSAGE_RATE_LIMITED });
 
 			await expect(
 				t.run((ctx) => startTurn(ctx, b.run_id, "A", "unaffected")),
@@ -836,12 +813,7 @@ describe("rate limiting", () => {
 		}
 	});
 
-	// startTurn consumes rate-limit budget BEFORE claimTurnSlot can reject -- but a Convex
-	// mutation is one transaction, so the guard's throw rolls the token consumption back with
-	// everything else. That rollback is what stops a client retry-storm against a busy persona
-	// from burning the student's own allowance and locking them out of a run they're mid-way
-	// through. It's a property of the transaction boundary, not of the call ordering, so it would
-	// silently break if any of this ever moved into a separate mutation or an action.
+	// Tests that a turn rejected by the concurrency guard does not consume message budget.
 	it("does not consume message budget for a turn the concurrency guard rejects", async () => {
 		freezeClock();
 		try {
@@ -849,7 +821,6 @@ describe("rate limiting", () => {
 			const state = await startRun(t);
 			stub({ replyText: "ok" });
 
-			// One accepted turn, left in flight, then 30 rejected retries against the busy slot.
 			await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first"));
 			for (let i = 0; i < 30; i++) {
 				await expect(
@@ -858,27 +829,19 @@ describe("rate limiting", () => {
 			}
 			await driveTurn(t, state.run_id, "A");
 
-			// 1 token spent, 14 left: the student can still finish their conversation.
 			for (let i = 0; i < 14; i++) {
 				await send(t, state.run_id, "A", `after storm ${i}`);
 			}
-			await expect(
-				t.run((ctx) => startTurn(ctx, state.run_id, "A", "sixteenth")),
-			).rejects.toThrow("Rate limit exceeded.");
+			expect(
+				await studentRejection(
+					t.run((ctx) => startTurn(ctx, state.run_id, "A", "sixteenth")),
+				),
+			).toMatchObject({ code: STUDENT_ERROR.MESSAGE_RATE_LIMITED });
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
-	// simulationStart is sharded (10 shards -- see lib/rateLimits.ts's own comment) so a class
-	// of students all starting at once doesn't serialize behind one row. That trades away an
-	// exact global count: which call is "the" one that first sees an empty bucket depends on
-	// which of the 10 shards it happens to sample, so a burst can start rejecting a little
-	// before, or keep succeeding a little past, the nominal 200-token capacity. These tests
-	// drive a burst well past that nominal capacity instead of asserting the literal 200th call
-	// is the exact boundary -- since nothing here advances the clock (no refill), 300 attempts
-	// against a 200-token bucket split 10 ways drives every shard negative, not just the first
-	// one a lopsided draw happens to hit.
 	const SIMULATION_START_BURST = 300;
 
 	async function driveSimulationStartToExhaustion(
@@ -888,29 +851,29 @@ describe("rate limiting", () => {
 		for (let i = 0; i < SIMULATION_START_BURST; i++) {
 			try {
 				await t.run((ctx) => startSimulation(ctx, accessCode));
-			} catch {
-				// Expected once (a shard of) the bucket is empty -- keep going so the whole
-				// burst drives every shard negative, not just whichever one got hit first.
-			}
+			} catch {}
 		}
 	}
 
+	// Tests that a burst of simulation starts against one access code is throttled.
 	it("throttles a burst of simulation starts against one access code", async () => {
 		const t = newTestConvex();
 		await startRun(t);
 		await driveSimulationStartToExhaustion(t, "sterling");
-		await expect(
-			t.run((ctx) => startSimulation(ctx, "sterling")),
-		).rejects.toThrow(/Too many simulations/);
+		expect(
+			await studentRejection(t.run((ctx) => startSimulation(ctx, "sterling"))),
+		).toMatchObject({ code: STUDENT_ERROR.SIMULATION_RATE_LIMITED });
 	});
 
-	// Casing alone must not buy a fresh bucket -- the limit keys off the normalized code.
+	// Tests that varying the access code's casing or padding cannot dodge the start throttle.
 	it("cannot be dodged by varying the access code's casing or padding", async () => {
 		const t = newTestConvex();
 		await startRun(t);
 		await driveSimulationStartToExhaustion(t, "sterling");
-		await expect(
-			t.run((ctx) => startSimulation(ctx, "  STERLING  ")),
-		).rejects.toThrow(/Too many simulations/);
+		expect(
+			await studentRejection(
+				t.run((ctx) => startSimulation(ctx, "  STERLING  ")),
+			),
+		).toMatchObject({ code: STUDENT_ERROR.SIMULATION_RATE_LIMITED });
 	});
 });

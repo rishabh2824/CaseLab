@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { RECENT_HISTORY_LIMIT } from "../lib/llm";
+import { STUDENT_ERROR } from "../lib/studentErrors";
 import { NONSENSE_THRESHOLD } from "../lib/turnState";
 import type { CaseStructure } from "../models/cases";
-import { driveTurn, newTestConvex } from "../test.setup";
+import { driveTurn, newTestConvex, studentRejection } from "../test.setup";
 import {
 	caseStructure,
 	fileEntry,
@@ -24,12 +25,14 @@ type LlmStubOptions = {
 	sendFiles?: string[];
 };
 
+// Builds a non-streaming chat-completions Response carrying the given content.
 function jsonResponse(content: string): Response {
 	return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
 		status: 200,
 	});
 }
 
+// Builds a streamed reply Response carrying the given JSON envelope.
 function sseResponse(envelope: string): Response {
 	return new Response(
 		`data: ${JSON.stringify({ choices: [{ delta: { content: envelope } }] })}\n\ndata: [DONE]\n\n`,
@@ -39,6 +42,7 @@ function sseResponse(envelope: string): Response {
 	);
 }
 
+// Returns the value, or calls it with the message and conversation if it is a function.
 function resolveMaybeFn<T>(
 	value: T | ((message: string, conversation: string) => T),
 	message: string,
@@ -49,11 +53,7 @@ function resolveMaybeFn<T>(
 		: value;
 }
 
-// One fetch mock standing in for every LLM call a turn makes: the harassment classifier (the
-// only classifier left -- see lib/llm.ts) and the persona reply stream, which now also judges
-// referral/file eligibility itself (see lib/prompt.ts's systemPrompt) rather than a separate
-// classifier pre-filtering an "eligible" list. Dispatched by inspecting the request body since
-// both hit the same endpoint.
+// Stubs the global fetch with a fake classifier and reply generator and returns its recorded calls.
 function stubLlm(options: LlmStubOptions = {}) {
 	const {
 		harassment = "normal",
@@ -65,10 +65,6 @@ function stubLlm(options: LlmStubOptions = {}) {
 	const calls: { kind: string; body: any }[] = [];
 	const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
 		const body = JSON.parse(init.body as string);
-		// The reply call's system message is a [{text, cache_control}, {text}] content-block pair
-		// (llm.ts's personaReplyStream, cache boundary between the two), not a plain string --
-		// flattened back to one string here so every assertion below can keep treating
-		// `messages[0].content` as plain text, same as the classify call's.
 		if (Array.isArray(body.messages[0].content)) {
 			body.messages[0].content = body.messages[0].content
 				.map((block: { text: string }) => block.text)
@@ -104,6 +100,7 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+// Seeds a case with the given structure and access code and starts a run on it.
 async function startRun(
 	t: ReturnType<typeof newTestConvex>,
 	structure: CaseStructure,
@@ -127,6 +124,7 @@ async function startRun(
 	return await t.run((ctx) => startSimulation(ctx, accessCode));
 }
 
+// Starts a turn and drives its reply stream to completion.
 async function send(
 	t: ReturnType<typeof newTestConvex>,
 	runId: Id<"runs">,
@@ -138,6 +136,7 @@ async function send(
 }
 
 describe("startTurn validation", () => {
+	// Tests that an empty or whitespace-only message is rejected.
 	it("rejects an empty/whitespace message", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
@@ -146,23 +145,33 @@ describe("startTurn validation", () => {
 		).rejects.toThrow();
 	});
 
+	// Tests that a message over the word limit is rejected.
 	it("rejects a message over the word limit", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		const tooLong = Array(51).fill("word").join(" ");
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", tooLong)),
-		).rejects.toThrow(/too long/);
+		expect(
+			await studentRejection(
+				t.run((ctx) => startTurn(ctx, state.run_id, "A", tooLong)),
+			),
+		).toMatchObject({ code: STUDENT_ERROR.MESSAGE_TOO_LONG });
 	});
 
+	// Tests that an unknown persona id is rejected.
 	it("rejects an unknown persona id", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "does-not-exist", "hi")),
-		).rejects.toThrow("Persona not found.");
+		expect(
+			await studentRejection(
+				t.run((ctx) => startTurn(ctx, state.run_id, "does-not-exist", "hi")),
+			),
+		).toEqual({
+			code: STUDENT_ERROR.PERSONA_NOT_FOUND,
+			message: "Persona not found.",
+		});
 	});
 
+	// Tests that a persona in the graph that has not been unlocked yet is rejected.
 	it("rejects a persona that exists in the graph but hasn't been unlocked yet", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
@@ -171,26 +180,36 @@ describe("startTurn validation", () => {
 			roots: ["A"],
 		});
 		const state = await startRun(t, structure);
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "B", "hi")),
-		).rejects.toThrow("Persona is not available yet.");
+		expect(
+			await studentRejection(
+				t.run((ctx) => startTurn(ctx, state.run_id, "B", "hi")),
+			),
+		).toEqual({
+			code: STUDENT_ERROR.PERSONA_UNAVAILABLE,
+			message: "Persona is not available yet.",
+		});
 	});
 
+	// Tests that a message is rejected once the simulation's duration has elapsed.
 	it("rejects a message once the simulation's duration has elapsed", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure(), "timed");
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		// Force a case duration (the seeded case has none) and move the run's start far enough
-		// back that elapsed >= duration.
 		await t.run((ctx) => ctx.db.patch(run.caseId, { duration: 10 }));
 		await t.run((ctx) =>
 			ctx.db.patch(state.run_id, { startTime: run.startTime - 15 * 60_000 }),
 		);
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi")),
-		).rejects.toThrow("This simulation has ended.");
+		expect(
+			await studentRejection(
+				t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi")),
+			),
+		).toEqual({
+			code: STUDENT_ERROR.SIMULATION_ENDED,
+			message: "This simulation has ended.",
+		});
 	});
 
+	// Tests that a message is rejected once the persona's own availability window has expired.
 	it("rejects a message once the persona's own availability window has expired", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
@@ -200,26 +219,37 @@ describe("startTurn validation", () => {
 		await t.run((ctx) =>
 			ctx.db.patch(state.run_id, { startTime: Date.now() - 10 * 60_000 }),
 		);
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi")),
-		).rejects.toThrow("Persona is not available yet.");
+		expect(
+			await studentRejection(
+				t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi")),
+			),
+		).toEqual({
+			code: STUDENT_ERROR.PERSONA_UNAVAILABLE,
+			message: "Persona is not available yet.",
+		});
 	});
 });
 
 describe("concurrency guard (claimStreamingSlot)", () => {
+	// Tests that a second turn on the same persona is rejected while one is in flight.
 	it("rejects a second turn on the same persona while one is already in flight", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first message"));
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
-		).rejects.toThrow(
-			"A reply is already being generated for this contact. Please wait.",
-		);
+		expect(
+			await studentRejection(
+				t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
+			),
+		).toEqual({
+			code: STUDENT_ERROR.REPLY_IN_PROGRESS,
+			message:
+				"A reply is already being generated for this contact. Please wait.",
+		});
 	});
 });
 
 describe("normal turn happy path", () => {
+	// Tests that the reply is persisted and the streaming preview is cleared.
 	it("persists the reply and clears the streaming preview", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
@@ -236,7 +266,8 @@ describe("normal turn happy path", () => {
 		]);
 	});
 
-	it("updates activePersonaKey on a switch but leaves it alone when messaging the persona already active", async () => {
+	// Tests that the run document is not written when the student switches to a different persona.
+	it("does not write the run document when the student switches to a different persona", async () => {
 		const t = newTestConvex();
 		const state = await startRun(
 			t,
@@ -245,20 +276,14 @@ describe("normal turn happy path", () => {
 				roots: ["A", "B"],
 			}),
 		);
-		stubLlm({ replyText: "ok" });
+		const before = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 
-		// "A" is already active_persona_id (see startSimulation) -- this must not error, and
-		// the field must simply stay put.
-		await send(t, state.run_id, "A", "still talking to A");
-		let run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.activePersonaKey).toBe("A");
+		await t.run((ctx) => startTurn(ctx, state.run_id, "B", "switching to B"));
 
-		// Switching to B is the actual write this guard must still perform.
-		await send(t, state.run_id, "B", "now talking to B");
-		run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.activePersonaKey).toBe("B");
+		expect(await t.run((ctx) => ctx.db.get(state.run_id))).toEqual(before);
 	});
 
+	// Tests that a leading speaker tag is stripped before the reply is stored.
 	it("strips a leading speaker tag before storing the reply", async () => {
 		const t = newTestConvex();
 		const state = await startRun(
@@ -275,15 +300,10 @@ describe("normal turn happy path", () => {
 		expect(history[1]!.content).toBe("Our budget is tight.");
 	});
 
+	// Tests that only the last RECENT_HISTORY_LIMIT turns reach the LLM while the full history is persisted.
 	it("bounds what reaches the LLM to RECENT_HISTORY_LIMIT prior turns but persists the full history", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
-		// 6 prior turns puts 12 messages in the DB before this one -- 2 more than
-		// RECENT_HISTORY_LIMIT (10), enough to force truncation and make the "drops the
-		// oldest" assertion below meaningful regardless of the limit's exact value. The 7th
-		// turn's own user message isn't persisted yet when the LLM call fires (it's appended
-		// only once the harassment classifier clears it), so it reaches the model purely as an
-		// in-memory addition on top of the persisted window -- see runTurn's `replyHistory`.
 		for (let i = 1; i <= 6; i++) {
 			stubLlm({ replyText: `reply-${i}` });
 			await send(t, state.run_id, "A", `turn-${i}`);
@@ -293,8 +313,6 @@ describe("normal turn happy path", () => {
 
 		const replyCall = calls.find((c) => c.kind === "reply")!;
 		const sentMessages = replyCall.body.messages;
-		// system + 10 persisted prior turns (oldest turn-1/reply-1 pair dropped) + turn-7
-		// appended in-memory.
 		expect(sentMessages).toHaveLength(2 + RECENT_HISTORY_LIMIT);
 		expect(sentMessages[1]).toEqual({ role: "user", content: "turn-2" });
 		expect(sentMessages[sentMessages.length - 1]).toEqual({
@@ -308,8 +326,7 @@ describe("normal turn happy path", () => {
 		expect(fullHistory).toHaveLength(14);
 	});
 
-	// A failed turn tells the student to resend, so the message it already stored is taken back
-	// out -- otherwise the resend would leave it in the persona's history twice.
+	// Tests that an empty reply marks the stream errored and leaves no trace of the turn.
 	it("marks the stream errored and leaves no trace of the turn when the reply is empty", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
@@ -327,6 +344,7 @@ describe("normal turn happy path", () => {
 		expect(turn?.status).toBe("error");
 	});
 
+	// Tests that a failed LLM call marks the stream errored and leaves no trace of the turn.
 	it("marks the stream errored and leaves no trace of the turn when the LLM call fails", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
@@ -346,7 +364,6 @@ describe("normal turn happy path", () => {
 		);
 		expect(turn?.status).toBe("error");
 
-		// And the persona isn't left locked: an immediate resend goes through.
 		stubLlm({ replyText: "Hello." });
 		await send(t, state.run_id, "A", "hi");
 		const retried = await t.run((ctx) =>
@@ -364,6 +381,7 @@ describe("harassment/boundary escalation", () => {
 		});
 	}
 
+	// Tests that the reply call still runs concurrently with the classifier when the message ends up flagged.
 	it("still issues the reply call concurrently even when the message ends up flagged", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, twoRoots());
@@ -371,8 +389,6 @@ describe("harassment/boundary escalation", () => {
 
 		await send(t, state.run_id, "A", "bad message");
 
-		// The Sonnet reply call fires alongside the harassment check rather than waiting on it
-		// (see runTurn's comment on `cleared`) -- it's the OUTPUT that's discarded, not the call.
 		expect(calls.some((c) => c.kind === "reply")).toBe(true);
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect(run.personaChatState.A).toMatchObject({
@@ -381,6 +397,7 @@ describe("harassment/boundary escalation", () => {
 		});
 	});
 
+	// Tests that a flagged message's discarded reply is never shown to the client or persisted.
 	it("never reveals the discarded reply to the client and never persists it", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, twoRoots());
@@ -391,8 +408,6 @@ describe("harassment/boundary escalation", () => {
 
 		const { text } = await send(t, state.run_id, "A", "bad message");
 
-		// Nothing was ever appended -- not to the driving tab's stream, nor to the persisted
-		// copy every other tab reads.
 		expect(text).toBe("");
 		const turn = await t.run((ctx) =>
 			getTurnStream(ctx, state.run_id, "A", true),
@@ -409,6 +424,7 @@ describe("harassment/boundary escalation", () => {
 		expect(assistantReply.content).toContain("not able to follow that");
 	});
 
+	// Tests that a flagged message is never persisted, so it cannot poison a later turn's context.
 	it("never persists a flagged message, so it can't poison a later turn's context", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, twoRoots());
@@ -419,8 +435,6 @@ describe("harassment/boundary escalation", () => {
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
-		// Only the canned boundary reply -- the flagged message itself was never written, so it
-		// can never be replayed as prior-turn context into a later, unrelated generation.
 		expect(history).toHaveLength(1);
 		expect(history[0]!.role).toBe("assistant");
 
@@ -436,6 +450,7 @@ describe("harassment/boundary escalation", () => {
 		);
 	});
 
+	// Tests that the chat ends once NONSENSE_THRESHOLD is reached.
 	it("ends the chat once NONSENSE_THRESHOLD is reached", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, twoRoots());
@@ -458,6 +473,7 @@ describe("harassment/boundary escalation", () => {
 		);
 	});
 
+	// Tests that a message to an already-ended chat is rejected, even a clean one.
 	it("rejects a message to an already-ended chat, even a clean one", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, twoRoots());
@@ -465,13 +481,19 @@ describe("harassment/boundary escalation", () => {
 		for (let i = 0; i < NONSENSE_THRESHOLD; i++)
 			await send(t, state.run_id, "A", "bad message");
 
-		await expect(
-			t.run((ctx) =>
-				startTurn(ctx, state.run_id, "A", "sorry, can we continue?"),
+		expect(
+			await studentRejection(
+				t.run((ctx) =>
+					startTurn(ctx, state.run_id, "A", "sorry, can we continue?"),
+				),
 			),
-		).rejects.toThrow("This conversation has ended.");
+		).toEqual({
+			code: STUDENT_ERROR.CONVERSATION_ENDED,
+			message: "This conversation has ended.",
+		});
 	});
 
+	// Tests that ending one persona's chat does not end another persona's.
 	it("ending one persona's chat does not end another persona's", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, twoRoots());
@@ -487,6 +509,7 @@ describe("harassment/boundary escalation", () => {
 		});
 	});
 
+	// Tests that a normal message after a warning does not reset the warning count.
 	it("a normal message after a warning does not reset the warning count", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, twoRoots());
@@ -518,6 +541,7 @@ describe("referrals", () => {
 		});
 	}
 
+	// Tests that a candidate referral is offered with its condition and introducing it unlocks the contact.
 	it("offers a candidate referral with its condition in the prompt, and introducing it unlocks the contact", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseWithOneReferral());
@@ -545,6 +569,7 @@ describe("referrals", () => {
 		expect(bob).not.toHaveProperty("files");
 	});
 
+	// Tests that a pending referral's name is redacted from the prompt even after a reply mentioned it.
 	it("redacts a pending referral's name from the prompt, even after it was mentioned in a reply", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
@@ -561,7 +586,7 @@ describe("referrals", () => {
 			roots: ["A"],
 		});
 		const state = await startRun(t, structure);
-		stubLlm({ replyText: "Let me tell you about Bob." }); // model doesn't introduce Bob (introduce: [])
+		stubLlm({ replyText: "Let me tell you about Bob." });
 		await send(t, state.run_id, "A", "Tell me about Bob.");
 
 		const { calls } = stubLlm({ replyText: "Sure, ask away." });
@@ -575,6 +600,7 @@ describe("referrals", () => {
 		expect(run.unlockedReferredIds).toEqual([]);
 	});
 
+	// Tests that a handle the model hallucinates that was never offered is ignored.
 	it("ignores a handle the model hallucinates that was never offered", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseWithOneReferral());
@@ -586,6 +612,7 @@ describe("referrals", () => {
 		expect(run.unlockedReferredIds).toEqual([]);
 	});
 
+	// Tests that a persona is unlocked only once even if the model repeats its handle in one reply.
 	it("unlocks a persona exactly once even if the model repeats its handle in one reply", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseWithOneReferral());
@@ -597,6 +624,7 @@ describe("referrals", () => {
 		expect(run.unlockedReferredIds).toEqual(["B"]);
 	});
 
+	// Tests that re-unlocking an already-unlocked persona, as in a retried applyDecisions call, is a no-op.
 	it("re-unlocking an already-unlocked persona (a retried applyDecisions call) is a no-op", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseWithOneReferral());
@@ -623,7 +651,6 @@ describe("referrals", () => {
 		const firstUnlockedAt = (await t.run((ctx) => ctx.db.get(state.run_id)))!
 			.unlockedAt.B;
 
-		// Time passes before the (simulated) retry.
 		const before = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		await t.run((ctx) =>
 			ctx.db.patch(state.run_id, { startTime: before.startTime - 5 * 60_000 }),
@@ -645,6 +672,7 @@ describe("referrals", () => {
 		expect(run.unlockedAt.B).toBe(firstUnlockedAt);
 	});
 
+	// Tests that an unlocked persona is marked referred once it is messageable.
 	it("marks an unlocked persona as referred once messageable", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseWithOneReferral());
@@ -658,6 +686,7 @@ describe("referrals", () => {
 		expect(live.contacts.find((c) => c.id === "B")?.is_referred).toBe(true);
 	});
 
+	// Tests that a persona referred by two parents stops being offered to the parent who did not unlock it.
 	it("stops offering a persona referred by two parents to the parent who didn't unlock it", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
@@ -678,8 +707,6 @@ describe("referrals", () => {
 
 		const { calls } = stubLlm({ replyText: "hi" });
 		await send(t, state.run_id, "D", "hi");
-		// B is already unlocked (via A), so it's no longer offered as a candidate to D either --
-		// unlockedReferredIds isn't scoped per-parent.
 		const replyCall = calls.find((c) => c.kind === "reply")!;
 		expect(replyCall.body.messages[0].content).not.toContain("Bob");
 		expect(replyCall.body.messages[0].content).toContain(
@@ -687,6 +714,7 @@ describe("referrals", () => {
 		);
 	});
 
+	// Tests that handles are numbered stably and one-indexed across multiple pending referrals.
 	it("numbers handles stably and one-indexed across multiple pending referrals", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
@@ -715,6 +743,7 @@ describe("referrals", () => {
 		expect(prompt).toContain("R3: Erin");
 	});
 
+	// Tests that a referral with a blank condition is never unlocked or offered.
 	it("never unlocks a referral with a blank condition, and never even offers it as a candidate", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
@@ -738,9 +767,6 @@ describe("referrals", () => {
 });
 
 describe("files", () => {
-	// getTurnContext resolves the candidate file by storage id against the `files` table (not
-	// off the structure blob), so the files row has to exist BEFORE the case is seeded, and the
-	// structure's file entry has to reference that same storage id.
 	async function startRunWithOneFile(t: ReturnType<typeof newTestConvex>) {
 		const storageId = await t.run((ctx) =>
 			ctx.storage.store(new Blob(["budget"])),
@@ -770,6 +796,7 @@ describe("files", () => {
 		return { state, fileId };
 	}
 
+	// Tests that a candidate file is offered with its condition and sending it shares a stable url.
 	it("offers a candidate file with its condition in the prompt, and sending it shares a stable url", async () => {
 		const t = newTestConvex();
 		const { state, fileId } = await startRunWithOneFile(t);
@@ -795,6 +822,7 @@ describe("files", () => {
 		expect(live.shared_files[0]!.url).toEqual(expect.any(String));
 	});
 
+	// Tests that a file with a blank share condition is never shared or offered.
 	it("never shares a file with a blank share condition, and never even offers it as a candidate", async () => {
 		const t = newTestConvex();
 		const storageId = await t.run((ctx) =>
@@ -835,13 +863,9 @@ describe("files", () => {
 		expect(run.sharedFiles).toEqual([]);
 	});
 
+	// Tests that a file whose storage id has no files row is never offered and is withheld from the prompt.
 	it("never offers a file whose storage id has no matching files row, and withholds it from the prompt", async () => {
 		const t = newTestConvex();
-		// A real (not fabricated) storage id -- v.id("_storage") on cases.structure now
-		// validates the id's own format, so it has to come from an actual ctx.storage.store,
-		// same as dataIntegrity.test.ts's equivalent case. The scenario under test is "no
-		// `files` row references it", not "the id itself is malformed" -- so no `files` insert
-		// follows.
 		const storageId = await t.run((ctx) =>
 			ctx.storage.store(new Blob(["orphan"])),
 		);
@@ -862,6 +886,7 @@ describe("files", () => {
 		);
 	});
 
+	// Tests that a file the model does not choose to send is withheld.
 	it("withholds a file the model doesn't choose to send", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithOneFile(t);
@@ -873,6 +898,7 @@ describe("files", () => {
 		expect(run.sharedFiles).toEqual([]);
 	});
 
+	// Tests that an already-shared file is not offered or shared again.
 	it("does not re-offer or re-share an already-shared file", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithOneFile(t);
@@ -896,6 +922,7 @@ describe("files", () => {
 		expect(run.sharedFiles).toHaveLength(1);
 	});
 
+	// Tests that an unknown file handle from the model is ignored.
 	it("ignores an unknown file handle from the model", async () => {
 		const t = newTestConvex();
 		const state = await startRun(

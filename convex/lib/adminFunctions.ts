@@ -4,17 +4,6 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { mutation, query } from "../_generated/server";
 import { requireCurrentAdmin, requireSuperAdmin } from "../services/admins";
 
-// Convex has no middleware layer (see services/admins.ts's requireCurrentAdmin comment), so
-// `await requireCurrentAdmin(ctx)` used to be the first line of every admin-gated handler,
-// copy-pasted rather than enforced. adminQuery/adminMutation/superAdminMutation run the check
-// themselves before the handler ever executes and hand the resolved admin doc back through
-// ctx -- a handler built with one of these structurally cannot forget the check, and there's
-// no `admin` in scope to use until it has already passed. Plain `query`/`mutation` from
-// _generated/server stay in use for the handful of handlers (admins.viewer, which returns
-// null instead of throwing) that deliberately don't gate this way.
-// Shared shape for adminQuery/adminMutation/superAdminMutation below -- the three differ only
-// in which Ctx they run against and which `check` function gates them, not in what a config
-// object handed to any of them looks like.
 type AdminHandlerConfig<
 	Ctx extends QueryCtx | MutationCtx,
 	Args extends PropertyValidators,
@@ -27,6 +16,7 @@ type AdminHandlerConfig<
 	) => Output | Promise<Output>;
 };
 
+// Wraps a handler so it first runs an admin check and receives the admin on its context.
 function adminHandler<
 	Ctx extends QueryCtx | MutationCtx,
 	Args extends PropertyValidators,
@@ -44,18 +34,21 @@ function adminHandler<
 	};
 }
 
+// Defines a query that requires a signed-in admin.
 export function adminQuery<Args extends PropertyValidators, Output>(
 	config: AdminHandlerConfig<QueryCtx, Args, Output>,
 ) {
 	return query(adminHandler(requireCurrentAdmin, config));
 }
 
+// Defines a mutation that requires a signed-in admin.
 export function adminMutation<Args extends PropertyValidators, Output>(
 	config: AdminHandlerConfig<MutationCtx, Args, Output>,
 ) {
 	return mutation(adminHandler(requireCurrentAdmin, config));
 }
 
+// Defines a mutation that requires a super admin.
 export function superAdminMutation<Args extends PropertyValidators, Output>(
 	config: AdminHandlerConfig<MutationCtx, Args, Output>,
 ) {

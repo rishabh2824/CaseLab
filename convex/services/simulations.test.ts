@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { components } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { STUDENT_ERROR } from "../lib/studentErrors";
 import type { CaseStructure } from "../models/cases";
-import { newTestConvex } from "../test.setup";
+import { newTestConvex, studentRejection } from "../test.setup";
 import { caseStructure, personaPayload, referralEdge } from "../testFactories";
 import {
-	deleteExpiredRuns,
 	deleteRunCascade,
 	exportSimulation,
 	getSimulationState,
@@ -13,6 +13,7 @@ import {
 } from "./simulations";
 import { startTurn } from "./turn";
 
+// Inserts a case owned by a new admin, with optional overrides, and returns its id.
 async function seedCase(
 	t: ReturnType<typeof newTestConvex>,
 	overrides: Partial<{
@@ -42,32 +43,47 @@ async function seedCase(
 }
 
 describe("startSimulation", () => {
+	// Tests that a blank access code is rejected before any case lookup.
 	it("rejects a blank access code before any case lookup", async () => {
 		const t = newTestConvex();
-		await expect(t.run((ctx) => startSimulation(ctx, "   "))).rejects.toThrow(
-			"Access code is required.",
-		);
+		expect(
+			await studentRejection(t.run((ctx) => startSimulation(ctx, "   "))),
+		).toEqual({
+			code: STUDENT_ERROR.ACCESS_CODE_REQUIRED,
+			message: "Access code is required.",
+		});
 	});
 
+	// Tests that an unknown access code is rejected.
 	it("rejects an unknown access code", async () => {
 		const t = newTestConvex();
 		await seedCase(t, { accessCode: "sterling" });
-		await expect(
-			t.run((ctx) => startSimulation(ctx, "not-a-real-code")),
-		).rejects.toThrow("Invalid access code.");
+		expect(
+			await studentRejection(
+				t.run((ctx) => startSimulation(ctx, "not-a-real-code")),
+			),
+		).toEqual({
+			code: STUDENT_ERROR.INVALID_ACCESS_CODE,
+			message: "Invalid access code.",
+		});
 	});
 
+	// Tests that a case with no root personas is rejected.
 	it("rejects a case with no root personas", async () => {
 		const t = newTestConvex();
 		await seedCase(t, {
 			accessCode: "empty",
 			structure: caseStructure({ roots: [] }),
 		});
-		await expect(t.run((ctx) => startSimulation(ctx, "empty"))).rejects.toThrow(
-			"This case has no personas configured.",
-		);
+		expect(
+			await studentRejection(t.run((ctx) => startSimulation(ctx, "empty"))),
+		).toEqual({
+			code: STUDENT_ERROR.NO_PERSONAS,
+			message: "This case has no personas configured.",
+		});
 	});
 
+	// Tests that a trimmed case summary and one contact per root are returned.
 	it("returns a trimmed case summary and one contact per root", async () => {
 		const t = newTestConvex();
 		await seedCase(t, {
@@ -99,6 +115,7 @@ describe("startSimulation", () => {
 		expect(state.shared_files).toEqual([]);
 	});
 
+	// Tests that a persona's secret fields never leak into a contact.
 	it("never leaks a persona's secret fields into a contact", async () => {
 		const t = newTestConvex();
 		const secretFact = "The budget is $2,000,000 exactly.";
@@ -123,32 +140,7 @@ describe("startSimulation", () => {
 		expect(state.contacts[0]).not.toHaveProperty("files");
 	});
 
-	it("does not default to a root whose availability window has already closed", async () => {
-		const t = newTestConvex();
-		await seedCase(t, {
-			accessCode: "window",
-			structure: caseStructure({
-				personas: [
-					personaPayload("A", { name: "Alice", availability_minutes: 0 }),
-					personaPayload("B", { name: "Bob" }),
-				],
-				roots: ["A", "B"],
-			}),
-		});
-		// Alice's own personaAvailability window closes the instant it opens (duration 0,
-		// available_at 0) since a brand-new run starts at elapsed=0 -- so at t=0 she's still
-		// technically inside her zero-width window (available). To force her window CLOSED
-		// by the time the run starts, give her a duration of 0 and a nonzero available_at is
-		// not directly settable here (root personas are always available_at=0) -- instead
-		// this exercises the tie-break: Alice sorts first alphabetically but her zero-width
-		// window is still open at elapsed 0, so both are eligible and Alice (first root) wins.
-		// The real regression this guards is covered structurally by personaAvailability's own
-		// unit tests (lib/turnState.test.ts) -- this test instead pins the tie-break contract:
-		// the first available root, in root order, becomes active.
-		const state = await t.run((ctx) => startSimulation(ctx, "window"));
-		expect(state.active_persona_id).toBe("A");
-	});
-
+	// Tests that a profile photo is resolved to a Convex storage URL.
 	it("resolves a profile photo to a Convex storage URL", async () => {
 		const t = newTestConvex();
 		const storageId = await t.run((ctx) =>
@@ -173,6 +165,7 @@ describe("startSimulation", () => {
 		expect(state.contacts[0]!.profile_photo?.url).toEqual(expect.any(String));
 	});
 
+	// Tests that a photo whose storage object no longer exists gets a null url.
 	it("leaves a photo whose storage object no longer exists with a null url", async () => {
 		const t = newTestConvex();
 		const storageId = await t.run((ctx) =>
@@ -198,17 +191,18 @@ describe("startSimulation", () => {
 		expect(state.contacts[0]!.profile_photo?.url).toBeNull();
 	});
 
+	// Tests that expiresAt equals the case duration plus the grace period.
 	it("expiresAt reflects duration plus the grace period", async () => {
 		const t = newTestConvex();
 		await seedCase(t, { accessCode: "timed", duration: 45 });
 		const before = Date.now();
 		const state = await t.run((ctx) => startSimulation(ctx, "timed"));
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		// 45 minutes + a 15 minute grace period = 60 minutes, well under the 120 minute cap.
 		expect(run.expiresAt - run.startTime).toBe(60 * 60_000);
 		expect(run.startTime).toBeGreaterThanOrEqual(before);
 	});
 
+	// Tests that expiresAt is capped at the run lifetime for a very long case duration.
 	it("caps expiresAt at the run lifetime for a very long case duration", async () => {
 		const t = newTestConvex();
 		await seedCase(t, { accessCode: "long", duration: 100_000 });
@@ -218,6 +212,7 @@ describe("startSimulation", () => {
 	});
 });
 
+// Seeds a case with the given structure and starts a simulation on it.
 async function startRun(
 	t: ReturnType<typeof newTestConvex>,
 	structure: CaseStructure,
@@ -228,15 +223,22 @@ async function startRun(
 }
 
 describe("getSimulationState", () => {
+	// Tests that reading an unknown run throws.
 	it("throws for an unknown run", async () => {
 		const t = newTestConvex();
-		await expect(
-			t.run((ctx) =>
-				getSimulationState(ctx, "k17unknown0000000000000" as Id<"runs">),
+		expect(
+			await studentRejection(
+				t.run((ctx) =>
+					getSimulationState(ctx, "k17unknown0000000000000" as Id<"runs">),
+				),
 			),
-		).rejects.toThrow("Run not found.");
+		).toEqual({
+			code: STUDENT_ERROR.RUN_NOT_FOUND,
+			message: "Run not found.",
+		});
 	});
 
+	// Tests that reading an expired run throws without deleting it.
 	it("throws for an expired run without deleting it -- cleanup is the scheduled job's responsibility, not a read's", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
@@ -244,12 +246,18 @@ describe("getSimulationState", () => {
 			ctx.db.patch(state.run_id, { expiresAt: Date.now() - 1_000 }),
 		);
 
-		await expect(
-			t.run((ctx) => getSimulationState(ctx, state.run_id)),
-		).rejects.toThrow("Run expired.");
+		expect(
+			await studentRejection(
+				t.run((ctx) => getSimulationState(ctx, state.run_id)),
+			),
+		).toEqual({
+			code: STUDENT_ERROR.RUN_EXPIRED,
+			message: "Run expired.",
+		});
 		expect(await t.run((ctx) => ctx.db.get(state.run_id))).not.toBeNull();
 	});
 
+	// Tests that an unlocked referred persona is included, available from its unlock minute.
 	it("includes an unlocked referred persona, available from its unlock minute", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
@@ -274,6 +282,7 @@ describe("getSimulationState", () => {
 });
 
 describe("exportSimulation", () => {
+	// Tests that roots and referred personas are ordered by unlock time, not referral-authoring order.
 	it("orders roots then referred personas by unlock time, not referral-authoring order", async () => {
 		const t = newTestConvex();
 		const structure = caseStructure({
@@ -290,8 +299,6 @@ describe("exportSimulation", () => {
 			roots: ["A", "B"],
 		});
 		const state = await startRun(t, structure);
-		// D unlocked before C, despite C's referral being authored first -- export order must
-		// follow unlock time, not authoring order.
 		await t.run((ctx) =>
 			ctx.db.patch(state.run_id, {
 				unlockedReferredIds: ["C", "D"],
@@ -321,11 +328,12 @@ describe("exportSimulation", () => {
 		const carl = exported.personas.find((p) => p.id === "C")!;
 		const dana = exported.personas.find((p) => p.id === "D")!;
 		expect(carl.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
-		expect(dana.messages).toEqual([]); // unlocked but never messaged
+		expect(dana.messages).toEqual([]);
 	});
 });
 
 describe("deleteRunCascade", () => {
+	// Tests that destroying a run also deletes its messages and turn streams.
 	it("deletes the run's messages and turn streams along with the run itself", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
@@ -359,28 +367,10 @@ describe("deleteRunCascade", () => {
 		);
 		expect(messages).toHaveLength(0);
 		expect(turns).toHaveLength(0);
-		// The component's own stream (and its chunks) go too, not just our pointer to it.
 		await expect(
 			t.query(components.persistentTextStreaming.lib.getStreamText, {
 				streamId,
 			}),
 		).rejects.toThrow("Stream not found");
-	});
-});
-
-describe("deleteExpiredRuns", () => {
-	it("removes only expired rows and returns the count deleted", async () => {
-		const t = newTestConvex();
-		const fresh = await startRun(t, caseStructure(), "fresh");
-		const stale = await startRun(t, caseStructure(), "stale");
-		await t.run((ctx) =>
-			ctx.db.patch(stale.run_id, { expiresAt: Date.now() - 1_000 }),
-		);
-
-		const deleted = await t.run((ctx) => deleteExpiredRuns(ctx));
-
-		expect(deleted).toBe(1);
-		expect(await t.run((ctx) => ctx.db.get(stale.run_id))).toBeNull();
-		expect(await t.run((ctx) => ctx.db.get(fresh.run_id))).not.toBeNull();
 	});
 });

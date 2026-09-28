@@ -6,23 +6,18 @@ import { authClient } from "$lib/auth-client.js";
 import { unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import UnsavedChangesModal from "./UnsavedChangesModal.svelte";
 
+// Signs the admin out and navigates to the landing page.
 async function signOutAdmin(): Promise<void> {
-	// Not awaited: crossDomainClient clears the local session synchronously, before the
-	// sign-out request is even sent (see its `init` hook) -- waiting on the network
-	// round-trip here just risks stranding the admin on a blank /admin if that request is
-	// slow or hangs, for no benefit (the local state is already correct by this point).
 	authClient.signOut().catch(() => {});
 	await goto("/");
 }
 
-// The unsaved-changes prompt's own open/isSaving/error state now lives on unsavedGuard itself
-// (not here) -- see its own comment for why: CaseForm.svelte's navigation guards route through
-// the exact same requestNavigation/discard/saveAndContinue, so there's one prompt shared by
-// every navigation attempt instead of one AdminTopBar owns alone.
+// Goes to the admin home, first asking about any unsaved changes.
 function handleHomeClick(): void {
 	unsavedGuard.requestNavigation(() => goto("/admin"));
 }
 
+// Signs out, first asking about any unsaved changes.
 function handleSignOutClick(): void {
 	unsavedGuard.requestNavigation(() => signOutAdmin());
 }

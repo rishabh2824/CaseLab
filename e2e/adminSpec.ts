@@ -11,16 +11,10 @@ import {
 	signInAsAdmin,
 } from "./mockApi.js";
 
-// --- route guards -----------------------------------------------------------
-
+// Tests that visiting /admin without a session starts a Google sign-in.
 test("an unauthenticated visit to /admin attempts a Google sign-in", async ({
 	page,
 }) => {
-	// admin/+layout.svelte's own gate is a single click end to end (see its comment): an
-	// unauthenticated visitor is sent straight into the Google OAuth flow rather than to a
-	// login page. mockApi() aborts the actual request (see its own comment) so this never
-	// reaches the real dev deployment or Google -- asserting the request itself is what
-	// proves the redirect fires, without depending on either being reachable.
 	await mockApi(page, {});
 	const signInRequest = page.waitForRequest(
 		(req) => req.method() === "POST" && req.url().includes("/sign-in/social"),
@@ -30,6 +24,7 @@ test("an unauthenticated visit to /admin attempts a Google sign-in", async ({
 	expect(request.postDataJSON()).toMatchObject({ provider: "google" });
 });
 
+// Tests that a signed-in ADMIN reaches /admin without seeing the manage-admins control.
 test("a signed-in ADMIN reaches /admin without the manage-admins control", async ({
 	page,
 }) => {
@@ -44,6 +39,7 @@ test("a signed-in ADMIN reaches /admin without the manage-admins control", async
 	);
 });
 
+// Tests that a signed-in SUPER admin sees the manage-admins control.
 test("a signed-in SUPER admin sees the manage-admins control", async ({
 	page,
 }) => {
@@ -53,12 +49,10 @@ test("a signed-in SUPER admin sees the manage-admins control", async ({
 	await expect(page.getByRole("link", { name: "Manage admins" })).toBeVisible();
 });
 
+// Tests that visiting /admin/admins without a session starts a Google sign-in.
 test("an unauthenticated visit to /admin/admins attempts a Google sign-in", async ({
 	page,
 }) => {
-	// Same gate as the plain /admin case above -- admin/+layout.svelte wraps every admin
-	// route, /admin/admins included -- so an unauthenticated visit here goes through the
-	// identical sign-in attempt rather than reaching the page's own super-admin check.
 	await mockApi(page, {});
 	const signInRequest = page.waitForRequest(
 		(req) => req.method() === "POST" && req.url().includes("/sign-in/social"),
@@ -68,6 +62,7 @@ test("an unauthenticated visit to /admin/admins attempts a Google sign-in", asyn
 	expect(request.postDataJSON()).toMatchObject({ provider: "google" });
 });
 
+// Tests that a non-super admin visiting /admin/admins is redirected to /admin.
 test("a non-super admin visiting /admin/admins redirects to /admin", async ({
 	page,
 }) => {
@@ -77,8 +72,7 @@ test("a non-super admin visiting /admin/admins redirects to /admin", async ({
 	await expect(page).toHaveURL(/\/admin$/);
 });
 
-// --- case list / delete ------------------------------------------------------
-
+// Tests that /admin/edit lists cases from the API and deleting one removes it from the list.
 test("/admin/edit lists cases from api/cases:listAll and deleting one removes it", async ({
 	page,
 }) => {
@@ -115,16 +109,12 @@ test("/admin/edit lists cases from api/cases:listAll and deleting one removes it
 		.getByRole("button", { name: "Delete" })
 		.click();
 
-	// Wait for the dialog itself to close first — its own title also says
-	// "Sterling Industries", so checking the list text while it's still
-	// mid-close-transition races against that.
 	await expect(page.getByRole("alertdialog")).not.toBeVisible();
 	await expect(page.getByText("Sterling Industries")).not.toBeVisible();
 	await expect(page.getByText("Acme Corp")).toBeVisible();
 });
 
-// --- create ------------------------------------------------------------------
-
+// Tests that creating a case submits the expected payload.
 test("creating a case submits the expected payload", async ({ page }) => {
 	let createArgs: Record<string, unknown> | undefined;
 	await mockApi(page, {
@@ -140,14 +130,10 @@ test("creating a case submits the expected payload", async ({ page }) => {
 
 	await page.getByLabel("Case name").fill("Riverside Manufacturing");
 	await page.getByLabel("Initial brief").fill("Cut logistics costs by 10%.");
-	// Convex's access-code format is lowercase-only now (services/cases.ts's
-	// ACCESS_CODE_FORMAT) -- CaseForm rejects an uppercase code client-side, unlike the old
-	// REST-era backend this suite used to test against.
 	await page.getByLabel("Access code").fill("riverside");
 
-	// A blank form starts with zero personas — at least one root is required.
 	await page.getByRole("button", { name: "+ Add root persona" }).click();
-	await page.getByText("Persona 1").click(); // expand the newly-added persona's <details>
+	await page.getByText("Persona 1").click();
 	await page.getByLabel("Persona name").fill("Sam Rivera");
 	await page.getByLabel("Title/Role").fill("Operations Lead");
 
@@ -162,20 +148,14 @@ test("creating a case submits the expected payload", async ({ page }) => {
 	expect(createArgs?.roots).toEqual([personas[0]?.id]);
 });
 
+// Tests that submitting with required fields empty sends no request and shows the field errors.
 test("submitting with required fields empty does not issue a request and reveals the field errors", async ({
 	page,
 }) => {
-	// No api/cases:create handler registered — a call would reject with "no mock
-	// registered" and fail the test.
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
 	await page.goto("/admin/cases/new");
 
-	// The Submit button is a native `type="submit"` next to `required` inputs, so clicking it
-	// on a blank form gets intercepted by the browser's own constraint validation before
-	// CaseForm's JS ever runs -- it wouldn't reveal the app's own field-error text at all.
-	// Typing then clearing a field is what flips showFieldErrors, the same gate a real admin
-	// would trip by touching any required field.
 	const nameInput = page.getByLabel("Case name");
 	await nameInput.fill("x");
 	await nameInput.fill("");
@@ -184,14 +164,10 @@ test("submitting with required fields empty does not issue a request and reveals
 	await expect(page.getByText("Initial brief is required.")).toBeVisible();
 	await expect(page.getByText("Access code is required.")).toBeVisible();
 	await expect(page.getByText("At least 1 persona is required")).toBeVisible();
-	// The Submit button intentionally stays enabled even with errors showing (see CaseForm's
-	// own comment: disabling it here left revealErrors() with no gesture to trigger it from --
-	// runSave's own hasValidationErrors check is what actually blocks the save).
 	await expect(page.getByRole("button", { name: "Submit" })).toBeEnabled();
 });
 
-// --- edit ----------------------------------------------------------------
-
+// Tests that editing a case populates the form and saving updates the existing case.
 test("editing a case populates the form and the save updates the existing case", async ({
 	page,
 }) => {
@@ -219,15 +195,11 @@ test("editing a case populates the form and the save updates the existing case",
 
 	await page.getByRole("button", { name: "Submit" }).click();
 	await expect(page.getByText("Case updated successfully.")).toBeVisible();
-	// Convex's updateCase has no expected_version/optimistic-concurrency check (last-write-
-	// wins, see services/cases.ts's comment) -- unlike the old REST backend, there's no
-	// conflict-detection field to assert on here, just the caseId and edited fields.
 	expect(updateArgs?.caseId).toBe("case7");
 	expect(updateArgs?.name).toBe("Sterling Industries");
 });
 
-// --- unsaved changes ----------------------------------------------------------
-
+// Tests that navigating away with a dirty form via the top bar opens the unsaved-changes modal.
 test("a dirty form triggers the unsaved-changes modal when navigating via the top bar", async ({
 	page,
 }) => {
@@ -240,13 +212,11 @@ test("a dirty form triggers the unsaved-changes modal when navigating via the to
 
 	await expect(page.getByText("You have unsaved changes")).toBeVisible();
 	await page.getByRole("button", { name: "Cancel" }).click();
-	// Cancel stays on the form — the unsaved edit is neither lost nor navigated away from.
 	await expect(page).toHaveURL(/\/admin\/cases\/new$/);
 	await expect(page.getByLabel("Case name")).toHaveValue("Draft Case");
 });
 
-// --- export / import -----------------------------------------------------------
-
+// Tests that exporting the blank form triggers a download.
 test("exporting the blank form triggers a download", async ({ page }) => {
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
@@ -257,20 +227,15 @@ test("exporting the blank form triggers a download", async ({ page }) => {
 	await page.getByRole("button", { name: "Export template" }).click();
 	const download = await downloadPromise;
 
-	// downloadForm (exportCase.ts) always downloads under this fixed name -- it doesn't
-	// slugify the case name into the filename (unlike the old REST-era frontend this suite
-	// used to assert against).
 	expect(download.suggestedFilename()).toBe("export case.html");
 });
 
+// Tests that importing a filled-in export populates the form.
 test("importing a filled-in export populates the form", async ({ page }) => {
 	await mockApi(page, {});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
 	await page.goto("/admin/cases/new");
 
-	// buildHTMLForm is the exact function CaseForm's own "Export template"
-	// button calls — building a filled-in copy here and feeding it back in
-	// exercises the same round trip an admin would perform by hand.
 	const html = buildHTMLForm({
 		caseName: "Imported Case",
 		accessCode: "imported",
@@ -294,6 +259,7 @@ test("importing a filled-in export populates the form", async ({ page }) => {
 	);
 });
 
+// Tests that importing an unrelated HTML file shows the import error.
 test("importing an unrelated HTML file surfaces the import error", async ({
 	page,
 }) => {
@@ -315,8 +281,7 @@ test("importing an unrelated HTML file surfaces the import error", async ({
 	).toBeVisible();
 });
 
-// --- admins management ---------------------------------------------------------
-
+// Tests that the admins page lists admins, adds one and deletes one with a summary.
 test("the admins page lists admins, adds one, and deletes one with a summary", async ({
 	page,
 }) => {
@@ -367,13 +332,9 @@ test("the admins page lists admins, adds one, and deletes one with a summary", a
 	await page.getByLabel("Name (optional)").fill("New Admin");
 	await page.getByRole("button", { name: "Add admin" }).click();
 
-	// Scoped to the table cell, not just text: the "Added new@wisc.edu." toast
-	// (also new@wisc.edu-containing) is a separate, incidental match.
 	await expect(page.getByRole("cell", { name: "new@wisc.edu" })).toBeVisible();
 	expect(createArgs?.email).toBe("new@wisc.edu");
 
-	// existing@wisc.edu sorts before new@wisc.edu (listAdmins orders by email), and is a
-	// plain "admin" (deletable) — the SUPER admin's own row never renders a Delete button.
 	await page.getByRole("button", { name: "Delete" }).first().click();
 	await expect(page.getByText("Delete existing@wisc.edu?")).toBeVisible();
 	await page
@@ -389,20 +350,15 @@ test("the admins page lists admins, adds one, and deletes one with a summary", a
 	await expect(page.getByText("existing@wisc.edu")).not.toBeVisible();
 });
 
-// --- hostile / degenerate admin interactions ---------------------------------
-
+// Tests that double-clicking Submit creates the case once, not twice.
 test("double-clicking Submit creates the case once, not twice", async ({
 	page,
 }) => {
-	// Two cases from one impatient double-click would be a duplicate access code on the
-	// second attempt server-side -- but the admin would see only an opaque conflict error
-	// after a case had already been created.
 	let createCalls = 0;
 	await mockApi(page, {
 		mutations: {
 			"api/cases:create": async () => {
 				createCalls++;
-				// Slow enough that a second click lands while the first is still in flight.
 				await new Promise((resolve) => setTimeout(resolve, 300));
 				return { caseId: "new-case-id" };
 			},
@@ -428,12 +384,10 @@ test("double-clicking Submit creates the case once, not twice", async ({
 	expect(createCalls).toBe(1);
 });
 
+// Tests that a server-rejected delete keeps the case in the list and explains why.
 test("a server-rejected delete keeps the case in the list and explains why", async ({
 	page,
 }) => {
-	// deleteCase refuses while the case has a live simulation (lib/guardNoLiveRuns.ts). The
-	// admin has to see that reason -- a silently-failed delete that leaves the row on screen is
-	// indistinguishable from a UI bug.
 	const cases = [
 		caseDoc({
 			_id: "case1",
@@ -464,12 +418,10 @@ test("a server-rejected delete keeps the case in the list and explains why", asy
 	await expect(page.getByRole("alertdialog")).toBeVisible();
 });
 
+// Tests that a server-rejected save keeps the admin's draft on screen.
 test("a server-rejected save keeps the admin's draft on screen", async ({
 	page,
 }) => {
-	// A rejected save (duplicate access code, invalid duration, live run) must not discard the
-	// form the admin just spent time filling in -- losing it would make a recoverable
-	// validation error into lost work.
 	await mockApi(page, {
 		mutations: {
 			"api/cases:create": () => {

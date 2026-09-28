@@ -4,13 +4,13 @@ import { caseStructure, personaPayload, referralEdge } from "../testFactories";
 import type { PersonaGraph } from "./simulationReads";
 import {
 	flattenPersonas,
-	graphPersonaById,
 	graphPersonas,
 	graphReferrals,
 	graphRootPersonas,
 } from "./simulationReads";
 
 describe("flattenPersonas", () => {
+	// Tests that persona secrets are carried through and availability_minutes becomes availabilityDuration.
 	it("carries persona secrets through and renames availability_minutes to availabilityDuration", () => {
 		const structure = caseStructure({
 			personas: [
@@ -31,6 +31,7 @@ describe("flattenPersonas", () => {
 		expect(mary.isReferred).toBe(false);
 	});
 
+	// Tests that a persona is marked referred only when it is not a root.
 	it("marks a persona as referred only when it isn't a root", () => {
 		const structure = caseStructure({
 			personas: [personaPayload("A"), personaPayload("B")],
@@ -41,6 +42,7 @@ describe("flattenPersonas", () => {
 		expect(graph.personas.get("B")!.isReferred).toBe(true);
 	});
 
+	// Tests that root rows are sorted by name.
 	it("sorts root rows by name", () => {
 		const structure = caseStructure({
 			personas: [
@@ -56,6 +58,7 @@ describe("flattenPersonas", () => {
 		]);
 	});
 
+	// Tests that every referral becomes an edge, with a null condition turned into an empty string.
 	it("turns every referral into an edge, with a null condition becoming an empty string", () => {
 		const structure = caseStructure({
 			personas: [personaPayload("A"), personaPayload("B")],
@@ -70,6 +73,7 @@ describe("flattenPersonas", () => {
 		});
 	});
 
+	// Tests that a persona referred by two parents is stored once, not once per edge.
 	it("stores a persona referred by two parents once, not once per edge", () => {
 		const structure = caseStructure({
 			personas: [personaPayload("A"), personaPayload("B"), personaPayload("C")],
@@ -86,6 +90,7 @@ describe("flattenPersonas", () => {
 		expect(graph.personas.size).toBe(3);
 	});
 
+	// Tests that a persona that is both a root and a referral target is stored once.
 	it("stores a persona that is both a root and a referral target once", () => {
 		const structure = caseStructure({
 			personas: [personaPayload("A"), personaPayload("B")],
@@ -98,6 +103,7 @@ describe("flattenPersonas", () => {
 	});
 });
 
+// Builds a small persona graph with a photo on one persona for the read tests.
 function buildGraph(): PersonaGraph {
 	const structure = caseStructure({
 		personas: [
@@ -123,6 +129,7 @@ function buildGraph(): PersonaGraph {
 }
 
 describe("graphReferrals", () => {
+	// Tests that edges are filtered by parent and return raw, unhydrated personas.
 	it("filters edges by parent, returning raw (unhydrated) personas", () => {
 		const graph = buildGraph();
 		const referredIds = new Set(
@@ -130,50 +137,29 @@ describe("graphReferrals", () => {
 		);
 		expect(referredIds).toEqual(new Set(["C", "D"]));
 
-		const c = graphPersonaById(graph, "C")!;
+		const c = graph.personas.get("C")!;
 		expect(c.profilePhotoUrl).toBeNull();
 		expect(c.profilePhoto?.storage_id).toBe("kg2test00000000000000001");
 	});
 });
 
 describe("graphPersonas", () => {
+	// Tests that a set of referred ids is resolved to persona details.
 	it("resolves a referred-id set (already deduped by the caller) to persona details", () => {
 		const graph = buildGraph();
-		// C is referred by two different parents (A and B, see buildGraph) but the graph
-		// stores it once -- a Set of referred ids naturally has no duplicate to begin with.
 		const personas = graphPersonas(graph, new Set(["C", "D"]));
 		expect(personas.map((p) => p.id).sort()).toEqual(["C", "D"]);
 	});
 
+	// Tests that raw, unhydrated personas are returned.
 	it("returns raw, unhydrated personas", () => {
 		const graph = buildGraph();
 		expect(graphPersonas(graph, ["C"])[0]!.profilePhotoUrl).toBeNull();
 	});
 });
 
-describe("graphPersonaById", () => {
-	it("finds a root persona", () => {
-		const graph = flattenPersonas(caseStructure());
-		expect(graphPersonaById(graph, "A")?.id).toBe("A");
-	});
-
-	it("finds a referred persona", () => {
-		const graph = flattenPersonas(
-			caseStructure({
-				personas: [personaPayload("A"), personaPayload("B")],
-				referrals: [referralEdge("A", "B")],
-			}),
-		);
-		expect(graphPersonaById(graph, "B")?.id).toBe("B");
-	});
-
-	it("returns undefined for an unknown id", () => {
-		const graph = flattenPersonas(caseStructure());
-		expect(graphPersonaById(graph, "nope")).toBeUndefined();
-	});
-});
-
 describe("graphRootPersonas", () => {
+	// Tests that full details are returned for every root, in roots order.
 	it("returns full details for every root, in roots order", () => {
 		const graph = buildGraph();
 		expect(graphRootPersonas(graph).map((p) => p.id)).toEqual(graph.roots);

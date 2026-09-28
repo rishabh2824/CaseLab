@@ -1,7 +1,15 @@
 import { expect, test } from "@playwright/test";
+import { STUDENT_ERROR } from "../convex/lib/studentErrors.js";
 import { makeSharedFile } from "../tests/support/fixtures.js";
-import { contact, mockApi, runState, turnHandler } from "./mockApi.js";
+import {
+	contact,
+	mockApi,
+	runState,
+	studentError,
+	turnHandler,
+} from "./mockApi.js";
 
+// Tests that a student can enter an access code and message a persona.
 test("student enters an access code and messages a persona", async ({
 	page,
 }) => {
@@ -23,18 +31,13 @@ test("student enters an access code and messages a persona", async ({
 
 	await page.goto("/");
 
-	// Enter the access code and open the case (landing page calls the api/simulations:start
-	// mutation).
 	await page.getByPlaceholder("Enter access code").fill("sterling");
 	await page.getByRole("button", { name: "Open Case" }).click();
 
-	// Success navigates to the student view; brief + contact render from the live
-	// api/simulations:get subscription.
 	await expect(page).toHaveURL(/\/student$/);
 	await expect(page.getByText("Reduce office supply costs.")).toBeVisible();
 	await expect(page.getByText("Mary").first()).toBeVisible();
 
-	// Send a message and assert the streamed persona reply appears.
 	await page
 		.getByPlaceholder("Type your message...")
 		.fill("What vendor do we use?");
@@ -46,11 +49,15 @@ test("student enters an access code and messages a persona", async ({
 	).toBeVisible();
 });
 
+// Tests that an invalid access code shows an inline error.
 test("an invalid access code surfaces an inline error", async ({ page }) => {
 	await mockApi(page, {
 		mutations: {
 			"api/simulations:start": () => {
-				throw new Error("Invalid access code.");
+				throw studentError(
+					STUDENT_ERROR.INVALID_ACCESS_CODE,
+					"Invalid access code.",
+				);
 			},
 		},
 	});
@@ -59,11 +66,11 @@ test("an invalid access code surfaces an inline error", async ({ page }) => {
 	await page.getByPlaceholder("Enter access code").fill("wrong-code");
 	await page.getByRole("button", { name: "Open Case" }).click();
 
-	// The landing page shows the error inline and stays put (no navigation).
 	await expect(page.getByText("Invalid access code.")).toBeVisible();
 	await expect(page).toHaveURL(/\/$/);
 });
 
+// Tests that an empty access code shows the inline error without sending a request.
 test("an empty access code shows the inline error without a request", async ({
 	page,
 }) => {
@@ -78,19 +85,14 @@ test("an empty access code shows the inline error without a request", async ({
 	});
 
 	await page.goto("/");
-	// handleSubmit's blank-code guard runs before any mutation call, so submitting with
-	// the field untouched must never reach the (mocked) backend.
 	await page.getByRole("button", { name: "Open Case" }).click();
 
 	await expect(page.getByText("Invalid access code.")).toBeVisible();
 	expect(mutationCalled).toBe(false);
 });
 
+// Tests that the access code is lower-cased before being sent.
 test("the access code is lower-cased before being sent", async ({ page }) => {
-	// Convex's createCase/updateCase (and startSimulation's own lookup) only ever store
-	// lowercase access codes -- the landing page normalizes to match (+page.svelte's
-	// handleSubmit), unlike the old REST-era frontend this suite used to assert
-	// upper-cased it.
 	let sentAccessCode: string | undefined;
 	await mockApi(page, {
 		queries: [
@@ -116,6 +118,7 @@ test("the access code is lower-cased before being sent", async ({ page }) => {
 	expect(sentAccessCode).toBe("sterling");
 });
 
+// Tests that a reload mid-run resumes the persisted run instead of starting a new one.
 test("a reload mid-run resumes from the persisted runId instead of starting a new run", async ({
 	page,
 }) => {
@@ -142,45 +145,31 @@ test("a reload mid-run resumes from the persisted runId instead of starting a ne
 	await expect(page).toHaveURL(/\/student$/);
 	expect(startCalls).toBe(1);
 
-	// A fresh page load re-runs run.init(); session.runId is still persisted to
-	// sessionStorage (session.svelte.ts) even though all in-memory JS state resets, and
-	// mockApi's query seed re-applies on every navigation (page.addInitScript) — so this
-	// must resume from the existing live subscription, not start a brand-new run.
 	await page.reload();
 	await expect(page.getByText("Reduce office supply costs.")).toBeVisible();
 	expect(startCalls).toBe(1);
 });
 
-test("an expired run is detected and recovers by starting a fresh session from the stored access code", async ({
+// Tests that an expired run sends the student home instead of starting a new run.
+test("an expired run sends the student home instead of starting a new run", async ({
 	page,
 }) => {
-	// Unlike the old REST flow (whose POST /start response was stashed and used directly
-	// for the first render, only ever calling GET on a later reload), run.svelte.ts's
-	// #runStateQuery is a live subscription from the very first render — so an "expired"
-	// run is detected (and recovered from) as soon as its query resolves, not specifically
-	// on a reload. testrun123 (the first mutation's run) is seeded to always report
-	// expired; #handleExpired then retries startSession from the stored access code,
-	// landing on a second, healthy run.
 	let startCalls = 0;
 	await mockApi(page, {
 		queries: [
 			{
 				name: "api/simulations:get",
 				args: { runId: "testrun123" },
-				error: "Run expired.",
-			},
-			{
-				name: "api/simulations:get",
-				args: { runId: "freshrun456" },
-				data: runState({ run_id: "freshrun456" }),
+				error: {
+					code: STUDENT_ERROR.RUN_EXPIRED,
+					message: "Run expired.",
+				},
 			},
 		],
 		mutations: {
 			"api/simulations:start": () => {
 				startCalls++;
-				return runState({
-					run_id: startCalls === 1 ? "testrun123" : "freshrun456",
-				});
+				return runState({ run_id: "testrun123" });
 			},
 		},
 	});
@@ -188,12 +177,13 @@ test("an expired run is detected and recovers by starting a fresh session from t
 	await page.goto("/");
 	await page.getByPlaceholder("Enter access code").fill("sterling");
 	await page.getByRole("button", { name: "Open Case" }).click();
-	await expect(page).toHaveURL(/\/student$/);
 
-	await expect(page.getByText("Reduce office supply costs.")).toBeVisible();
-	expect(startCalls).toBe(2);
+	await expect(page).toHaveURL(/\/$/);
+	await expect(page.getByPlaceholder("Enter access code")).toBeVisible();
+	expect(startCalls).toBe(1);
 });
 
+// Tests that typing over the word limit blocks Send without sending a message.
 test("typing over the word limit blocks Send without sending a message", async ({
 	page,
 }) => {
@@ -219,7 +209,6 @@ test("typing over the word limit blocks Send without sending a message", async (
 	await page.getByRole("button", { name: "Open Case" }).click();
 	await expect(page).toHaveURL(/\/student$/);
 
-	// MAX_MESSAGE_WORDS is 50 — 51 words trips the over-limit guard.
 	const longMessage = new Array(51).fill("word").join(" ");
 	await page.getByPlaceholder("Type your message...").fill(longMessage);
 
@@ -228,6 +217,7 @@ test("typing over the word limit blocks Send without sending a message", async (
 	expect(turnCalled).toBe(false);
 });
 
+// Tests that a referral unlock adds the new contact and shows a toast.
 test("a referral unlock adds the new contact and fires a toast", async ({
 	page,
 }) => {
@@ -265,6 +255,7 @@ test("a referral unlock adds the new contact and fires a toast", async ({
 	await expect(page.locator("button", { hasText: "Bob" })).toBeVisible();
 });
 
+// Tests that a shared file appears in the file list and shows a toast.
 test("a shared file appears in the file list and fires a toast", async ({
 	page,
 }) => {
@@ -308,6 +299,7 @@ test("a shared file appears in the file list and fires a toast", async ({
 	).toBeVisible();
 });
 
+// Tests that a chat-ended meta frame disables the composer for that persona.
 test("a chat-ended meta frame disables the composer for that persona", async ({
 	page,
 }) => {
@@ -340,8 +332,6 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 	await page.getByPlaceholder("Type your message...").fill("One more question");
 	await page.getByRole("button", { name: "Send" }).click();
 
-	// "Conversation ended" itself renders in two places (the sidebar contact row and the
-	// header badge) — this message is unique to the chat panel.
 	await expect(
 		page.getByText("This persona has ended the conversation for this chat."),
 	).toBeVisible();
@@ -350,15 +340,10 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 	).toBeDisabled();
 });
 
+// Tests that an unavailable contact cannot be selected or messaged.
 test("an unavailable contact cannot be selected or messaged", async ({
 	page,
 }) => {
-	// available_at (not a since-removed `available`/`available_in` flag -- see
-	// fixtures.ts's makeContact comment) far in the future keeps Bob unavailable for the
-	// test's real-time duration. personaAvailability (availability.ts) reports this as
-	// "available in N min", not "Unavailable" -- that string is reserved for a persona
-	// whose availability window already EXPIRED (elapsed past available_at + duration),
-	// which real wall-clock minutes make impractical to reach in a fast-running test.
 	const state = runState({
 		contacts: [
 			contact(),
@@ -389,14 +374,13 @@ test("an unavailable contact cannot be selected or messaged", async ({
 	const bobButton = page.locator("button", { hasText: "Bob" });
 	await expect(bobButton).toBeDisabled();
 	await expect(page.getByText("Available in 9999 min")).toBeVisible();
-	// Mary (active_persona_id in the fixture) stays selected — Bob was never clickable, so
-	// the composer never switched personas.
 	await expect(
 		page.locator("p.font-display", { hasText: "Mary" }),
 	).toBeVisible();
 });
 
-test("a mid-stream error frame keeps the user's message, drops the assistant reply, and shows a toast", async ({
+// Tests that a mid-stream failure removes the user's message, drops the partial reply and shows a toast.
+test("a mid-stream failure removes the user's message, drops the partial reply, and shows a toast", async ({
 	page,
 }) => {
 	await mockApi(page, {
@@ -409,9 +393,6 @@ test("a mid-stream error frame keeps the user's message, drops the assistant rep
 		],
 		mutations: {
 			"api/simulations:start": () => runState(),
-			// reply: null — a partial preview streams, then the row is marked "error" with
-			// no reply ever persisted. The reducer must discard any partial streamed text,
-			// not commit it as history.
 			"api/turn:start": turnHandler({
 				reply: null,
 				partialText: "Let me check on that...",
@@ -429,15 +410,16 @@ test("a mid-stream error frame keeps the user's message, drops the assistant rep
 		.fill("What vendor do we use?");
 	await page.getByRole("button", { name: "Send" }).click();
 
-	await expect(page.getByText("What vendor do we use?")).toBeVisible();
 	await expect(
 		page.getByText(
 			"Something went wrong generating a reply. Please resend your message.",
 		),
 	).toBeVisible();
+	await expect(page.getByText("What vendor do we use?")).not.toBeVisible();
 	await expect(page.getByText("Let me check on that...")).not.toBeVisible();
 });
 
+// Tests that notes autosave to sessionStorage after a debounce and never to the backend.
 test("notes autosave writes to sessionStorage after a debounce, never to the backend", async ({
 	page,
 }) => {
@@ -461,10 +443,6 @@ test("notes autosave writes to sessionStorage after a debounce, never to the bac
 		.getByPlaceholder("Write your notes here...")
 		.fill("Vendor is Acme.");
 
-	// The store debounces ~800ms before persisting — poll instead of a fixed sleep. Notes
-	// are client-side only (sessionStorage, keyed by run id) — see run.svelte.ts's comment
-	// on NOTES_STORAGE_PREFIX — so there's no Convex mutation to mock for this at all; one
-	// firing would 599 through mockApi's "no mock registered" rejection and fail the test.
 	await expect
 		.poll(() =>
 			page.evaluate(() => sessionStorage.getItem("caselab:notes:testrun123")),
@@ -472,6 +450,7 @@ test("notes autosave writes to sessionStorage after a debounce, never to the bac
 		.toBe("Vendor is Acme.");
 });
 
+// Tests that exporting the PDF requests the export payload and triggers a download.
 test("exporting the PDF requests the export payload and triggers a download", async ({
 	page,
 }) => {
@@ -513,18 +492,19 @@ test("exporting the PDF requests the export payload and triggers a download", as
 	expect(download.suggestedFilename()).toBe("chats.pdf");
 });
 
+// Tests that a non-expiry backend error shows an inline alert instead of a frozen screen.
 test("a non-expiry backend error surfaces an inline alert instead of a silently frozen screen", async ({
 	page,
 }) => {
-	// run.svelte.ts sets `loadError` for any live-subscription failure that isn't
-	// "Run expired."/"Run not found." (those auto-restart the run instead). Nothing rendered
-	// that field, so a real backend fault mid-simulation showed the student nothing at all.
 	await mockApi(page, {
 		queries: [
 			{
 				name: "api/simulations:get",
 				args: { runId: "testrun123" },
-				error: "Case not found.",
+				error: {
+					code: STUDENT_ERROR.CASE_NOT_FOUND,
+					message: "Case not found.",
+				},
 			},
 		],
 		mutations: { "api/simulations:start": () => runState() },
@@ -538,13 +518,10 @@ test("a non-expiry backend error surfaces an inline alert instead of a silently 
 	await expect(page.getByRole("alert")).toHaveText("Case not found.");
 });
 
+// Tests that a rejected turn re-enables the composer so the student can retry.
 test("a rejected turn re-enables the composer so the student can retry", async ({
 	page,
 }) => {
-	// The server rejects synchronously (rate limit, chat ended, persona unavailable, message
-	// too long). isSending must clear on that rejection -- if it didn't, one rejected message
-	// would disable the composer for the rest of the run, since the effects that normally
-	// clear it are waiting on a reply that will never arrive.
 	await mockApi(page, {
 		queries: [
 			{
@@ -556,7 +533,10 @@ test("a rejected turn re-enables the composer so the student can retry", async (
 		mutations: {
 			"api/simulations:start": () => runState(),
 			"api/turn:start": () => {
-				throw new Error("Rate limit exceeded.");
+				throw studentError(
+					STUDENT_ERROR.MESSAGE_RATE_LIMITED,
+					"Rate limit exceeded.",
+				);
 			},
 		},
 	});

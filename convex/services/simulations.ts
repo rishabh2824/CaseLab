@@ -4,30 +4,29 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { simulationLimit } from "../lib/rateLimits";
 import { streaming } from "../lib/streaming";
+import { STUDENT_ERROR, studentError } from "../lib/studentErrors";
 import {
 	type ChatStateMap,
 	type ChatStateOut,
 	getChatState,
-	personaAvailability,
 } from "../lib/turnState";
 import { RUN_LIFETIME_MINUTES } from "../schema";
 import {
 	flattenPersonas,
-	graphPersonaById,
 	graphPersonas,
 	graphRootPersonas,
 	type PersonaDetail,
 	referredContactIds,
 } from "./simulationReads";
 
-// Extra time tacked onto a case's configured duration so students can finish up chat after
-// time is "up".
 const GRACE_PERIOD_MINUTES = 15;
 
+// Trims and lower-cases a student's access code.
 function normalizeAccessCode(raw: string): string {
 	return raw.trim().toLowerCase();
 }
 
+// Computes when a run expires: duration plus grace period, capped at the run lifetime.
 function computeExpiresAt(
 	startTime: number,
 	durationMinutes: number | undefined,
@@ -39,10 +38,7 @@ function computeExpiresAt(
 	return startTime + ttlMs;
 }
 
-// The persona graph (simulationReads.ts) stores each photo as a raw file reference, never a
-// URL -- this resolves it to a fetchable URL at read time via Convex's own file storage.
-// ctx.storage.getUrl is plain query-safe Convex data access, so this can just be async
-// instead of needing its own route.
+// Returns the storage URL for a stored file, or null if it no longer exists.
 async function fileUrl(
 	ctx: QueryCtx | MutationCtx,
 	storageId: Id<"_storage">,
@@ -50,6 +46,7 @@ async function fileUrl(
 	return await ctx.storage.getUrl(storageId);
 }
 
+// Adds the profile photo URL to a persona when it has a photo.
 async function hydratePersona(
 	ctx: QueryCtx | MutationCtx,
 	persona: PersonaDetail,
@@ -68,17 +65,6 @@ export type PersonaPhotoOut = {
 	url: string | null;
 };
 
-// Deliberately carries raw timing (available_at) rather than a derived available/
-// available_in/expires_in triple -- the earlier design baked those into this payload at
-// query-evaluation time via personaAvailability(..., Date.now()), which is wrong for a
-// Convex query specifically: a subscription only ever re-runs when its underlying DATA
-// changes, never on elapsed wall-clock time alone. That meant a persona's availability
-// window silently never expired, and "available in N min" never ticked down, until some
-// unrelated write happened to re-trigger the query. The frontend (run.svelte.ts) now
-// computes available/available_in/expires_in itself, against its own ticking clock, using
-// the same personaAvailability logic mirrored client-side (frontend/src/lib/student/
-// availability.ts) -- the run-expiry path never had this problem, because the scheduled
-// `destroy` (api/simulations.ts) is itself a WRITE that invalidates the query.
 export type ContactOut = {
 	id: string;
 	name: string;
@@ -92,6 +78,7 @@ export type ContactOut = {
 	warning_count: number;
 };
 
+// Builds the student-facing contact for a persona, without exposing its secret fields.
 function toContactOut(
 	persona: PersonaDetail,
 	availableAtMinutes: number,
@@ -118,12 +105,7 @@ function toContactOut(
 	};
 }
 
-// Every root persona (always available from minute 0), plus every unlocked referred persona
-// (available from whenever it was unlocked). Takes the run's chat-state/unlock-time maps
-// directly (not a full run doc) so startSimulation can call this while still deciding a
-// brand-new run's initial contacts, before any row exists. No `elapsed` parameter -- this
-// doesn't need "now" at all; it just reports each persona's fixed available_at minute and
-// lets the caller (or, for a live run, the frontend) compare that against elapsed time.
+// Builds the contact list from root personas followed by unlocked referred personas.
 function buildContacts(
 	personaChatState: ChatStateMap,
 	unlockedAt: Record<string, number>,
@@ -153,11 +135,7 @@ export type SharedFileOut = {
 	url: string | null;
 };
 
-// Resolves the current name/contentType/storageId live off the `files` row rather than a
-// stored snapshot -- case edits/deletes are assumed never to happen against a live run (see
-// schema.ts's `runs` comment), so there's no risk of this row changing out from under an
-// active simulation. Returns null if the file is somehow gone, so a stale id just drops
-// silently from the list instead of failing the whole query.
+// Builds the student-facing shared file with its URL, or null if the file is gone.
 async function toSharedFileOut(
 	ctx: QueryCtx | MutationCtx,
 	fileId: Id<"files">,
@@ -174,7 +152,7 @@ async function toSharedFileOut(
 
 export type ChatMessageOut = { role: "user" | "assistant"; content: string };
 
-// Shared by exportSimulation and getPersonaHistory below.
+// Loads a persona's chat messages for a run as role/content pairs.
 async function queryPersonaMessages(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -189,16 +167,6 @@ async function queryPersonaMessages(
 	return rows.map((row) => ({ role: row.role, content: row.content }));
 }
 
-// Deliberately carries no `histories` map -- the earlier design folded every visible
-// persona's full transcript into this same reactive query, so every new message (any
-// persona, not just the one the student is looking at) re-pushed EVERY persona's entire
-// history to every subscriber: a 5-persona/40-message run re-reads and re-ships ~200
-// documents per turn to deliver the one new message that actually changed. The frontend only
-// ever renders one persona's messages at a time (the active chat panel) and export goes
-// through the separate exportRun query below, which legitimately needs everyone's transcript
-// at once -- so getPersonaHistory (below) is its own scoped query instead, the same
-// reasoning as the turnStreams table (schema.ts) being its own table rather than a field
-// on this one.
 export type RunStateOut = {
 	run_id: Id<"runs">;
 	case: {
@@ -208,40 +176,42 @@ export type RunStateOut = {
 		simulation_duration: number | null;
 	};
 	contacts: ContactOut[];
-	active_persona_id: string;
 	shared_files: SharedFileOut[];
 };
 
+// Starts a run for an access code, schedules its destruction and returns its initial state.
 export async function startSimulation(
 	ctx: MutationCtx,
 	accessCodeRaw: string,
 ): Promise<RunStateOut> {
 	const accessCode = normalizeAccessCode(accessCodeRaw);
-	if (!accessCode) throw new Error("Access code is required.");
+	if (!accessCode)
+		throw studentError(
+			STUDENT_ERROR.ACCESS_CODE_REQUIRED,
+			"Access code is required.",
+		);
 	await simulationLimit(ctx, accessCode);
 	const c = await ctx.db
 		.query("cases")
 		.withIndex("by_access_code", (q) => q.eq("accessCode", accessCode))
 		.first();
-	if (!c) throw new Error("Invalid access code.");
+	if (!c)
+		throw studentError(
+			STUDENT_ERROR.INVALID_ACCESS_CODE,
+			"Invalid access code.",
+		);
 
 	const graph = flattenPersonas(c.structure);
 	if (graph.roots.length === 0)
-		throw new Error("This case has no personas configured.");
+		throw studentError(
+			STUDENT_ERROR.NO_PERSONAS,
+			"This case has no personas configured.",
+		);
 	const rootPersonas = await Promise.all(
 		graphRootPersonas(graph).map((persona) => hydratePersona(ctx, persona)),
 	);
 
-	// A brand-new run is 0 minutes into its own timeline by definition -- every root persona
-	// is available_at 0, so the first one that's actually reachable this instant (hasn't
-	// already expired its own availability window at elapsed=0, an edge case but one
-	// personaAvailability already handles) becomes active.
 	const contacts = buildContacts({}, {}, rootPersonas);
-	const activePersonaKey =
-		rootPersonas.find(
-			(persona) =>
-				personaAvailability(persona.availabilityDuration, 0, 0).available,
-		)?.id ?? rootPersonas[0]!.id;
 
 	const startTime = Date.now();
 	const expiresAt = computeExpiresAt(startTime, c.duration);
@@ -249,7 +219,6 @@ export async function startSimulation(
 		caseId: c._id,
 		startTime,
 		expiresAt,
-		activePersonaKey,
 		unlockedReferredIds: [],
 		unlockedAt: {},
 		sharedFiles: [],
@@ -271,27 +240,25 @@ export async function startSimulation(
 			simulation_duration: c.duration ?? null,
 		},
 		contacts,
-		active_persona_id: activePersonaKey,
 		shared_files: [],
 	};
 }
 
-// Shared by getSimulationState/exportSimulation below, and by services/turn.ts. A read
-// never deletes an expired row -- the scheduled `destroy` job (see api/simulations.ts) owns
-// that.
+// Loads a run and its case, throwing student errors if the run is missing, expired or orphaned.
 export async function loadLiveRun(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 ): Promise<{ run: Doc<"runs">; c: Doc<"cases"> }> {
 	const run = await ctx.db.get(runId);
-	if (!run) throw new Error("Run not found.");
-	if (Date.now() > run.expiresAt) throw new Error("Run expired.");
+	if (!run) throw studentError(STUDENT_ERROR.RUN_NOT_FOUND, "Run not found.");
+	if (Date.now() > run.expiresAt)
+		throw studentError(STUDENT_ERROR.RUN_EXPIRED, "Run expired.");
 	const c = await ctx.db.get(run.caseId);
-	if (!c) throw new Error("Case not found.");
+	if (!c) throw studentError(STUDENT_ERROR.CASE_NOT_FOUND, "Case not found.");
 	return { run, c };
 }
 
-// No per-persona histories -- see RunStateOut's own comment for why.
+// Returns a live run's case summary, contacts and shared files.
 export async function getSimulationState(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -328,18 +295,11 @@ export async function getSimulationState(
 			simulation_duration: c.duration ?? null,
 		},
 		contacts,
-		active_persona_id: run.activePersonaKey,
 		shared_files: sharedFiles,
 	};
 }
 
-// Scoped to a single persona's transcript -- what the frontend (run.svelte.ts) subscribes to
-// for whichever contact's chat panel is currently open, instead of a `histories` map on
-// getSimulationState above. A turn landing for persona A no longer re-pushes persona B..E's
-// entire histories to a client only looking at A; each persona's messages only get re-sent
-// to a client actually subscribed to that persona. Not run through loadLiveRun -- same as
-// getStreamingPreview (services/turn.ts), whose expiry/not-found errors already surface via
-// the getSimulationState subscription every client also holds.
+// Returns the chat history between the student and one persona.
 export async function getPersonaHistory(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -359,9 +319,7 @@ export type ExportSimulationOut = {
 	personas: ExportPersonaOut[];
 };
 
-// Every root persona, plus every referred persona unlocked so far (oldest-unlocked first),
-// each carrying its full user/assistant transcript. `run.unlockedReferredIds` is populated by
-// services/turn.ts's applyDecisions as referrals unlock over the course of a run.
+// Returns every unlocked persona's transcript for export, roots first then referred by unlock time.
 export async function exportSimulation(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -375,7 +333,7 @@ export async function exportSimulation(
 
 	const personas = await Promise.all(
 		personaIds.map(async (personaId): Promise<ExportPersonaOut> => {
-			const persona = graphPersonaById(graph, personaId);
+			const persona = graph.personas.get(personaId);
 			const messages = await queryPersonaMessages(ctx, runId, personaId);
 			return {
 				id: personaId,
@@ -389,22 +347,11 @@ export async function exportSimulation(
 	return { case: { id: c._id, case_name: c.name }, personas };
 }
 
-// Deletes every row scoped to a run -- its messages and each persona's turnStreams row (with
-// its component stream) -- before the run document itself. Convex has no FK cascade, so this
-// has to be explicit: without it, a deleted run's rows are unreachable
-// (nothing can look them up by runId once the run is gone) but never actually removed, the
-// same class of leak files are exposed to (see services/files.ts). Both `destroy`
-// (api/simulations.ts, the primary per-run expiry path) and deleteExpiredRuns below (the
-// backstop sweep) call this instead of deleting the run row directly.
+// Deletes a run together with its messages and turn streams; safe to call on a missing run.
 export async function deleteRunCascade(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
 ): Promise<void> {
-	// Idempotent by design, not by luck: two independent paths delete a run -- the per-run
-	// scheduled `destroy` and deleteExpiredRuns' weekly sweep -- and a destroy job delayed past
-	// the next sweep finds its row already gone. `ctx.db.delete` on a missing id throws, which
-	// would turn that harmless duplicate into a permanently failing scheduled function in the
-	// deployment's logs.
 	if ((await ctx.db.get(runId)) === null) return;
 
 	const messages = await ctx.db
@@ -423,19 +370,4 @@ export async function deleteRunCascade(
 	}
 
 	await ctx.db.delete(runId);
-}
-
-// A backstop sweep for any run whose scheduled `destroy` job (see startSimulation above and
-// api/simulations.ts) was somehow lost -- e.g. a deploy that raced the scheduler, or a
-// transient scheduler failure. Every run is normally deleted precisely at its own expiresAt
-// by that job, so this finds nothing in the common case; api/simulations.ts's weekly cron is
-// what actually calls it.
-export async function deleteExpiredRuns(ctx: MutationCtx): Promise<number> {
-	const now = Date.now();
-	const expired = await ctx.db
-		.query("runs")
-		.withIndex("by_expiry", (q) => q.lt("expiresAt", now))
-		.collect();
-	for (const run of expired) await deleteRunCascade(ctx, run._id);
-	return expired.length;
 }

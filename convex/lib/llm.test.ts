@@ -2,25 +2,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatMessage } from "./llm";
 import { classifyHarassment, personaReplyStream } from "./llm";
 
+// Builds a non-streaming chat-completions Response carrying the given content.
 function jsonResponse(content: string, status = 200): Response {
 	return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
 		status,
 	});
 }
 
-// Encodes a sequence of already-formatted SSE `data: ...` lines as one streamed response body,
-// mirroring what OpenRouter's chat/completions endpoint sends with `stream: true`.
+// Builds an SSE Response from raw data lines.
 function sseResponse(dataLines: string[], status = 200): Response {
 	const body = dataLines.map((line) => `data: ${line}\n\n`).join("");
 	return new Response(body, { status });
 }
 
+// Builds one streamed delta payload line for the given text.
 function deltaLine(text: string | null): string {
 	return JSON.stringify({ choices: [{ delta: { content: text } }] });
 }
 
-// personaReplyStream now rejects a stream whose accumulated text isn't valid JSON, so fixtures
-// that stand in for a successful generation must be one.
 const REPLY_JSON = JSON.stringify({
 	reply: "Hi",
 	introduce: [],
@@ -33,6 +32,7 @@ const REPLY_JSON_CHUNKS = [
 	REPLY_JSON.slice(20),
 ];
 
+// Collects every event emitted by personaReplyStream into an array.
 async function drain(
 	systemPrompt = NOOP_SYSTEM_PROMPT,
 ): Promise<{ type: string; text?: string }[]> {
@@ -52,21 +52,25 @@ afterEach(() => {
 });
 
 describe("classifyHarassment (fail-open contract)", () => {
+	// Tests that the classifier returns the NONSENSE label.
 	it("labels NONSENSE", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("NONSENSE")));
 		expect(await classifyHarassment("asdkjh", [])).toBe("nonsense");
 	});
 
+	// Tests that the classifier returns the NORMAL label.
 	it("labels NORMAL", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("NORMAL")));
 		expect(await classifyHarassment("hi", [])).toBe("normal");
 	});
 
+	// Tests that an unrecognized classifier label defaults to normal.
 	it("defaults an unrecognized label to normal", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("BANANA")));
 		expect(await classifyHarassment("hi", [])).toBe("normal");
 	});
 
+	// Tests that a failed classifier call falls back to normal so an outage never blocks a student.
 	it("falls back to normal when the classifier call itself fails -- an outage must never block a student", async () => {
 		vi.stubGlobal(
 			"fetch",
@@ -75,6 +79,7 @@ describe("classifyHarassment (fail-open contract)", () => {
 		expect(await classifyHarassment("hi", [])).toBe("normal");
 	});
 
+	// Tests that the classifier label parsing ignores case and surrounding whitespace.
 	it("is case- and whitespace-insensitive", async () => {
 		vi.stubGlobal(
 			"fetch",
@@ -83,6 +88,7 @@ describe("classifyHarassment (fail-open contract)", () => {
 		expect(await classifyHarassment("hi", [])).toBe("nonsense");
 	});
 
+	// Tests that an empty conversation is formatted as a placeholder in the classifier prompt.
 	it("formats an empty conversation as a placeholder in the classifier prompt", async () => {
 		const fetchMock = vi.fn().mockResolvedValue(jsonResponse("NORMAL"));
 		vi.stubGlobal("fetch", fetchMock);
@@ -91,6 +97,7 @@ describe("classifyHarassment (fail-open contract)", () => {
 		expect(body.messages[1].content).toContain("No conversation yet.");
 	});
 
+	// Tests that conversation turns are formatted as 'role: content' lines and system turns are skipped.
 	it("formats conversation turns as 'role: content' lines and skips system turns", async () => {
 		const fetchMock = vi.fn().mockResolvedValue(jsonResponse("NORMAL"));
 		vi.stubGlobal("fetch", fetchMock);
@@ -106,11 +113,10 @@ describe("classifyHarassment (fail-open contract)", () => {
 	});
 });
 
-// Cache boundary content is irrelevant to every test below -- they only care about how the
-// SSE response is processed, not what was sent -- so one fixed stand-in covers every call.
 const NOOP_SYSTEM_PROMPT = { cacheable: "system", dynamic: "" };
 
 describe("personaReplyStream", () => {
+	// Tests that reply text deltas are yielded in order.
 	it("yields text deltas in order", async () => {
 		vi.stubGlobal(
 			"fetch",
@@ -135,6 +141,7 @@ describe("personaReplyStream", () => {
 		]);
 	});
 
+	// Tests that the reply request explicitly disables reasoning so it doesn't eat into the attempt timeout.
 	it("explicitly disables reasoning -- adaptive thinking left on by default eats into the 30s attempt timeout", async () => {
 		const fetchMock = vi
 			.fn()
@@ -145,6 +152,7 @@ describe("personaReplyStream", () => {
 		expect(body.reasoning).toEqual({ enabled: false });
 	});
 
+	// Tests that streamed delta lines with no text content are skipped.
 	it("skips delta lines with no text content", async () => {
 		vi.stubGlobal(
 			"fetch",
@@ -160,6 +168,7 @@ describe("personaReplyStream", () => {
 		expect(events).toEqual([{ type: "delta", text: REPLY_JSON }]);
 	});
 
+	// Tests that a transient connection failure is retried before any text has streamed.
 	it("retries a transient connection failure before any text has streamed", async () => {
 		const fetchMock = vi
 			.fn()
@@ -173,6 +182,7 @@ describe("personaReplyStream", () => {
 		expect(events).toEqual([{ type: "delta", text: REPLY_JSON }]);
 	});
 
+	// Tests that a retryable HTTP status (429/5xx) is retried before any text has streamed.
 	it("retries a retryable HTTP status (429/5xx) before any text has streamed", async () => {
 		const fetchMock = vi
 			.fn()
@@ -186,6 +196,7 @@ describe("personaReplyStream", () => {
 		expect(events).toEqual([{ type: "delta", text: REPLY_JSON }]);
 	});
 
+	// Tests that a non-retryable HTTP status is retried once and then fails with that status.
 	it("retries a non-retryable HTTP status once, then fails with it", async () => {
 		const fetchMock = vi
 			.fn()
@@ -195,6 +206,7 @@ describe("personaReplyStream", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
+	// Tests that a stream that ends with no content is retried.
 	it("retries a stream that ends with no content", async () => {
 		const fetchMock = vi
 			.fn()
@@ -210,6 +222,7 @@ describe("personaReplyStream", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
+	// Tests that a stream truncated mid-JSON is retried after telling the consumer to reset.
 	it("retries a stream truncated mid-JSON, telling the consumer to reset first", async () => {
 		const fetchMock = vi
 			.fn()
@@ -230,6 +243,7 @@ describe("personaReplyStream", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
+	// Tests that an error frame inside a 200 stream is treated as a failure and retried.
 	it("retries when OpenRouter puts an error frame in a 200 stream", async () => {
 		const fetchMock = vi
 			.fn()
@@ -245,6 +259,7 @@ describe("personaReplyStream", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
+	// Tests that the turn fails when every attempt ends empty or truncated.
 	it("fails the turn when every attempt ends empty or truncated", async () => {
 		const fetchMock = vi
 			.fn()
@@ -254,17 +269,8 @@ describe("personaReplyStream", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
 
-	// The retry policy is only safe because it never restarts a generation that already emitted
-	// text: a second attempt produces a completely different reply, so resuming would splice two
-	// generations together -- the caller (services/turn.ts's runTurn) accumulates every delta
-	// into one `fullText` it then parses as a single JSON object, which two concatenated
-	// generations can never be. Failing the turn is the correct outcome; a duplicated or
-	// half-spliced reply reaching the student is not. Mutating the `!yieldedAny` guard away left
-	// the whole suite green, so this is the only thing holding that boundary.
+	// Tests that a failure after text has already streamed is not retried and fails the turn.
 	it("does NOT retry once text has already streamed -- it fails the turn instead", async () => {
-		// Errors on the SECOND pull, not in start(): erroring a controller clears its queue, so
-		// enqueue-then-error synchronously would drop the chunk and never deliver a delta at all
-		// -- which is the "nothing streamed yet" case that legitimately DOES retry.
 		let pulls = 0;
 		const brokenBody = new ReadableStream<Uint8Array>({
 			pull(controller) {
@@ -303,11 +309,7 @@ describe("personaReplyStream", () => {
 		expect(events).toEqual([{ type: "delta", text: "Partial" }]);
 	});
 
-	// A provider that returns headers and then stalls used to have NO timeout: the abort timer
-	// was disarmed the moment fetch resolved, which for a streamed response is before a single
-	// byte of body has arrived. The turn would hang until the platform killed the scheduled
-	// action -- which skips runTurn's catch, so markStreamingError never runs and the persona's
-	// streaming row stays "streaming" forever, locking that contact for the rest of the run.
+	// Tests that a response body that stalls after the headers is aborted instead of hanging.
 	it("aborts a response whose body stalls after the headers, instead of hanging forever", async () => {
 		vi.useFakeTimers();
 		try {
@@ -318,7 +320,6 @@ describe("personaReplyStream", () => {
 						controller.enqueue(
 							new TextEncoder().encode(`data: ${deltaLine("Partial")}\n\n`),
 						);
-						// ...and then nothing else, ever, unless the caller's own deadline fires.
 						signal.addEventListener("abort", () =>
 							controller.error(new Error("The operation was aborted.")),
 						);
@@ -335,8 +336,6 @@ describe("personaReplyStream", () => {
 			})();
 			const assertion = expect(consumed).rejects.toThrow(/abort/i);
 
-			// Past the per-attempt budget (30s). Without the deadline covering the body, this
-			// advance changes nothing and the promise never settles.
 			await vi.advanceTimersByTimeAsync(35_000);
 			await assertion;
 			expect(events).toEqual([{ type: "delta", text: "Partial" }]);
@@ -345,8 +344,7 @@ describe("personaReplyStream", () => {
 		}
 	});
 
-	// The flip side: the deadline must not fire for a stream that simply takes a while but keeps
-	// producing, and must be disarmed once the stream ends normally.
+	// Tests that a slow but progressing stream that finishes within the budget is not aborted.
 	it("does not abort a slow-but-progressing stream that completes within the budget", async () => {
 		vi.useFakeTimers();
 		try {
@@ -381,8 +379,6 @@ describe("personaReplyStream", () => {
 			await consumed;
 
 			expect(events.map((e) => e.text)).toEqual(REPLY_JSON_CHUNKS);
-			// The timer is released on the normal exit path too -- an un-disarmed timer would
-			// still be pending here and fire into a completed request.
 			expect(vi.getTimerCount()).toBe(0);
 		} finally {
 			vi.useRealTimers();

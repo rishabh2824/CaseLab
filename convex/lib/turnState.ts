@@ -1,3 +1,4 @@
+// Returns the whole minutes elapsed between two timestamps.
 export function elapsedMinutes(startTime: number, now: number): number {
 	return Math.floor((now - startTime) / 60_000);
 }
@@ -8,7 +9,7 @@ export type Availability = {
 	expiresIn: number | null;
 };
 
-// Computes whether a persona should currently be reachable.
+// Computes whether a persona is available at the elapsed time, and how long until it is or expires.
 export function personaAvailability(
 	availabilityDuration: number | null,
 	availableAtMinutes: number,
@@ -34,8 +35,6 @@ export function personaAvailability(
 	return { available: true, availableIn: 0, expiresIn: null };
 }
 
-// Mirrors schema.ts's chatState validator -- kept here, not imported from schema.ts, since
-// these are plain data shapes with no Convex validator machinery attached.
 export type ChatStateMap = Record<
 	string,
 	{ warningCount: number; ended: boolean; endReason?: string }
@@ -46,9 +45,7 @@ export type ChatStateOut = {
 	warningCount: number;
 };
 
-// Takes the map directly (not a full run doc) so it works both against a real run's
-// `personaChatState` and against a plain `{}` at the moment startSimulation is still
-// deciding a run's initial contacts, before any run document exists to read one from.
+// Returns a persona's chat state, defaulting to an open chat with no warnings.
 export function getChatState(
 	personaChatState: ChatStateMap,
 	personaId: string,
@@ -63,10 +60,9 @@ export function getChatState(
 		: { ended: false, endReason: null, warningCount: 0 };
 }
 
-// Number of nonsense messages allowed before ending the chat.
 export const NONSENSE_THRESHOLD = 3;
 
-// A persona's canned response to a harassment/nonsense-classified message.
+// Returns the canned warning or chat-ending message for a flagged message.
 export function boundaryReply(personaName: string, shouldEnd: boolean): string {
 	const name = personaName || "I";
 	if (shouldEnd) {

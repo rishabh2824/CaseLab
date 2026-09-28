@@ -19,13 +19,6 @@ const admins = $derived(adminsQuery.data ?? []);
 const createAdmin = useMutation(api.api.admins.create);
 const deleteAdmin = useMutation(api.api.admins.deleteWithCascade);
 
-// Shared with admin/+layout.svelte via context (see adminViewer.ts) instead of reading
-// session.adminRole -- that's a plain sessionStorage-backed store the layout populates via a
-// side-effect one tick behind its own `viewer` query, and on a cold load/reload of this route
-// directly it's still null when this component first mounts (a `+page.ts` load-based redirect
-// using it, the previous approach here, fired before that side-effect had ever run, bouncing a
-// real super admin back to /admin on every hard refresh). Gating on the query itself has no
-// such gap.
 const viewer = getViewerContext();
 const isSuperAdmin = $derived(viewer.data?.role === "super");
 $effect(() => {
@@ -40,6 +33,7 @@ let isAdding = $state(false);
 let pendingDelete = $state<Doc<"admins"> | null>(null);
 let isDeleting = $state(false);
 
+// Validates and submits the add-admin form, showing a toast for the result.
 async function handleAdd(event: SubmitEvent): Promise<void> {
 	event.preventDefault();
 	const trimmedEmail = email.trim();
@@ -65,10 +59,12 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 	}
 }
 
+// Marks an admin as pending deletion so the confirm dialog opens.
 function requestDelete(admin: Doc<"admins">): void {
 	pendingDelete = admin;
 }
 
+// Deletes the pending admin and toasts a summary of the cases deleted or reassigned.
 async function confirmDelete(): Promise<void> {
 	const admin = pendingDelete;
 	if (!admin) return;

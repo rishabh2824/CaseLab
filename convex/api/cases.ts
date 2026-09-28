@@ -14,15 +14,7 @@ import {
 	updateCase,
 } from "../services/cases";
 
-// The one shared example case every signed-in admin can see, read-only, regardless of
-// ownership/collaborator status -- used by DemoCaseView.svelte. This is safe to expose without
-// requireCaseAccess (unlike getForEdit below) specifically BECAUSE the id comes from the
-// DEMO_CASE_ID app env var (convex.config.ts, set per deployment via `npx convex env set`),
-// not a caller-supplied argument -- an admin has no way to point this at any other case's
-// document, so there's nothing for an "any signed-in admin" exemption to leak. Returns null
-// (not an error) when DEMO_CASE_ID isn't set for this deployment, or resolves to nothing --
-// a missing demo case is a deployment-configuration gap, not something to surface as a broken
-// query.
+// Returns the configured demo case, or null if none is set or it cannot be loaded.
 export const getDemo = adminQuery({
 	args: {},
 	handler: async (ctx) => {
@@ -35,10 +27,7 @@ export const getDemo = adminQuery({
 	},
 });
 
-// Used by CaseForm.svelte both to load an existing case for editing and to load one as a
-// create-from-template source (the same query serves both; a template load simply doesn't
-// read collaboratorAdminIds, since a new case starts with none regardless of the source
-// case's own list).
+// Loads a case the caller can access, plus its collaborator admin ids, for the edit form.
 export const getForEdit = adminQuery({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
@@ -54,7 +43,7 @@ export const getForEdit = adminQuery({
 	},
 });
 
-// Owner-or-collaborator visibility; SUPER admins see everything.
+// Lists the cases the calling admin can see.
 export const listAll = adminQuery({
 	args: {},
 	handler: async (ctx) => {
@@ -62,6 +51,7 @@ export const listAll = adminQuery({
 	},
 });
 
+// Deletes a case the caller has access to.
 export const deleteCase = adminMutation({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
@@ -69,18 +59,11 @@ export const deleteCase = adminMutation({
 	},
 });
 
-// Shared by create/update below -- a CasePayload's fields (see services/cases.ts), as
-// Convex validators.
 const casePayloadArgs = {
 	name: v.string(),
 	brief: v.string(),
 	commonInformation: v.optional(v.string()),
 	duration: v.optional(v.number()),
-	// Every case must have a unique access code -- see validateAccessCode (services/cases.ts)
-	// for the actual required-and-unique enforcement. Required here too (not v.optional like
-	// commonInformation/duration) so a direct call missing the field entirely is rejected by
-	// argument validation, matching name/brief above rather than accessCode's old optional
-	// shape from when a case could be saved without a launchable code.
 	accessCode: v.string(),
 	personas: v.array(personaPayloadValidator),
 	referrals: v.array(referralEdgeValidator),
@@ -88,6 +71,7 @@ const casePayloadArgs = {
 	collaboratorAdminIds: v.array(v.id("admins")),
 };
 
+// Creates a case owned by the calling admin and returns its id.
 export const create = adminMutation({
 	args: casePayloadArgs,
 	handler: async (ctx, args) => {
@@ -96,8 +80,7 @@ export const create = adminMutation({
 	},
 });
 
-// No expected_version conflict check -- see schema.ts's comment on `cases` for why
-// last-write-wins replaces it.
+// Updates an existing case the caller has access to and returns its id.
 export const update = adminMutation({
 	args: { caseId: v.id("cases"), ...casePayloadArgs },
 	handler: async (ctx, args) => {

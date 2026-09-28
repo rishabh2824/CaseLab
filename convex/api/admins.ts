@@ -10,13 +10,7 @@ import {
 	listAdmins,
 } from "../services/admins";
 
-// The current admin's identity + role, or null if not signed in / not an admin. Gates the
-// frontend UI -- the actual authorization enforcement is per-request, in
-// services/admins.ts's requireCurrentAdmin/requireSuperAdmin (run by every adminQuery/
-// adminMutation/superAdminMutation handler, see lib/adminFunctions.ts), not here or in
-// auth.ts (which only gates a brand-new Google account at sign-in time). `_id` lets a caller
-// (e.g. CaseForm.svelte's effectiveOwnerId) identify "this admin" directly, instead of
-// matching this query's own email against the full admin roster to find the same row.
+// Returns the signed-in admin's basic profile, or null for anonymous and non-admin callers.
 export const viewer = query({
 	args: {},
 	handler: async (ctx) => {
@@ -35,7 +29,7 @@ export const viewer = query({
 	},
 });
 
-// Any signed-in admin can see the full roster, not just super admins.
+// Lists every admin on the roster.
 export const listAll = adminQuery({
 	args: {},
 	handler: async (ctx) => {
@@ -43,6 +37,7 @@ export const listAll = adminQuery({
 	},
 });
 
+// Creates a new admin (super admins only).
 export const create = superAdminMutation({
 	args: { email: v.string(), name: v.optional(v.string()), role: adminRole },
 	handler: async (ctx, args) => {
@@ -50,6 +45,7 @@ export const create = superAdminMutation({
 	},
 });
 
+// Deletes an admin and cascades through their cases and sessions (super admins only).
 export const deleteWithCascade = superAdminMutation({
 	args: { adminId: v.id("admins") },
 	handler: async (ctx, args) => {

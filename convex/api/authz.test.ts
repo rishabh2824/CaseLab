@@ -7,6 +7,7 @@ import { caseStructure, personaPayload } from "../testFactories";
 
 type T = ReturnType<typeof newTestConvex>;
 
+// Inserts a case owned by the given admin, with optional name, access code and structure overrides.
 async function seedCase(
 	t: T,
 	ownerAdminId: Id<"admins">,
@@ -27,14 +28,11 @@ async function seedCase(
 	);
 }
 
+// Builds a valid case create/update payload with optional overrides.
 function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 	return {
 		name: "Case",
 		brief: "Brief",
-		// Every call in this file either gets rejected before ever reaching
-		// validateAccessCode (the auth/ownership gates this file actually tests) or is the sole
-		// case created/updated in its own isolated test -- so one fixed code is fine, no
-		// per-call uniqueness needed the way a file that creates several cases per test would.
 		accessCode: "authztestcode",
 		personas: [personaPayload("A")],
 		referrals: [],
@@ -44,9 +42,6 @@ function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-// Every publicly-exported admin-facing function, with args valid enough that the ONLY thing
-// that can reject the call is the auth gate itself. A new admin function added to api/ without
-// a gate shows up here as a passing call instead of a rejection.
 describe("admin-only surface rejects anonymous callers", () => {
 	async function anonymousCallers(t: T) {
 		const adminId = await t.run((ctx) =>
@@ -97,6 +92,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 		] as const;
 	}
 
+	// Tests that every admin function rejects a caller with no identity.
 	it("rejects every admin function for a caller with no identity at all", async () => {
 		const t = newTestConvex();
 		const failures: string[] = [];
@@ -104,13 +100,12 @@ describe("admin-only surface rejects anonymous callers", () => {
 			try {
 				await call();
 				failures.push(name);
-			} catch {
-				// expected
-			}
+			} catch {}
 		}
 		expect(failures).toEqual([]);
 	});
 
+	// Tests that every admin function rejects a signed-in Google user who has no admins row.
 	it("rejects every admin function for an authenticated Google user with no admins row", async () => {
 		const t = newTestConvex();
 		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
@@ -140,13 +135,12 @@ describe("admin-only surface rejects anonymous callers", () => {
 			try {
 				await call();
 				failures.push(name);
-			} catch {
-				// expected
-			}
+			} catch {}
 		}
 		expect(failures).toEqual([]);
 	});
 
+	// Tests that viewer returns null for anonymous and non-admin callers instead of throwing or leaking.
 	it("viewer returns null (rather than throwing or leaking) for anonymous and non-admin callers", async () => {
 		const t = newTestConvex();
 		expect(await t.query(api.api.admins.viewer, {})).toBeNull();
@@ -155,6 +149,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 		expect(await asStranger.query(api.api.admins.viewer, {})).toBeNull();
 	});
 
+	// Tests that an admin loses access as soon as their admins row is deleted.
 	it("stops authorizing a signed-in admin once their admins row is deleted", async () => {
 		const t = newTestConvex();
 		const { asUser, adminId } = await withAdmin(t, { role: "admin" });
@@ -170,6 +165,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 });
 
 describe("cross-admin case isolation (object ownership)", () => {
+	// Tests that a non-owner is denied every ownership-gated case operation by id.
 	it("denies a non-owner every ownership-gated case operation, by id", async () => {
 		const t = newTestConvex();
 		const owner = await withAdmin(t, { email: "owner@test.caselab.invalid" });
@@ -197,6 +193,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 		).resolves.toEqual([]);
 	});
 
+	// Tests that getForEdit does not expose another admin's access code and persona secrets to an unrelated admin.
 	it("REGRESSION: cases.getForEdit must not hand another admin's access code and persona secrets to an unrelated admin", async () => {
 		const t = newTestConvex();
 		const owner = await withAdmin(t, { email: "owner2@test.caselab.invalid" });
@@ -219,9 +216,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 		).rejects.toThrow(/access/i);
 	});
 
-	// getDemo is the one case-read that deliberately skips this ownership check -- see its own
-	// comment (api/cases.ts) for why that's safe: unlike every id-taking query above, it takes
-	// no caseId argument, so a caller can never point it at another admin's case.
+	// Tests that getDemo cannot be pointed at another admin's case because it takes no caseId.
 	it("getDemo cannot be pointed at another admin's case -- it takes no caseId at all", async () => {
 		const source = await import("./cases?raw").then((m) => m.default as string);
 		const getDemoBlock = source.slice(source.indexOf("export const getDemo"));
@@ -230,6 +225,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 		);
 	});
 
+	// Tests that a collaborator gets access to a case while an admin who was never added is refused.
 	it("gives a collaborator access but still refuses an admin who was never added", async () => {
 		const t = newTestConvex();
 		const owner = await withAdmin(t, { email: "owner3@test.caselab.invalid" });
@@ -256,6 +252,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 		).rejects.toThrow("You do not have access to this case.");
 	});
 
+	// Tests that a collaborator cannot take ownership of a case through update.
 	it("a collaborator cannot take ownership of a case through update", async () => {
 		const t = newTestConvex();
 		const owner = await withAdmin(t, { email: "owner4@test.caselab.invalid" });
@@ -282,6 +279,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 });
 
 describe("role boundaries", () => {
+	// Tests that a regular admin cannot create or delete admins, including elevating themselves.
 	it("a regular admin cannot create or delete admins, even a self-elevating one", async () => {
 		const t = newTestConvex();
 		const regular = await withAdmin(t, {
@@ -312,6 +310,7 @@ describe("role boundaries", () => {
 		]);
 	});
 
+	// Tests that a super admin cannot be deleted by anyone.
 	it("a super admin cannot be deleted, by anyone", async () => {
 		const t = newTestConvex();
 		const superAdmin = await withAdmin(t, {
@@ -330,6 +329,7 @@ describe("role boundaries", () => {
 		).rejects.toThrow("Super admins cannot be deleted.");
 	});
 
+	// Tests that a super admin bypasses per-case ownership while a regular admin never does.
 	it("a super admin bypasses per-case ownership but a regular admin never does", async () => {
 		const t = newTestConvex();
 		const owner = await withAdmin(t, { email: "owner5@test.caselab.invalid" });
@@ -360,6 +360,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		return await t.mutation(api.api.simulations.start, { accessCode });
 	}
 
+	// Tests that the student-facing functions work without any identity.
 	it("start/get/getPersonaHistory/exportRun/getTurnStream all work with no identity", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t);
@@ -386,6 +387,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		).resolves.toBeNull();
 	});
 
+	// Tests that one run's id can never read another run's transcript, contacts or export.
 	it("one run's id never reads another run's transcript, contacts, or export", async () => {
 		const t = newTestConvex();
 		const a = await startRun(t, "alpha");
@@ -412,6 +414,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		expect(JSON.stringify(bExport)).not.toContain("run A private message");
 	});
 
+	// Tests that every state-mutating turn/simulation function is declared internal rather than public.
 	it("keeps every state-mutating turn/simulation function declared internal, not public", async () => {
 		const [turnSource, simulationsSource] = await Promise.all([
 			import("./turn?raw").then((m) => m.default as string),
@@ -435,22 +438,14 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 });
 
 describe("every export in the admin-facing api/ modules is gated or internal", () => {
-	// Reads each module's own exports directly from source rather than relying only on the
-	// hand-maintained anonymousCallers list above -- that list is exercised for real (it proves
-	// the gate actually rejects a bad caller at runtime), but it's maintained by hand and had
-	// already drifted once (missing uploads.discardUploads). This structural check can't drift:
-	// it walks every export in these four files itself, so a new admin function that forgets a
-	// wrapper fails here immediately instead of silently passing as "not covered yet."
 	const ADMIN_WRAPPERS = new Set([
 		"adminQuery",
 		"adminMutation",
 		"superAdminMutation",
 	]);
-	// The one deliberate exception: viewer returns null instead of throwing (see its own
-	// comment in api/admins.ts), so it can't use a wrapper that throws on an unauthorized
-	// caller -- it's plain `query`, gated by hand inside its own body instead.
 	const UNGATED_EXCEPTIONS = new Set(["admins.viewer"]);
 
+	// Tests that every export in the admins/cases/uploads/files modules uses an admin wrapper or is internal.
 	it("uses an admin wrapper, or is internal, for every export in admins/cases/uploads/files", async () => {
 		const moduleNames = ["admins", "cases", "uploads", "files"];
 		const sources = await Promise.all(

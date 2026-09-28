@@ -2,37 +2,34 @@ import { browser } from "$app/environment";
 
 const STORAGE_KEY = "caseLabSession";
 
-// Student-run identity only -- there used to be an admin identity here too
-// (adminRole/adminEmail, set from api/admins:viewer on sign-in), but nothing
-// actually needed a sessionStorage-backed copy of it: the one real reader
-// (admin/+page.svelte's "Manage admins" gate) now subscribes to that same
-// live query directly, the same way admin/admins/+page.svelte's own gate
-// already did (see its comment on why a stored copy is unreliable there --
-// one tick behind the query, and still null on a cold reload).
 export interface PersistedSession {
 	runId: string;
-	accessCode: string;
 	startTime: number | null;
+	activePersonaId: string;
 }
 
 const defaults: PersistedSession = Object.freeze({
 	runId: "",
-	accessCode: "",
 	startTime: null,
+	activePersonaId: "",
 });
 
+// Validates a stored session blob field by field, defaulting anything missing or malformed.
 function normalizePersisted(value: unknown): PersistedSession {
 	if (typeof value !== "object" || value === null) return defaults;
 	const v = value as Record<string, unknown>;
 	return {
 		runId: typeof v.runId === "string" ? v.runId : defaults.runId,
-		accessCode:
-			typeof v.accessCode === "string" ? v.accessCode : defaults.accessCode,
 		startTime:
 			typeof v.startTime === "number" ? v.startTime : defaults.startTime,
+		activePersonaId:
+			typeof v.activePersonaId === "string"
+				? v.activePersonaId
+				: defaults.activePersonaId,
 	};
 }
 
+// Reads the session from sessionStorage, falling back to defaults on the server or bad data.
 function readPersisted(): PersistedSession {
 	if (!browser) return defaults;
 	try {
@@ -48,45 +45,45 @@ const initial = readPersisted();
 
 class SessionStore {
 	runId = $state<string>(initial.runId);
-	accessCode = $state<string>(initial.accessCode);
 	startTime = $state<number | null>(initial.startTime);
+	activePersonaId = $state<string>(initial.activePersonaId);
 
+	// Writes the current session to sessionStorage.
 	#persist() {
 		if (!browser) return;
 		const persisted: PersistedSession = {
 			runId: this.runId,
-			accessCode: this.accessCode,
 			startTime: this.startTime,
+			activePersonaId: this.activePersonaId,
 		};
 		sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
 	}
 
-	// Called when a student simulation starts
-	startRun({
-		runId,
-		accessCode,
-		startTime,
-	}: {
-		runId: string;
-		accessCode: string;
-		startTime?: number | null;
-	}) {
+	// Begins a run in the session, defaulting the start time to now and clearing the active persona.
+	startRun({ runId, startTime }: { runId: string; startTime?: number | null }) {
 		this.runId = runId ?? "";
-		this.accessCode = accessCode ?? "";
 		this.startTime = startTime ?? Date.now();
+		this.activePersonaId = "";
 		this.#persist();
 	}
 
+	// Remembers which persona is selected.
+	setActivePersona(personaId: string) {
+		this.activePersonaId = personaId;
+		this.#persist();
+	}
+
+	// Sets the current run id.
 	setRunId(runId: string) {
 		this.runId = runId;
 		this.#persist();
 	}
 
-	// Clear a student run.
+	// Clears all run fields from the session.
 	clearRun() {
 		this.runId = "";
-		this.accessCode = "";
 		this.startTime = null;
+		this.activePersonaId = "";
 		this.#persist();
 	}
 }

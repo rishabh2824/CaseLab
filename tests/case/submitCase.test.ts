@@ -1,10 +1,3 @@
-// Node project: submitCase orchestrates the two-phase direct-to-Convex-storage upload
-// (generate an upload URL, then POST straight to it) and builds the case create/update
-// payload. Nothing else exercises it, and a silent field-mapping bug here (e.g. an uploaded
-// storage id landing on the wrong persona) would corrupt a saved case without ever throwing.
-//
-// Both create/update and upload-url generation go through Convex (getConvexClient().mutation,
-// mocked below) -- only the storage POST itself stays real MSW/fetch.
 import type { GenericId } from "convex/values";
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,19 +15,10 @@ vi.mock("convex-svelte", () => ({
 	getConvexClient: () => ({ mutation: mockMutation }),
 }));
 
-// This file's "server" vitest project doesn't set clearMocks (only "client" does, see
-// vite.config.ts) -- reset call history and implementations ourselves so one test's
-// mockMutation setup can't leak into the next.
 beforeEach(() => {
 	mockMutation.mockReset();
 });
 
-// Node's built-in fetch (bundled undici) refuses a relative URL outright — it
-// needs a same-origin base to resolve against, which a browser gets for free
-// from `location`. Mirrors client.test.ts's identical patch so apiFetch's
-// `fetch("/api/...")` calls resolve here the same way they would in a browser.
-// (The direct-to-storage POST below uses an absolute URL, so it needs no such
-// patch.)
 Object.defineProperty(globalThis, Symbol.for("undici.globalOrigin.1"), {
 	value: new URL("http://localhost"),
 	writable: true,
@@ -44,15 +28,7 @@ Object.defineProperty(globalThis, Symbol.for("undici.globalOrigin.1"), {
 
 const UPLOAD_ORIGIN = "https://upload.test";
 
-// Wires generateUploadUrls (mutation, args `{count}`), createCase/updateCase (mutation, args
-// distinguished by whether `caseId` is present -- same as submitCase itself building update's
-// args from create's `scalars` plus that one extra field), and the storage POST each upload
-// URL hands back. `postStatus` lets the upload-failure test reuse this without hand-rolling
-// its own handlers. All three go through the same mocked `mutation()`, so they're wired
-// together in one place instead of independent stubs.
-// `failSave` makes the create/update branch below throw instead of succeeding -- used by the
-// "cleans up its own uploads" test to prove submitCase's catch calls discardUploads with
-// exactly the storage ids that same attempt just uploaded, before rethrowing.
+// Stubs the Convex mutations and storage uploads and records the requests made.
 function stubMutations({
 	postStatus = 200,
 	failSave,
@@ -113,6 +89,7 @@ function stubMutations({
 	};
 }
 
+// Builds a submitCase input with defaults and optional overrides.
 function baseInput(overrides: Partial<SubmitCaseInput> = {}): SubmitCaseInput {
 	return {
 		editCaseId: null,
@@ -130,6 +107,7 @@ function baseInput(overrides: Partial<SubmitCaseInput> = {}): SubmitCaseInput {
 }
 
 describe("submitCase — create vs. edit routing", () => {
+	// Tests that a new case is saved through the createCase mutation.
 	it("creates a case via the Convex createCase mutation", async () => {
 		const { createRequests } = stubMutations();
 
@@ -139,6 +117,7 @@ describe("submitCase — create vs. edit routing", () => {
 		expect(mockMutation).toHaveBeenCalledTimes(1);
 	});
 
+	// Tests that an existing case is saved through updateCase with its caseId.
 	it("updates a case via the Convex updateCase mutation, passing its caseId", async () => {
 		const { updateRequests } = stubMutations();
 
@@ -151,6 +130,7 @@ describe("submitCase — create vs. edit routing", () => {
 });
 
 describe("submitCase — profile photo upload", () => {
+	// Tests that a File profile photo is uploaded and replaced with the returned file reference.
 	it("uploads a File-valued profile photo and replaces it with the returned FileRef", async () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const persona = makePersona({
@@ -170,6 +150,7 @@ describe("submitCase — profile photo upload", () => {
 		});
 	});
 
+	// Tests that an already-uploaded profile photo reference is passed through without re-uploading.
 	it("passes an existing FileRef profile photo through without uploading it again", async () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const existingPhoto: FileRefPayload = {
@@ -181,7 +162,6 @@ describe("submitCase — profile photo upload", () => {
 
 		await submitCase(baseInput({ personas: [persona] }));
 
-		// The whole point: an already-uploaded photo must not hit generateUploadUrls again.
 		expect(uploadCountRequests).toEqual([]);
 		expect(createRequests).toHaveLength(1);
 		const personas = createRequests[0]?.personas as PersonaPayload[];
@@ -190,6 +170,7 @@ describe("submitCase — profile photo upload", () => {
 });
 
 describe("submitCase — file attachments", () => {
+	// Tests that a File attachment is uploaded and replaced with a reference, keeping its other fields.
 	it("uploads a File-valued attachment, replacing it with a FileRef while keeping its other fields", async () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const persona = makePersona({
@@ -217,6 +198,7 @@ describe("submitCase — file attachments", () => {
 		expect(sentFile?.perceived_contents).toBe("budget");
 	});
 
+	// Tests that an attachment with a null file is kept as-is without an upload.
 	it("preserves a file:null attachment entry as-is, uploading nothing for it", async () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const persona = makePersona({
@@ -235,10 +217,9 @@ describe("submitCase — file attachments", () => {
 });
 
 describe("submitCase — content type handling", () => {
+	// Tests that a file with no MIME type is uploaded as application/octet-stream.
 	it("sends application/octet-stream on the upload POST for a file with no MIME type", async () => {
 		const { postRequests } = stubMutations();
-		// No `type` option — a real drag-and-dropped file of an unrecognized kind
-		// behaves exactly like this (file.type === "").
 		const persona = makePersona({
 			profile_photo: new File(["data"], "note"),
 		});
@@ -251,6 +232,7 @@ describe("submitCase — content type handling", () => {
 });
 
 describe("submitCase — multiple personas and attachments", () => {
+	// Tests that every File across personas and attachments is uploaded and matched to the right entry.
 	it("uploads every File across personas/attachments and associates each returned storage id with the right entry", async () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const persona1 = makePersona({
@@ -282,10 +264,6 @@ describe("submitCase — multiple personas and attachments", () => {
 
 		await submitCase(baseInput({ personas: [persona1, persona2] }));
 
-		// 4 uploads total: p1's photo + 2 files, p2's 1 file — sent as a single
-		// batched generateUploadUrls call, not 4 separate round trips. Runs through
-		// Promise.all in uploadAll, so the count alone would not catch a
-		// mis-association — the per-persona checks below do.
 		expect(uploadCountRequests).toEqual([4]);
 		expect(createRequests).toHaveLength(1);
 		const sentPersonas = (createRequests[0]?.personas ??
@@ -300,8 +278,6 @@ describe("submitCase — multiple personas and attachments", () => {
 		]);
 		expect(sentP2?.files?.[0]?.file?.file_name).toBe("p2-file1.pdf");
 
-		// Every storage id is unique — a mis-mapped id would silently overwrite
-		// one persona's file with another's, so uniqueness alone is a real check.
 		const allIds = [
 			sentP1?.profile_photo?.storage_id,
 			...(sentP1?.files ?? []).map((f) => f.file?.storage_id),
@@ -312,6 +288,7 @@ describe("submitCase — multiple personas and attachments", () => {
 });
 
 describe("submitCase — upload failures", () => {
+	// Tests that a failed storage upload rejects with an upload error and never creates the case.
 	it("rejects with 'Failed to upload file.' and never creates the case when the storage POST fails", async () => {
 		const { createRequests } = stubMutations({ postStatus: 500 });
 		const persona = makePersona({
@@ -324,6 +301,7 @@ describe("submitCase — upload failures", () => {
 		expect(createRequests).toHaveLength(0);
 	});
 
+	// Tests that a failed generateUploadUrls call is propagated and the case is never created.
 	it("propagates a failed generateUploadUrls call, never creating the case", async () => {
 		mockMutation.mockRejectedValue(new Error("Upload URL request failed."));
 		const persona = makePersona({
@@ -338,10 +316,7 @@ describe("submitCase — upload failures", () => {
 		expect((err as Error).message).toBe("Upload URL request failed.");
 	});
 
-	// The uploads themselves already landed in Convex storage by the time create/update
-	// rejects (a taken access code, say) -- submitCase's catch block cleans those up via
-	// discardUploads rather than leaving them stranded, so a fixed-and-resubmitted save
-	// doesn't multiply orphaned storage on every attempt.
+	// Tests that uploads are discarded when the save itself fails.
 	it("cleans up its own uploads via discardUploads when the save itself fails", async () => {
 		const { createRequests, discardRequests } = stubMutations({
 			failSave: new Error(
@@ -361,6 +336,7 @@ describe("submitCase — upload failures", () => {
 		expect(discardRequests).toEqual([["storage-1"]]);
 	});
 
+	// Tests that discardUploads is called with no ids when the save fails but nothing was uploaded.
 	it("calls discardUploads with nothing when the save fails but nothing was uploaded", async () => {
 		const { discardRequests } = stubMutations({
 			failSave: new Error("Case name is required."),
@@ -372,11 +348,7 @@ describe("submitCase — upload failures", () => {
 		expect(discardRequests).toEqual([]);
 	});
 
-	// A batch of several uploads where only one fails: without Promise.allSettled, the ones
-	// that already succeeded would be discarded along with the batch's rejection -- nothing
-	// would know their storage ids, leaving them orphaned until the weekly sweep. uploadAll
-	// settles the whole batch first, discards exactly what succeeded, then rethrows, so the
-	// case is never created/updated at all (a partial upload can't produce a partial save).
+	// Tests that only the uploads that already succeeded are discarded when a later upload fails.
 	it("discards only the uploads that already succeeded when a later upload in the same batch fails", async () => {
 		const { createRequests, discardRequests } = stubMutations();
 		server.use(
@@ -403,6 +375,7 @@ describe("submitCase — upload failures", () => {
 });
 
 describe("submitCase — payload shaping", () => {
+	// Tests that text fields are trimmed, referrals reduced to their wire shape, and roots/collaborators passed through.
 	it("trims top-level text fields, reduces referrals to their wire shape, and passes roots/collaborator ids through unchanged", async () => {
 		const { createRequests } = stubMutations();
 
@@ -427,8 +400,6 @@ describe("submitCase — payload shaping", () => {
 		expect(body.brief).toBe("Reduce office supply costs.");
 		expect(body.commonInformation).toBe("Background context.");
 		expect(body.accessCode).toBe("abc");
-		// Reduced to exactly {from_id, to_id, conditions} — conditions itself is
-		// passed through untrimmed, only the top-level case fields are trimmed.
 		expect(body.referrals).toEqual([
 			{ from_id: "p1", to_id: "p2", conditions: "  when asked  " },
 		]);

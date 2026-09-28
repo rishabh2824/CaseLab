@@ -43,15 +43,6 @@ const selectableAdmins = $derived(
 	),
 );
 
-// Derived off just these scalar fields, not pushed up to CaseForm.svelte via a
-// bind:hasErrors + $effect -- CaseForm.svelte computes the same "does this case info have
-// any errors" boolean itself, from the exact same getCaseInfoErrors call, the same way
-// PersonaFields.svelte's own per-persona `errors` and graph.svelte.ts's graph-wide
-// `validation` are two independent readers of one shared pure function rather than one
-// pushing its answer up into the other's state. Gated on showFieldErrors here (an empty
-// object when it's false) the same way PersonaFields.svelte gates its own `errors` --
-// consistently across every field, including simulation duration, which previously showed
-// its error regardless of showFieldErrors.
 const errors = $derived(
 	showFieldErrors
 		? getCaseInfoErrors({

@@ -1,11 +1,3 @@
-// Client project: CaseForm is the largest file in the frontend and the main
-// case-authoring surface. These tests drive it through
-// @testing-library/svelte + user-event, stubbing every endpoint it touches,
-// and focus on the validation gate, the save/load paths, dirty tracking,
-// persona add/remove cascades, and import — not the markup.
-//
-// Everything CaseForm touches (admin roster, case load, case create/update)
-// goes through Convex now, so convex-svelte is mocked here rather than MSW.
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import * as sonner from "svelte-sonner";
@@ -40,11 +32,7 @@ vi.mock("convex-svelte", () => ({
 	}),
 }));
 
-// CaseForm reads the signed-in admin (api/admins:viewer) from Svelte context now, set by
-// admin/+layout.svelte in the real app (see adminViewer.ts) -- this builds the same context
-// shape directly for a component test, which mounts CaseForm without that layout. `null`
-// (nobody signed in, effectively) is the default: most tests don't care who's viewing, only
-// the "excludes the signed-in admin" test below overrides it with a real admin.
+// Builds the Svelte context map that provides the signed-in admin viewer.
 function viewerContext(
 	data: AdminRow | null = null,
 ): Map<typeof VIEWER_CONTEXT_KEY, unknown> {
@@ -56,9 +44,7 @@ function viewerContext(
 	]);
 }
 
-// overrides takes a plain string `_id` (test ids like "9" read better than a cast at every
-// call site) even though AdminRow's own `_id` is the branded Id<"admins"> -- the cast to
-// AdminRow below is the one place that boundary is crossed.
+// Builds an admin row with defaults and optional overrides.
 function makeAdminRow(
 	overrides: Partial<Omit<AdminRow, "_id">> & { _id?: string } = {},
 ): AdminRow {
@@ -71,6 +57,7 @@ function makeAdminRow(
 	} as AdminRow;
 }
 
+// Builds a persona payload named Mary with optional overrides.
 function makePersonaPayload(
 	overrides: Partial<PersonaPayload> = {},
 ): PersonaPayload {
@@ -82,9 +69,6 @@ function makePersonaPayload(
 	});
 }
 
-// The shape api/cases:getForEdit returns: a raw Convex case doc (camelCase scalars,
-// snake_case `structure` -- see convex/models/cases.ts) plus a flattened
-// collaboratorAdminIds list.
 type ConvexCaseDoc = {
 	_id: string;
 	name: string;
@@ -101,6 +85,7 @@ type ConvexCaseDoc = {
 	collaboratorAdminIds?: string[];
 };
 
+// Builds a case document with defaults and optional overrides.
 function makeCaseDoc(overrides: Partial<ConvexCaseDoc> = {}): ConvexCaseDoc {
 	return {
 		_id: "case-7",
@@ -120,8 +105,7 @@ function makeCaseDoc(overrides: Partial<ConvexCaseDoc> = {}): ConvexCaseDoc {
 	};
 }
 
-// Loading a case (edit or template mode) goes through getConvexClient().query -- stub it to
-// respond only to the matching caseId, same way a real query would 404/reject otherwise.
+// Stubs the case query to return the given case for its id and throw for any other.
 function stubLoadCase(doc: ConvexCaseDoc) {
 	mockClientQuery.mockImplementation(
 		async (_ref: unknown, args: { caseId: string }) => {
@@ -131,9 +115,7 @@ function stubLoadCase(doc: ConvexCaseDoc) {
 	);
 }
 
-// Replaces the old MSW-based POST/PUT /api/cases stubs: case creation and update now go
-// through Convex's create/update mutations (see submitCase.ts). Update's args always carry
-// a `caseId`, create's never do -- that's how the two are told apart here.
+// Stubs the create and update mutations and records the requests made.
 function stubMutations() {
 	const createRequests: Record<string, unknown>[] = [];
 	const updateRequests: Record<string, unknown>[] = [];
@@ -150,8 +132,7 @@ function stubMutations() {
 	return { createRequests, updateRequests };
 }
 
-// Mirrors what the /admin/cases/new and /admin/cases/[id]/edit route files
-// pass CaseForm — editCaseId here stands in for those routes' page.params.id.
+// Renders the case form in create, edit or template mode with an optional viewer.
 function renderForm(
 	props: {
 		editCaseId?: string | null;
@@ -176,8 +157,6 @@ describe("CaseForm", () => {
 		mockClientQuery.mockReset();
 		mockClientMutation.mockReset();
 		mockClientAction.mockReset();
-		// Safe default roster (empty, already loaded) — collaborator-picker tests
-		// below override this with their own fixture list before rendering.
 		mockUseQuery.mockReturnValue({
 			data: [],
 			isLoading: false,
@@ -190,6 +169,7 @@ describe("CaseForm", () => {
 	});
 
 	describe("create mode — validation", () => {
+		// Tests that submitting an empty create form shows required-field errors and sends no request.
 		it("renders empty and surfaces required-field errors instead of sending a request", async () => {
 			const { container } = renderForm();
 
@@ -198,10 +178,6 @@ describe("CaseForm", () => {
 				screen.queryByText("Case name is required."),
 			).not.toBeInTheDocument();
 
-			// The Submit button is disabled while the form is invalid (which it
-			// always is when blank), so a real click can never fire it — dispatch
-			// the submit event directly, the same way pressing Enter in a field
-			// would if the button weren't disabled.
 			const form = container.querySelector("form") as HTMLFormElement;
 			await fireEvent.submit(form);
 
@@ -220,6 +196,7 @@ describe("CaseForm", () => {
 	});
 
 	describe("create mode — valid submit", () => {
+		// Tests that a valid create form sends the expected payload and reports success.
 		it("sends the expected payload and reports success", async () => {
 			const { createRequests } = stubMutations();
 			const user = userEvent.setup();
@@ -239,10 +216,6 @@ describe("CaseForm", () => {
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 
-			// A create-mode success leaves this route for the edit route (see CaseForm's own
-			// handleSubmit) -- the toast is what's meant to carry the message across that
-			// navigation, so it's the signal to check here, not the inline paragraph (which this
-			// unmocked-router test harness would otherwise show forever, since goto is a no-op).
 			await waitFor(() => {
 				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
 					"Case saved successfully.",
@@ -258,6 +231,7 @@ describe("CaseForm", () => {
 	});
 
 	describe("edit mode", () => {
+		// Tests that edit mode loads the case into the form and saves it through updateCase.
 		it("loads the case into the form and saves it via the Convex updateCase mutation", async () => {
 			const doc = makeCaseDoc();
 			stubLoadCase(doc);
@@ -281,6 +255,7 @@ describe("CaseForm", () => {
 			expect(updateRequests[0]?.caseId).toBe(doc._id);
 		});
 
+		// Tests that a failed save in edit mode shows an inline error.
 		it("surfaces a save failure inline", async () => {
 			const doc = makeCaseDoc();
 			stubLoadCase(doc);
@@ -301,13 +276,7 @@ describe("CaseForm", () => {
 			).toBeInTheDocument();
 		});
 
-		// After a successful update, the form's own in-memory persona/file state still holds
-		// whatever the admin last typed/picked -- not what the server actually persisted
-		// (submitCase.ts already swapped every picked File for a FileRef before this mutation
-		// ran, and buildStructure trims/normalizes fields server-side). Reloading from
-		// api/cases:getForEdit is what keeps the form showing the real, saved state instead of
-		// silently drifting from it -- proven here by having the reload's response differ from
-		// the initial load's.
+		// Tests that the case is reloaded from the server after a successful update.
 		it("reloads the case from the server after a successful update", async () => {
 			const doc = makeCaseDoc();
 			let queryCalls = 0;
@@ -336,11 +305,7 @@ describe("CaseForm", () => {
 	});
 
 	describe("concurrent saves", () => {
-		// The Submit button disables itself while isSubmitting, so a second click can't reach
-		// performSave again -- but AdminTopBar's own "Save changes" action (via
-		// unsavedGuard.save()) is a separate gesture the disabled button can't block. Without
-		// its own dedup, that second call would race a second submitCase call against the
-		// first's still-in-flight one.
+		// Tests that a second submit during an in-flight save reuses it instead of calling the mutation again.
 		it("reuses the in-flight save instead of issuing a second mutation call", async () => {
 			let resolveMutation: ((value: unknown) => void) | undefined;
 			mockClientMutation.mockImplementation(
@@ -379,13 +344,7 @@ describe("CaseForm", () => {
 			});
 		});
 
-		// Regression test for a real bug: only the Submit button disabled itself while a save was
-		// in flight. Typing into a field (or importing a new template) while that save was still
-		// running was either silently overwritten by the reload loadCase() does afterward in edit
-		// mode, or -- in create mode -- counted as already-saved by markSaved() and then dropped
-		// without a prompt by the redirect to the edit route. Wrapping the form's fields in a
-		// <fieldset disabled={isSubmitting || isLoadingSource}> closes both: every input this
-		// fieldset contains (not just the Submit button) is inert while a save is running.
+		// Tests that every field, not just Submit, is disabled while a save is in flight.
 		it("disables every field, not just Submit, while a save is in flight", async () => {
 			let resolveMutation: ((value: unknown) => void) | undefined;
 			mockClientMutation.mockImplementation(
@@ -429,13 +388,12 @@ describe("CaseForm", () => {
 	});
 
 	describe("dirty tracking", () => {
+		// Tests that the form starts clean, turns dirty on typing and is clean again after saving.
 		it("starts clean, becomes dirty on typing, and clean again after a successful save", async () => {
 			const { createRequests } = stubMutations();
 			const user = userEvent.setup();
 			renderForm();
 
-			// This gates AdminTopBar's unsaved-changes prompt, so it's worth
-			// pinning at each transition rather than just the end state.
 			expect(unsavedGuard.isDirty).toBe(false);
 
 			await user.type(
@@ -464,13 +422,7 @@ describe("CaseForm", () => {
 	});
 
 	describe("unsaved-changes navigation guard", () => {
-		// Regression test for a real bug: beforeNavigate's callback used to gate on the form's
-		// own local `isDirty` derived value, not unsavedGuard.isDirty. unsavedGuard.discard()
-		// unregisters the form from the guard (so unsavedGuard.isDirty flips to false) but never
-		// touches the form's own baseline, so the local value stayed true — the very goto() that
-		// discard() issues re-entered this same beforeNavigate callback, which cancelled it and
-		// re-issued it as a new prompt, forever. Drives the mocked beforeNavigate callback
-		// directly (the same way SvelteKit's router invokes it) since no router is mounted here.
+		// Tests that a dirty navigation is cancelled, and allowed through once the changes are discarded.
 		it("cancels a dirty navigation, but lets navigation through once discarded instead of re-blocking it", async () => {
 			const user = userEvent.setup();
 			renderForm();
@@ -492,7 +444,6 @@ describe("CaseForm", () => {
 			expect(firstCancel).toHaveBeenCalledTimes(1);
 			expect(unsavedGuard.showModal).toBe(true);
 
-			// Same effect as clicking "Discard changes" in the modal.
 			await unsavedGuard.discard();
 			expect(unsavedGuard.isDirty).toBe(false);
 
@@ -506,6 +457,7 @@ describe("CaseForm", () => {
 	});
 
 	describe("persona add/remove", () => {
+		// Tests that adding a root persona appends a new persona card.
 		it("adding a root persona appends a card", async () => {
 			const user = userEvent.setup();
 			renderForm();
@@ -521,6 +473,7 @@ describe("CaseForm", () => {
 			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(2);
 		});
 
+		// Tests that removing a root also removes referrals into it and any persona left unreachable.
 		it("removing a root also removes referral edges into it, dropping a persona that becomes unreachable", async () => {
 			const user = userEvent.setup();
 			renderForm();
@@ -530,27 +483,21 @@ describe("CaseForm", () => {
 			);
 			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(1);
 
-			// Referring out creates the second persona (reachableFrom's territory —
-			// see draft.test.ts for the helper itself; this pins the observable
-			// outcome in the actual form).
 			await user.click(screen.getByRole("button", { name: "+ Add referral" }));
 			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(2);
 
-			// The root's own "Remove" (in CaseForm's own summary) is first in DOM
-			// order; the nested referral-edge "Remove" (inside the root's
-			// PersonaFields) comes after it — index [0] reliably targets the root.
 			const [rootRemoveButton] = screen.getAllByRole("button", {
 				name: "Remove",
 			});
 			if (!rootRemoveButton) throw new Error("expected a Remove button");
 			await user.click(rootRemoveButton);
 
-			// Both the root and the persona only reachable through it are gone.
 			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(0);
 		});
 	});
 
 	describe("import", () => {
+		// Tests that import is offered in create mode.
 		it("is offered in create mode (no source case)", () => {
 			renderForm();
 			expect(
@@ -558,6 +505,7 @@ describe("CaseForm", () => {
 			).toBeInTheDocument();
 		});
 
+		// Tests that import is not offered in edit mode.
 		it("is not offered in edit mode", async () => {
 			const doc = makeCaseDoc();
 			stubLoadCase(doc);
@@ -568,6 +516,7 @@ describe("CaseForm", () => {
 			).not.toBeInTheDocument();
 		});
 
+		// Tests that importing a modified export populates the form and shows its warnings.
 		it("populates the form and surfaces warnings from a modified export file", async () => {
 			const root = makePersona({
 				id: "root1",
@@ -591,13 +540,7 @@ describe("CaseForm", () => {
 				roots: ["root1"],
 			});
 			const tweaked = html
-				// replaceAll: "Original Case" also appears in the <title> tag, which
-				// the test doesn't care about — only the case_name field's value
-				// (read via getByDisplayValue below) actually matters.
 				.replaceAll("Original Case", "Tweaked Case")
-				// The root's availability_minutes field renders as exactly "45" —
-				// corrupting it to non-numeric text exercises parseNumberField's
-				// warning path (see importCase.ts) without hand-building HTML.
 				.replace(">45</textarea>", ">not-a-number</textarea>");
 			const file = new File([tweaked], "export.html", { type: "text/html" });
 			const user = userEvent.setup();
@@ -614,6 +557,7 @@ describe("CaseForm", () => {
 			expect(screen.getByText(/issue.*to review/i)).toBeInTheDocument();
 		});
 
+		// Tests that importing over existing content asks for confirmation and only imports once confirmed.
 		it("confirms before replacing existing form content, and only imports after confirming", async () => {
 			const html = buildHTMLForm({
 				caseName: "Imported Case",
@@ -629,8 +573,6 @@ describe("CaseForm", () => {
 			const user = userEvent.setup();
 			const { container } = renderForm();
 
-			// Existing content in the form is what makes the import destructive —
-			// an empty form (the earlier test) skips the confirm dialog entirely.
 			await user.type(screen.getByLabelText("Case name"), "Existing Case");
 
 			const fileInput = container.querySelector(
@@ -641,7 +583,6 @@ describe("CaseForm", () => {
 			expect(
 				await screen.findByText("Replace everything in this form?"),
 			).toBeInTheDocument();
-			// Not yet applied — confirming is still pending.
 			expect(screen.getByLabelText("Case name")).toHaveValue("Existing Case");
 
 			await user.click(screen.getByRole("button", { name: "Import" }));
@@ -654,6 +595,7 @@ describe("CaseForm", () => {
 			).not.toBeInTheDocument();
 		});
 
+		// Tests that cancelling the replace confirmation leaves the existing form content untouched.
 		it("cancelling the replace-confirm leaves the existing form content untouched", async () => {
 			const html = buildHTMLForm({
 				caseName: "Imported Case",
@@ -685,6 +627,7 @@ describe("CaseForm", () => {
 			expect(screen.getByLabelText("Case name")).toHaveValue("Existing Case");
 		});
 
+		// Tests that importing an unrelated HTML file shows the import error as a toast.
 		it("surfaces the import error as a toast for an unrelated HTML file", async () => {
 			const file = new File(
 				["<html><body><p>hello</p></body></html>"],
@@ -717,6 +660,7 @@ describe("CaseForm", () => {
 			return user;
 		}
 
+		// Tests that the collaborator picker lists the admin roster from the live subscription.
 		it("shows the admin roster from the live Convex subscription in the picker", async () => {
 			mockUseQuery.mockReturnValue({
 				data: [makeAdminRow({ _id: "9", name: "Nina" })],
@@ -730,6 +674,7 @@ describe("CaseForm", () => {
 			expect(await screen.findByText("Nina")).toBeInTheDocument();
 		});
 
+		// Tests that SUPER admins and the case owner are excluded from the picker in edit mode.
 		it("excludes SUPER admins and the case's owner from the selectable list in edit mode", async () => {
 			const doc = makeCaseDoc({ ownerAdminId: "5" });
 			stubLoadCase(doc);
@@ -752,10 +697,8 @@ describe("CaseForm", () => {
 			expect(screen.queryByText("Super Sam")).not.toBeInTheDocument();
 		});
 
+		// Tests that the signed-in admin is excluded from the picker as the effective owner in create mode.
 		it("excludes the signed-in admin (api/admins:viewer) as the effective owner in create mode", async () => {
-			// effectiveOwnerId in create mode comes from api/admins:viewer -- via context now
-			// (see adminViewer.ts), not a second useQuery call, so it's set through
-			// renderForm's own `viewer` option rather than dispatching mockUseQuery by name.
 			mockUseQuery.mockReturnValue({
 				data: [
 					makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
@@ -778,6 +721,7 @@ describe("CaseForm", () => {
 			expect(screen.queryByText("Me")).not.toBeInTheDocument();
 		});
 
+		// Tests that toggling a collaborator updates the selected-count badge and the submit payload.
 		it("toggling a collaborator updates the selected-count badge and is included in the submit payload", async () => {
 			const { createRequests } = stubMutations();
 			mockUseQuery.mockReturnValue({
@@ -800,10 +744,6 @@ describe("CaseForm", () => {
 			await user.type(screen.getByLabelText("Persona name"), "Mary");
 			await user.type(screen.getByLabelText("Title/Role"), "CFO");
 
-			// bits-ui's floating-ui positioning leaves the popover content
-			// `visibility: hidden` in jsdom (it never resolves a real layout), and
-			// getByRole excludes invisible elements — so this looks the checkbox
-			// up by its (visibility-blind) implicit label text instead.
 			await openPicker();
 			const checkbox = await screen.findByLabelText("Nina");
 			await user.click(checkbox);
@@ -820,7 +760,6 @@ describe("CaseForm", () => {
 
 			expect(createRequests[0]?.collaboratorAdminIds).toEqual(["9"]);
 
-			// Unchecking removes it again.
 			await user.click(checkbox);
 			expect(screen.queryByText("1 selected")).not.toBeInTheDocument();
 		});

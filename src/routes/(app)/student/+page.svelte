@@ -16,12 +16,6 @@ onMount(() => {
 	run.init();
 });
 
-// Without this, run.svelte.ts's #expiryInterval (a window.setInterval) and its $effect.root
-// tree both outlive this component's unmount -- see RunStore.destroy()'s own comment for why
-// neither is torn down automatically the way SimulationClock's bare $effect is. Left running,
-// the orphaned expiry timer can fire endSimulation() against whatever run `session` (a module
-// singleton) points to by the time its original deadline arrives -- a LATER run, if the
-// student has since started a new one.
 onDestroy(() => {
 	run.destroy();
 });
@@ -60,15 +54,18 @@ $effect(() => {
 	});
 });
 
+// Sends the typed message unless it is over the word limit, clearing the input if it was accepted.
 function handleSend(): void {
 	if (overWordLimit) return;
 	if (run.sendMessage(inputValue)) inputValue = "";
 }
 
+// Preloads the PDF module so exporting feels instant.
 function preloadPdfModule(): void {
 	import("$lib/student/pdf.js").catch(() => {});
 }
 
+// Fetches the run's export data and downloads it as a PDF along with the student's notes.
 async function handleExportPdf(): Promise<void> {
 	if (!session.runId || isExporting) return;
 	isExporting = true;
@@ -113,12 +110,6 @@ async function handleExportPdf(): Promise<void> {
 		</div>
 	</header>
 
-	<!--
-		run.loadError carries any live-subscription failure that ISN'T an expiry (expiry is
-		handled by auto-restarting the run). Without this banner the store set the field and
-		nothing ever read it, so a genuine backend error mid-simulation left the student looking
-		at a silently frozen screen with no indication anything had gone wrong.
-	-->
 	{#if run.loadError}
 		<div class="mx-auto max-w-7xl px-6 pt-4">
 			<p role="alert" class="rounded-2xl border border-brand/20 bg-brand-tint px-4 py-3 text-sm text-brand">

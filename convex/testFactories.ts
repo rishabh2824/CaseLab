@@ -1,6 +1,3 @@
-// Payload/graph builders shared by convex-test suites -- everything builds off
-// `personaPayload`/`caseStructure` below, so a new required field is one edit instead of
-// updating every call site.
 import type { Id } from "./_generated/dataModel";
 import type {
 	CaseStructure,
@@ -10,6 +7,7 @@ import type {
 	ReferralEdgePayload,
 } from "./models/cases";
 
+// Builds a persona payload with defaults and optional overrides.
 export function personaPayload(
 	id: string,
 	overrides: Partial<PersonaPayload> = {},
@@ -27,14 +25,8 @@ export function personaPayload(
 	};
 }
 
-// Every case needs a real, unique access code now (see services/cases.ts's validateAccessCode),
-// so a test payload builder that creates more than one case in the same test can no longer
-// leave accessCode unset and rely on it defaulting to "no code" -- each needs its own. A plain
-// incrementing counter can't be stringified directly (ACCESS_CODE_FORMAT only allows
-// lowercase letters, no digits), hence the base-26 conversion. Module-level, so it's shared by
-// every test file that imports this -- fine since uniqueness only ever has to hold within one
-// test (each gets its own fresh in-memory database via newTestConvex()), not across the suite.
 let accessCodeCounter = 0;
+// Returns a fresh, letters-only access code that is unique per call.
 export function uniqueAccessCode(): string {
 	accessCodeCounter += 1;
 	let n = accessCodeCounter;
@@ -47,6 +39,7 @@ export function uniqueAccessCode(): string {
 	return `code${letters}`;
 }
 
+// Builds a referral edge payload.
 export function referralEdge(
 	from_id: string,
 	to_id: string,
@@ -55,6 +48,7 @@ export function referralEdge(
 	return { from_id, to_id, conditions };
 }
 
+// Builds a persona file entry with default file details and optional overrides.
 export function fileEntry(
 	overrides: Partial<{
 		storage_id: Id<"_storage">;
@@ -75,6 +69,7 @@ export function fileEntry(
 	return { file, share_conditions, perceived_contents };
 }
 
+// Builds a case structure, defaulting to a single root persona.
 export function caseStructure(
 	overrides: Partial<{
 		personas: PersonaPayload[];

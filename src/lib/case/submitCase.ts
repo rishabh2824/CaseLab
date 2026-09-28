@@ -9,16 +9,9 @@ import type {
 	ReferralEdge,
 } from "../types.js";
 
-// FileRefPayload is nullable (an unset ref), but a just-uploaded file always resolves to a
-// real ref -- narrowed here once so every reader of `uploaded` below isn't left re-guarding
-// against a null this map never actually holds.
 type UploadedFileRef = Exclude<FileRefPayload, null>;
 
-// One request for every File across every persona (photos and attachments alike) -- not one
-// request per file. Shared by both the create and edit save paths below. A Convex upload URL
-// carries no file metadata -- it's generated and consumed once, with the file's own name/
-// content type attached separately when Convex resolves the upload -- so this is just "give
-// me N URLs," paying the admin auth check once per case save instead of once per file.
+// Requests the given number of upload URLs from Convex.
 async function generateUploadUrls(count: number): Promise<string[]> {
 	if (count === 0) return [];
 	return await getConvexClient().mutation(api.api.uploads.generateUploadUrls, {
@@ -26,6 +19,7 @@ async function generateUploadUrls(count: number): Promise<string[]> {
 	});
 }
 
+// Uploads a file to a Convex upload URL and returns its storage reference.
 async function putToConvexStorage(
 	file: File,
 	uploadUrl: string,
@@ -47,10 +41,7 @@ async function putToConvexStorage(
 	};
 }
 
-// Every File-valued profile photo/attachment across every persona, keyed by the File object
-// itself -- a Map, not a list of {target, file} pairs threaded back together by position
-// (photo vs. attachment, persona index, file index), since the File instance already is a
-// unique key and buildPersonaPayload below already has the File in hand at each call site.
+// Collects every new File (profile photos and attachments) that still needs uploading.
 function collectPendingUploads(personas: Persona[]): File[] {
 	const files: File[] = [];
 	for (const persona of personas) {
@@ -63,17 +54,7 @@ function collectPendingUploads(personas: Persona[]): File[] {
 	return files;
 }
 
-// Uploads every File-valued profile photo/attachment across every persona: one round trip
-// for the whole batch's upload URLs, then every upload running concurrently (not
-// photo-then-attachments, persona by persona in series).
-//
-// Promise.allSettled, not Promise.all: with a plain Promise.all, one failed upload in a batch
-// of several rejects immediately and discards every OTHER upload's result along with it --
-// those files already landed in Convex storage, but nothing would know their storage ids to
-// clean them up, leaving them orphaned until the weekly sweepOrphanedStorage backstop. Settling
-// the whole batch first means the ones that succeeded can be discarded (via discardNewUploads,
-// the same cleanup path a rejected create/update already goes through below) before this
-// function throws, so a partial-failure upload leaves nothing stranded either.
+// Uploads all pending files, discarding the successful ones and throwing if any upload fails.
 async function uploadAll(
 	personas: Persona[],
 ): Promise<Map<File, UploadedFileRef>> {
@@ -104,6 +85,7 @@ async function uploadAll(
 	return succeeded;
 }
 
+// Swaps a persona's new File objects for their uploaded references.
 function buildPersonaPayload(
 	persona: Persona,
 	uploaded: Map<File, UploadedFileRef>,
@@ -117,17 +99,10 @@ function buildPersonaPayload(
 			return { ...entry, file: entry.file ?? null };
 		return { ...entry, file: uploaded.get(entry.file) ?? null };
 	});
-	// Persona and PersonaPayload agree field-for-field except profile_photo/files (see
-	// types.ts's Persona = Omit<PersonaPayload, ...> & {...}), so spreading persona and
-	// overriding just the two resolved fields can't silently drop a field the way a hand-listed
-	// object literal could if PersonaPayload ever grew one.
 	return { ...persona, profile_photo, files };
 }
 
-// Best-effort cleanup for uploads a failed create/update leaves stranded (see discardUploads
-// in api/uploads.ts) -- swallows its own failure so a cleanup hiccup never masks the save
-// error the admin actually needs to see; any upload it fails to reach is still caught by the
-// weekly sweepOrphanedStorage backstop (api/files.ts, convex/crons.ts).
+// Deletes freshly uploaded files from storage, ignoring any errors.
 async function discardNewUploads(
 	uploaded: Map<File, UploadedFileRef>,
 ): Promise<void> {
@@ -137,16 +112,10 @@ async function discardNewUploads(
 		await getConvexClient().mutation(api.api.uploads.discardUploads, {
 			storageIds,
 		});
-	} catch {
-		// Left for sweepOrphanedStorage.
-	}
+	} catch {}
 }
 
 export type SubmitCaseInput = {
-	// null means create; a case id means update that case. Not a separate isEditMode flag
-	// alongside it -- the two could never legitimately disagree (edit mode always has a case
-	// id by the time submitCase can run; create mode never does), so there was nothing a
-	// second field could express that this one doesn't already.
 	editCaseId: string | null;
 	caseName: string;
 	initialBrief: string;
@@ -156,20 +125,10 @@ export type SubmitCaseInput = {
 	personas: Persona[];
 	referrals: ReferralEdge[];
 	roots: string[];
-	// Convex admin ids (see CaseForm.svelte's collaborator picker, sourced from
-	// api/admins:listAll).
 	collaboratorAdminIds: string[];
 };
 
-// Uploads any new (File-valued) profile photos/attachments to Convex storage, then creates
-// or updates the case -- both go through Convex end to end now. Edit has no optimistic-
-// concurrency check (no expected-version conflict to handle): two admins saving the same
-// case at once is rare enough that last-write-wins is an accepted tradeoff (see
-// convex/schema.ts's comment on `cases`). Both create and update return `{ caseId }` (see
-// api/cases.ts) -- surfaced here, not discarded, so a successful create can hand the caller
-// its new case's id (CaseForm.svelte uses it to leave the create route once the case exists,
-// rather than staying somewhere a second Submit click re-runs `create` against the same
-// now-already-saved case).
+// Uploads new files then creates or updates the case, discarding the uploads if the save fails.
 export async function submitCase({
 	editCaseId,
 	caseName,
@@ -186,9 +145,6 @@ export async function submitCase({
 	const personasPayload = personas.map((persona) =>
 		buildPersonaPayload(persona, uploaded),
 	);
-	// referrals is already exactly ReferralEdge[] (= ReferralEdgePayload[], see types.ts) --
-	// no File-valued fields to resolve the way personas above needs, so it needs no mapping,
-	// unlike personasPayload.
 	const scalars = {
 		name: caseName.trim(),
 		brief: initialBrief.trim(),
@@ -198,10 +154,6 @@ export async function submitCase({
 		personas: personasPayload,
 		referrals,
 		roots,
-		// Plain strings on the wire in from CaseForm.svelte's collaborator picker (sourced from
-		// api/admins:listAll's own real Id<"admins"> values, just widened to string the moment
-		// they're read off admin._id in that picker's UI state) -- narrowed back here, at the
-		// one point this actually becomes a mutation argument that has to be Id<"admins">.
 		collaboratorAdminIds: collaboratorAdminIds as Id<"admins">[],
 	};
 
@@ -215,10 +167,6 @@ export async function submitCase({
 
 		return await getConvexClient().mutation(api.api.cases.create, scalars);
 	} catch (err) {
-		// The uploads above already landed in Convex storage; the mutation that would have
-		// claimed them (via `files` rows) never committed. Clean up what this attempt itself
-		// uploaded before rethrowing, so a rejected save (e.g. a taken access code) doesn't
-		// leave orphaned storage behind every time an admin fixes the field and resubmits.
 		await discardNewUploads(uploaded);
 		throw err;
 	}

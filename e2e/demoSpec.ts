@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { ADMIN_ROLE, caseDoc, mockApi, signInAsAdmin } from "./mockApi.js";
 
+// Tests that the demo case view renders the case read-only.
 test("the demo case view renders the case read-only", async ({ page }) => {
 	await mockApi(page, {
 		queries: [
@@ -19,10 +20,10 @@ test("the demo case view renders the case read-only", async ({ page }) => {
 	await expect(page.getByText("Reduce office supply costs.")).toBeVisible();
 	await expect(page.getByText("Mary").first()).toBeVisible();
 
-	// Read-only: nothing on this screen accepts input.
 	await expect(page.locator("input, textarea")).toHaveCount(0);
 });
 
+// Tests that a failed demo-case load shows an inline error.
 test("a failed demo-case load surfaces an inline error", async ({ page }) => {
 	await mockApi(page, {
 		queries: [
@@ -39,8 +40,7 @@ test("a failed demo-case load surfaces an inline error", async ({ page }) => {
 	await expect(page.getByText("Failed to load demo.")).toBeVisible();
 });
 
-// getDemo returns null (rather than throwing) when DEMO_CASE_ID isn't set for this
-// deployment -- distinct from the error case above, which is a real query failure.
+// Tests that having no demo case configured shows a plain message rather than an error.
 test("no demo case configured shows a plain message, not an error", async ({
 	page,
 }) => {
@@ -55,6 +55,7 @@ test("no demo case configured shows a plain message, not an error", async ({
 	).toBeVisible();
 });
 
+// Tests that choosing a template seeds a new case form.
 test("choosing a template seeds a new case form", async ({ page }) => {
 	await mockApi(page, {
 		queries: [
@@ -77,11 +78,10 @@ test("choosing a template seeds a new case form", async ({ page }) => {
 
 	await expect(page).toHaveURL(/\/admin\/cases\/new\?template=case5/);
 	await expect(page.getByLabel("Case name")).toHaveValue("Sterling Industries");
-	// Not carried over from the template: the source case's code is already claimed, so copying
-	// it here would just guarantee the new case's first save fails (see CaseForm's loadCase).
 	await expect(page.getByLabel("Access code")).toHaveValue("");
 });
 
+// Tests that the template picker shows an empty state when there are no cases.
 test("the template picker shows an empty state when there are no cases", async ({
 	page,
 }) => {

@@ -6,34 +6,21 @@ import rateLimiter from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { studentErrorData } from "./lib/studentErrors";
 import schema from "./schema";
 
-// Called from every *.test.ts file to get a fresh in-memory backend. Lives at the convex/
-// root (not in a test-only subfolder) so `import.meta.glob` below sees every real module --
-// convex-test needs the full module map to resolve `internal.*`/`api.*` references made by
-// actions and scheduled functions.
 const modules = import.meta.glob(["./**/*.*s", "!./**/*.test.*s"]);
 
+// Creates an in-memory Convex test instance with the app's components registered.
 export function newTestConvex() {
 	const t = convexTest(schema, modules);
-	// lib/rateLimits.ts calls into the rateLimiter component (registered in convex.config.ts)
-	// on every startSimulation/startTurn call -- convex-test has no way to discover a
-	// component's own schema/functions on its own, so the component's own test helper
-	// registers them the same way a real deployment's build step would.
 	rateLimiter.register(t);
-	// requireCurrentAdmin/viewer (services/admins.ts) resolve the signed-in identity via
-	// authComponent.safeGetAuthUser, which looks up real rows in the betterAuth component's
-	// own session/user tables -- same registration story as rateLimiter above.
 	betterAuthTest.register(t);
-	// Every turn streams through this component (lib/streaming.ts) -- same story again.
 	persistentTextStreaming.register(t);
 	return t;
 }
 
-// Stands in for the student's tab after a successful `start`: POSTs this persona's claimable
-// turn to /turn-stream (http.ts) the way run.svelte.ts does, and reads the reply body to the
-// end -- which is also when the turn has finished, since the component closes the body only
-// after runTurn returns or throws.
+// Drives a persona's pending turn through the /turn-stream endpoint and returns its response.
 export async function driveTurn(
 	t: ReturnType<typeof newTestConvex>,
 	runId: Id<"runs">,
@@ -54,16 +41,7 @@ export async function driveTurn(
 	return { status: response.status, text: await response.text() };
 }
 
-// Seeds betterAuth `user` and `session` rows directly via the component's generic adapter
-// mutation, bypassing Better Auth's own request-handling layer (and so auth.ts's
-// databaseHooks.user.create.before) entirely -- this is test setup standing in for "Google
-// sign-in already happened", not an exercise of the sign-in gate itself. Both rows are
-// required: authComponent.safeGetAuthUser resolves the caller in two steps, session by
-// `identity.sessionId` (and not expired) THEN user by `identity.subject` -- a mocked
-// identity missing either leaves that lookup with nothing to find. Returns a `t` handle
-// whose identity matches both rows, the way a real signed-in request would. Whether the
-// email also has an `admins` row (and so is actually authorized) is entirely up to the
-// caller -- this only seeds the identity side.
+// Creates a Better Auth user and session for an email and returns a test client acting as them.
 export async function withGoogleIdentity(
 	t: ReturnType<typeof newTestConvex>,
 	email: string,
@@ -100,7 +78,7 @@ export async function withGoogleIdentity(
 	return t.withIdentity({ subject: user._id, sessionId: session._id });
 }
 
-// A signed-in admin's `t` handle plus the ids convex-test needs to look them up again.
+// Creates an admins row and a signed-in test client for it.
 export async function withAdmin(
 	t: ReturnType<typeof newTestConvex>,
 	overrides: { email?: string; name?: string; role?: "super" | "admin" } = {},
@@ -123,8 +101,7 @@ export async function withAdmin(
 	};
 }
 
-// A signed-in Google identity with no matching `admins` row -- the "authenticated but not
-// authorized" case exercised by requireCurrentAdmin/viewer's rejection paths.
+// Returns a signed-in test client whose email is not on the admin roster.
 export async function withStranger(
 	t: ReturnType<typeof newTestConvex>,
 	email = `stranger-${Math.random().toString(36).slice(2)}@test.caselab.invalid`,
@@ -132,34 +109,24 @@ export async function withStranger(
 	return withGoogleIdentity(t, email);
 }
 
-// ---------------------------------------------------------------------------
-// OpenRouter stubbing
-// ---------------------------------------------------------------------------
-
-// A single SSE frame carrying one text delta, as OpenRouter emits them.
+// Formats a text chunk as a streamed completion SSE data line.
 export function sseDelta(text: string): string {
 	return `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
 }
 
-// A complete SSE body for one reply, chunked at arbitrary boundaries so a test can prove the
-// consumer doesn't depend on frame alignment.
+// Formats text chunks as a full SSE stream ending with [DONE].
 export function sseStream(chunks: string[]): string {
 	return `${chunks.map(sseDelta).join("")}data: [DONE]\n\n`;
 }
 
 export type LlmStub = {
-	// The whole raw text the reply model "generates", chunked as given. Defaults to a
-	// well-formed persona-reply envelope built from replyText/introduce/sendFiles.
 	replyChunks?: string[];
 	replyText?: string;
 	introduce?: string[];
 	sendFiles?: string[];
-	// Raw SSE body, bypassing replyChunks entirely -- for malformed/partial/erroring streams.
 	replyBody?: string;
-	// Fail the reply request itself rather than its body.
 	replyStatus?: number;
 	replyThrows?: Error;
-	// Classifier outcome. A thrown error exercises classifyHarassment's fail-open path.
 	harassment?: string;
 	classifierThrows?: Error;
 	classifierBody?: string;
@@ -168,13 +135,7 @@ export type LlmStub = {
 // biome-ignore lint/suspicious/noExplicitAny: captured request bodies differ in shape (classify vs. reply) and tests read them freely by property
 export type LlmCall = { kind: "classify" | "reply"; body: any };
 
-// One fetch implementation standing in for every OpenRouter call a turn makes -- the Haiku
-// harassment classifier and the Sonnet reply stream, dispatched by `body.stream` since both hit
-// the same endpoint. Returns the function rather than installing it (callers do their own
-// `vi.stubGlobal("fetch", ...)`) so this module stays free of a vitest import, same as the rest
-// of convex/. Shared here rather than re-hand-rolled per suite: several suites feed the reply
-// path deliberately malformed SSE, and that framing is exactly the detail worth having in one
-// place.
+// Builds a stub fetch that records LLM calls and returns configurable classifier and reply responses.
 export function makeLlmFetch(options: LlmStub = {}): {
 	calls: LlmCall[];
 	fetch: (url: string, init: RequestInit) => Promise<Response>;
@@ -193,10 +154,6 @@ export function makeLlmFetch(options: LlmStub = {}): {
 	): Promise<Response> {
 		const body = JSON.parse(init.body as string);
 		const kind: "classify" | "reply" = body.stream ? "reply" : "classify";
-		// The reply call's system message is a [{text, cache_control}, {text}] content-block pair
-		// (llm.ts's personaReplyStream, cache boundary between the two), not a plain string --
-		// flattened back to one string so every caller of this helper can keep treating
-		// `messages[0].content` as plain text, same as the classify call's.
 		if (Array.isArray(body.messages[0].content)) {
 			body.messages[0].content = body.messages[0].content
 				.map((block: { text: string }) => block.text)
@@ -229,4 +186,16 @@ export function makeLlmFetch(options: LlmStub = {}): {
 	}
 
 	return { calls, fetch: stubbedFetch };
+}
+
+// Awaits a promise and returns the student error it rejects with, or 'resolved' if it succeeds.
+export async function studentRejection(
+	promise: Promise<unknown>,
+): Promise<ReturnType<typeof studentErrorData> | "resolved"> {
+	try {
+		await promise;
+	} catch (err) {
+		return studentErrorData(err);
+	}
+	return "resolved";
 }

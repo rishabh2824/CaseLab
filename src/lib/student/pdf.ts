@@ -1,5 +1,3 @@
-// PDF export of a student's chat transcript, built with jsPDF.
-
 import jsPDF from "jspdf";
 import type { ExportPersonaOut } from "../types.js";
 
@@ -9,7 +7,7 @@ const TITLE_FONT_SIZE = 14;
 const LINE_HEIGHT = 15;
 const TITLE_GAP = LINE_HEIGHT * 1.5;
 
-// Writes a titled section starting at the current page, adding real page breaks whenever content overflows.
+// Writes a titled section of wrapped text to the PDF, starting a new page when it runs out of room.
 const writeSection = (doc: jsPDF, title: string, bodyLines: string[]): void => {
 	const pageWidth = doc.internal.pageSize.getWidth();
 	const pageHeight = doc.internal.pageSize.getHeight();
@@ -41,6 +39,7 @@ const writeSection = (doc: jsPDF, title: string, bodyLines: string[]): void => {
 
 type PrintablePersona = Pick<ExportPersonaOut, "name" | "role" | "messages">;
 
+// Builds a PDF with the student's notes followed by one section per persona's chat.
 export const buildChatPdfBlob = (
 	personas: PrintablePersona[],
 	notes = "",

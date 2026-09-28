@@ -1,4 +1,3 @@
-// Client project: parseHTMLForm is a DOMParser-based parser, needs jsdom.
 import { describe, expect, it } from "vitest";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import {
@@ -7,29 +6,22 @@ import {
 } from "../../src/lib/case/importCase.js";
 import { makePersona, makeReferral } from "../support/fixtures.js";
 
-// Serializes a mutated Document back into the string parseHTMLForm expects.
-// Mutating the parsed Document (rather than string-splicing the template) is
-// what keeps these tests immune to unrelated markup/whitespace changes in
-// exportCase.ts.
+// Serializes a Document back into an HTML string.
 function serialize(doc: Document): string {
 	return `<!DOCTYPE html>${doc.documentElement.outerHTML}`;
 }
 
+// Finds the form field with the given data-field name within a scope.
 function fieldIn(scope: ParentNode, field: string): HTMLTextAreaElement {
 	return scope.querySelector(`[data-field="${field}"]`) as HTMLTextAreaElement;
 }
 
-// Sets a <textarea data-field> value by rewriting its child text node rather
-// than its `.value` property: jsdom (like real browsers) only serializes a
-// textarea's original text content via outerHTML, so a bare `.value = ...`
-// assignment would be silently lost the moment we re-parse the string.
+// Sets the text of a form field in the document.
 function setField(scope: ParentNode, field: string, value: string): void {
 	fieldIn(scope, field).textContent = value;
 }
 
-// Same story for <select>: the "selected" HTML attribute is what survives
-// serialization, not the live `.value` property (verified empirically —
-// setting `.value` alone reverts to the first option on re-parse).
+// Marks only the option with the given value as selected.
 function selectOnly(select: HTMLSelectElement, matchValue: string): void {
 	for (const option of Array.from(select.querySelectorAll("option"))) {
 		option.removeAttribute("selected");
@@ -38,10 +30,7 @@ function selectOnly(select: HTMLSelectElement, matchValue: string): void {
 	if (target) target.setAttribute("selected", "");
 }
 
-// Appends a brand-new <option> (representing an id that doesn't correspond
-// to any persona) and selects it — the only way to simulate a referral
-// dangling at an id the graph has never heard of, since buildHTMLForm's own
-// personaOptions() only ever emits options for real personas.
+// Selects an option pointing at a persona id that doesn't exist.
 function selectGhostOption(select: HTMLSelectElement, ghostId: string): void {
 	for (const option of Array.from(select.querySelectorAll("option"))) {
 		option.removeAttribute("selected");
@@ -53,15 +42,12 @@ function selectGhostOption(select: HTMLSelectElement, ghostId: string): void {
 	select.appendChild(option);
 }
 
+// Builds the export HTML for the input and parses it into a Document.
 function buildDoc(input: Parameters<typeof buildHTMLForm>[0]): Document {
 	return new DOMParser().parseFromString(buildHTMLForm(input), "text/html");
 }
 
-// Imported personas get fresh ids on every parse (mintFreshPersonaIds in importCase.ts), so
-// a test can't compare a returned id against the source persona's original `.id` — it has
-// to look the new id up some other way instead. Name is stable across that remap and
-// (via makePersona's auto-incrementing default) unique per fixture in these tests, so it
-// doubles as the stand-in identity for assertions that need to name a specific persona.
+// Returns a lookup from persona name to persona id.
 function idsByName(
 	personas: { id: string; name: string }[],
 ): (name: string) => string {
@@ -78,16 +64,15 @@ const baseCaseFields = {
 };
 
 describe("parseHTMLForm — file shape", () => {
+	// Tests that a file that is not a Case Lab export is rejected with CaseImportError.
 	it("throws CaseImportError for a file that isn't a Case Lab export", () => {
 		const html =
 			"<!DOCTYPE html><html><body><p>Not a case file.</p></body></html>";
 		expect(() => parseHTMLForm(html)).toThrow(CaseImportError);
 	});
 
+	// Tests that a file with no persona cards is rejected with CaseImportError.
 	it("throws CaseImportError for a file with no persona cards", () => {
-		// Hand-rolled: buildHTMLForm can't itself produce an empty persona
-		// list (it always scaffolds at least one persona), so this shape is
-		// only reachable via a hand-edited/corrupted export.
 		const html = `<!DOCTYPE html><html><body>
 			<div id="personas-list"></div>
 			<div id="referrals-list"></div>
@@ -95,10 +80,10 @@ describe("parseHTMLForm — file shape", () => {
 		expect(() => parseHTMLForm(html)).toThrow(CaseImportError);
 	});
 
+	// Tests that a file where every persona is marked referred (no roots) is rejected.
 	it("throws CaseImportError when every persona is marked referred (no roots)", () => {
 		const a = makePersona();
 		const b = makePersona();
-		// roots: [] means neither card gets data-persona-root="true".
 		const html = buildHTMLForm({
 			...baseCaseFields,
 			personas: [a, b],
@@ -110,6 +95,7 @@ describe("parseHTMLForm — file shape", () => {
 });
 
 describe("parseHTMLForm — field extraction", () => {
+	// Tests that case name, access code, brief, common information and duration are read and trimmed.
 	it("reads and trims case name, access code, brief, common information, and duration", () => {
 		const persona = makePersona();
 		const html = buildHTMLForm({
@@ -133,6 +119,7 @@ describe("parseHTMLForm — field extraction", () => {
 });
 
 describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
+	// Tests that a non-numeric duration becomes null with a warning naming the field.
 	it("returns null plus a warning naming the field for a non-numeric value", () => {
 		const persona = makePersona();
 		const doc = buildDoc({
@@ -147,6 +134,7 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 		expect(warnings.some((w) => w.includes("Simulation duration"))).toBe(true);
 	});
 
+	// Tests that a decimal duration is rounded.
 	it("rounds a decimal value", () => {
 		const persona = makePersona();
 		const doc = buildDoc({
@@ -160,6 +148,7 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 		expect(data.simulationDurationMinutes).toBe(13);
 	});
 
+	// Tests that a blank duration becomes null without a warning.
 	it("returns null with no warning for a blank value", () => {
 		const persona = makePersona();
 		const html = buildHTMLForm({
@@ -176,6 +165,7 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 });
 
 describe("parseHTMLForm — persona graph validation", () => {
+	// Tests that a duplicate persona id keeps the first card and warns.
 	it("keeps the first card and drops the rest on a duplicate data-persona-id, with a warning", () => {
 		const persona = makePersona({ name: "Original" });
 		const doc = buildDoc({
@@ -197,6 +187,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		expect(warnings.some((w) => w.includes("Duplicate persona id"))).toBe(true);
 	});
 
+	// Tests that a referral to a missing persona is skipped with a warning.
 	it("skips a referral pointing at a persona id that doesn't exist, with a warning", () => {
 		const a = makePersona();
 		const b = makePersona();
@@ -215,8 +206,6 @@ describe("parseHTMLForm — persona graph validation", () => {
 		doc.getElementById("referrals-list")?.appendChild(danglingRow);
 
 		const { data, warnings } = parseHTMLForm(serialize(doc));
-		// Imported personas get fresh ids (see mintFreshPersonaIds in importCase.ts) --
-		// looked up here by name, which stays put across that remap.
 		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual([
 			{ from_id: byName(a.name), to_id: byName(b.name), conditions: "" },
@@ -224,6 +213,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		expect(warnings.some((w) => w.includes("wasn't found"))).toBe(true);
 	});
 
+	// Tests that a duplicate referral is skipped, keeping only the first.
 	it("skips a duplicate referral (same from/to pair twice), keeping only the first", () => {
 		const a = makePersona();
 		const b = makePersona();
@@ -246,6 +236,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		expect(warnings.some((w) => w.includes("duplicate referral"))).toBe(true);
 	});
 
+	// Tests that a self-referral is skipped with a warning.
 	it("skips a self-referral (from === to), with a warning", () => {
 		const a = makePersona();
 		const b = makePersona();
@@ -275,17 +266,8 @@ describe("parseHTMLForm — persona graph validation", () => {
 		expect(warnings.some((w) => w.includes("refers to itself"))).toBe(true);
 	});
 
+	// Tests that a cycle unreachable from any root is broken and its cluster removed.
 	it("breaks a cycle disconnected from any root, dropping the back edge and removing the whole unreachable cluster", () => {
-		// p1 is the only root, reaching only p2. p3 <-> p4 form a 2-cycle with
-		// no connection to p1 at all. The code's own comment insists cycle
-		// detection (pass 1: walks every persona, not just roots) and root
-		// reachability (pass 2) are separate passes — this is the case that
-		// proves it: p3's *only* inbound edge is the one the cycle pass drops
-		// (p4 -> p3), so p3 has zero accepted inbound edges even before
-		// reachability is considered, and p4 is unreachable transitively
-		// through it. Conflating the two passes would either keep this cycle
-		// (never walked, since neither p3 nor p4 is root-reachable) or drop
-		// personas the cycle pass didn't actually touch.
 		const p1 = makePersona();
 		const p2 = makePersona();
 		const p3 = makePersona();
@@ -312,13 +294,14 @@ describe("parseHTMLForm — persona graph validation", () => {
 		expect(warnings.some((w) => w.includes(p4.id))).toBe(true);
 	});
 
+	// Tests that a referred persona nothing points at is removed with a warning.
 	it("removes a persona marked referred that nothing points at, with a warning naming it", () => {
 		const root = makePersona();
 		const orphan = makePersona({ name: "Orphan" });
 		const html = buildHTMLForm({
 			...baseCaseFields,
 			personas: [root, orphan],
-			referrals: [], // nothing refers to `orphan`
+			referrals: [],
 			roots: [root.id],
 		});
 		const { data, warnings } = parseHTMLForm(html);
@@ -328,6 +311,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		).toBe(true);
 	});
 
+	// Tests that two personas referring to the same third persona are both kept.
 	it("keeps both parents when two personas refer to the same third persona (multi-parent)", () => {
 		const parentA = makePersona();
 		const parentB = makePersona();
@@ -366,6 +350,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 });
 
 describe("parseHTMLForm — file sharing", () => {
+	// Tests that each file's share conditions and perceived contents are read back, with the file left null.
 	it("round-trips each file's share_conditions and perceived_contents, with file left null", () => {
 		const persona = makePersona({
 			files: [
@@ -394,6 +379,7 @@ describe("parseHTMLForm — file sharing", () => {
 		]);
 	});
 
+	// Tests that a persona with no files parses to an empty file list.
 	it("produces no files when the persona has none", () => {
 		const persona = makePersona({ files: [] });
 		const html = buildHTMLForm({
@@ -408,6 +394,7 @@ describe("parseHTMLForm — file sharing", () => {
 });
 
 describe("parseHTMLForm — clean file", () => {
+	// Tests that a well-formed export parses with no warnings.
 	it("returns no warnings for a well-formed export", () => {
 		const root = makePersona();
 		const referred = makePersona();

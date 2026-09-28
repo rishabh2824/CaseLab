@@ -17,10 +17,6 @@ type Props = {
 let { persona, graph, showFieldErrors }: Props = $props();
 const uid = $props.id();
 
-// Derived off just this persona, not the whole graph — editing persona #12
-// no longer recomputes (or reallocates error objects for) every other
-// mounted PersonaFields instance. See graph.svelte.ts's `validation` for the
-// graph-wide hasErrors boolean this intentionally doesn't duplicate.
 const errors = $derived(showFieldErrors ? getPersonaFieldErrors(persona) : {});
 
 type InputEvent_ = Event & { currentTarget: EventTarget & HTMLInputElement };
@@ -28,11 +24,13 @@ type TextAreaEvent = Event & {
 	currentTarget: EventTarget & HTMLTextAreaElement;
 };
 
+// Stores the chosen profile photo on the persona and resets the file input.
 function handlePhotoChange(event: InputEvent_): void {
 	persona.profile_photo = event.currentTarget.files?.[0] ?? null;
 	event.currentTarget.value = "";
 }
 
+// Adds an empty shareable-file entry to the persona.
 function addFile(): void {
 	persona.files.push({
 		file: null,
@@ -41,10 +39,12 @@ function addFile(): void {
 	});
 }
 
+// Removes the shareable-file entry at the given index.
 function removeFile(fileIndex: number): void {
 	persona.files.splice(fileIndex, 1);
 }
 
+// Attaches the chosen file to a file entry and resets the file input.
 function handleFileChange(event: InputEvent_, fileIndex: number): void {
 	const entry = persona.files[fileIndex];
 	if (!entry) return;
@@ -54,17 +54,17 @@ function handleFileChange(event: InputEvent_, fileIndex: number): void {
 
 const ownReferrals = $derived(referralsFrom(graph.referrals, persona.id));
 
-// UX unchanged from before the flat-graph refactor: this always creates a
-// brand-new referred persona per added referral, never links to an existing
-// one — authoring a second parent for an existing persona isn't exposed here.
+// Adds a new referred persona linked from this persona.
 function addReferral(): void {
 	graph.addReferral(persona.id);
 }
 
+// Removes a referral from this persona, along with anything that becomes unreachable.
 function removeReferral(referral: ReferralEdge): void {
 	graph.removeReferralsFrom(persona.id, [referral.to_id]);
 }
 
+// Updates a referral's unlock conditions from the textarea.
 function handleReferralConditionsChange(
 	event: TextAreaEvent,
 	referral: ReferralEdge,

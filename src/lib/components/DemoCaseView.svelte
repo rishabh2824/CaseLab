@@ -11,9 +11,6 @@ import { api } from "../../../convex/_generated/api.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
-// Sterling Industries, resolved server-side from the DEMO_CASE_ID app env var
-// (convex.config.ts) -- see getDemo's own comment (api/cases.ts) for why this can be shown to
-// any signed-in admin without an owner/collaborator check, unlike every other case read.
 const caseQuery = useQuery(api.api.cases.getDemo, {});
 
 const parsedStructure = $derived(parseCaseStructure(caseQuery.data?.structure));

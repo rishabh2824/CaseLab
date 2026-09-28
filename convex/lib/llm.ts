@@ -1,19 +1,11 @@
-// Raw fetch against OpenRouter's OpenAI-compatible API instead of the `openai` SDK: the
-// SDK's Convex-runtime story (default V8 isolate vs. "use node") is an open question, and
-// fetch sidesteps it entirely (no "use node" needed, works in the default runtime, no Node
-// cold start) while also dropping a dependency.
-
 const LLM_BASE_URL = "https://openrouter.ai/api/v1";
 const LLM_MODEL = "anthropic/claude-sonnet-5";
 const LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-4.5";
 
-// See personaReplyStream's own comment for how these relate (LLM_ATTEMPT_TIMEOUT_MS *
-// PERSONA_REPLY_RETRIES is the worst case before it gives up). Exported so services/turn.ts's
-// claimStreamingSlot can derive its stuck-row staleness threshold from the same worst case,
-// instead of a second, independently-chosen number that could silently stop matching this one.
 export const LLM_ATTEMPT_TIMEOUT_MS = 30_000;
 export const PERSONA_REPLY_RETRIES = 2;
 
+// Returns the LLM API key from the environment, throwing if it is missing.
 function requireLlmKey(): string {
 	const key = process.env.LLM_KEY;
 	if (!key) throw new Error("Missing required environment variable: LLM_KEY");
@@ -25,17 +17,7 @@ export type ChatMessage = {
 	content: string;
 };
 
-// Resolves once response HEADERS arrive, and hands back a `release` the caller must invoke when
-// it is genuinely finished with the response -- immediately for a buffered call, but only after
-// the last chunk for a streamed body.
-//
-// Disarming the abort in a `finally` around `fetch` alone (the obvious shape) leaves a streamed
-// body with no timeout at all, since fetch resolves at the headers. A provider that sends
-// headers and then stalls would hang the whole turn, and that hang is not benign: the platform
-// eventually kills the action WITHOUT running runTurn's catch, leaving the turn's stream open --
-// which claimTurnSlot (services/turn.ts) reads as "a turn is already in flight", blocking that
-// contact until STREAMING_SLOT_STALE_MS. Keeping the timer armed across the read loop makes
-// timeoutMs a deadline for the entire attempt, which is what the retry budget already assumed.
+// Fetches a URL with an abort timeout that stays armed until the caller releases it.
 async function fetchWithTimeout(
 	url: string,
 	init: RequestInit,
@@ -52,10 +34,7 @@ async function fetchWithTimeout(
 	}
 }
 
-// Shared by chat() and personaReplyStream() below -- both POST to the same endpoint with the
-// same headers/auth, and differ only in the request body (buffered vs. streamed, and which
-// model/schema) and the timeout budget. Pure extraction of that identical construction; no
-// behavior change.
+// POSTs a chat-completions request to the LLM provider with the API key attached.
 async function postChatCompletions(
 	body: unknown,
 	timeoutMs: number,
@@ -74,9 +53,7 @@ async function postChatCompletions(
 	);
 }
 
-// Its only caller is classifyHarassment, a temperature=0 classification gate -- pin routing
-// to Anthropic directly so identical inputs aren't put through whatever upstream OpenRouter
-// happens to pick for a given request.
+// Makes a non-streaming chat call and returns the reply text.
 async function chat(options: {
 	model: string;
 	messages: ChatMessage[];
@@ -108,13 +85,6 @@ async function chat(options: {
 	}
 }
 
-// Schema the persona reply is constrained to (structured outputs). reply/introduce/
-// send_files are generated as ONE schema-constrained JSON object -- the provider's
-// constrained decoding guarantees introduce/send_files are always present and consistent
-// with the same generation that produced reply, unlike an optional, separately-decided tool
-// call the model can simply skip or contradict. Descriptions here are deliberately terse
-// field labels, not the full contract (lib/prompt.ts's replyInstructions() already states
-// that in the prompt).
 export const PERSONA_REPLY_SCHEMA = {
 	type: "object",
 	properties: {
@@ -134,23 +104,11 @@ export const PERSONA_REPLY_SCHEMA = {
 	additionalProperties: false,
 };
 
-// "reset" tells the consumer to throw away everything streamed so far: the attempt that
-// produced it failed and a fresh one is about to start from scratch. (runTurn can only honor it
-// while none of that text has reached the student yet -- see its own handling.)
 export type StreamDelta = { type: "delta"; text: string } | { type: "reset" };
 
-// A failure the stream loop should retry regardless of whether text already streamed.
 class StreamRetryError extends Error {}
 
-// Streaming persona reply. Yields {type: "delta", text} for each raw fragment of the
-// schema-constrained JSON object as it streams -- the caller (services/turn.ts's runTurn)
-// accumulates the full text and authoritatively parses it once the stream ends. Retries a
-// fresh attempt (never resumes a partial one) up to PERSONA_REPLY_RETRIES times on: a failed
-// fetch or any non-OK status, a mid-stream error frame, a stream that ends with no content, and
-// a stream that ends with unparseable (truncated) JSON. If the failed attempt had already
-// yielded text, a {type: "reset"} is yielded first so the caller discards it rather than
-// concatenating it onto the retry. A read error mid-stream is still only retried while nothing
-// has streamed, since it gives no signal the text so far is bad.
+// Streams a persona's JSON reply, retrying failed attempts and emitting a reset when a retry discards streamed text.
 export async function* personaReplyStream(
 	systemPrompt: { cacheable: string; dynamic: string },
 	history: ChatMessage[],
@@ -160,14 +118,6 @@ export async function* personaReplyStream(
 		messages: [
 			{
 				role: "system",
-				// Anthropic (via OpenRouter) caches everything up to and including a block marked
-				// cache_control, at a 90% discount on every subsequent read within the (default
-				// 5-minute) TTL -- and since the cache key is just a content hash, not scoped to
-				// this conversation, every OTHER student concurrently talking to this same persona
-				// hits it too. `dynamic` (redacted knownFacts, referral/file candidates -- see
-				// prompt.ts's SystemPromptParts) stays in its own uncached block after the
-				// breakpoint, since it changes as referrals unlock and would otherwise invalidate
-				// the whole cached prefix on every turn.
 				content: [
 					{
 						type: "text",
@@ -180,11 +130,6 @@ export async function* personaReplyStream(
 			...history,
 		],
 		max_tokens: 1000,
-		// Explicit, not left at the provider default (1.0) -- a rare degenerate sample at 1.0
-		// combines badly with strict schema-constrained decoding below: when a sampled token is
-		// masked out by the JSON-schema grammar, the constrained sampler falls back into
-		// whatever's left, which at high temperature produces word-fragment garbage inside an
-		// otherwise-valid `reply` string rather than a clean retry-worthy failure.
 		temperature: 0.7,
 		stream: true,
 		response_format: {
@@ -196,13 +141,6 @@ export async function* personaReplyStream(
 			},
 		},
 		provider: { order: ["anthropic"], allow_fallbacks: false },
-		// A persona reply is straight-line generation against a schema, not a problem that
-		// benefits from extended thinking -- but left unset, Anthropic's own default for this
-		// model is adaptive thinking *on*, which eats into LLM_ATTEMPT_TIMEOUT_MS's 30s budget
-		// before any schema content starts streaming and was observed driving a chunk of the
-		// "please resend your message" failures (timeout aborts / provider rate limits from the
-		// extra reasoning tokens). Explicit > relying on whatever OpenRouter infers when the
-		// field is omitted.
 		reasoning: { enabled: false },
 	};
 
@@ -228,10 +166,6 @@ export async function* personaReplyStream(
 		let yieldedAny = false;
 		let attemptText = "";
 		let finishReason: string | null = null;
-		// A stream can end "successfully" (headers 200, [DONE] received) and still be unusable:
-		// nothing was generated (e.g. max_tokens exhausted before any content), or what was
-		// generated is cut-off JSON. Neither throws on its own, so without this check the
-		// retry below never sees them as failures.
 		const assertUsableAttempt = () => {
 			if (!attemptText)
 				throw new StreamRetryError(
@@ -278,8 +212,6 @@ export async function* personaReplyStream(
 					} catch {
 						continue;
 					}
-					// OpenRouter reports a failure after the 200 has already been sent as an
-					// `error` frame in the stream, with no `choices`.
 					if (parsed.error)
 						throw new StreamRetryError(
 							`LLM stream error frame: ${JSON.stringify(parsed.error).slice(0, 300)}`,
@@ -294,31 +226,21 @@ export async function* personaReplyStream(
 				}
 			}
 		} catch (err) {
-			// A StreamRetryError is retried even after text has streamed, since the consumer is
-			// told to discard that text via "reset"; any other error (e.g. the connection
-			// dropping mid-stream) is only retried while nothing has streamed yet.
 			if (canRetry && (!yieldedAny || err instanceof StreamRetryError)) {
 				if (yieldedAny) yield { type: "reset" };
 				continue;
 			}
 			throw err;
 		} finally {
-			// Runs on every exit -- the `[DONE]`/end-of-stream returns above, a thrown error, and
-			// the consumer abandoning the generator mid-stream (which resumes this function at
-			// the `yield` with a return, so nothing after the loop would otherwise run).
 			release();
 		}
 	}
 	throw new Error("Persona reply stream failed after all retries.");
 }
 
-// Share the last few messages only instead of the full chat history -- one shared limit for
-// both the harassment classifier's transcript below and the persona-reply prompt
-// (services/turn.ts). Exported so turn.ts can also bound its db query to this same window,
-// instead of fetching a persona's entire history just to discard most of it.
 export const RECENT_HISTORY_LIMIT = 10;
 
-// Formats the last `limit` non-system turns of a conversation as "role: content" lines.
+// Formats the recent conversation as 'role: content' lines and counts user and assistant turns.
 function formatTranscript(
 	conversation: ChatMessage[],
 	limit = RECENT_HISTORY_LIMIT,
@@ -341,15 +263,7 @@ function formatTranscript(
 
 export type HarassmentLabel = "normal" | "nonsense";
 
-// Deliberate fail-OPEN default: a classifier outage (timeout, upstream error) must not
-// itself block a student from continuing their case -- the cost of under-flagging one
-// message during an outage is
-// low, the cost of a wave of "please resend" errors for every student mid-simulation is not.
-// Kept on its own small, unbiased classifier call (Haiku, no persona framing) rather than
-// folded into the persona's own reply generation like referral/file-share eligibility now is
-// (services/turn.ts) -- a model mid-roleplay as an in-character persona is a worse judge of
-// whether the user just crossed a safety line than a clean, dedicated classifier prompt is.
-// Do NOT "fix" this asymmetry -- it's intentional.
+// Classifies the latest student message as normal or nonsense, defaulting to normal if the call fails.
 export async function classifyHarassment(
 	userMessage: string,
 	conversation: ChatMessage[],

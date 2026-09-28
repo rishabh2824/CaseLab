@@ -1,18 +1,15 @@
-// Client project: buildHTMLForm/downloadForm produce and manipulate real DOM
-// (DOMParser output, download anchors), so this needs jsdom.
 import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm, downloadForm } from "../../src/lib/case/exportCase.js";
 import { makePersona, makeReferral } from "../support/fixtures.js";
 
-// Parses buildHTMLForm's output the same way a browser (or parseHTMLForm)
-// would, so assertions inspect real elements rather than the raw template
-// string.
+// Parses exported form HTML into a Document.
 function parseForm(html: string): Document {
 	return new DOMParser().parseFromString(html, "text/html");
 }
 
 describe("buildHTMLForm", () => {
+	// Tests that an export with no personas scaffolds a root, a referred persona and one referral.
 	it("scaffolds a root and a referred persona joined by one referral when no personas are given", () => {
 		const doc = parseForm(
 			buildHTMLForm({
@@ -30,6 +27,7 @@ describe("buildHTMLForm", () => {
 		expect(doc.querySelectorAll(".referral-row")).toHaveLength(1);
 	});
 
+	// Tests that the first root is marked fixed with no remove button while other personas get one.
 	it("marks the first root data-fixed-root and hides its remove button; other personas get one", () => {
 		const root = makePersona();
 		const referred = makePersona();
@@ -61,6 +59,7 @@ describe("buildHTMLForm", () => {
 		).not.toBeNull();
 	});
 
+	// Tests that each persona's data-persona-root reflects the roots list.
 	it("sets data-persona-root per persona according to the roots list", () => {
 		const a = makePersona();
 		const b = makePersona();
@@ -87,12 +86,9 @@ describe("buildHTMLForm", () => {
 	});
 
 	describe("HTML escaping", () => {
-		// Case name, persona name, and known-facts are admin/AI-authored free
-		// text that ends up inside a generated HTML document; a value like
-		// `<script>` must render as inert text, not markup, or the exported
-		// form becomes an XSS vector the moment it's reopened in a browser.
 		const dangerous = `<script>alert("xss")</script> & Tom's "quote"`;
 
+		// Tests that a dangerous case name round-trips as text without injecting a script.
 		it("round-trips a dangerous case name as text, injecting no extra <script>", () => {
 			const doc = parseForm(
 				buildHTMLForm({
@@ -107,11 +103,10 @@ describe("buildHTMLForm", () => {
 				'[data-field="case_name"]',
 			) as HTMLTextAreaElement;
 			expect(field.value.trim()).toBe(dangerous);
-			// Only the form's own inline <script>...</script> (see buildHTMLForm's
-			// trailing <script> block) may exist — none injected from data.
 			expect(doc.querySelectorAll("script")).toHaveLength(1);
 		});
 
+		// Tests that a dangerous persona name round-trips as text without injecting a script.
 		it("round-trips a dangerous persona name as text, injecting no extra <script>", () => {
 			const persona = makePersona({ name: dangerous });
 			const doc = parseForm(
@@ -133,6 +128,7 @@ describe("buildHTMLForm", () => {
 			expect(doc.querySelectorAll("script")).toHaveLength(1);
 		});
 
+		// Tests that a dangerous known-facts value round-trips as text without injecting a script.
 		it("round-trips a dangerous known-facts value as text, injecting no extra <script>", () => {
 			const persona = makePersona({ known_facts: dangerous });
 			const doc = parseForm(
@@ -154,13 +150,7 @@ describe("buildHTMLForm", () => {
 			expect(doc.querySelectorAll("script")).toHaveLength(1);
 		});
 
-		// services/cases.ts's PERSONA_ID_FORMAT rejects a value like this at save time going
-		// forward, but this function has no way to know whether the id it's handed came from a
-		// case saved before that restriction existed -- it has to escape unconditionally, as its
-		// own independent line of defense. A persona id lands in an HTML attribute (unlike the
-		// free-text fields above, which land in a <textarea>'s text content), so the attack here
-		// is different: not "inject a script tag" but "close this attribute early and add an
-		// attribute of our own."
+		// Tests that a quote in a persona id cannot break out of the data-persona-id attribute.
 		it("escapes a quote in a persona id so it can't break out of the data-persona-id attribute", () => {
 			const dangerousId = `p1" onmouseover="alert(1)`;
 			const persona = makePersona({ id: dangerousId });
@@ -184,16 +174,9 @@ describe("buildHTMLForm", () => {
 	});
 });
 
-// The generated form's embedded <script> (add/remove persona, add/remove referral,
-// dropdown sync) is real, executable JS that a browser runs when an admin opens the
-// downloaded file -- DOMParser (used above) never executes it, so these drive it in an
-// actual JSDOM window with script execution enabled, the same way opening the file would.
 describe("buildHTMLForm's embedded script", () => {
 	function loadInteractive(html: string): JSDOM {
 		const dom = new JSDOM(html, { runScripts: "dangerously" });
-		// jsdom implements no WebCrypto randomUUID (see tests/support/setup.client.ts's
-		// same polyfill for the main app's own jsdom environment) -- this is a separate,
-		// freshly constructed window, so it needs its own copy.
 		let counter = 0;
 		Object.defineProperty(dom.window.crypto, "randomUUID", {
 			configurable: true,
@@ -211,6 +194,7 @@ describe("buildHTMLForm's embedded script", () => {
 		);
 	}
 
+	// Tests that a persona added in the exported form's script gets a UUID id.
 	it("mints a UUID for a newly-added persona, not a sequential id", () => {
 		const dom = loadInteractive(
 			buildHTMLForm({
@@ -238,6 +222,7 @@ describe("buildHTMLForm's embedded script", () => {
 		expect(newId).toMatch(/^[0-9a-f-]{36}$/i);
 	});
 
+	// Tests that removing a persona in the exported form also removes its exclusive descendants.
 	it("cascade-removes a persona's exclusive descendants, matching graph.svelte.ts's removeSubtree", () => {
 		const a = makePersona();
 		const b = makePersona();
@@ -268,6 +253,7 @@ describe("buildHTMLForm's embedded script", () => {
 		expect(doc.querySelectorAll(".referral-row")).toHaveLength(0);
 	});
 
+	// Tests that removing a referral removes the target persona only once no other path reaches it.
 	it("removing a referral cascade-removes the target only once it has no other path from a root", () => {
 		const a = makePersona();
 		const d = makePersona();
@@ -287,26 +273,17 @@ describe("buildHTMLForm's embedded script", () => {
 		const doc = dom.window.document;
 		const rows = () => doc.querySelectorAll(".referral-row");
 
-		// C is still reachable via D -> C, so removing A -> C alone must not remove it.
 		click(rows()[0]?.querySelector('[data-action="remove-referral"]') ?? null);
 		expect(doc.querySelector(`[data-persona-id="${c.id}"]`)).not.toBeNull();
 		expect(rows()).toHaveLength(1);
 
-		// Now C's only remaining path (D -> C) is gone too.
 		click(rows()[0]?.querySelector('[data-action="remove-referral"]') ?? null);
 		expect(doc.querySelector(`[data-persona-id="${c.id}"]`)).toBeNull();
 		expect(doc.querySelector(`[data-persona-id="${a.id}"]`)).not.toBeNull();
 		expect(doc.querySelector(`[data-persona-id="${d.id}"]`)).not.toBeNull();
 	});
 
-	// Regression test for a real bug: FIXED_ROOT_ID used to be embedded via plain
-	// JSON.stringify(fixedRootId), which escapes quotes/backslashes for JS syntax but not `<`.
-	// A root persona id containing the literal text "</script>" closed this inline <script>
-	// block early -- the HTML parser has no notion of JS string literals, so it reads
-	// "</script>" as a real closing tag regardless of where it sits inside the source text --
-	// and whatever <script> tag followed inside that id then became a second, real script
-	// element the browser actually parsed and ran. jsonForInlineScript's `<` escaping keeps
-	// the id inert as string data instead.
+	// Tests that a malicious fixed-root persona id stays inert data inside the inline script.
 	it("keeps a dangerous fixed-root persona id inert as string data, not markup, in the inline script", () => {
 		const dangerousId = "</script><script>window.__pwned=1</script>";
 		const persona = makePersona({ id: dangerousId });
@@ -327,6 +304,7 @@ describe("buildHTMLForm's embedded script", () => {
 		).toBeUndefined();
 	});
 
+	// Tests that the referral dropdowns list the new persona after one is added.
 	it("refreshes referral dropdown options after a persona is added", () => {
 		const dom = loadInteractive(
 			buildHTMLForm({
@@ -357,6 +335,7 @@ describe("downloadForm", () => {
 		vi.useRealTimers();
 	});
 
+	// Tests that downloadForm always names the file 'export case.html'.
 	it("always names the file export case.html", () => {
 		const appendSpy = vi.spyOn(document.body, "appendChild");
 		downloadForm("<html></html>");
@@ -365,15 +344,10 @@ describe("downloadForm", () => {
 		expect(link.download).toBe("export case.html");
 	});
 
+	// Tests that downloadForm revokes its object URL after the scheduled delay.
 	it("revokes the object URL after the scheduled delay", () => {
-		// Wrap whatever createObjectURL/revokeObjectURL currently are (jsdom
-		// has neither; some Node versions register real ones on the global
-		// URL) rather than asserting against the setup file's stub directly —
-		// what matters here is the *pairing*, not which implementation runs.
 		const createSpy = vi.spyOn(URL, "createObjectURL");
 		const revokeSpy = vi.spyOn(URL, "revokeObjectURL");
-		// Fake timers keep this deterministic instead of waiting a real second
-		// for the trailing window.setTimeout cleanup to fire.
 		vi.useFakeTimers();
 		downloadForm("<html></html>");
 		const url = createSpy.mock.results[0]?.value;

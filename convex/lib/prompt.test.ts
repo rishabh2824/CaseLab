@@ -7,14 +7,13 @@ import {
 	parseReply,
 } from "./prompt";
 
-// These tests only care about substring presence, not which of the two cached/uncached blocks
-// (see prompt.ts's SystemPromptParts) a given fact landed in -- so join them back into one
-// string, the same shape systemPrompt returned before the split.
+// Calls the real system prompt builder and joins its stable and dynamic parts into one string.
 function systemPrompt(...args: Parameters<typeof buildSystemPrompt>): string {
 	const { stable, dynamic } = buildSystemPrompt(...args);
 	return `${stable}\n\n${dynamic}`;
 }
 
+// Builds a persona detail with defaults and optional overrides.
 function personaDetail(overrides: Partial<PersonaDetail> = {}): PersonaDetail {
 	return {
 		id: "A",
@@ -35,6 +34,7 @@ const BRIEF = "Reduce office supply costs.";
 const COMMON_INFO = "Sterling Industries background.";
 
 describe("systemPrompt", () => {
+	// Tests that the system prompt carries the case and persona facts.
 	it("returns a string carrying case and persona facts", () => {
 		const prompt = systemPrompt(BRIEF, COMMON_INFO, personaDetail(), [], []);
 		expect(prompt).toContain(BRIEF);
@@ -45,6 +45,7 @@ describe("systemPrompt", () => {
 		expect(prompt).toContain("Karen handles all complaint escalations.");
 	});
 
+	// Tests that referral and file candidates are listed with their handles and conditions.
 	it("lists referral and file candidates with their handles and conditions", () => {
 		const prompt = systemPrompt(
 			BRIEF,
@@ -79,6 +80,7 @@ describe("systemPrompt", () => {
 		);
 	});
 
+	// Tests that every referral candidate's handle appears in the prompt.
 	it("lists every referral candidate's handle", () => {
 		const prompt = systemPrompt(
 			BRIEF,
@@ -95,12 +97,14 @@ describe("systemPrompt", () => {
 		expect(prompt).toContain("R2: Sue (CTO)");
 	});
 
+	// Tests that the prompt takes the no-referrals branch when there are no candidates.
 	it("takes the no-referrals branch when there are no candidates", () => {
 		const prompt = systemPrompt(BRIEF, COMMON_INFO, personaDetail(), [], []);
 		expect(prompt).toContain("You have no one to introduce this turn.");
 		expect(prompt).not.toContain("You may introduce a contact");
 	});
 
+	// Tests that the parenthetical is omitted for a file with no perceived contents.
 	it("omits the parenthetical when a file has no perceived contents", () => {
 		const prompt = systemPrompt(
 			BRIEF,
@@ -120,12 +124,14 @@ describe("systemPrompt", () => {
 		expect(prompt).not.toContain("F2: Empty.pdf (what you believe");
 	});
 
+	// Tests that the prompt takes the no-files branch when there are no candidates.
 	it("takes the no-files branch when there are no candidates", () => {
 		const prompt = systemPrompt(BRIEF, COMMON_INFO, personaDetail(), [], []);
 		expect(prompt).toContain("You have no file to send this turn.");
 		expect(prompt).not.toContain("You may send a file");
 	});
 
+	// Tests that the never-introduce-anyone-unlisted sentence is added whenever there are referral candidates.
 	it("adds the never-introduce-anyone-unlisted sentence whenever there are referral candidates", () => {
 		const prompt = systemPrompt(
 			BRIEF,
@@ -147,6 +153,7 @@ describe("systemPrompt", () => {
 	});
 
 	describe("redaction (security-critical)", () => {
+		// Tests that a candidate referral's name is redacted from known facts regardless of its condition.
 		it("redacts a candidate referral's name out of known facts, regardless of its condition", () => {
 			const prompt = systemPrompt(
 				BRIEF,
@@ -166,13 +173,11 @@ describe("systemPrompt", () => {
 			);
 			expect(prompt).not.toContain("Karen handles all complaint escalations.");
 			expect(prompt).toContain("[undisclosed contact]");
-			// The name still appears in the Referrals: candidate list itself -- only the
-			// incidental knownFacts mention is redacted.
 			expect(prompt).toContain("R1: Karen (Support Lead)");
 		});
 
+		// Tests that redaction matches whole words only, not substrings of a longer name.
 		it("only matches whole words, not substrings of a longer name", () => {
-			// "Ann" is a substring of "Anna" -- must not redact into the middle of it.
 			const prompt = systemPrompt(
 				BRIEF,
 				COMMON_INFO,
@@ -191,6 +196,7 @@ describe("systemPrompt", () => {
 			expect(prompt).not.toContain("[undisclosed contact]");
 		});
 
+		// Tests that regex metacharacters in a candidate name are escaped rather than crashing or over-matching.
 		it("escapes regex metacharacters in the candidate name instead of crashing or over-matching", () => {
 			const prompt = systemPrompt(
 				BRIEF,
@@ -212,6 +218,7 @@ describe("systemPrompt", () => {
 			);
 		});
 
+		// Tests that a blank candidate name is skipped without error while a real one is still redacted.
 		it("skips a blank/whitespace candidate name without erroring, and still redacts a real one", () => {
 			const prompt = systemPrompt(
 				BRIEF,
@@ -236,6 +243,7 @@ describe("systemPrompt", () => {
 });
 
 describe("parseReply", () => {
+	// Tests that parseReply parses a clean JSON object.
 	it("parses a clean JSON object", () => {
 		const raw = '{"reply": "Hi there.", "introduce": ["R1"], "send_files": []}';
 		expect(parseReply(raw)).toEqual({
@@ -245,54 +253,65 @@ describe("parseReply", () => {
 		});
 	});
 
+	// Tests that parseReply returns null for empty or missing input.
 	it("returns null for empty or missing input", () => {
 		expect(parseReply("")).toBeNull();
 		expect(parseReply(undefined)).toBeNull();
 		expect(parseReply(null)).toBeNull();
 	});
 
+	// Tests that parseReply returns null for unparseable text.
 	it("returns null for unparseable text", () => {
 		expect(parseReply("not json at all")).toBeNull();
 	});
 
+	// Tests that parseReply returns null for a JSON array.
 	it("returns null for a JSON array (not an object)", () => {
 		expect(parseReply("[1, 2, 3]")).toBeNull();
 	});
 });
 
 describe("coerceHandles", () => {
+	// Tests that coerceHandles upper-cases and strips entries.
 	it("upper-cases and strips entries", () => {
 		expect(coerceHandles(["r1", " R2 "])).toEqual(["R1", "R2"]);
 	});
 
+	// Tests that coerceHandles drops whitespace-only entries.
 	it("drops whitespace-only entries", () => {
 		expect(coerceHandles(["   ", "r1"])).toEqual(["R1"]);
 	});
 
+	// Tests that coerceHandles treats a bare string as a single-item list.
 	it("treats a bare string as a single-item list", () => {
 		expect(coerceHandles("R1")).toEqual(["R1"]);
 	});
 
+	// Tests that coerceHandles returns an empty list for non-list, non-string input.
 	it("returns empty for non-list, non-string input", () => {
 		expect(coerceHandles(5)).toEqual([]);
 		expect(coerceHandles(null)).toEqual([]);
 	});
 
+	// Tests that coerceHandles skips items that are neither strings nor numbers.
 	it("skips items that are neither strings nor numbers", () => {
 		expect(coerceHandles(["R1", null, ["nested"], 2])).toEqual(["R1", "2"]);
 	});
 });
 
 describe("cleanReply", () => {
+	// Tests that cleanReply strips a leading speaker tag.
 	it("strips a leading speaker tag", () => {
 		expect(cleanReply("[Mary, CFO] Hello there.")).toBe("Hello there.");
 	});
 
+	// Tests that cleanReply leaves an inline bracket untouched.
 	it("leaves an inline bracket untouched", () => {
 		const text = "Sure thing. [Note: confidential] Okay.";
 		expect(cleanReply(text)).toBe(text);
 	});
 
+	// Tests that cleanReply handles empty and missing input.
 	it("handles empty and missing input", () => {
 		expect(cleanReply(null)).toBe("");
 		expect(cleanReply(undefined)).toBe("");

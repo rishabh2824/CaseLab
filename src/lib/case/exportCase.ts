@@ -1,5 +1,3 @@
-// Exports an empty case form so admins can autofill it with AI
-
 import { downloadBlob } from "../download.js";
 import type { Persona, ReferralEdge } from "../types.js";
 import {
@@ -8,13 +6,7 @@ import {
 	reachableFrom,
 } from "./draft.js";
 
-// Escapes quotes too, not just `&`/`<`/`>` -- every call site below that used to embed this
-// unescaped landed a value straight inside a double-quoted HTML attribute (persona ids in
-// data-persona-id and an <option>'s value), so a value containing `"` could close that
-// attribute early and inject markup of its own into whichever admin's browser opens the
-// exported file. See PERSONA_ID_FORMAT's own comment (services/cases.ts) for why a persona id
-// is the concrete way an id like that reaches here: this escaping is the second, independent
-// line of defense for an id already stored under that format's older, wider charset.
+// Escapes a value for safe use in HTML text and attributes.
 const escapeHtml = (value: unknown): string =>
 	String(value ?? "")
 		.replace(/&/g, "&amp;")
@@ -22,19 +14,9 @@ const escapeHtml = (value: unknown): string =>
 		.replace(/>/g, "&gt;")
 		.replace(/"/g, "&quot;");
 
-// Embedded verbatim (via .toString()) into the generated <script> below, so the exported
-// form's own persona-removal cascade runs graph.svelte.ts's exact reachability algorithm
-// instead of a hand-copied reimplementation that could silently drift from it.
 const REACHABLE_FROM_SOURCE = reachableFrom.toString();
 
-// JSON.stringify escapes quotes/backslashes/control characters for JS syntax, but not `<` --
-// so a value containing the literal text "</script>" would still close the <script> block this
-// gets embedded into early once interpolated into the template below, letting whatever text
-// follows it in the exported file run as markup (or script) of its own instead of staying
-// data. Escaping `<` to its Unicode escape keeps the result valid, semantically identical JS
-// while making that sequence inert. Same defense-in-depth reasoning as escapeHtml above: the
-// one call site below embeds a persona id (see PERSONA_ID_FORMAT's comment, services/cases.ts),
-// and this is what protects an id already stored under that format's older, wider charset.
+// Serializes a value as JSON that is safe to embed in an inline script tag.
 const jsonForInlineScript = (value: unknown): string =>
 	JSON.stringify(value).replace(/</g, "\\u003c");
 
@@ -44,6 +26,7 @@ type Graph = {
 	roots: string[];
 };
 
+// Builds a starter graph with one root persona referring to one referred persona.
 function scaffoldGraph(): Graph {
 	const root = createEmptyPersona();
 	const referred = createEmptyPersona();
@@ -54,8 +37,7 @@ function scaffoldGraph(): Graph {
 	};
 }
 
-// Short, human-friendly label for a persona card/option — falls back to a
-// truncated id only when the name is still blank (a fresh scaffold persona).
+// Returns a persona's name, or a short id-based label when it has none.
 function personaLabel(persona: Persona): string {
 	return persona.name.trim() || `Persona ${persona.id.slice(0, 6)}`;
 }
@@ -69,6 +51,7 @@ type FieldsInput = {
 	required?: boolean;
 };
 
+// Renders a labelled textarea field for the exported form.
 function fields({
 	field,
 	label,
@@ -85,13 +68,7 @@ function fields({
   </div>`;
 }
 
-// A file entry's actual attachment can't round-trip through this text form
-// (there's no way to embed a real File in HTML an LLM edits as text), so this
-// renders a placeholder per file — just the two describing fields — and the
-// admin attaches the real file to each slot in-app after importing. Slots are
-// matched by position, not id (FileEntryPayload carries no name/label field),
-// so re-numbering on add/remove (see the inline script's renumberFiles) is
-// what keeps "File 3" in the form pointing at the third entry on import.
+// Renders one file entry row in the exported form.
 function fileRowMarkup(
 	file: {
 		share_conditions?: string | null;
@@ -120,6 +97,7 @@ function fileRowMarkup(
   </div>`;
 }
 
+// Renders a persona's shareable-files block with its file rows.
 function filesBlockMarkup(persona: Persona | null | undefined): string {
 	const rows = (persona?.files ?? [])
 		.map((file, index) => fileRowMarkup(file, index))
@@ -137,6 +115,7 @@ function filesBlockMarkup(persona: Persona | null | undefined): string {
   </div>`;
 }
 
+// Renders a persona card, with a fixed-root chip for the required first root.
 function personaCardMarkup(
 	persona: Persona,
 	isRoot: boolean,
@@ -185,6 +164,7 @@ function personaCardMarkup(
   </article>`;
 }
 
+// Renders the option list of personas for a referral dropdown.
 function personaOptions(personas: Persona[], selectedId: string): string {
 	return personas
 		.map(
@@ -194,6 +174,7 @@ function personaOptions(personas: Persona[], selectedId: string): string {
 		.join("");
 }
 
+// Renders one referral row with from/to dropdowns and a conditions field.
 function referralRowMarkup(
 	referral: ReferralEdge,
 	personas: Persona[],
@@ -282,6 +263,7 @@ export type BuildHTMLFormInput = {
 	roots?: string[] | null;
 };
 
+// Builds the standalone, editable HTML export of a case, including its embedded script.
 export function buildHTMLForm({
 	caseName,
 	accessCode,
@@ -297,9 +279,6 @@ export function buildHTMLForm({
 			? { personas, referrals: referrals ?? [], roots: roots ?? [] }
 			: scaffoldGraph();
 
-	// The exported form's own "+ Add persona" always leaves the first root
-	// (whichever is exported as roots[0]) as the one mandatory, un-removable
-	// root — same invariant the app itself enforces (at least one root).
 	const fixedRootId = graph.roots[0] ?? null;
 
 	const personaCards = graph.personas
@@ -423,9 +402,6 @@ export function buildHTMLForm({
   var referralTemplate = document.getElementById('referral-template');
   var fileTemplate = document.getElementById('file-template');
 
-  // The exact same reachability algorithm graph.svelte.ts's CaseGraph is built on --
-  // embedded here, not hand-copied, so this form's removal cascade can't silently drift
-  // from the live app's.
   var reachableFrom = ${REACHABLE_FROM_SOURCE};
 
   function currentPersonas() {
@@ -462,10 +438,6 @@ export function buildHTMLForm({
     });
   }
 
-  // Removes every persona no longer reachable from a root by following the referral
-  // edges currently in the form -- same rule graph.svelte.ts's removeSubtree/
-  // removeReferralsFrom enforce: a persona introduced only by a referral that's gone
-  // doesn't stay behind as an orphan.
   function pruneUnreachablePersonas() {
     var stillReachable = reachableFrom(currentRoots(), currentReferralEdges());
     document.querySelectorAll('[data-persona-id]').forEach(function (card) {
@@ -476,14 +448,6 @@ export function buildHTMLForm({
     });
   }
 
-  // Built with the Option constructor, not innerHTML + string-concatenated markup: a persona
-  // name is admin-authored text that reaches here unescaped (unlike personaOptions() above,
-  // which builds the export's INITIAL <option>s server-side through escapeHtml), and the
-  // Option constructor always sets its label as a text node -- never parsed as HTML -- so an
-  // id or name containing '"', '<', or '>' can't break out of an attribute or inject markup
-  // into whichever admin's browser has this file open. Same threat PERSONA_ID_FORMAT's own
-  // comment (services/cases.ts) defends against for ids; this closes the matching gap for
-  // names, which that format restriction doesn't cover.
   function refreshReferralOptions() {
     var personas = currentPersonas();
     document.querySelectorAll('.referral-row').forEach(function (row) {
@@ -513,9 +477,6 @@ export function buildHTMLForm({
 
   function removePersona(card) {
     var id = card.getAttribute('data-persona-id');
-    // The fixed first root has no "Remove persona" button (see
-    // personaCardMarkup), but guard here too — it's the case's one
-    // mandatory root persona.
     if (id === FIXED_ROOT_ID) return;
     removeReferralEdgesTouching(id);
     card.remove();
@@ -537,8 +498,6 @@ export function buildHTMLForm({
     refreshReferralOptions();
   }
 
-  // Files carry no id of their own (see fileRowMarkup's comment) — the label
-  // just tracks DOM position, so it has to be recomputed after every add/remove.
   function renumberFiles(fileList) {
     fileList.querySelectorAll('.file-row').forEach(function (row, index) {
       row.querySelector('.file-row-title').textContent = 'File ' + (index + 1);
@@ -586,6 +545,7 @@ export function buildHTMLForm({
     </html>`;
 }
 
+// Downloads the HTML form as 'export case.html'.
 export function downloadForm(html: string): void {
 	downloadBlob(
 		new Blob([html], { type: "text/html;charset=utf-8" }),

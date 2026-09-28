@@ -1,15 +1,14 @@
-// run.svelte.ts uses `window.setTimeout`/`setInterval` directly (notes debounce,
-// run-expiry watch), which is why this file is named `*.svelte.test.ts` rather than plain
-// `*.test.ts`: per vite.config.ts's project split, that suffix (also what gets the Svelte
-// compiler to process runes in this non-.svelte module) routes it to the jsdom-backed
-// "client" project, not "server"/node.
-
 import { getFunctionName } from "convex/server";
 import { toast } from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { goto } from "$app/navigation";
+import { STUDENT_ERROR } from "../../convex/lib/studentErrors.js";
 import { session } from "../../src/lib/session.svelte.js";
 import { RunStore } from "../../src/lib/student/run.svelte.js";
+import {
+	clientServerError,
+	clientStudentError,
+} from "../support/convexClientErrors.js";
 import {
 	makeContact,
 	makeRunState,
@@ -17,24 +16,19 @@ import {
 	message,
 } from "../support/fixtures.js";
 
-// startSession/sendMessage go through Convex mutations, and the run's live state
-// (contacts, histories, ...) through a Convex query subscription -- both mocked here.
 const mockClientMutation = vi.fn();
 const mockClientQuery = vi.fn();
 
-// A minimal, reactive-enough stand-in for convex-svelte's useQuery: entries are keyed by
-// (function name, args) and re-read via a getter on every access, gated behind a $state
-// version counter so changing an *existing* key's value later (simulating a live server
-// push, same args as before) still invalidates anything derived from it -- a plain Map
-// mutation alone wouldn't, since Svelte has no way to see inside a plain JS getter.
 type FakeQueryEntry = { data?: unknown; error?: Error };
 const fakeQueryData = new Map<string, FakeQueryEntry>();
 let fakeQueryVersion = $state(0);
 
+// Builds the key for a fake query result from its name and arguments.
 function fakeQueryKey(refName: string, args: unknown): string {
 	return `${refName}::${JSON.stringify(args)}`;
 }
 
+// Sets a fake query result and notifies subscribers.
 function setFakeQuery(
 	refName: string,
 	args: unknown,
@@ -44,6 +38,7 @@ function setFakeQuery(
 	fakeQueryVersion += 1;
 }
 
+// Clears all fake query results.
 function resetFakeQueries(): void {
 	fakeQueryData.clear();
 	fakeQueryVersion += 1;
@@ -83,8 +78,7 @@ const GET_SIMULATION_STATE = "api/simulations:get";
 const GET_PERSONA_HISTORY = "api/simulations:getPersonaHistory";
 const GET_TURN_STREAM = "api/turn:getTurnStream";
 
-// Pushes mary's latest turn (api/turn:getTurnStream) under the args RunStore subscribes with --
-// withText is true unless this tab is driving that turn.
+// Sets the fake turn stream query result for the active persona.
 function setTurn(
 	turn: Partial<{
 		streamId: string;
@@ -110,9 +104,6 @@ function setTurn(
 	);
 }
 
-// A case with no configured duration keeps #ensureExpiryWatch's early-return
-// branch active, so tests never touch `window.setInterval` incidentally —
-// that behavior (auto-ending a run on expiry) is out of scope here.
 const caseData = {
 	id: "case-1",
 	case_name: "Sterling Industries",
@@ -120,16 +111,8 @@ const caseData = {
 	simulation_duration: null as number | null,
 };
 
-// RunStore is created fresh per /student mount (createRunStore), not a module singleton --
-// session IS a module singleton these tests share, reset via session.clearRun() in beforeEach
-// below rather than vi.resetModules(): fakeQueryVersion above is a
-// $state declared at this file's top level, which vi.resetModules() would NOT re-evaluate
-// (only subsequently-imported modules get a fresh instance) -- reactivity across that boundary
-// silently doesn't propagate, since a freshly re-imported run.svelte.ts would run under a
-// different Svelte runtime instance than this file's own top-level $state. Every created
-// RunStore is tracked and disposed in afterEach, so a stale instance's effects can't keep
-// reacting to the next test's session changes.
 const liveRuns: RunStore[] = [];
+// Creates a RunStore and returns it with the session and the mocked goto and toast.
 function freshRun() {
 	const run = new RunStore();
 	liveRuns.push(run);
@@ -141,15 +124,13 @@ function freshRun() {
 	};
 }
 
-// Establishes a run whose active persona ("mary") is available, wired through the fake
-// reactive query rather than a direct `run.raw = ...` assignment -- raw is now $derived,
-// read-only, sourced from the (mocked) live subscription.
+// Starts a run in the session and seeds the fake state query with a run state.
 async function primeRun(
 	run: Awaited<ReturnType<typeof freshRun>>["run"],
 	session: Awaited<ReturnType<typeof freshRun>>["session"],
 	overrides: Parameters<typeof makeRunState>[0] = {},
 ) {
-	session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+	session.startRun({ runId: "run-1" });
 	setFakeQuery(
 		GET_SIMULATION_STATE,
 		{ runId: "run-1" },
@@ -157,7 +138,6 @@ async function primeRun(
 			data: makeRunState({
 				case: caseData,
 				contacts: [makeContact({ id: "mary", chat_ended: false })],
-				active_persona_id: "mary",
 				...overrides,
 			}),
 		},
@@ -178,127 +158,175 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-describe("startSession", () => {
-	it("a successful call populates raw (via the live query), writes the session, and selects an active contact", async () => {
+describe("init", () => {
+	// Tests that a run already in the session is left alone.
+	it("resumes a persisted run without starting anything", async () => {
 		const { run, session, goto } = await freshRun();
-		mockClientMutation.mockResolvedValue(
-			makeRunState({
-				run_id: "run-42",
-				case: caseData,
-				contacts: [makeContact({ id: "mary" })],
-				active_persona_id: "mary",
-			}),
-		);
+		session.startRun({ runId: "run-1" });
+
+		run.init();
+
+		expect(goto).not.toHaveBeenCalled();
+		expect(mockClientMutation).not.toHaveBeenCalled();
+	});
+
+	// A simulation that has ended stays ended: with no run to resume the student goes home,
+	// and nothing starts a new one behind their back.
+	it("goes home, without starting a new run, when there is no run to resume", async () => {
+		const { run, session, goto } = await freshRun();
+
+		run.init();
+
+		expect(goto).toHaveBeenCalledWith("/");
+		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(session.runId).toBe("");
+	});
+});
+
+describe("which persona is selected", () => {
+	// Tests that the default selection skips a contact who is not yet available.
+	it("defaults to the first contact that's actually available, skipping one that isn't yet", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session, {
+			contacts: [
+				makeContact({ id: "later", available_at: 999 }),
+				makeContact({ id: "mary" }),
+			],
+		});
+
+		await vi.waitFor(() => expect(run.activeContactId).toBe("mary"));
+	});
+
+	// Tests that the last selected persona is restored, e.g. after a reload.
+	it("restores the persona the student last selected, e.g. after a reload", async () => {
+		const { run, session } = await freshRun();
+		session.startRun({ runId: "run-1" });
+		session.setActivePersona("bob");
 		setFakeQuery(
 			GET_SIMULATION_STATE,
-			{ runId: "run-42" },
+			{ runId: "run-1" },
 			{
 				data: makeRunState({
-					run_id: "run-42",
 					case: caseData,
-					contacts: [makeContact({ id: "mary" })],
-					active_persona_id: "mary",
+					contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
 				}),
 			},
 		);
 
-		await run.startSession("ACCESS1");
-
-		expect(session.runId).toBe("run-42");
-		expect(session.accessCode).toBe("ACCESS1");
-		await vi.waitFor(() => expect(run.raw?.run_id).toBe("run-42"));
-		expect(run.activeContactId).toBe("mary");
-		expect(goto).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(run.activeContactId).toBe("bob"));
 	});
 
-	it("a failed call navigates home", async () => {
-		const { run, goto } = await freshRun();
-		mockClientMutation.mockRejectedValue(new Error("Invalid access code."));
+	// Tests that a remembered persona no longer in the run is ignored.
+	it("ignores a remembered persona that's no longer in the run", async () => {
+		const { run, session } = await freshRun();
+		session.startRun({ runId: "run-1" });
+		session.setActivePersona("gone");
+		setFakeQuery(
+			GET_SIMULATION_STATE,
+			{ runId: "run-1" },
+			{
+				data: makeRunState({
+					case: caseData,
+					contacts: [makeContact({ id: "mary" })],
+				}),
+			},
+		);
 
-		await run.startSession("BADCODE");
+		await vi.waitFor(() => expect(run.activeContactId).toBe("mary"));
+	});
 
-		expect(run.raw).toBeNull();
-		expect(goto).toHaveBeenCalledWith("/");
+	// Tests that a selection is remembered in the session and forgotten along with the run.
+	it("remembers a selection in the session, and forgets it with the run", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session, {
+			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
+		});
+		await vi.waitFor(() => expect(run.activeContactId).toBe("mary"));
+
+		run.selectContact("bob");
+
+		expect(session.activePersonaId).toBe("bob");
+		expect(
+			JSON.parse(sessionStorage.getItem("caseLabSession") ?? "{}"),
+		).toMatchObject({ activePersonaId: "bob" });
+
+		session.clearRun();
+		expect(session.activePersonaId).toBe("");
 	});
 });
 
 describe("session resume / live-query errors", () => {
-	it("an expired run clears the run id and starts a fresh session when an access code is still known", async () => {
-		const { run, session, goto } = await freshRun();
-		session.startRun({ runId: "stale-run", accessCode: "ACCESS1" });
-		setFakeQuery(
-			GET_SIMULATION_STATE,
-			{ runId: "stale-run" },
-			{ error: new Error("Run not found.") },
-		);
-		mockClientMutation.mockResolvedValue(
-			makeRunState({
-				run_id: "fresh-run",
-				case: caseData,
-				contacts: [makeContact({ id: "mary" })],
-				active_persona_id: "mary",
-			}),
-		);
-		setFakeQuery(
-			GET_SIMULATION_STATE,
-			{ runId: "fresh-run" },
-			{
-				data: makeRunState({
-					run_id: "fresh-run",
-					case: caseData,
-					contacts: [makeContact({ id: "mary" })],
-					active_persona_id: "mary",
-				}),
-			},
-		);
+	// Tests that a run-not-found or run-expired error sends the student home without starting a new run.
+	it.each([
+		[STUDENT_ERROR.RUN_NOT_FOUND, "Run not found."],
+		[STUDENT_ERROR.RUN_EXPIRED, "Run expired."],
+	] as const)(
+		"a %s error sends the student home without starting a new run",
+		async (code, text) => {
+			const { session, goto } = await freshRun();
+			session.startRun({ runId: "stale-run" });
+			sessionStorage.setItem(notesKey("stale-run"), "my notes");
+			setFakeQuery(
+				GET_SIMULATION_STATE,
+				{ runId: "stale-run" },
+				{ error: clientStudentError("api/simulations:get", code, text, "Q") },
+			);
 
-		// #handleExpired fires startSession without awaiting it, so the fresh
-		// run only shows up once that call resolves.
-		await vi.waitFor(() => expect(run.raw?.run_id).toBe("fresh-run"));
-		expect(session.runId).toBe("fresh-run");
-		expect(goto).not.toHaveBeenCalled();
-	});
+			await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
+			expect(session.runId).toBe("");
+			expect(sessionStorage.getItem(notesKey("stale-run"))).toBeNull();
+			expect(mockClientMutation).not.toHaveBeenCalled();
+		},
+	);
 
-	it("an expired run with no known access code navigates home instead", async () => {
-		const { run, session, goto } = await freshRun();
-		session.startRun({ runId: "stale-run", accessCode: "" });
-		setFakeQuery(
-			GET_SIMULATION_STATE,
-			{ runId: "stale-run" },
-			{ error: new Error("Run not found.") },
-		);
-
-		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
-		expect(session.runId).toBe("");
-		void run;
-	});
-
+	// Tests that an unrelated error sets loadError instead of clearing the run.
 	it("a non-expiry error sets loadError instead of clearing the run", async () => {
 		const { run, session, goto } = await freshRun();
-		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+		session.startRun({ runId: "run-1" });
 		setFakeQuery(
 			GET_SIMULATION_STATE,
 			{ runId: "run-1" },
-			{ error: new Error("Server exploded.") },
+			{ error: clientServerError("api/simulations:get", "Q") },
 		);
 
-		await vi.waitFor(() => expect(run.loadError).toBe("Server exploded."));
+		await vi.waitFor(() =>
+			expect(run.loadError).toBe("Failed to load the simulation."),
+		);
 		expect(session.runId).toBe("run-1");
 		expect(goto).not.toHaveBeenCalled();
 	});
 
-	// REGRESSION: loadError used to only ever be set, never cleared, so a transient failure
-	// (network blip, momentary server error) left the error banner up forever even after the
-	// subscription went on to succeed.
-	it("clears loadError once the live subscription recovers", async () => {
-		const { run, session } = await freshRun();
-		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+	// Tests that a deliberate student error's own message is shown as loadError.
+	it("shows a deliberate student error's own message as loadError", async () => {
+		const { run, session, goto } = await freshRun();
+		session.startRun({ runId: "run-1" });
 		setFakeQuery(
 			GET_SIMULATION_STATE,
 			{ runId: "run-1" },
-			{ error: new Error("Server exploded.") },
+			{
+				error: clientStudentError(
+					"api/simulations:get",
+					STUDENT_ERROR.CASE_NOT_FOUND,
+					"Case not found.",
+					"Q",
+				),
+			},
 		);
-		await vi.waitFor(() => expect(run.loadError).toBe("Server exploded."));
+
+		await vi.waitFor(() => expect(run.loadError).toBe("Case not found."));
+		expect(goto).not.toHaveBeenCalled();
+	});
+
+	// Tests that loadError clears once the live subscription recovers.
+	it("clears loadError once the live subscription recovers", async () => {
+		const { run, session } = await freshRun();
+		session.startRun({ runId: "run-1" });
+		setFakeQuery(
+			GET_SIMULATION_STATE,
+			{ runId: "run-1" },
+			{ error: clientServerError("api/simulations:get", "Q") },
+		);
+		await vi.waitFor(() => expect(run.loadError).not.toBe(""));
 
 		setFakeQuery(
 			GET_SIMULATION_STATE,
@@ -311,6 +339,7 @@ describe("session resume / live-query errors", () => {
 });
 
 describe("sendMessage guards", () => {
+	// Tests that sendMessage returns false and sends nothing without a run id.
 	it("returns false and sends nothing when there is no run id", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -321,6 +350,7 @@ describe("sendMessage guards", () => {
 		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
+	// Tests that sendMessage returns false and sends nothing without an active contact.
 	it("returns false and sends nothing when there is no active contact", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -330,6 +360,7 @@ describe("sendMessage guards", () => {
 		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
+	// Tests that sendMessage returns false and sends nothing for an empty or whitespace-only message.
 	it("returns false and sends nothing for an empty or whitespace-only message", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -340,6 +371,7 @@ describe("sendMessage guards", () => {
 		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
+	// Tests that sendMessage returns false and sends nothing while a send is in flight.
 	it("returns false and sends nothing while a send is already in flight", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -350,11 +382,9 @@ describe("sendMessage guards", () => {
 		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
+	// Tests that sendMessage returns false and sends nothing when the active persona is unavailable.
 	it("returns false and sends nothing when the active persona is unavailable", async () => {
 		const { run, session } = await freshRun();
-		// available_at far in the future -- elapsedMinutes stays ~0 for the test's real-time
-		// duration (session.startTime defaults to "now"), so this persona never becomes
-		// available. See fixtures.ts's makeContact comment for why not `available: false`.
 		await primeRun(run, session, {
 			contacts: [makeContact({ id: "mary", available_at: 9999 })],
 		});
@@ -364,6 +394,7 @@ describe("sendMessage guards", () => {
 		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
+	// Tests that sendMessage returns false and sends nothing when the persona's chat has ended.
 	it("returns false and sends nothing when the active persona's chat has ended", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session, {
@@ -375,6 +406,7 @@ describe("sendMessage guards", () => {
 		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
+	// Tests that an accepted message returns true and calls the api/turn:start mutation.
 	it("returns true and calls the api/turn:start mutation when the message is accepted", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -396,6 +428,7 @@ describe("sendMessage guards", () => {
 });
 
 describe("sendMessage lifecycle", () => {
+	// Tests that isSending stays true until the sent turn settles, regardless of how many messages it adds.
 	it("isSending stays true until the sent turn settles, however many messages that adds to the history", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -412,15 +445,9 @@ describe("sendMessage lifecycle", () => {
 		run.sendMessage("New question");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		// The mutation resolving alone must not clear isSending, and neither must the previous
-		// turn -- which the subscription still shows, already settled, until the new one replaces it.
 		await Promise.resolve();
 		expect(run.isSending).toBe(true);
 
-		// The new turn starts, and the user's own message lands in the history (startTurn
-		// no longer stores it -- runTurn does, once the classifier clears it -- but either way
-		// a history change alone must NOT clear isSending: this is the regression where the Send
-		// button read "Send" instead of showing the typing indicator mid-reply).
 		setTurn({ streamId: "new", status: "streaming", text: "The rep" });
 		setFakeQuery(
 			GET_PERSONA_HISTORY,
@@ -436,7 +463,6 @@ describe("sendMessage lifecycle", () => {
 		await Promise.resolve();
 		expect(run.isSending).toBe(true);
 
-		// applyDecisions/applyBoundary insert the reply and settle the turn in one transaction.
 		setTurn({ streamId: "new", status: "done", settled: true });
 		setFakeQuery(
 			GET_PERSONA_HISTORY,
@@ -455,9 +481,7 @@ describe("sendMessage lifecycle", () => {
 		expect(run.activeMessages).toHaveLength(4);
 	});
 
-	// REGRESSION: a flagged message is never stored, so the canned boundary reply grows the history
-	// by ONE, not two. Clearing on "history grew by 2" left isSending stuck true -- silently
-	// blocking every later send, to every persona, until a reload.
+	// Tests that a boundary reply clears isSending even though it adds only one message.
 	it("clears isSending after a boundary reply, though it adds only one message to the history", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
@@ -485,12 +509,17 @@ describe("sendMessage lifecycle", () => {
 		expect(run.sendMessage("a real question")).toBe(true);
 	});
 
+	// Tests that a rejected mutation clears isSending immediately and shows a toast.
 	it("a rejected mutation (e.g. rate limited, conversation ended) clears isSending immediately and shows a toast", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 		mockClientMutation.mockRejectedValue(
-			new Error("This conversation has ended."),
+			clientStudentError(
+				"api/turn:start",
+				STUDENT_ERROR.CONVERSATION_ENDED,
+				"This conversation has ended.",
+			),
 		);
 
 		run.sendMessage("hello");
@@ -501,7 +530,22 @@ describe("sendMessage lifecycle", () => {
 		});
 	});
 
-	// A turn this tab isn't driving (a reload, a second window) follows the persisted copy.
+	// Tests that a real server error shows a generic toast rather than the client's wrapper text.
+	it("shows a generic toast, not the client's wrapper text, when the server hit a real error", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockRejectedValue(clientServerError("api/turn:start"));
+
+		run.sendMessage("hello");
+
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(toast).toHaveBeenCalledWith("Message failed. Please try again.", {
+			duration: 4000,
+		});
+	});
+
+	// Tests that streamingPreview shows an undriven turn's persisted text and clears once it settles.
 	it("streamingPreview shows an undriven turn's persisted text, and clears once the turn settles", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -516,6 +560,7 @@ describe("sendMessage lifecycle", () => {
 		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
 	});
 
+	// Tests that a claimable turn is streamed exactly once and the reply shows as it streams.
 	it("drives a claimable turn over /turn-stream exactly once and shows the reply as it streams", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -532,7 +577,6 @@ describe("sendMessage lifecycle", () => {
 			{ method: "POST", body: JSON.stringify({ streamId: "s1" }) },
 		);
 
-		// Driving, this tab stops asking the server for the text -- it reads its own stream.
 		setTurn({ status: "streaming" }, false);
 		const encoder = new TextEncoder();
 		await writer.write(encoder.encode("Hel"));
@@ -546,6 +590,7 @@ describe("sendMessage lifecycle", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 
+	// Tests that the persisted reply is used when another tab claimed the turn first.
 	it("falls back to the persisted copy when another tab claimed the turn first", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -562,6 +607,7 @@ describe("sendMessage lifecycle", () => {
 		);
 	});
 
+	// Tests that a failed stream clears isSending and toasts instead of leaving it stuck.
 	it("a failed turn (stream status 'error') clears isSending and toasts, instead of leaving it stuck forever", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
@@ -571,9 +617,6 @@ describe("sendMessage lifecycle", () => {
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		// The component marks the stream "error" when runTurn throws -- unlike a synchronous
-		// startTurn rejection, this arrives asynchronously via the reactive subscription, not a
-		// rejected mutation promise, since the mutation already resolved.
 		setTurn({ status: "error" });
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
@@ -584,8 +627,7 @@ describe("sendMessage lifecycle", () => {
 		);
 	});
 
-	// Until the new turn replaces it, the subscription still shows the previous one -- which may
-	// itself have failed. That stale "error" must not cancel the send that just started.
+	// Tests that the previous turn's error is not mistaken for the new send failing.
 	it("does not mistake the previous turn's error for the new send failing", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
@@ -604,6 +646,7 @@ describe("sendMessage lifecycle", () => {
 });
 
 describe("notification diffing (#diffAndNotify, observed via the live query)", () => {
+	// Tests that toasts fire only for new contacts and files after the initial roster, and never for repeats.
 	it("fires no toasts for the initial roster, exactly one for a later new contact and a later new file, and none for a repeat", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session, { shared_files: [] });
@@ -618,7 +661,6 @@ describe("notification diffing (#diffAndNotify, observed via the live query)", (
 				data: makeRunState({
 					case: caseData,
 					contacts: [makeContact({ id: "mary", chat_ended: false }), bob],
-					active_persona_id: "mary",
 					shared_files: [newFile],
 				}),
 			},
@@ -632,9 +674,6 @@ describe("notification diffing (#diffAndNotify, observed via the live query)", (
 			duration: 4000,
 		});
 
-		// The same contact/file showing up again -- via an entirely unrelated query (this
-		// persona's history is its own subscription now, see #historyQuery's comment)
-		// changing -- must not re-notify.
 		setFakeQuery(
 			GET_PERSONA_HISTORY,
 			{ runId: "run-1", personaId: "mary" },
@@ -645,48 +684,39 @@ describe("notification diffing (#diffAndNotify, observed via the live query)", (
 	});
 });
 
-// Notes are client-side only (sessionStorage, keyed by run id) — see
-// run.svelte.ts's comment on NOTES_STORAGE_PREFIX for why: autosaving them
-// through the backend used to take the simulations row's write lock on every
-// debounced keystroke, contending with reply persistence.
+// Returns the sessionStorage key a run's notes are stored under.
 const notesKey = (runId: string) => `caselab:notes:${runId}`;
 
 describe("notes", () => {
-	// jsdom's Storage implementation doesn't go through overridable prototype
-	// methods (vi.spyOn(Storage.prototype/sessionStorage, "setItem") silently
-	// never fires here), so these observe the actually-stored value instead
-	// of counting calls.
+	// Tests that setNotes debounces its write to storage.
 	it("setNotes debounces: no write before the debounce elapses, written after", async () => {
 		vi.useFakeTimers();
 		try {
 			const { run, session } = await freshRun();
-			session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+			session.startRun({ runId: "run-1" });
 
 			run.setNotes("draft text");
 			await vi.advanceTimersByTimeAsync(700);
 			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
-			await vi.advanceTimersByTimeAsync(150); // crosses the 800ms debounce
+			await vi.advanceTimersByTimeAsync(150);
 			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft text");
 		} finally {
 			vi.useRealTimers();
 		}
 	});
 
+	// Tests that flushNotes writes immediately and cancels the pending debounce timer.
 	it("flushNotes bypasses the debounce and cancels the pending timer so it does not fire again later", async () => {
 		vi.useFakeTimers();
 		try {
 			const { run, session } = await freshRun();
-			session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+			session.startRun({ runId: "run-1" });
 
 			run.setNotes("draft 1");
 			run.setNotes("draft 2");
 			run.flushNotes();
 			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft 2");
 
-			// Mutate the in-memory value directly, bypassing setNotes (so no new
-			// timer gets scheduled) — if the original debounce timer from
-			// setNotes("draft 2") weren't cancelled by flushNotes, it would fire
-			// here and write this stale value to storage.
 			run.notes = "mutated after flush";
 			await vi.advanceTimersByTimeAsync(1000);
 			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft 2");
@@ -695,9 +725,10 @@ describe("notes", () => {
 		}
 	});
 
+	// Tests that a storage write failure neither throws nor shows a toast.
 	it("a storage write failure does not throw or show a toast", async () => {
 		const { run, session, toast } = await freshRun();
-		session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+		session.startRun({ runId: "run-1" });
 		vi.stubGlobal("sessionStorage", {
 			setItem: () => {
 				throw new DOMException("Quota exceeded.");
@@ -715,24 +746,21 @@ describe("notes", () => {
 });
 
 describe("endSimulation", () => {
+	// Tests that endSimulation cancels the pending save, clears notes and the run, and navigates home.
 	it("cancels any pending save, clears stored notes, clears the run, and navigates home", async () => {
 		vi.useFakeTimers();
 		try {
 			const { run, session, goto } = await freshRun();
-			session.startRun({ runId: "run-1", accessCode: "ACCESS1" });
+			session.startRun({ runId: "run-1" });
 			sessionStorage.setItem(notesKey("run-1"), "earlier session");
 
-			run.setNotes("final thoughts"); // schedules a debounced write, never flushed
+			run.setNotes("final thoughts");
 			run.endSimulation();
 
 			expect(session.runId).toBe("");
 			expect(goto).toHaveBeenCalledWith("/");
-			// A finished run has nothing left to read its notes back — cleared
-			// outright rather than flushed first.
 			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
 
-			// If the pending debounced write from setNotes() above weren't
-			// cancelled, it would fire here and resurrect the just-cleared entry.
 			await vi.advanceTimersByTimeAsync(1000);
 			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
 		} finally {
@@ -742,13 +770,9 @@ describe("endSimulation", () => {
 });
 
 describe("a run that expires while a message is in flight", () => {
-	// #handleExpired resets activeContactId, notes and the run id, but not the send guard.
-	// Both effects that clear isSending are scoped to `personaId === activeContactId`, so once
-	// expiry nulls activeContactId neither can ever fire again -- and #handleExpired immediately
-	// starts a REPLACEMENT run from the stored access code. The student lands in a working new
-	// simulation with the composer permanently disabled, and the only way out is a full reload.
-	it("REGRESSION: clears isSending so the replacement run's composer is usable", async () => {
-		const { run, session } = await freshRun();
+	// Tests that a run expiring while a message is in flight sends the student home without a replacement run.
+	it("sends the student home instead of starting a replacement run", async () => {
+		const { run, session, goto } = await freshRun();
 		await primeRun(run, session);
 		setFakeQuery(
 			GET_PERSONA_HISTORY,
@@ -760,91 +784,27 @@ describe("a run that expires while a message is in flight", () => {
 		expect(run.sendMessage("are you there?")).toBe(true);
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		// The run expires mid-turn; the store auto-starts a fresh one from the access code.
-		mockClientMutation.mockResolvedValue(
-			makeRunState({
-				run_id: "run-2",
-				case: caseData,
-				contacts: [makeContact({ id: "mary" })],
-				active_persona_id: "mary",
-			}),
-		);
 		setFakeQuery(
 			GET_SIMULATION_STATE,
 			{ runId: "run-1" },
-			{ error: new Error("Run expired.") },
-		);
-		setFakeQuery(
-			GET_SIMULATION_STATE,
-			{ runId: "run-2" },
 			{
-				data: makeRunState({
-					run_id: "run-2",
-					case: caseData,
-					contacts: [makeContact({ id: "mary" })],
-					active_persona_id: "mary",
-				}),
+				error: clientStudentError(
+					"api/simulations:get",
+					STUDENT_ERROR.RUN_EXPIRED,
+					"Run expired.",
+					"Q",
+				),
 			},
 		);
 
-		await vi.waitFor(() => expect(session.runId).toBe("run-2"));
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-	});
-
-	it("REGRESSION: accepts a new message in the replacement run", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: [] },
-		);
-		mockClientMutation.mockResolvedValue(undefined);
-		run.sendMessage("first");
-		await vi.waitFor(() => expect(run.isSending).toBe(true));
-
-		mockClientMutation.mockResolvedValue(
-			makeRunState({
-				run_id: "run-2",
-				case: caseData,
-				contacts: [makeContact({ id: "mary" })],
-				active_persona_id: "mary",
-			}),
-		);
-		setFakeQuery(
-			GET_SIMULATION_STATE,
-			{ runId: "run-1" },
-			{ error: new Error("Run expired.") },
-		);
-		setFakeQuery(
-			GET_SIMULATION_STATE,
-			{ runId: "run-2" },
-			{
-				data: makeRunState({
-					run_id: "run-2",
-					case: caseData,
-					contacts: [makeContact({ id: "mary" })],
-					active_persona_id: "mary",
-				}),
-			},
-		);
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-2", personaId: "mary" },
-			{ data: [] },
-		);
-		await vi.waitFor(() => expect(run.activeContactId).toBe("mary"));
-
-		mockClientMutation.mockResolvedValue(undefined);
-		await vi.waitFor(() => expect(run.sendMessage("second")).toBe(true));
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
+		expect(session.runId).toBe("");
+		expect(mockClientMutation).toHaveBeenCalledTimes(1);
 	});
 });
 
 describe("run-level time expiry", () => {
-	// Replaces the old "kick the student out" behavior: once the case's configured duration
-	// elapses, messaging disables in place instead of endSimulation() clearing the session and
-	// navigating home -- the student stays on the same run and can keep reading history/notes
-	// and exporting the PDF.
+	// Tests that run-level time expiry disables messaging in place rather than navigating away.
 	it("disables messaging in place instead of navigating away", async () => {
 		vi.useFakeTimers();
 		try {
@@ -862,7 +822,6 @@ describe("run-level time expiry", () => {
 			expect(run.activePersonaAvailable).toBe(false);
 			expect(run.sendMessage("are you there?")).toBe(false);
 			expect(mockClientMutation).not.toHaveBeenCalled();
-			// Unlike the old endSimulation() path: the session/run are left intact.
 			expect(session.runId).toBe("run-1");
 			expect(goto).not.toHaveBeenCalled();
 		} finally {
@@ -870,47 +829,34 @@ describe("run-level time expiry", () => {
 		}
 	});
 
-	it("resets on the replacement run once the grace period actually expires", async () => {
+	// Tests that the student goes home once the grace period ends, without a new run.
+	it("goes home once the grace period actually expires, without starting a new run", async () => {
 		vi.useFakeTimers();
 		try {
-			const { run, session } = await freshRun();
+			const { run, session, goto } = await freshRun();
 			await primeRun(run, session, {
 				case: { ...caseData, simulation_duration: 1 },
 			});
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(run.timeExpired).toBe(true);
+			expect(goto).not.toHaveBeenCalled();
 
-			// The backend's own grace period (services/simulations.ts's expiresAt) elapses later,
-			// well after this client-side flag already flipped -- #handleExpired's existing
-			// auto-restart fires exactly as it does today.
-			mockClientMutation.mockResolvedValue(
-				makeRunState({
-					run_id: "run-2",
-					case: caseData,
-					contacts: [makeContact({ id: "mary" })],
-					active_persona_id: "mary",
-				}),
-			);
 			setFakeQuery(
 				GET_SIMULATION_STATE,
 				{ runId: "run-1" },
-				{ error: new Error("Run expired.") },
-			);
-			setFakeQuery(
-				GET_SIMULATION_STATE,
-				{ runId: "run-2" },
 				{
-					data: makeRunState({
-						run_id: "run-2",
-						case: caseData,
-						contacts: [makeContact({ id: "mary" })],
-						active_persona_id: "mary",
-					}),
+					error: clientStudentError(
+						"api/simulations:get",
+						STUDENT_ERROR.RUN_NOT_FOUND,
+						"Run not found.",
+						"Q",
+					),
 				},
 			);
 
-			await vi.waitFor(() => expect(session.runId).toBe("run-2"));
-			expect(run.timeExpired).toBe(false);
+			await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
+			expect(session.runId).toBe("");
+			expect(mockClientMutation).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 		}
@@ -918,10 +864,7 @@ describe("run-level time expiry", () => {
 });
 
 describe("hostile and degenerate client-side send guards", () => {
-	// The client trims exactly like startTurn does (services/turn.ts) and otherwise sends the
-	// text through untouched. Any other reshaping -- truncating, collapsing whitespace,
-	// normalizing unicode -- would let the client's word count disagree with the server's, so
-	// the Send button could enable a message the backend then rejects (or vice versa).
+	// Tests that messages are trimmed like the server does while unicode and newlines are sent untouched.
 	it("trims exactly like the server and otherwise sends unicode and newlines untouched", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -939,7 +882,7 @@ describe("hostile and degenerate client-side send guards", () => {
 		);
 	});
 
-	// Rapid double-click / Enter-mashing: only the first send may reach the backend.
+	// Tests that a burst of sends collapses into exactly one mutation.
 	it("collapses a burst of sends into exactly one mutation", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
@@ -955,6 +898,7 @@ describe("hostile and degenerate client-side send guards", () => {
 		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalledTimes(1));
 	});
 
+	// Tests that sending to a contact whose chat has ended is refused.
 	it("refuses to send to a contact whose chat has already ended", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session, {

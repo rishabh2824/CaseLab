@@ -1,4 +1,3 @@
-// Imports the autofilled HTML form back into the app
 import type { Persona, ReferralEdge } from "../types.js";
 
 export class CaseImportError extends Error {}
@@ -8,6 +7,7 @@ type FormFieldElement =
 	| HTMLTextAreaElement
 	| HTMLSelectElement;
 
+// Reads the value of the field with the given data-field name, or an empty string if absent.
 function fieldValue(root: ParentNode, field: string): string {
 	const el = root.querySelector(
 		`[data-field="${field}"]`,
@@ -15,6 +15,7 @@ function fieldValue(root: ParentNode, field: string): string {
 	return el ? el.value : "";
 }
 
+// Parses a numeric field to a rounded number, warning and returning null if it isn't a number.
 function parseNumberField(
 	text: string,
 	label: string,
@@ -34,9 +35,6 @@ function parseNumberField(
 
 type RawEdge = { fromId: string; toId: string; conditions: string };
 
-// Plain data, straight off the DOM — one persona/edge per element, before any
-// graph-level validation (duplicate ids already resolved, dangling refs
-// already dropped, since both need personaById which this pass builds).
 type RawCaseGraph = {
 	personaOrder: string[];
 	personaById: Map<string, Persona>;
@@ -44,10 +42,7 @@ type RawCaseGraph = {
 	edges: RawEdge[];
 };
 
-// The one DOM-reading pass: walks every persona card and referral row exactly
-// once and builds a plain object. Nothing past this point touches the DOM —
-// validateCaseGraph below is pure-data, the same split as the backend's
-// CaseStructure/validateGraph.
+// Reads personas, roots and referral edges from the form DOM, skipping duplicate or broken entries with warnings.
 function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 	const personaOrder: string[] = [];
 	const personaById = new Map<string, Persona>();
@@ -62,10 +57,6 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 			);
 			continue;
 		}
-		// Files carry no id of their own in the exported form (see exportCase.ts's
-		// fileRowMarkup) — each `.file-row` becomes one placeholder entry, in DOM
-		// order, with `file: null`. The admin attaches the real attachment to each
-		// slot in-app after import; matching them up is on them, by position.
 		const files = Array.from(
 			card.querySelectorAll(".files-block .file-row"),
 		).map((row) => ({
@@ -88,20 +79,10 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 			profile_photo: null,
 			files,
 		});
-		// data-persona-root is the admin's explicit root/referred choice — kept
-		// live-accurate by the exported file's own type-select toggle (see
-		// exportCase.ts's inline script). Trusted directly here instead of
-		// re-derived from the edge list, so the one mandatory root can't
-		// silently lose its root-ness.
 		if (card.getAttribute("data-persona-root") === "true") roots.push(id);
 	}
 
 	const edges: RawEdge[] = [];
-	// Same (from, to) pair seen twice — a hand-edited export can produce this even though the
-	// exported form's own selects never duplicate a referral row on their own. Tracked as a
-	// per-pair Set, not just personaById, since the flat model still allows a persona to be
-	// referred by more than one *other* persona — only an exact repeat of the same edge is
-	// rejected.
 	const seenEdges = new Set<string>();
 	for (const row of doc.querySelectorAll(
 		'.referral-row[data-referral="true"]',
@@ -132,8 +113,6 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 			continue;
 		}
 		seenEdges.add(edgeKey);
-		// No "one parent" restriction here — the flat model allows a persona to
-		// be referred by more than one other persona.
 		edges.push({ fromId, toId, conditions });
 	}
 
@@ -146,19 +125,7 @@ type FlatGraph = {
 	roots: string[];
 };
 
-// Pass 1 of validateCaseGraph below, split out as its own function purely for
-// readability. 3-color DFS over every persona (not just roots), so a cycle with no root
-// connection at all still gets caught. Same approach as the backend's validateGraph —
-// correct even with multiple parents into the same persona, unlike a per-path ancestry
-// set, which can miss a cycle only reachable via a persona's second parent.
-//
-// Iterative, not recursive: mirrors the backend's own iterative three-colour DFS
-// (services/cases.ts's validateGraph) for the same reason — a long referral chain is a
-// perfectly legal shape for a real import to produce, and recursing once per node risks
-// blowing the call stack on a large file. The explicit stack holds (node,
-// next-edge-index) so a node is only marked DONE once every one of its outgoing edges has
-// been walked, exactly as the recursive version (still visible in git history) did on
-// return.
+// Walks the graph and keeps every edge that doesn't close a cycle, warning about the ones it drops.
 function acceptNonCyclicEdges(
 	personaOrder: string[],
 	edgesFrom: Map<string, RawEdge[]>,
@@ -204,24 +171,13 @@ function acceptNonCyclicEdges(
 	return acceptedEdges;
 }
 
-// Pure-data validation over the already-built graph. Two separate passes —
-// conflating them is a real bug: a cycle entirely disconnected from any root
-// still needs walking so its cycle-forming edge gets dropped, but "visited by
-// that walk" is not the same thing as "reachable from a root," and treating
-// them as one set would silently keep personas nothing ever refers to. No DOM
-// access from here on.
+// Drops cyclic edges and personas unreachable from a root, returning the cleaned graph with warnings.
 function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
 	const { personaOrder, personaById, roots, edges } = graph;
 	const edgesFrom = Map.groupBy(edges, (edge) => edge.fromId);
 
-	// Pass 1 (see acceptNonCyclicEdges above).
 	const acceptedEdges = acceptNonCyclicEdges(personaOrder, edgesFrom, warnings);
 
-	// Pass 2 — reachability from an explicit root, over the now-cycle-free
-	// edge set. This is what actually decides which personas survive: one
-	// marked "Referred" with nothing pointing to it, or reachable only through
-	// an edge pass 1 just dropped, is unreachable here even though pass 1
-	// visited it.
 	const edgesFromAccepted = Map.groupBy(acceptedEdges, (edge) => edge.fromId);
 	const reachable = new Set<string>(roots);
 	const queue = [...roots];
@@ -259,17 +215,7 @@ function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
 	};
 }
 
-// The exported HTML's `data-persona-id` attribute exists only so this file's own referral
-// <select>s and root toggles can point at "this card" while an admin (or an LLM) fills in
-// the visible fields around it -- an admin never sees or needs to type the value itself.
-// Left alone, it's also the original persona's real id, carried over unedited by a normal
-// export/re-import round trip. But it's untrusted input once it reaches here (see
-// validatePersonaId's comment in services/cases.ts): a hand-edited attribute containing a
-// character outside printable ASCII, or a leading "$", saves fine client-side and then fails
-// at the server with "Invalid persona id" -- a failure this form has no way to preempt.
-// Minting a fresh id per persona removes that failure mode entirely, and is also more honest
-// about what an import produces: a brand-new case with its own new personas, not a
-// resurrection of the source file's exact identities.
+// Gives every persona a new UUID and rewrites referrals and roots to match.
 function mintFreshPersonaIds(graph: FlatGraph): FlatGraph {
 	const idMap = new Map(
 		graph.personas.map((persona) => [persona.id, crypto.randomUUID()]),
@@ -304,6 +250,7 @@ export type ParsedHTMLForm = {
 	warnings: string[];
 };
 
+// Parses an exported case form into case data plus warnings, throwing CaseImportError for unusable files.
 export function parseHTMLForm(htmlText: string): ParsedHTMLForm {
 	const doc = new DOMParser().parseFromString(htmlText, "text/html");
 	if (
@@ -324,8 +271,6 @@ export function parseHTMLForm(htmlText: string): ParsedHTMLForm {
 		warnings,
 	);
 
-	// One DOM-reading pass builds the whole graph as plain data; everything
-	// after this point is pure validation, no further DOM access.
 	const rawGraph = readCaseGraphFromDom(doc, warnings);
 	if (rawGraph.personaOrder.length === 0) {
 		throw new CaseImportError(

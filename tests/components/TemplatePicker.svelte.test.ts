@@ -1,7 +1,3 @@
-// Client project: TemplatePicker renders the admin case list and (in "edit"
-// mode) a per-card delete flow gated behind DestructiveConfirmDialog. Focus
-// here is that flow — open/cancel/confirm and the on-failure path — not the
-// plain template-picking click-through.
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import * as sonner from "svelte-sonner";
@@ -18,6 +14,7 @@ vi.mock("convex-svelte", () => ({
 
 type CaseSummary = { _id: string; name: string; accessCode?: string };
 
+// Builds a case summary with defaults and optional overrides.
 function makeCaseSummary(overrides: Partial<CaseSummary> = {}): CaseSummary {
 	return {
 		_id: "case-1",
@@ -27,6 +24,7 @@ function makeCaseSummary(overrides: Partial<CaseSummary> = {}): CaseSummary {
 	};
 }
 
+// Stubs the case list query to return the given cases.
 function stubCaseList(items: CaseSummary[]) {
 	mockUseQuery.mockReturnValue({
 		data: items,
@@ -41,6 +39,7 @@ beforeEach(() => {
 });
 
 describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
+	// Tests that clicking delete opens the confirm dialog with the case name and stays on the page.
 	it("opens the confirm dialog with the case's name, without navigating away", async () => {
 		stubCaseList([makeCaseSummary()]);
 		const user = userEvent.setup();
@@ -58,12 +57,10 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 				"This also frees its access code for reuse. This cannot be undone.",
 			),
 		).toBeInTheDocument();
-		// The delete button sits inside the same clickable card as the
-		// open-for-edit button -- stopPropagation must keep this from also
-		// firing openCase's goto.
 		expect(nav.goto).not.toHaveBeenCalled();
 	});
 
+	// Tests that Cancel closes the confirm dialog without deleting the case.
 	it("Cancel closes the dialog without deleting the case", async () => {
 		stubCaseList([makeCaseSummary()]);
 		const user = userEvent.setup();
@@ -81,6 +78,7 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
 	});
 
+	// Tests that confirming delete calls the mutation with the case id and closes the dialog.
 	it("Delete calls the Convex mutation with the case id and closes the dialog", async () => {
 		stubCaseList([makeCaseSummary({ _id: "case-1" })]);
 		mockDeleteCase.mockResolvedValue(undefined);
@@ -100,6 +98,7 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		expect(mockDeleteCase).toHaveBeenCalledWith({ caseId: "case-1" });
 	});
 
+	// Tests that a failed delete keeps the dialog open and shows a toast.
 	it("keeps the dialog open and shows a toast when the delete request fails", async () => {
 		stubCaseList([makeCaseSummary()]);
 		mockDeleteCase.mockRejectedValue(new Error("Case not found."));
@@ -111,8 +110,6 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		const dialog = await screen.findByText('Delete "Sterling Industries"?');
 		await user.click(screen.getByRole("button", { name: "Delete" }));
 
-		// The failure path (confirmDelete's catch) never clears pendingDelete,
-		// so the dialog stays open and the case is never removed from view.
 		await waitFor(() =>
 			expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith("Case not found."),
 		);
@@ -120,12 +117,7 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
 	});
 
-	// Regression test for a real bug: bits-ui's AlertDialog.Content closes on Escape by
-	// default regardless of button disabled state -- Cancel/Delete were disabled while a
-	// delete was in flight, but Escape bypassed both, closing the dialog and re-enabling the
-	// row's Delete button before the in-flight request had actually finished. A second click
-	// then raced the first delete. ConfirmDialog now passes escapeKeydownBehavior={confirming
-	// ? "ignore" : "close"} down to AlertDialog.Content to close that gap.
+	// Tests that Escape is ignored while a delete is in flight but closes the dialog once idle.
 	it("ignores Escape while a delete is in flight, but honors it once idle", async () => {
 		stubCaseList([makeCaseSummary()]);
 		let resolveDelete: (() => void) | undefined;
@@ -152,6 +144,7 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		await waitFor(() => expect(dialogTitle).not.toBeInTheDocument());
 	});
 
+	// Tests that template (create) mode offers no delete button.
 	it("does not offer a delete button in template (create) mode", async () => {
 		stubCaseList([makeCaseSummary()]);
 		render(TemplatePicker, { props: { mode: "template" } });

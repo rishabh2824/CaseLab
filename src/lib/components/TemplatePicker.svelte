@@ -12,28 +12,25 @@ type Props = {
 
 let { mode = "template" }: Props = $props();
 
-// A live subscription, not a fetch-once cache: Convex pushes an updated list to every
-// subscriber automatically whenever a case is created/deleted/edited (including from
-// deleteCase below), so there's no manual invalidate-and-refetch bookkeeping to maintain.
 const casesQuery = useQuery(api.api.cases.listAll, {});
 const deleteCase = useMutation(api.api.cases.deleteCase);
 
 let pendingDelete = $state<CaseSummary | null>(null);
 let isDeleting = $state(false);
 
+// Returns the link for a case: its edit page in edit mode, otherwise a new case seeded from it.
 function caseHref(caseItem: CaseSummary): string {
 	return mode === "edit"
 		? `/admin/cases/${caseItem._id}/edit`
 		: `/admin/cases/new?template=${caseItem._id}`;
 }
 
-// No stopPropagation here: this button sits in a sibling <div> below the
-// open-for-edit button, not nested inside it, so a click here was never
-// going to reach that button's own handler regardless.
+// Marks a case as pending deletion so the confirm dialog opens.
 function requestDelete(caseItem: CaseSummary) {
 	pendingDelete = caseItem;
 }
 
+// Deletes the pending case, showing a toast if the request fails.
 async function confirmDelete(): Promise<void> {
 	const caseItem = pendingDelete;
 	if (!caseItem) return;

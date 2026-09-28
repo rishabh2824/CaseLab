@@ -1,10 +1,3 @@
-// Domain fixtures shared across the frontend unit tests.
-//
-// Every builder takes an overrides object and returns a complete, wire-valid
-// shape, so a test only states the field it actually cares about. Keeping them
-// here (rather than re-declaring a persona literal per file) is what makes a
-// wire-shape change surface as one edit instead of a dozen silently-stale
-// copies — the same reason the backend keeps its payload builders in conftest.
 import type { StartedRun } from "../../src/lib/student/run.svelte.js";
 import type {
 	ChatMessage,
@@ -17,6 +10,7 @@ import type {
 
 let personaSeq = 0;
 
+// Builds a persona with a sequential id and optional overrides.
 export function makePersona(overrides: Partial<Persona> = {}): Persona {
 	personaSeq += 1;
 	return {
@@ -32,6 +26,7 @@ export function makePersona(overrides: Partial<Persona> = {}): Persona {
 	};
 }
 
+// Builds a referral edge.
 export function makeReferral(
 	from_id: string,
 	to_id: string,
@@ -40,10 +35,7 @@ export function makeReferral(
 	return { from_id, to_id, conditions };
 }
 
-// available_at: 0 (the default) means available from the run's own minute 0 -- callers
-// simulating an unavailable/not-yet-unlocked contact should override this to some minute
-// past whatever elapsed time the test's scenario implies, not pass an `available: false`
-// flag (the wire shape no longer carries one -- see types.ts's Contact comment for why).
+// Builds a contact, defaulting to Mary, the CFO.
 export function makeContact(overrides: Partial<Contact> = {}): Contact {
 	return {
 		id: "mary",
@@ -60,6 +52,7 @@ export function makeContact(overrides: Partial<Contact> = {}): Contact {
 	};
 }
 
+// Builds a shared file with default details.
 export function makeSharedFile(
 	overrides: Partial<SharedFile> = {},
 ): SharedFile {
@@ -72,6 +65,7 @@ export function makeSharedFile(
 	};
 }
 
+// Builds a started run's state with one contact and no shared files.
 export function makeRunState(overrides: Partial<StartedRun> = {}): StartedRun {
 	return {
 		run_id: "run-1",
@@ -82,20 +76,18 @@ export function makeRunState(overrides: Partial<StartedRun> = {}): StartedRun {
 			simulation_duration: 45,
 		},
 		contacts: [makeContact()],
-		active_persona_id: "mary",
 		shared_files: [],
 		...overrides,
 	};
 }
 
+// Builds a chat message.
 export const message = (
 	role: "user" | "assistant",
 	content: string,
 ): ChatMessage => ({ role, content });
 
-// Returns the raw wire shape verbatim (not the app's draft/renamed Persona type) -- for
-// stubbing Convex responses directly, where the point is catching a field rename/type change
-// at compile time (convex/models/cases.ts's PersonaPayload).
+// Builds a persona payload with blank defaults.
 export function makePersonaPayload(
 	overrides: Partial<PersonaPayload> = {},
 ): PersonaPayload {

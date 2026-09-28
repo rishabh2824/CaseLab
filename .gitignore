@@ -1,16 +1,12 @@
-# Editor / IDE
 .zed/
 
-# Local agent/tool config
 .claude/
 .ai/
 .superpowers/
 
-# OS
 .DS_Store
 Thumbs.db
 
-# --- dependencies / build output ---
 node_modules/
 .output
 .vercel
@@ -24,7 +20,6 @@ test-results
 playwright-report
 coverage
 
-# .env.example and .env.test stay tracked; every other env file is local-only.
 .env
 .env.local
 .env.development.local

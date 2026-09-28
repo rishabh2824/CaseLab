@@ -5,21 +5,10 @@ on:
     branches: [main]
   pull_request:
 
-# A new push to the same branch makes the in-flight run irrelevant.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# `PUBLIC_CONVEX_URL` is a SvelteKit $env/static/public var, resolved at TYPE-CHECK time
-# (svelte-check, the `test` job's "Type check (src/)" step) as well as BUILD time (`vite
-# build`, invoked by the `e2e` job's playwright webServer) -- both fail outright if it's
-# unset, since there's no .env file here (deliberately gitignored, see .gitignore's
-# comment) to supply it. Workflow-level, not per-job: scoping this to just `e2e` (its
-# original home) left `test`'s svelte-check step failing with "has no exported member
-# 'PUBLIC_CONVEX_URL'" the same way the build once failed. A syntactically valid
-# placeholder is enough for both jobs -- svelte-check never reads the value, just needs
-# the export to exist, and every e2e *Spec.ts test replaces convex-svelte with an
-# in-memory mock (see e2e/support/convexMock.svelte.ts) that never opens a real connection.
 env:
   PUBLIC_CONVEX_URL: https://e2e-placeholder.convex.cloud
 
@@ -53,12 +42,6 @@ jobs:
       - name: Type check (src/)
         run: pnpm run check
 
-      # convex-test simulates the Convex backend in-memory, and every LLM call
-      # is mocked via a stubbed fetch (see services/turn.test.ts's stubLlm) --
-      # no live Convex deployment or LLM credentials needed for the convex/
-      # project. The src/ projects mock every backend call the same way (see
-      # the *Spec.ts files), so this needs no live deployment or credentials
-      # at all.
       - name: Unit tests
         run: pnpm exec vitest run --coverage
 
@@ -82,8 +65,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Cached separately from node_modules: the browser binaries are large and
-      # change only when @playwright/test does.
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v4

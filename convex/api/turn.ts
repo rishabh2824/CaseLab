@@ -16,40 +16,34 @@ import {
 	startTurn,
 } from "../services/turn";
 
-// Validation, rate limit, and the turn lock -- generation itself runs in /turn-stream
-// (http.ts), driven by the client. Public and unauthenticated, same as the rest of the
-// student-facing simulation API.
+// Validates a student's message and claims the persona's reply slot for it.
 export const start = mutation({
 	args: { runId: v.id("runs"), personaId: v.string(), message: v.string() },
 	handler: async (ctx, args) =>
 		await startTurn(ctx, args.runId, args.personaId, args.message),
 });
 
-// Public and unauthenticated, same as the rest of the student-facing simulation reads. See
-// services/turn.ts's getTurnStream for what withText trades off.
+// Returns the status (and optionally the text) of a persona's reply stream.
 export const getTurnStream = query({
 	args: { runId: v.id("runs"), personaId: v.string(), withText: v.boolean() },
 	handler: async (ctx, args) =>
 		await getTurnStreamService(ctx, args.runId, args.personaId, args.withText),
 });
 
-// Not client-callable. Called by /turn-stream (http.ts) before it starts generating.
+// Lets exactly one request claim the right to drive a turn's reply.
 export const claimTurn = internalMutation({
 	args: { streamId: v.string() },
 	handler: async (ctx, args) => await claimTurnService(ctx, args.streamId),
 });
 
-// Not client-callable. Bundles everything runTurn (no direct db access) needs to run its
-// classifier fan-out and build the reply prompt.
+// Loads the case, persona and history the reply generator needs.
 export const getTurnContext = internalQuery({
 	args: { runId: v.id("runs"), personaId: v.string() },
 	handler: async (ctx, args) =>
 		await getTurnContextService(ctx, args.runId, args.personaId),
 });
 
-// Not client-callable. Called by runTurn the instant classifyHarassment clears the message as
-// "normal" -- not by start (above), so a flagged message never enters this persona's persisted
-// history in the first place. See services/turn.ts's appendUserMessage for why.
+// Stores the student's message in the persona's chat.
 export const appendUserMessage = internalMutation({
 	args: { runId: v.id("runs"), personaId: v.string(), message: v.string() },
 	handler: async (ctx, args) =>
@@ -61,14 +55,14 @@ export const appendUserMessage = internalMutation({
 		),
 });
 
-// Not client-callable. Called by runTurn's catch when a turn fails after storing the message.
+// Removes a stored student message, used when a turn fails.
 export const removeUserMessage = internalMutation({
 	args: { messageId: v.id("runMessages") },
 	handler: async (ctx, args) =>
 		await removeUserMessageService(ctx, args.messageId),
 });
 
-// Not client-callable. Called by runTurn when the harassment classifier flags the message.
+// Records a warning or chat-ending boundary reply for a flagged message.
 export const applyBoundary = internalMutation({
 	args: {
 		runId: v.id("runs"),
@@ -88,7 +82,7 @@ export const applyBoundary = internalMutation({
 		),
 });
 
-// Not client-callable. Called by runTurn once the persona's reply has been generated.
+// Persists a finished reply along with any referral unlocks and shared files.
 export const applyDecisions = internalMutation({
 	args: {
 		runId: v.id("runs"),

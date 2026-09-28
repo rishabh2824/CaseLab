@@ -4,6 +4,7 @@ import type { Id } from "../_generated/dataModel";
 import { newTestConvex, withAdmin, withStranger } from "../test.setup";
 
 describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
+	// Tests that an unauthenticated caller is rejected.
 	it("rejects an unauthenticated caller", async () => {
 		const t = newTestConvex();
 		await expect(t.query(api.api.admins.listAll, {})).rejects.toThrow(
@@ -11,6 +12,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		);
 	});
 
+	// Tests that a signed-in Google user with no matching admins row is rejected.
 	it("rejects a signed-in Google user with no matching admins row", async () => {
 		const t = newTestConvex();
 		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
@@ -19,6 +21,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		);
 	});
 
+	// Tests that any signed-in admin can list the roster.
 	it("allows any signed-in admin to list the roster", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "admin" });
@@ -27,6 +30,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		expect(admins).toHaveLength(2);
 	});
 
+	// Tests that a non-super admin cannot create another admin.
 	it("rejects a non-super admin creating another admin", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "admin" });
@@ -38,6 +42,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		).rejects.toThrow("Only a super admin can do this.");
 	});
 
+	// Tests that a super admin can create another admin.
 	it("allows a super admin to create another admin", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
@@ -48,6 +53,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		expect(created.email).toBe("new@test.caselab.invalid");
 	});
 
+	// Tests that creating an admin with a duplicate email is rejected.
 	it("rejects creating a duplicate email", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
@@ -77,6 +83,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		);
 	}
 
+	// Tests that deleting a super admin is refused.
 	it("refuses to delete a super admin", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
@@ -91,6 +98,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		).rejects.toThrow("Super admins cannot be deleted.");
 	});
 
+	// Tests that deleting an admin removes their owned cases that have no collaborators.
 	it("deletes an owned case with no collaborators", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
@@ -106,6 +114,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		expect(await t.run((ctx) => ctx.db.get(caseId))).toBeNull();
 	});
 
+	// Tests that deleting an admin promotes the longest-standing collaborator instead of deleting a shared case.
 	it("promotes the longest-standing collaborator instead of deleting a shared case", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
@@ -136,10 +145,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		expect(remainingCollaborators).toHaveLength(0);
 	});
 
-	// Deleting an admin cascade-deletes their owned cases even if one has a live run -- the
-	// admin is assumed to know the consequences (schema.ts's comment on `runs`); the old guard
-	// here was an availability hole (an unauthenticated access-code holder could keep an admin
-	// permanently undeletable) for a scenario that's rare in practice.
+	// Tests that deleting an admin cascades through a case with a live run instead of refusing.
 	it("cascades through a case with a live run instead of refusing the whole operation", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
@@ -152,7 +158,6 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 				caseId: liveCaseId,
 				startTime: 0,
 				expiresAt: Date.now() + 1_000_000,
-				activePersonaKey: "A",
 				unlockedReferredIds: [],
 				unlockedAt: {},
 				sharedFiles: [],
@@ -167,10 +172,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		expect(await t.run((ctx) => ctx.db.get(liveCaseId))).toBeNull();
 	});
 
-	// requireCurrentAdmin already refuses a deleted admin via the (now-gone) `admins` row --
-	// this proves the underlying Better Auth session is actually revoked too, not just left to
-	// expire on its own JWT timer (see deleteAdminWithCascade's own comment on why that gap
-	// matters).
+	// Tests that deleting an admin revokes their Better Auth session.
 	it("revokes the deleted admin's Better Auth session", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });

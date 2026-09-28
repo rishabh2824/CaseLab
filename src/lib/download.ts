@@ -1,3 +1,4 @@
+// Downloads a blob as a file by clicking a temporary link, then releases the object URL.
 export function downloadBlob(blob: Blob, filename: string): void {
 	const url = URL.createObjectURL(blob);
 	const link = document.createElement("a");

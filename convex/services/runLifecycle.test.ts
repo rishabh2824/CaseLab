@@ -1,10 +1,3 @@
-// The run lifecycle as a state machine: created -> live -> expired -> destroyed. Existing
-// suites cover the happy path of each piece in isolation (simulations.test.ts's
-// deleteRunCascade/deleteExpiredRuns); what's tested here is the transitions between them --
-// expiry that the scheduler hasn't caught up with yet, the same terminal transition applied
-// twice, and what happens to a run's read paths when its case is edited or deleted out from
-// under it (updateCase/deleteCase no longer block on live runs -- see schema.ts's comment on
-// `runs`).
 import { describe, expect, it, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -12,11 +5,12 @@ import type { CaseStructure } from "../models/cases";
 import { newTestConvex } from "../test.setup";
 import { caseStructure, personaPayload } from "../testFactories";
 import { deleteCase, updateCase } from "./cases";
-import { deleteExpiredRuns, startSimulation } from "./simulations";
+import { startSimulation } from "./simulations";
 import { startTurn } from "./turn";
 
 type T = ReturnType<typeof newTestConvex>;
 
+// Inserts an admin and a case they own, returning both.
 async function seedCase(
 	t: T,
 	overrides: Partial<{
@@ -45,13 +39,11 @@ async function seedCase(
 	return { caseId, admin };
 }
 
+// Builds a valid case payload with optional overrides.
 function payload(overrides: Record<string, unknown> = {}) {
 	return {
 		name: "Sterling Industries",
 		brief: "Reduce office supply costs.",
-		// Matches seedCase's own default so an update in these tests keeps the case's own code
-		// (self-exclusion in validateAccessCode means that's never a conflict) rather than
-		// needing every caller to pass one through.
 		accessCode: "sterling",
 		personas: [personaPayload("A")],
 		referrals: [],
@@ -62,10 +54,7 @@ function payload(overrides: Record<string, unknown> = {}) {
 }
 
 describe("editing or deleting a case does not wait for its live runs", () => {
-	// Blocking edits on a live run was an availability hole: simulations.start is
-	// unauthenticated, so anyone with an access code could keep a case permanently uneditable.
-	// The tradeoff is now the other way -- an admin who edits/deletes a case while a student is
-	// mid-simulation is assumed to know the consequences (see schema.ts's comment on `runs`).
+	// Tests that a case can be updated and deleted while a run is in progress.
 	it("allows update and delete while a run is in progress", async () => {
 		const t = newTestConvex();
 		const { caseId, admin } = await seedCase(t);
@@ -83,10 +72,7 @@ describe("editing or deleting a case does not wait for its live runs", () => {
 });
 
 describe("run destruction is a terminal transition, and must tolerate being applied twice", () => {
-	// destroy is scheduled per-run at expiresAt, AND crons.ts sweeps expired rows weekly. Those
-	// two paths can both target the same row (a destroy job delayed past the next sweep), so the
-	// second one to run finds the row already gone. A bare ctx.db.delete on a missing id throws,
-	// which surfaces as a failed scheduled function in production logs for a no-op.
+	// Tests that destroying an already-destroyed run is a no-op rather than an error.
 	it("destroy on an already-destroyed run is a no-op, not an error", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
@@ -98,20 +84,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		).resolves.toBeNull();
 	});
 
-	it("the weekly sweep and a per-run destroy of the same expired row do not fight", async () => {
-		const t = newTestConvex();
-		await seedCase(t);
-		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
-		await t.run((ctx) =>
-			ctx.db.patch(state.run_id, { expiresAt: Date.now() - 1 }),
-		);
-
-		expect(await t.run((ctx) => deleteExpiredRuns(ctx))).toBe(1);
-		await expect(
-			t.mutation(internal.api.simulations.destroy, { runId: state.run_id }),
-		).resolves.toBeNull();
-	});
-
+	// Tests that destroying a run leaves no orphaned messages or turn streams.
 	it("leaves no orphaned messages or turn streams behind", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
@@ -136,9 +109,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		expect(leftovers).toEqual({ run: null, messages: [], turns: [] });
 	});
 
-	// The scheduled job is what makes the "no snapshot on a run" design safe (see schema.ts):
-	// if it never fires, expired runs accumulate and hold their cases hostage. Prove the
-	// scheduling itself is wired up, not just that the mutation works when called by hand.
+	// Tests that startSimulation schedules a destroy that really deletes the run when it fires.
 	it("startSimulation schedules a destroy that actually deletes the run when it fires", async () => {
 		vi.useFakeTimers();
 		try {
@@ -159,15 +130,13 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 });
 
 describe("reads against a run that has gone away", () => {
+	// Tests that the student-scoped queries return gracefully instead of throwing on a destroyed run.
 	it("the scoped student queries degrade gracefully rather than throwing on a destroyed run", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
 		await t.mutation(internal.api.simulations.destroy, { runId: state.run_id });
 
-		// getPersonaHistory/getTurnStream deliberately skip loadLiveRun -- the client's
-		// getSimulationState subscription is what surfaces the expiry -- so they must answer
-		// emptily rather than erroring, or a destroyed run turns into two competing error toasts.
 		await expect(
 			t.query(api.api.simulations.getPersonaHistory, {
 				runId: state.run_id,
@@ -183,6 +152,7 @@ describe("reads against a run that has gone away", () => {
 		).resolves.toBeNull();
 	});
 
+	// Tests that the authoritative reads refuse an expired run without deleting it.
 	it("the authoritative reads refuse an expired run without silently deleting it", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
@@ -207,12 +177,11 @@ describe("reads against a run that has gone away", () => {
 		expect(await t.run((ctx) => ctx.db.get(state.run_id))).not.toBeNull();
 	});
 
+	// Tests that a run whose case was removed reports a case error instead of crashing.
 	it("a run whose case was somehow removed reports a case error, not a crash", async () => {
 		const t = newTestConvex();
 		const { caseId } = await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
-		// deleteCase no longer blocks on a live run (schema.ts's comment on `runs`), so this is
-		// now a directly reachable path, not just a modeled edge case.
 		await t.run((ctx) => ctx.db.delete(caseId));
 
 		await expect(

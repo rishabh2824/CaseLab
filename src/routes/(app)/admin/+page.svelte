@@ -1,9 +1,6 @@
 <script lang="ts">
 import { getViewerContext } from "$lib/adminViewer.js";
 
-// Shared with admin/+layout.svelte via context (see adminViewer.ts) instead of a session-
-// stored role: a plain sessionStorage-backed copy is one tick behind the layout's own query,
-// and is unreliable on a cold load/reload of this route directly.
 const viewer = getViewerContext();
 const isSuperAdmin = $derived(viewer.data?.role === "super");
 </script>

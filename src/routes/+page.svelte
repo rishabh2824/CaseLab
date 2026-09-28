@@ -4,23 +4,13 @@ import { goto } from "$app/navigation";
 import { session } from "$lib/session.svelte.js";
 import type { StartedRun } from "$lib/student/run.svelte.js";
 import { startSimulationRef } from "$lib/student/run.svelte.js";
+import { studentErrorData } from "../../convex/lib/studentErrors.js";
 
 let accessCode = $state("");
 let error = $state("");
 let isSubmitting = $state(false);
 
-// startSimulation's own deliberate rejections (services/simulations.ts) -- shown verbatim,
-// since they're written for a student to read. Anything else (a network failure, an
-// unhandled server exception) is a bug, not a bad access code, and got its own generic
-// message here after one such crash was previously mislabeled "Invalid access code.",
-// which sent debugging in exactly the wrong direction.
-const KNOWN_START_ERRORS = new Set([
-	"Access code is required.",
-	"Invalid access code.",
-	"This case has no personas configured.",
-	"Too many simulations have been started with this access code recently. Please wait a moment and try again.",
-]);
-
+// Starts a simulation for the access code and goes to the student page, showing an inline error on failure.
 async function submit(code: string): Promise<void> {
 	isSubmitting = true;
 	try {
@@ -29,21 +19,20 @@ async function submit(code: string): Promise<void> {
 		})) as StartedRun;
 		session.startRun({
 			runId: fresh.run_id,
-			accessCode: code,
 			startTime: Date.now(),
 		});
 		error = "";
 		await goto("/student");
 	} catch (err) {
-		const message = err instanceof Error ? err.message : "";
-		error = KNOWN_START_ERRORS.has(message)
-			? message
-			: "Something went wrong starting the simulation. Please try again.";
+		error =
+			studentErrorData(err)?.message ??
+			"Something went wrong starting the simulation. Please try again.";
 	} finally {
 		isSubmitting = false;
 	}
 }
 
+// Handles the access-code form submit, rejecting a blank code and lower-casing the rest.
 function handleSubmit(event: SubmitEvent): void {
 	event.preventDefault();
 	const code = accessCode.trim();

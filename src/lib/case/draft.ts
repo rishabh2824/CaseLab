@@ -1,14 +1,15 @@
-// Pure data-shaping helpers for the case form
 import type { CaseStructure } from "../../../convex/models/cases.js";
 import { ACCESS_CODE_FORMAT } from "../../../convex/schema.js";
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
 
+// Parses a numeric string to a whole number, returning null for blank or non-numeric input.
 export function parseIntOrNull(raw: string): number | null {
 	if (raw === "") return null;
 	const parsed = Number(raw);
 	return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
 }
 
+// Creates a blank persona with a fresh UUID, with optional field overrides.
 export const createEmptyPersona = (
 	overrides: Partial<Persona> = {},
 ): Persona => ({
@@ -23,6 +24,7 @@ export const createEmptyPersona = (
 	...overrides,
 });
 
+// Creates a blank referral edge, with optional field overrides.
 export const createEmptyReferral = (
 	overrides: Partial<ReferralEdge> = {},
 ): ReferralEdge => ({
@@ -32,9 +34,7 @@ export const createEmptyReferral = (
 	...overrides,
 });
 
-// Accepts anything shaped like a partial Persona — including the PersonaPayload
-// the API returns when loading a template/edit source. Only this persona's
-// own (flat) fields are defaulted; there's nothing nested left to normalize.
+// Fills in any missing persona fields with blank defaults, including a new id for null input.
 export const normalizePersona = (
 	persona: Partial<Persona> | null | undefined,
 ): Persona => ({
@@ -43,6 +43,7 @@ export const normalizePersona = (
 	files: persona?.files ?? [],
 });
 
+// Fills in any missing referral fields with blank defaults.
 export const normalizeReferral = (
 	referral: Partial<ReferralEdge> | null | undefined,
 ): ReferralEdge => ({
@@ -50,15 +51,7 @@ export const normalizeReferral = (
 	...(referral ?? {}),
 });
 
-// A case document's `structure` field (personas/referrals/roots) as read back from Convex --
-// already shaped exactly like CaseStructure by caseStructureValidator (models/cases.ts), so
-// there's no untrusted shape to defend against here, only display-only defaults
-// normalizePersona/normalizeReferral fill in (e.g. a field an older-shaped row never had).
-// CaseForm.svelte (loading a case to edit or use as a template) and DemoCaseView.svelte (the
-// read-only demo) both need this exact normalization; sharing it here means there's one place
-// that knows how to turn a `structure` blob into display-ready Personas/Referrals, not two
-// independently-written copies that could drift. `structure` is optional only because a live
-// query's `.data` is undefined before it first loads, not because its shape is ever in doubt.
+// Converts a stored case structure into normalized form-ready personas, referrals and roots.
 export function parseCaseStructure(structure: CaseStructure | undefined): {
 	personas: Persona[];
 	referrals: ReferralEdge[];
@@ -75,15 +68,13 @@ export function parseCaseStructure(structure: CaseStructure | undefined): {
 	};
 }
 
-// SUPER admins already have full access to every case, and a case's owner can't also be
-// listed as its own collaborator -- mirrors convex/services/cases.ts's resolveCollaboratorIds,
-// which rejects both server-side. Named and exported (not an inline filter predicate) so
-// convex/parity.test.ts can pin it against that rejection rule.
+// Returns whether an admin may be chosen as a collaborator: not a super admin and not the effective owner.
 export const isSelectableCollaborator = (
 	admin: { _id: string; role: string },
 	effectiveOwnerId: string | null,
 ): boolean => admin.role !== "super" && admin._id !== effectiveOwnerId;
 
+// Returns the persona's trimmed name, or the fallback when the name is blank.
 export const getPersonaLabel = (
 	persona: { name: string },
 	fallback: string,
@@ -92,6 +83,7 @@ export const getPersonaLabel = (
 	return trimmed.length > 0 ? trimmed : fallback;
 };
 
+// Validates a persona's name, role and availability and returns the messages for any that fail.
 export const getPersonaFieldErrors = (persona: Persona): PersonaFieldErrors => {
 	const errors: PersonaFieldErrors = {};
 	if (!persona.name?.trim()) errors.name = "Name is required.";
@@ -105,10 +97,7 @@ export const getPersonaFieldErrors = (persona: Persona): PersonaFieldErrors => {
 	return errors;
 };
 
-// Shared by any per-field error record this form produces (PersonaFieldErrors,
-// CaseInfoFieldErrors below) -- both are just "field name -> message or absent",
-// so there's one predicate for "does this record have any errors at all" rather
-// than a copy per shape.
+// Returns whether any field in an error map has a message.
 export const hasFieldErrors = (
 	errors: Record<string, string | undefined>,
 ): boolean => Object.values(errors).some(Boolean);
@@ -120,11 +109,7 @@ export type CaseInfoFieldErrors = Partial<
 	>
 >;
 
-// A pure function of the case-info scalar fields, computed the same way
-// getPersonaFieldErrors is: CaseForm.svelte calls this directly (via a $derived, like
-// graph.validation) to decide whether Submit should be disabled, and CaseInfoFields.svelte
-// calls the exact same function for its own per-field messages -- one place that knows what
-// "invalid" means here, not two independently-derived copies that could disagree.
+// Validates the case-level fields (name, brief, access code, duration) and returns the messages for any that fail.
 export function getCaseInfoErrors({
 	caseName,
 	initialBrief,
@@ -154,9 +139,6 @@ export function getCaseInfoErrors({
 		(simulationDurationMinutes > maxSimulationDuration ||
 			simulationDurationMinutes < 1)
 	) {
-		// Derived from maxSimulationDuration, not hardcoded -- this message used to always say
-		// "(2 hours)", which only happened to match RUN_LIFETIME_MINUTES's current value of 120
-		// and would have silently gone wrong the moment that constant changed.
 		const maxHours = maxSimulationDuration / 60;
 		const hoursLabel = Number.isInteger(maxHours)
 			? String(maxHours)
@@ -169,27 +151,29 @@ export function getCaseInfoErrors({
 	return errors;
 }
 
-// Referral edges authored by a given persona (its "refers out to" list).
+// Returns the referrals authored by the given persona.
 export const referralsFrom = (
 	referrals: ReferralEdge[],
 	personaId: string,
 ): ReferralEdge[] =>
 	referrals.filter((referral) => referral.from_id === personaId);
 
-// Referral edges pointing at a given persona (who refers to it — plural,
-// since the flat model allows more than one parent).
+// Returns the referrals that point at the given persona.
 export const referralsTo = (
 	referrals: ReferralEdge[],
 	personaId: string,
 ): ReferralEdge[] =>
 	referrals.filter((referral) => referral.to_id === personaId);
 
+// Returns whether the persona id is one of the roots.
 export const isRoot = (roots: string[], personaId: string): boolean =>
 	roots.includes(personaId);
 
+// Indexes personas by id.
 export const personasById = (personas: Persona[]): Map<string, Persona> =>
 	new Map(personas.map((p) => [p.id, p]));
 
+// Returns the root personas in roots order, skipping ids that don't exist.
 export const rootPersonas = (
 	personas: Persona[],
 	roots: string[],
@@ -200,9 +184,7 @@ export const rootPersonas = (
 		.filter((persona): persona is Persona => Boolean(persona));
 };
 
-// Personas not in `roots` — i.e. every persona reachable only via a referral,
-// in flat document order. A persona can have more than one referrer under
-// the flat model, so the label shows every parent, not just one.
+// Lists the non-root personas with a display label and the names of their referring parents.
 export const referredWithParents = (
 	personas: Persona[],
 	referrals: ReferralEdge[],
@@ -225,10 +207,7 @@ export const referredWithParents = (
 		}));
 };
 
-// Every persona reachable from `startIds` by following referral edges
-// outward, including `startIds` themselves. Used to cascade-delete a
-// persona's subtree without discarding a persona still reachable some other
-// way (e.g. a second parent, under the flat model's multi-parent support).
+// Returns every persona id reachable from the start ids by following referrals, safely handling cycles.
 export const reachableFrom = (
 	startIds: string[],
 	referrals: ReferralEdge[],

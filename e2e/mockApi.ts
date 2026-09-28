@@ -1,14 +1,5 @@
-// Shared E2E harness: one Convex mock for the entire backend.
-//
-// The E2E suite runs a production build (with `E2E=true`, see vite.config.ts) against a
-// fully-mocked Convex client -- no server, no database, no LLM credentials, no real
-// WebSocket. `e2e/support/convexMock.svelte.ts` is swapped in for `convex-svelte` at build
-// time; it reads reactive query data from a Node-bridged in-memory store and forwards every
-// mutation/action call here via `window.__e2eConvexCall`. A call to a function this file
-// hasn't registered a handler for throws an explicit "no mock registered" error (queries)
-// or rejects the same way (mutations/actions) -- a missing stub shows up as a loud, specific
-// failure instead of a silent hang or a stale-data false pass.
 import type { Page } from "@playwright/test";
+import type { StudentErrorCode } from "../convex/lib/studentErrors.js";
 import type { AdminRole, Persona, ReferralEdge } from "../src/lib/types.js";
 import {
 	makeContact,
@@ -16,11 +7,26 @@ import {
 	makeRunState,
 } from "../tests/support/fixtures.js";
 
-export type QueryEntry = { data: unknown } | { error: string };
+export type MockError = string | { code: StudentErrorCode; message: string };
+
+export type QueryEntry = { data: unknown } | { error: MockError };
+
+class MockStudentError extends Error {
+	// Creates a mock student error carrying a code and message.
+	constructor(
+		readonly code: StudentErrorCode,
+		message: string,
+	) {
+		super(message);
+	}
+}
+// Builds a mock student error for a handler to throw.
+export const studentError = (code: StudentErrorCode, message: string) =>
+	new MockStudentError(code, message);
 
 export type QuerySeed = { name: string; args: unknown } & (
 	| { data: unknown; error?: undefined }
-	| { error: string; data?: undefined }
+	| { error: MockError; data?: undefined }
 );
 
 export type ConvexHandlerCtx = {
@@ -28,44 +34,25 @@ export type ConvexHandlerCtx = {
 	setQuery: (name: string, args: unknown, entry: QueryEntry) => Promise<void>;
 };
 
-// args/return vary per Convex function -- mirrors the old Handler type's own deliberately-
-// untyped body context.
 export type ConvexHandler = (
-	// biome-ignore lint/suspicious/noExplicitAny: see comment above
+	// biome-ignore lint/suspicious/noExplicitAny: mock request bodies vary in shape and are read freely by property
 	args: any,
 	ctx: ConvexHandlerCtx,
 ) => unknown | Promise<unknown>;
 
 export type MockApiConfig = {
-	// Seeded once via page.addInitScript, before the app's own top-level code runs -- so it's
-	// in place for the very first render AND survives a page.reload() (a fresh JS context
-	// re-runs the init script) without needing to be re-pushed by hand. Use the returned
-	// `setQuery` helper (or a mutation handler's own ctx.setQuery) for anything that needs to
-	// change reactively mid-test.
 	queries?: QuerySeed[];
-	// Keyed by Convex function name, e.g. "api/cases:create" -- NOT prefixed with a method,
-	// unlike the old REST route map, since Convex has no HTTP verb to key on.
 	mutations?: Record<string, ConvexHandler>;
 	actions?: Record<string, ConvexHandler>;
 };
 
+// Installs the mock Convex backend on a page: seeds queries and routes mutations and actions to handlers.
 export async function mockApi(
 	page: Page,
 	config: MockApiConfig,
 ): Promise<void> {
 	const { queries = [], mutations = {}, actions = {} } = config;
 
-	// admin/+layout.svelte's auto sign-in effect calls the real Better Auth client directly
-	// (crossDomain: no SvelteKit server proxy -- see convex/auth.ts), which for an
-	// unauthenticated visit means a real POST to the dev Convex deployment's /api/auth/sign-in
-	// endpoint, and from there a real redirect toward accounts.google.com. This file's own
-	// header comment promises "no server, no database... no real WebSocket" -- a live
-	// dependency on Google OAuth and a real deployment would break that isolation and make
-	// tests flaky/slow on top of it. Aborting keeps every test hermetic: signInAsAdmin fakes
-	// the *result* of a successful sign-in (sessionStorage + a seeded viewer query) rather
-	// than driving a real flow, so a passing test never actually needs this request to
-	// succeed -- a test asserting the unauthenticated redirect attempt itself reads the
-	// request (page.waitForRequest), never a response.
 	await page.route("**/api/auth/**", (route) => route.abort());
 
 	await page.addInitScript((seed) => {
@@ -99,13 +86,21 @@ export async function mockApi(
 			if (!handler) {
 				throw new Error(`E2E: no mock registered for ${kind} ${name}`);
 			}
-			return await handler(args, { page, setQuery });
+			try {
+				return await handler(args, { page, setQuery });
+			} catch (err) {
+				if (err instanceof MockStudentError) {
+					return {
+						__e2eStudentError: { code: err.code, message: err.message },
+					};
+				}
+				throw err;
+			}
 		},
 	);
 }
 
-// Pushes (or overwrites) one query's data outside of a mutation handler -- e.g. seeding
-// state after navigation, or from a test's own top-level code rather than a handler's ctx.
+// Pushes a new result for a query into the running page.
 export async function pushQuery(
 	page: Page,
 	name: string,
@@ -126,22 +121,12 @@ export async function pushQuery(
 	);
 }
 
-// --- admin sign-in ----------------------------------------------------------
-
-// Convex's own "super" | "admin" string union (see convex/schema.ts) -- callers
-// import this instead of spelling the literals out, for readability at call sites.
 export const ADMIN_ROLE = Object.freeze({
 	SUPER: "super",
 	ADMIN: "admin",
 }) satisfies Record<string, AdminRole>;
 
-// admin/+layout.svelte now gates on TWO things before it renders anything: the mocked auth
-// context's `isAuthenticated` (convexMock.svelte.ts's `setupAuth`, which reads this same
-// sessionStorage key -- see its `isE2EAdminSignedIn`) and a live `api/admins:viewer` query
-// (mocked like any other Convex query, see e2e/support/convexMock.svelte.ts's `useQuery`).
-// Both need seeding here, not just the session key alone -- an unseeded viewer query stays
-// `isLoading` forever in the mock (no real network round trip to eventually resolve it), which
-// would leave the admin shell blank even with sessionStorage faked correctly.
+// Pre-signs the page in as an admin with the given role and email.
 export async function signInAsAdmin(
 	page: Page,
 	{
@@ -157,7 +142,6 @@ export async function signInAsAdmin(
 					adminRole,
 					adminEmail,
 					runId: "",
-					accessCode: "",
 					startTime: null,
 				}),
 			);
@@ -166,12 +150,9 @@ export async function signInAsAdmin(
 					name: string;
 					args: unknown;
 					data?: unknown;
-					error?: string;
+					error?: MockError;
 				}>;
 			};
-			// Appended, not assigned -- mockApi()'s own addInitScript (always called first in
-			// every spec) already set this to `[]` or a test's own seed list by the time this
-			// runs; overwriting it here would silently drop that test's other seeded queries.
 			w.__e2eConvexSeed = [
 				...(w.__e2eConvexSeed ?? []),
 				{
@@ -185,31 +166,22 @@ export async function signInAsAdmin(
 	);
 }
 
-// --- student-flow fixtures ---------------------------------------------------
-
+// Builds a mock contact defaulting to Mary, the CFO.
 export const contact = (overrides: Parameters<typeof makeContact>[0] = {}) =>
 	makeContact({ id: "mary", role: "Chief Financial Officer", ...overrides });
 
+// Builds a mock run state with a default run id and one contact.
 export const runState = (overrides: Parameters<typeof makeRunState>[0] = {}) =>
 	makeRunState({
 		run_id: "testrun123",
 		contacts: [contact()],
-		active_persona_id: "mary",
 		...overrides,
 	});
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
-// Builds a "mutation api/turn:start" handler emulating one full turn against the reactive
-// query split the real backend uses (see run.svelte.ts's comments on #historyQuery/
-// #streamingPreviewQuery/#runStateQuery): persists the user's message immediately (mirrors
-// startTurn's synchronous insert before scheduling runTurn), then pushes a streaming preview
-// and finally the persisted assistant reply -- or, for `reply: null`, pushes only a
-// streaming-preview error and never persists a reply, for testing a failed turn.
-// `nextRunState`, if given, is pushed to api/simulations:get once the turn completes -- the
-// Convex equivalent of the old SSE `meta` frame's new_contacts/shared_files/chat_ended,
-// which now simply live on the run document itself (see services/turn.ts's applyDecisions
-// comment) instead of a separate side-channel.
+let turnCounter = 0;
+// Builds a mutation handler that simulates a turn by updating history and the reply stream, or failing it.
 export function turnHandler({
 	reply,
 	history = [],
@@ -219,8 +191,6 @@ export function turnHandler({
 	reply: string | null;
 	history?: ChatMessage[];
 	nextRunState?: ReturnType<typeof runState>;
-	// Only meaningful when reply is null: an in-progress preview pushed before the error,
-	// to prove the reducer discards partial streamed text rather than committing it.
 	partialText?: string;
 }): ConvexHandler {
 	return async (args, { setQuery }) => {
@@ -229,6 +199,25 @@ export function turnHandler({
 			personaId: string;
 			message: string;
 		};
+		const streamId = `e2e-stream-${++turnCounter}`;
+		const pushTurn = (turn: {
+			status: string;
+			text?: string;
+			settled?: boolean;
+		}) =>
+			setQuery(
+				"api/turn:getTurnStream",
+				{ runId, personaId, withText: true },
+				{
+					data: {
+						streamId,
+						settled: false,
+						claimable: false,
+						text: "",
+						...turn,
+					},
+				},
+			);
 		const withUser: ChatMessage[] = [
 			...history,
 			{ role: "user", content: message },
@@ -241,26 +230,19 @@ export function turnHandler({
 
 		if (reply === null) {
 			if (partialText) {
-				await setQuery(
-					"api/turn:getStreamingPreview",
-					{ runId, personaId },
-					{ data: { status: "streaming", text: partialText } },
-				);
+				await pushTurn({ status: "streaming", text: partialText });
 			}
 			await setQuery(
-				"api/turn:getStreamingPreview",
+				"api/simulations:getPersonaHistory",
 				{ runId, personaId },
-				{ data: { status: "error", text: "" } },
+				{ data: history },
 			);
+			await pushTurn({ status: "error" });
 			return;
 		}
 
 		const split = Math.ceil(reply.length / 2);
-		await setQuery(
-			"api/turn:getStreamingPreview",
-			{ runId, personaId },
-			{ data: { status: "streaming", text: reply.slice(0, split) } },
-		);
+		await pushTurn({ status: "streaming", text: reply.slice(0, split) });
 		const withReply: ChatMessage[] = [
 			...withUser,
 			{ role: "assistant", content: reply },
@@ -270,22 +252,14 @@ export function turnHandler({
 			{ runId, personaId },
 			{ data: withReply },
 		);
-		await setQuery(
-			"api/turn:getStreamingPreview",
-			{ runId, personaId },
-			{ data: { status: "done", text: "" } },
-		);
+		await pushTurn({ status: "done", settled: true });
 		if (nextRunState) {
 			await setQuery("api/simulations:get", { runId }, { data: nextRunState });
 		}
 	};
 }
 
-// --- admin case-authoring fixtures --------------------------------------------
-
-// Matches the `structure.personas[]` shape services/cases.ts's buildStructure writes and
-// draft.ts's normalizePersona reads back -- snake_case, mirroring the still-untouched
-// CaseGraph/CaseGraphEditor frontend (see convex/models/cases.ts's own comment).
+// Builds a persona entry for a mock case, defaulting to Mary.
 export const personaEntry = (
 	overrides: Partial<Persona> = {},
 ): Partial<Persona> => ({
@@ -300,6 +274,7 @@ export const personaEntry = (
 	...overrides,
 });
 
+// Builds a referral entry with blank defaults.
 export const referralEntry = (
 	overrides: Partial<ReferralEdge> = {},
 ): ReferralEdge => ({
@@ -309,10 +284,7 @@ export const referralEntry = (
 	...overrides,
 });
 
-// A Convex `cases` document as api/cases:get / getForEdit / listAll return it -- `_id`/
-// `name`/`accessCode`/`structure`, not the old REST era's `id`/`case_name`/`access_code`.
-// `collaboratorAdminIds` is only ever present on getForEdit's response (see its own comment
-// in convex/api/cases.ts) -- omit it for listAll/get seeds.
+// Builds a mock case document.
 export const caseDoc = (
 	overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
@@ -332,8 +304,7 @@ export const caseDoc = (
 	...overrides,
 });
 
-// A Convex `admins` document as api/admins:listAll / create return it -- `_id`/`role`
-// ("super" | "admin" string literals, see convex/schema.ts).
+// Builds a mock admin document.
 export const adminDoc = (
 	overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
@@ -345,6 +316,4 @@ export const adminDoc = (
 	...overrides,
 });
 
-// Re-exported so spec files that only need a bare persona payload (not a full structure
-// entry) can build one without reaching into fixtures.ts directly.
 export { makePersonaPayload };

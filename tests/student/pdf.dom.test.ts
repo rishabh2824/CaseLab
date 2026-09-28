@@ -1,6 +1,3 @@
-// Client project: buildChatPdfBlob just needs a Blob constructor, which jsdom
-// provides — it doesn't touch the DOM directly, but jsPDF's internals expect
-// a browser-ish environment (Blob/canvas shims) that node lacks.
 import { Buffer } from "node:buffer";
 import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
@@ -9,6 +6,7 @@ import type { ExportPersonaOut } from "../../src/lib/types.js";
 
 type PrintablePersona = Pick<ExportPersonaOut, "name" | "role" | "messages">;
 
+// Builds a printable persona with defaults and optional overrides.
 const persona = (
 	overrides: Partial<PrintablePersona> = {},
 ): PrintablePersona => ({
@@ -18,22 +16,13 @@ const persona = (
 	...overrides,
 });
 
-// buildChatPdfBlob only exposes a Blob, not the jsPDF document instance
-// itself. Object dictionaries (including each page's `/Type /Page` entry)
-// are never Flate-compressed even with `compress: true`, only the content
-// streams are — so page count can be read straight off the raw bytes. The
-// `\b` boundary is what keeps this from also matching the single `/Type
-// /Pages` tree node ("Page" immediately followed by "s" fails a boundary).
+// Counts the pages in a PDF blob.
 async function pageCountOf(blob: Blob): Promise<number> {
 	const raw = Buffer.from(await blob.arrayBuffer()).toString("latin1");
 	return (raw.match(/\/Type\s*\/Page\b/g) ?? []).length;
 }
 
-// Every literal string buildChatPdfBlob writes (titles, "No notes.", chat
-// lines, ...) ends up inside a Flate-compressed content stream, so it can't
-// be grepped off the raw PDF bytes directly. This walks each `stream ...
-// endstream` block, inflates it, and checks the decompressed PDF text-show
-// operators (e.g. `(No chat history.) Tj`) for the literal substring.
+// Returns whether any of the PDF's compressed streams contains the given text.
 async function pdfContainsText(blob: Blob, needle: string): Promise<boolean> {
 	const raw = Buffer.from(await blob.arrayBuffer()).toString("latin1");
 	const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
@@ -47,14 +36,13 @@ async function pdfContainsText(blob: Blob, needle: string): Promise<boolean> {
 				Buffer.from(streamContent, "latin1"),
 			).toString("latin1");
 			if (inflated.includes(`(${needle})`)) return true;
-		} catch {
-			// Not a Flate-compressed stream (e.g. an embedded font) — skip it.
-		}
+		} catch {}
 	}
 	return false;
 }
 
 describe("buildChatPdfBlob", () => {
+	// Tests that buildChatPdfBlob returns a non-empty application/pdf blob.
 	it("returns a non-empty application/pdf blob", () => {
 		const blob = buildChatPdfBlob([persona()], "Some notes");
 
@@ -62,6 +50,7 @@ describe("buildChatPdfBlob", () => {
 		expect(blob.size).toBeGreaterThan(0);
 	});
 
+	// Tests that the PDF has one page per persona plus the leading notes page.
 	it("produces one page per persona plus the leading notes page", async () => {
 		const personas = [persona({ name: "Mary" }), persona({ name: "Tom" })];
 
@@ -70,35 +59,36 @@ describe("buildChatPdfBlob", () => {
 		expect(await pageCountOf(blob)).toBe(personas.length + 1);
 	});
 
+	// Tests that an empty persona list produces a 'No unlocked personas' page without throwing.
 	it("falls back to a 'No unlocked personas' page for an empty array, without throwing", async () => {
 		expect(() => buildChatPdfBlob([], "notes")).not.toThrow();
 
 		const blob = buildChatPdfBlob([], "notes");
 
-		// Notes page + exactly one fallback persona page.
 		expect(await pageCountOf(blob)).toBe(2);
 		expect(await pdfContainsText(blob, "No unlocked personas")).toBe(true);
 	});
 
+	// Tests that a persona with no messages renders 'No chat history.'.
 	it("renders 'No chat history.' for a persona with no messages", async () => {
 		const blob = buildChatPdfBlob([persona({ messages: [] })], "notes");
 
 		expect(await pdfContainsText(blob, "No chat history.")).toBe(true);
 	});
 
+	// Tests that blank notes render 'No notes.'.
 	it("renders 'No notes.' for blank notes", async () => {
 		const blob = buildChatPdfBlob([persona()], "   ");
 
 		expect(await pdfContainsText(blob, "No notes.")).toBe(true);
 	});
 
+	// Tests that a very long single message adds at least one extra page.
 	it("forces at least one extra page for a very long single message", async () => {
 		const shortBlob = buildChatPdfBlob(
 			[persona({ messages: [{ role: "user", content: "hi" }] })],
 			"notes",
 		);
-		// Long enough to overflow the page well past writeSection's wrap +
-		// page-break loop — the only real logic in this file.
 		const longMessage = "This is a very long message. ".repeat(400);
 		const longBlob = buildChatPdfBlob(
 			[persona({ messages: [{ role: "user", content: longMessage }] })],
@@ -109,7 +99,7 @@ describe("buildChatPdfBlob", () => {
 			pageCountOf(shortBlob),
 			pageCountOf(longBlob),
 		]);
-		expect(shortPages).toBe(2); // notes page + 1 persona page, no wrapping
+		expect(shortPages).toBe(2);
 		expect(longPages).toBeGreaterThan(shortPages);
 	});
 });

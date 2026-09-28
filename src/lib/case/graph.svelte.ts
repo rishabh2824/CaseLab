@@ -1,6 +1,3 @@
-// Owns the in-memory persona/referral graph a case form edits — personas and
-// referral edges as sibling arrays (see types.ts). Dirty-tracking lives in
-// CaseForm's snapshot comparison, not here (see CaseForm.svelte).
 import type { Persona, ReferralEdge } from "../types.js";
 import {
 	createEmptyPersona,
@@ -28,23 +25,11 @@ export class CaseGraph {
 	referrals = $state<ReferralEdge[]>([]);
 	roots = $state<string[]>([]);
 
-	// $derived (memoized against personas/referrals/roots), not a plain getter:
-	// CaseGraphEditor.svelte and PersonaFields.svelte read these once per
-	// persona/referral inside {#each} loops, so a plain getter rebuilt the
-	// whole Map / re-walked the whole graph on every one of those accesses —
-	// real cost for a 30-persona case. ReadOnlyPersonaCard.svelte already uses
-	// this pattern for the same computations outside the class.
 	byId: Map<string, Persona> = $derived(personasById(this.personas));
 	referredWithParents = $derived(
 		referredWithParentsOf(this.personas, this.referrals, this.roots),
 	);
 
-	// $derived, same as byId/referredWithParents above — one memoized signal
-	// shared by every reader (CaseForm.svelte and CaseGraphEditor.svelte both
-	// read graph.validation), instead of each call site re-walking all N
-	// personas on its own. Per-persona field errors are no longer computed
-	// here: PersonaFields.svelte derives its own from just its own persona,
-	// so editing one persona no longer invalidates every other one's errors.
 	validation: GraphValidation = $derived.by(() => {
 		const rootsError =
 			this.roots.length < 1 ? "At least 1 persona is required" : null;
@@ -57,15 +42,14 @@ export class CaseGraph {
 		};
 	});
 
-	// Replaces the whole graph -- used both to load a case for editing/templating and to
-	// apply a parsed import (CaseForm.svelte), which need no different handling here: both
-	// hand in a complete, already-validated {personas, referrals, roots}.
+	// Replaces the graph's personas, referrals and roots.
 	load(input: GraphInput): void {
 		this.personas = input.personas;
 		this.referrals = input.referrals;
 		this.roots = input.roots;
 	}
 
+	// Adds a new blank root persona and returns it.
 	addRoot(overrides?: Partial<Persona>): Persona {
 		const persona = createEmptyPersona(overrides);
 		this.personas = [...this.personas, persona];
@@ -73,8 +57,7 @@ export class CaseGraph {
 		return persona;
 	}
 
-	// Discards a root's whole subtree — every persona only reachable from it,
-	// not also reachable from some other kept root or referral.
+	// Removes a root and every persona that was reachable only through it.
 	removeSubtree(rootId: string): void {
 		const keptRoots = this.roots.filter((id) => id !== rootId);
 		const stillReachable = reachableFrom(keptRoots, this.referrals);
@@ -87,6 +70,7 @@ export class CaseGraph {
 		this.roots = keptRoots;
 	}
 
+	// Adds a blank referred persona linked from the given persona and returns both.
 	addReferral(fromPersonaId: string): {
 		persona: Persona;
 		referral: ReferralEdge;
@@ -101,9 +85,7 @@ export class CaseGraph {
 		return { persona, referral };
 	}
 
-	// Removes personaId's referral edges into targetIds, then cascade-deletes
-	// each removed target's own subtree — unless a target is still reachable
-	// some other way once those edges are gone (e.g. a second parent).
+	// Removes a persona's referrals to the given targets, along with anything that becomes unreachable.
 	removeReferralsFrom(personaId: string, targetIds: Iterable<string>): void {
 		const targets = new Set(targetIds);
 		this.referrals = this.referrals.filter(
@@ -119,10 +101,12 @@ export class CaseGraph {
 		this.#applyRemoval(toRemove);
 	}
 
+	// Removes a single referral edge with the same unreachable-persona cleanup.
 	removeReferral(referral: ReferralEdge): void {
 		this.removeReferralsFrom(referral.from_id, [referral.to_id]);
 	}
 
+	// Deletes the given personas and any referrals that touch them.
 	#applyRemoval(toRemove: Set<string>): void {
 		if (toRemove.size === 0) return;
 		this.personas = this.personas.filter(

@@ -15,13 +15,13 @@ let { graph, showFieldErrors, revealErrors }: Props = $props();
 const graphValidation = $derived(graph.validation);
 const rootPersonasError = $derived(graphValidation.rootsError);
 
+// Adds a new root persona and reveals validation errors.
 function addRoot(): void {
 	revealErrors();
 	graph.addRoot();
 }
 
-// Removing a root discards its whole subtree — every persona only reachable
-// from this root, not also reachable from some other kept root or referral.
+// Removes a root persona and everything only reachable through it.
 function removeRoot(rootId: string): void {
 	revealErrors();
 	graph.removeSubtree(rootId);

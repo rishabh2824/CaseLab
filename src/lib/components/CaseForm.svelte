@@ -24,14 +24,6 @@ import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 
 const MAX_SIMULATION_DURATION = RUN_LIFETIME_MINUTES;
 
-// mode is explicit (set by the route: /admin/cases/new vs.
-// /admin/cases/[id]/edit), not inferred from which of caseId/templateId
-// happens to be non-null. caseId is the resource identity in edit mode
-// (sourced from page.params.id, a real path segment); templateId is only
-// ever a "prefill from" hint on the create route (page.url.searchParams,
-// since it doesn't identify the case being created). Both are only ever
-// passed as the `caseId` argument to api/cases:getForEdit, never parsed as
-// a number.
 type Props = {
 	mode: "create" | "edit";
 	caseId?: string | null;
@@ -43,7 +35,6 @@ let { mode, caseId = null, templateId = null }: Props = $props();
 const isEditMode = $derived(mode === "edit");
 const editCaseId = $derived(isEditMode ? caseId : null);
 const sourceCaseId = $derived(editCaseId || templateId);
-// Import is only offered on the blank "from scratch" new-case route
 const canImport = $derived(!sourceCaseId);
 
 let caseName = $state("");
@@ -53,33 +44,12 @@ let simulationDurationMinutes = $state<number | null>(null);
 let accessCode = $state("");
 const graph = new CaseGraph();
 
-// Collaborators: access-control metadata, not case content — only ever
-// populated in edit mode (see loadCase). A new case (blank or from a
-// template) always starts with none.
-//
-// Always-subscribed, not fetched lazily on popover open: Convex's reactivity makes a live
-// subscription to a ~10-row table cheap enough that the bookkeeping to defer it isn't worth
-// keeping.
 const adminsQuery = useQuery(api.api.admins.listAll, {});
 const allAdmins = $derived(adminsQuery.data ?? []);
-// Shared with admin/+layout.svelte via context (see adminViewer.ts) rather than a second
-// useQuery(api.api.admins.viewer, {}) call.
 const viewerQuery = getViewerContext();
 let collaboratorAdminIds = $state<string[]>([]);
 let ownerAdminId = $state<string | null>(null);
 
-// Tracks unsaved edits so AdminTopBar can gate home/logout navigation behind
-// a save-or-discard prompt. null baseline means "nothing loaded to compare
-// against yet" (edit/template mode before loadCase resolves).
-//
-// Split into a cheap scalar comparison and a separate graph comparison
-// (rather than one JSON.stringify of the whole case) so that Svelte's
-// fine-grained $derived dependency tracking actually pays off: typing in
-// caseName/brief/access-code only re-evaluates scalarsDirty's plain equality
-// checks — it never touches graphDirty's derived (and so never re-serializes
-// every persona) since graph.personas/referrals/roots didn't change. Editing
-// inside the persona graph still has to serialize the graph to detect a
-// change, but no longer drags the scalar fields/collaborator list along.
 let baselineScalars = $state<{
 	caseName: string;
 	initialBrief: string;
@@ -90,9 +60,7 @@ let baselineScalars = $state<{
 } | null>(null);
 let baselineGraphSnapshot = $state<string | null>(null);
 
-// File objects serialize to "{}" under plain JSON.stringify (none of their
-// properties are own-enumerable), which would make two different selected
-// files compare equal — replace them with a value that actually changes.
+// Replaces File values with a small descriptor so the form can be snapshotted as JSON.
 function jsonReplacer(_key: string, value: unknown): unknown {
 	if (value instanceof File) {
 		return {
@@ -104,6 +72,7 @@ function jsonReplacer(_key: string, value: unknown): unknown {
 	return value;
 }
 
+// Serializes the persona graph to a string for change detection.
 function snapshotGraph(): string {
 	return JSON.stringify(
 		{
@@ -115,6 +84,7 @@ function snapshotGraph(): string {
 	);
 }
 
+// Records the current form values as the clean baseline for dirty tracking.
 function markSaved(): void {
 	baselineScalars = {
 		caseName,
@@ -127,10 +97,7 @@ function markSaved(): void {
 	baselineGraphSnapshot = snapshotGraph();
 }
 
-// A brand-new case (no source to load) has nothing to wait on — the empty
-// form itself is the baseline, captured once at setup.
-// svelte-ignore state_referenced_locally -- intentional: sourceCaseId is only
-// checked once here, not tracked reactively.
+// svelte-ignore state_referenced_locally
 if (!sourceCaseId) markSaved();
 
 const scalarsDirty = $derived.by(() => {
@@ -154,6 +121,7 @@ const graphDirty = $derived(
 const isDirty = $derived(scalarsDirty || graphDirty);
 
 let showFieldErrors = $state(false);
+// Turns on display of field validation errors.
 function revealErrors() {
 	showFieldErrors = true;
 }
@@ -162,45 +130,23 @@ let isLoadingSource = $state(untrack(() => Boolean(sourceCaseId)));
 let loadErrorMessage = $state("");
 let submitError = $state("");
 let submitSuccess = $state("");
-// Set right before navigating away after a create-mode save (see handleSubmit): the toast
-// fired there is what's meant to carry submitSuccess across the navigation, so the inline
-// paragraph below has nothing left to do except flash alongside it for a moment before this
-// component unmounts -- which is exactly what produced two "Case saved successfully." texts
-// on screen at once.
 let suppressInlineSuccess = $state(false);
 let isSubmitting = $state(false);
 let importWarnings = $state<string[]>([]);
 let pendingImportFile = $state<File | null>(null);
 let fileInputEl = $state<HTMLInputElement | null>(null);
-// The id submitCase's most recent successful call created/updated -- not reactive state,
-// just read by handleSubmit right after a create so it can leave this route once the case
-// exists (see handleSubmit below). Not threaded through performSave's own SaveResult, which
-// AdminTopBar's unsaved-changes save path (the other caller of performSave) has no use for.
 let lastSavedCaseId: string | null = null;
 
-// Loads a case's fields into the form, either as the resource being edited (edit mode) or
-// as a from-scratch starting point (template mode, via TemplatePicker) -- the same query
-// serves both. They differ only in whether collaborators come along, since a template load
-// always starts a brand-new case with none.
+// Loads a case (or template) from the server into the form and marks it clean.
 async function loadCase(id: string): Promise<void> {
 	const loadedCase = await getConvexClient().query(api.api.cases.getForEdit, {
 		caseId: id as Id<"cases">,
 	});
-	// A newer load may have started since this one was kicked off -- switching `?template=`
-	// (or, in edit mode, navigating straight from one case's edit route to another's) while
-	// this form stays mounted re-triggers the effect below without unmounting/remounting this
-	// component, so two loadCase calls can be in flight together, and the one that resolves
-	// LAST would otherwise win regardless of which one is actually current. Bail out here,
-	// before touching any form state, once sourceCaseId has moved on from the id this call
-	// was asked to load.
 	if (sourceCaseId !== id) return;
 	caseName = loadedCase.name ?? "";
 	initialBrief = loadedCase.brief ?? "";
 	commonInformation = loadedCase.commonInformation ?? "";
 	simulationDurationMinutes = loadedCase.duration ?? null;
-	// Edit mode keeps the case's own code; a template load starts blank -- the source case's
-	// code is already claimed by that case, so carrying it over here just guarantees the new
-	// case's first save fails on it (createCase rejects a duplicate access code).
 	accessCode = isEditMode ? loadedCase.accessCode : "";
 	graph.load(parseCaseStructure(loadedCase.structure));
 	if (isEditMode) {
@@ -213,19 +159,12 @@ async function loadCase(id: string): Promise<void> {
 
 $effect(() => {
 	if (!sourceCaseId) return;
-	// Captured once per effect run: sourceCaseId itself may move on (see loadCase's own
-	// guard above) before this particular load settles, and the checks below need to compare
-	// against the id THIS run was loading for, not whatever it's since become.
 	const id = sourceCaseId;
-	// Reset both eagerly, not just on completion -- otherwise switching sources while a
-	// previous load's error or "done loading" state is still showing leaves that stale state
-	// on screen for however long the new load takes, instead of immediately reflecting that a
-	// fresh load has started.
 	isLoadingSource = true;
 	loadErrorMessage = "";
 	loadCase(id)
 		.catch((err: unknown) => {
-			if (sourceCaseId !== id) return; // superseded -- let the newer run report its own error
+			if (sourceCaseId !== id) return;
 			loadErrorMessage = getErrorMessage(
 				err,
 				isEditMode
@@ -234,21 +173,15 @@ $effect(() => {
 			);
 		})
 		.finally(() => {
-			if (sourceCaseId !== id) return; // superseded -- the newer run owns isLoadingSource now
+			if (sourceCaseId !== id) return;
 			isLoadingSource = false;
 		});
 });
 
-// Effective owner used to exclude from the collaborator picker: the loaded
-// case's owner in edit mode, or the signed-in admin when creating a new case
-// (api/admins:viewer resolves that identity server-side directly).
 const effectiveOwnerId = $derived(
 	isEditMode ? ownerAdminId : (viewerQuery.data?._id ?? null),
 );
 
-// Computed the same way graph.validation is (a pure function of the scalar fields, not
-// pushed up from CaseInfoFields via a bind:hasErrors + $effect) -- CaseInfoFields.svelte
-// calls this same getCaseInfoErrors for its own per-field messages, so the two can't drift.
 const caseInfoErrors = $derived(
 	getCaseInfoErrors({
 		caseName,
@@ -266,7 +199,7 @@ const hasValidationErrors = $derived(
 );
 const displayedError = $derived(submitError || loadErrorMessage);
 
-// Builds a .html form from whatever's currently in this form
+// Exports the current form as a downloadable HTML template.
 function handleExportTemplate(): void {
 	const html = buildHTMLForm({
 		caseName,
@@ -281,13 +214,12 @@ function handleExportTemplate(): void {
 	downloadForm(html);
 }
 
+// Opens the file picker for importing an exported case.
 function handleImportClick(): void {
 	fileInputEl?.click();
 }
 
-// Picks up a file from the input: if the form already has content, routes
-// through the confirm dialog first (destructive — import replaces it all);
-// otherwise imports immediately.
+// Handles a chosen import file, asking for confirmation first if the form already has content.
 function handleImportFile(
 	event: Event & { currentTarget: EventTarget & HTMLInputElement },
 ): void {
@@ -307,13 +239,14 @@ function handleImportFile(
 	void performImport(file);
 }
 
+// Imports the file the user confirmed replacing the form with.
 async function confirmImport(): Promise<void> {
 	const file = pendingImportFile;
 	pendingImportFile = null;
 	if (file) await performImport(file);
 }
 
-// Parses a filled-in export back into form state
+// Parses an exported HTML form into the form fields, or shows a toast if the file is unusable.
 async function performImport(file: File): Promise<void> {
 	importWarnings = [];
 	try {
@@ -340,18 +273,9 @@ async function performImport(file: File): Promise<void> {
 	}
 }
 
-// Single source of truth for saving: used by the form's own Submit button
-// and by AdminTopBar's "Save changes" action (via unsavedGuard), so both
-// paths get the same validation gate and error handling.
-//
-// Deduped against itself: without inFlightSave, the Submit button (disabled while isSubmitting,
-// so a second click can't reach this) and AdminTopBar's own "Save changes" prompt (its own,
-// separate gesture, not blocked by the Submit button's disabled state) could both call this at
-// once -- a second create racing the first would fail outright once the first claims the access
-// code, and a second update would just be redundant work. A second concurrent call reuses the
-// first attempt's promise instead of starting its own.
 let inFlightSave: Promise<SaveResult> | null = null;
 
+// Saves the form, reusing the save already in flight if there is one.
 function performSave(): Promise<SaveResult> {
 	if (inFlightSave) return inFlightSave;
 	const attempt = runSave();
@@ -361,6 +285,7 @@ function performSave(): Promise<SaveResult> {
 	return inFlightSave;
 }
 
+// Validates and submits the case, then updates the success, error and baseline state.
 async function runSave(): Promise<SaveResult> {
 	revealErrors();
 	if (hasValidationErrors) {
@@ -391,23 +316,9 @@ async function runSave(): Promise<SaveResult> {
 			? "Case updated successfully."
 			: "Case saved successfully.";
 		if (isEditMode && editCaseId) {
-			// Reloads the just-saved case from the server rather than only calling markSaved()
-			// against the form's own in-memory state: submitCase already uploaded every picked
-			// File and swapped it for a FileRef in the payload it sent, but the form's own
-			// persona/file state still holds the original File objects -- left alone, the next
-			// save would upload them all over again (uploadAll in submitCase.ts) and orphan the
-			// files row this save just created. The server also trims name/brief/persona
-			// name+role and drops any fileless attachment slot (see buildStructure's own
-			// comment) -- reloading is what keeps the form showing exactly what was persisted
-			// instead of silently drifting from it. Create mode needs no equivalent: handleSubmit
-			// below leaves this route for the edit route the moment a create succeeds, which
-			// mounts a brand-new CaseForm that loads the just-created case fresh on its own.
 			try {
 				await loadCase(editCaseId);
 			} catch {
-				// The save itself already succeeded -- a reload hiccup (e.g. a dropped
-				// connection) shouldn't turn that into a visible failure. Fall back to marking
-				// the form's current (still-correct-enough) in-memory state as the new baseline.
 				markSaved();
 			}
 		} else {
@@ -423,14 +334,10 @@ async function runSave(): Promise<SaveResult> {
 	}
 }
 
+// Handles the form submit, moving to the new case's edit page after a first save.
 async function handleSubmit(event: SubmitEvent): Promise<void> {
 	event.preventDefault();
 	const result = await performSave();
-	// A save from the Submit button, not from AdminTopBar's unsaved-changes prompt (that path
-	// already navigates wherever the admin asked to go next). Leaving the create route the
-	// moment the case exists is what stops a second Submit click from re-running `create`
-	// against a case that already saved -- which fails outright once its access code is
-	// already taken (see resolveCasePayload's own conflict check).
 	if (result.ok && !isEditMode && lastSavedCaseId) {
 		suppressInlineSuccess = true;
 		toast(submitSuccess);
@@ -438,31 +345,11 @@ async function handleSubmit(event: SubmitEvent): Promise<void> {
 	}
 }
 
-// Browser back/forward, clicking a link elsewhere, or any other in-app navigation away from
-// this form while it has unsaved edits -- not just the two buttons AdminTopBar's own
-// requestNavigation calls cover. Cancels the navigation and re-issues it as the same
-// save-or-discard prompt those buttons show, once the admin picks one.
-//
-// Gated on unsavedGuard.isDirty, not the form's own local `isDirty` -- discard() unregisters
-// this form from the guard (dirtySource -> null, so unsavedGuard.isDirty flips to false) but
-// doesn't touch the form's own baseline, so local `isDirty` would still read true and this
-// guard would cancel the very goto() discard() just issued -- which re-enters
-// requestNavigation, which (now genuinely not dirty) fires the action again, cancelling it
-// again, forever. unsavedGuard.isDirty tracks the same dirtySource() while registered, so this
-// is a no-op change for every other path (Cancel, Save) and only differs once discard has
-// unregistered.
 beforeNavigate((navigation) => {
 	if (!unsavedGuard.isDirty) return;
 	const targetUrl = navigation.to?.url;
 	if (!targetUrl) return;
 	navigation.cancel();
-	// A browser Back/Forward click (type "popstate") that gets cancelled here has its history
-	// entry restored by SvelteKit automatically -- re-issuing it as a plain goto(targetUrl)
-	// once the admin confirms would then PUSH a new entry instead of actually moving the
-	// history pointer, leaving Back/Forward needing an extra press or landing somewhere
-	// unexpected. history.go(navigation.delta) replays the exact popstate that was
-	// interrupted; every other navigation type (a link, a programmatic goto) still resumes via
-	// goto(targetUrl) as before.
 	const resume =
 		navigation.type === "popstate" && navigation.delta !== undefined
 			? () => history.go(navigation.delta)
@@ -472,12 +359,6 @@ beforeNavigate((navigation) => {
 
 onMount(() => {
 	unsavedGuard.register(() => isDirty, performSave);
-	// Closing the tab, refreshing, or navigating to a URL outside this app entirely --
-	// beforeNavigate above only ever sees in-app navigation. The browser's own native "leave
-	// site?" prompt is the only hook available for this (no custom message; every modern
-	// browser shows its own fixed text regardless of what's set here), so there's no route
-	// through the app's own unsaved-changes modal for this specific case. Same
-	// unsavedGuard.isDirty gate as beforeNavigate above, for the same reason.
 	function handleBeforeUnload(event: BeforeUnloadEvent): void {
 		if (!unsavedGuard.isDirty) return;
 		event.preventDefault();
@@ -497,15 +378,6 @@ onDestroy(() => {
 	<div class="mx-auto max-w-4xl px-6 py-10">
 		<div class="rounded-2xl border border-line bg-white p-8 shadow-soft">
 			<form onsubmit={handleSubmit} class="flex flex-col gap-6">
-				<!-- disabled cascades natively to every input/button/select this fieldset
-				     contains, including inside CaseInfoFields/CaseGraphEditor -- covers import
-				     (which would otherwise silently replace the form's content out from under a
-				     save already in flight) and the collaborator popover, not just typing.
-				     `class="contents"` keeps it out of the box layout entirely (the form's own
-				     flex/gap applies directly to these children), so it changes nothing
-				     visually. Gated on isSubmitting (a save is in flight) or isLoadingSource (the
-				     source case hasn't loaded yet -- typing now would be overwritten the moment
-				     it does, or by the reload after a save in edit mode). -->
 				<fieldset disabled={isSubmitting || isLoadingSource} class="contents">
 				<div class="relative">
 					<div class="text-center">
@@ -601,12 +473,6 @@ onDestroy(() => {
 					</p>
 				{/if}
 
-				<!-- No disabled here: isSubmitting/isLoadingSource are already covered by the
-				     surrounding fieldset, and disabling on hasValidationErrors made a blank new-case
-				     form's Submit button unclickable with no feedback -- revealErrors() (which is
-				     what actually shows the validation messages) never got a chance to run. runSave
-				     itself already checks hasValidationErrors and bails out with a message before
-				     doing anything else, so clicking a currently-invalid form here is safe. -->
 				<button
 					type="submit"
 					class="self-start rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"

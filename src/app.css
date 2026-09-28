@@ -1,9 +1,3 @@
-/* latin-only subsets, not the combined files: the app is English-only, so the
-   cyrillic/greek/vietnamese/latin-ext @font-face rules those combined files
-   also declare are pure deploy weight — unicode-range means a browser never
-   downloads their woff2s, but the files still ship. Space Grotesk 500 is
-   dropped outright: nothing on the site pairs font-display with font-medium,
-   only font-semibold (600) and font-bold (700). */
 @import "@fontsource/ibm-plex-sans/latin-400.css";
 @import "@fontsource/ibm-plex-sans/latin-500.css";
 @import "@fontsource/ibm-plex-sans/latin-600.css";
@@ -15,7 +9,6 @@
 	--font-body: "IBM Plex Sans", sans-serif;
 	--font-display: "Space Grotesk", sans-serif;
 
-	/* WSB brand palette */
 	--color-brand: #c5050c;
 	--color-brand-dark: #9c0409;
 	--color-brand-tint: #fdecec;
@@ -35,9 +28,6 @@
 		0 1px 2px rgba(18, 18, 18, 0.04), 0 14px 30px -22px rgba(18, 18, 18, 0.28);
 }
 
-/* --muted/--muted-foreground are the only shadcn-style semantic tokens this
-   app actually uses (student/+page.svelte's disabled state) — recolored to
-   the WSB brand. No .dark block: the app has no dark mode today. */
 :root {
 	--radius: 0.5rem;
 	--muted: #efeae0;

@@ -1,9 +1,5 @@
 import type { PersonaDetail } from "../services/simulationReads";
 
-// A referral/file the persona MAY act on this turn -- unlike the old design (a classifier
-// pre-filtered these to an "eligible" list before the persona ever saw them), the persona's
-// own reply generation now judges conditionTrigger/shareConditions itself, with the full case
-// context it already has and a classifier never did. See systemPrompt below.
 export type CandidateReferral = {
 	handle: string;
 	name: string;
@@ -17,22 +13,14 @@ export type CandidateFile = {
 	shareConditions: string | null;
 };
 
+// Escapes regex metacharacters in a string.
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Split into `stable` (identical for this persona on every turn, by every student, for as
-// long as the case itself doesn't change -- case brief, common info, name/role/personality)
-// and `dynamic` (redacted knownFacts plus referral/file candidates, which shift as referrals
-// unlock) instead of one concatenated string: llm.ts's personaReplyStream puts a cache_control
-// breakpoint right after `stable`, so Anthropic caches that block once per persona instead of
-// once per message -- concatenating the two back together before caching would invalidate the
-// whole thing every time `dynamic` changes.
 export type SystemPromptParts = { stable: string; dynamic: string };
 
-// Builds the persona's system prompt, including the referral/file candidates it must judge
-// eligibility for itself this turn -- see CandidateReferral/CandidateFile above for why this
-// is no longer a pre-filtered "eligible" list.
+// Builds the stable and per-turn system prompt for a persona, with referral and file candidates.
 export function systemPrompt(
 	caseBrief: string,
 	commonInformation: string | null,
@@ -40,11 +28,6 @@ export function systemPrompt(
 	candidateReferrals: CandidateReferral[],
 	candidateFiles: CandidateFile[],
 ): SystemPromptParts {
-	// --- referral guidance ---
-	// referralOptions is only actually read in the "candidates exist" branch below, but it's
-	// cheap (empty array -> "") to compute unconditionally, which lets referralSection collapse
-	// to a plain ternary instead of an array that only ever holds 1 or 2 entries just to be
-	// `.join(" ")`ed back into one string.
 	const referralOptions = candidateReferrals
 		.map(
 			(c) =>
@@ -66,7 +49,6 @@ export function systemPrompt(
 			: "You have no one to introduce this turn. Do not offer, promise, or hint at " +
 				'connecting the user with anyone; keep "introduce" empty.';
 
-	// --- file guidance ---
 	const describeFile = (f: CandidateFile): string => {
 		const perceived = (f.perceivedContents ?? "").trim();
 		const base = perceived
@@ -86,9 +68,6 @@ export function systemPrompt(
 			: "You have no file to send this turn. Do not claim to send, attach, or offer " +
 				'any file; keep "send_files" empty.';
 
-	// Every pending referral's name is redacted out of knownFacts, regardless of whether its
-	// condition looks satisfiable this turn -- disclosure only ever happens through the formal
-	// "introduce" handle above, never as an incidental mention in prose.
 	let knownFacts = persona.knownFacts ?? "None";
 	if (candidateReferrals.length > 0 && knownFacts !== "None") {
 		for (const c of candidateReferrals) {
@@ -121,6 +100,7 @@ export function systemPrompt(
 	return { stable, dynamic: turn };
 }
 
+// Returns the instructions describing the JSON shape the model must reply with.
 export function replyInstructions(): string {
 	return (
 		"Return ONLY a single JSON object (no code fences, no prose around it) with " +
@@ -137,16 +117,13 @@ export function replyInstructions(): string {
 	);
 }
 
-// Strip a leading bracketed speaker tag like "[Mary, CFO ...]".
+// Trims a reply and strips any leading speaker tag.
 export function cleanReply(text: string | null | undefined): string {
 	const reply = (text ?? "").trim();
 	return reply.replace(/^\s*\[[^\]]+\]\s*/, "").trim();
 }
 
-// Processes the LLM reply. The provider streams with strict structured-output decoding (see
-// lib/llm.ts's PERSONA_REPLY_SCHEMA), so `raw` is always a bare, valid JSON object -- never
-// wrapped in a code fence or surrounded by prose, which strict decoding can't produce. No
-// fence-stripping or brace-scanning fallback needed.
+// Parses the model output as a JSON object, or returns null if it isn't one.
 export function parseReply(
 	raw: string | null | undefined,
 ): Record<string, unknown> | null {
@@ -163,7 +140,7 @@ export function parseReply(
 		: null;
 }
 
-// Normalizes referral/file "handles".
+// Normalizes model-supplied handles into a list of upper-cased, trimmed strings.
 export function coerceHandles(value: unknown): string[] {
 	const list =
 		typeof value === "string" ? [value] : Array.isArray(value) ? value : [];

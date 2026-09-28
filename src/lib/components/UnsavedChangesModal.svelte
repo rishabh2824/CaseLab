@@ -5,10 +5,6 @@ import ConfirmDialog, {
 	SECONDARY_BUTTON_CLASS,
 } from "./ConfirmDialog.svelte";
 
-// No onCancel prop: AlertDialog.Cancel already closes the dialog on its own (bits-ui's
-// built-in behavior), and unsavedGuard.svelte.ts's caller-side bind:open setter already calls
-// closeModal() the moment open flips to false -- a cancel handler here would just be a second
-// way to trigger that same setter.
 type Props = {
 	open: boolean;
 	isSaving: boolean;
