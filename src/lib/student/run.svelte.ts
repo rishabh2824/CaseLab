@@ -109,6 +109,10 @@ export class RunStore {
 	activeContactId = $state<string | null>(null);
 	notes = $state("");
 	isSending = $state(false);
+	// Flipped by #ensureExpiryWatch once the case's configured duration elapses -- folded into
+	// activePersonaAvailable below so the composer disables in place instead of the student
+	// being kicked out (see #ensureExpiryWatch's own comment).
+	timeExpired = $state(false);
 
 	#initialized = false;
 	#notesInitialized = false;
@@ -221,7 +225,9 @@ export class RunStore {
 	);
 	activePersonaAvailable = $derived(
 		Boolean(
-			this.selectedContact?.available && !this.selectedContact?.chat_ended,
+			!this.timeExpired &&
+				this.selectedContact?.available &&
+				!this.selectedContact?.chat_ended,
 		),
 	);
 	totalDurationSeconds = $derived(
@@ -386,11 +392,27 @@ export class RunStore {
 		this.notes = "";
 		this.#notesInitialized = false;
 		this.#seenInitialized = false;
+		// timeExpired belongs to whichever run set it -- without resetting it here, a
+		// replacement run would start with messaging already disabled. And since this can fire
+		// (via "Run not found."/"Run expired.") before the OLD run's own #ensureExpiryWatch
+		// interval ever got a chance to fire and self-clear, defensively clear it here too --
+		// same orphaned-timer concern endSimulation() below already guards against, just for
+		// this path instead of the manual-end one.
+		this.timeExpired = false;
+		if (this.#expiryInterval) window.clearInterval(this.#expiryInterval);
+		this.#expiryInterval = null;
 		if (session.accessCode) this.startSession(session.accessCode);
 		else goto("/");
 	}
 
-	// Auto-ends the run once the case's configured duration elapses.
+	// Marks the run read-only once the case's configured duration elapses -- messaging is
+	// disabled (activePersonaAvailable folds timeExpired in) but the student stays in the chat:
+	// history, notes, and the PDF export all keep working. This intentionally matches
+	// startTurn's own `c.duration` gate (convex/services/turn.ts) exactly, not run.expiresAt's
+	// padded value (services/simulations.ts's computeExpiresAt) -- the backend already keeps
+	// the run row alive for an extra grace period past this point specifically so reads/export
+	// survive after sending stops, and #handleExpired's existing reaction to a genuine "Run
+	// expired."/"Run not found." error is what ends that grace window, unchanged by this.
 	#ensureExpiryWatch(): void {
 		if (this.#expiryInterval) return;
 		const totalDurationSeconds = this.totalDurationSeconds;
@@ -401,7 +423,7 @@ export class RunStore {
 			if (elapsed >= totalDurationSeconds) {
 				if (this.#expiryInterval) window.clearInterval(this.#expiryInterval);
 				this.#expiryInterval = null;
-				this.endSimulation();
+				this.timeExpired = true;
 			}
 		};
 		checkExpiry();

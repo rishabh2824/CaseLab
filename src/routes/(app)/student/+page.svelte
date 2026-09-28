@@ -127,6 +127,14 @@ async function handleExportPdf(): Promise<void> {
 		</div>
 	{/if}
 
+	{#if run.timeExpired}
+		<div class="mx-auto max-w-7xl px-6 pt-4">
+			<p class="rounded-2xl border border-brand/20 bg-brand-tint px-4 py-3 text-sm text-brand">
+				Your time is up. You can no longer send messages, but you can still review your conversations and export your transcript.
+			</p>
+		</div>
+	{/if}
+
 	<main class="mx-auto grid max-w-7xl gap-6 px-6 py-6 lg:grid-cols-[240px_minmax(0,1fr)_340px]">
 		<aside class="space-y-6">
 			<div>
@@ -272,7 +280,11 @@ async function handleExportPdf(): Promise<void> {
 				<div class="flex-1">
 					<textarea
 						bind:this={chatInputEl}
-						placeholder={run.activeContact?.chat_ended ? 'This conversation has ended.' : 'Type your message...'}
+						placeholder={run.timeExpired
+							? "Time's up — messaging is disabled."
+							: run.activeContact?.chat_ended
+								? 'This conversation has ended.'
+								: 'Type your message...'}
 						disabled={!run.activePersonaAvailable || run.isSending}
 						class="w-full resize-none rounded-xl border px-4 py-3 text-sm transition focus:outline-none focus:ring-4 {overWordLimit
 							? 'border-brand focus:border-brand focus:ring-brand/12'

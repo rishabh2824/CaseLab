@@ -732,6 +732,83 @@ describe("a run that expires while a message is in flight", () => {
 	});
 });
 
+describe("run-level time expiry", () => {
+	// Replaces the old "kick the student out" behavior: once the case's configured duration
+	// elapses, messaging disables in place instead of endSimulation() clearing the session and
+	// navigating home -- the student stays on the same run and can keep reading history/notes
+	// and exporting the PDF.
+	it("disables messaging in place instead of navigating away", async () => {
+		vi.useFakeTimers();
+		try {
+			const { run, session, goto } = await freshRun();
+			await primeRun(run, session, {
+				case: { ...caseData, simulation_duration: 1 },
+			});
+
+			expect(run.timeExpired).toBe(false);
+			expect(run.activePersonaAvailable).toBe(true);
+
+			await vi.advanceTimersByTimeAsync(60_000);
+
+			expect(run.timeExpired).toBe(true);
+			expect(run.activePersonaAvailable).toBe(false);
+			expect(run.sendMessage("are you there?")).toBe(false);
+			expect(mockClientMutation).not.toHaveBeenCalled();
+			// Unlike the old endSimulation() path: the session/run are left intact.
+			expect(session.runId).toBe("run-1");
+			expect(goto).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("resets on the replacement run once the grace period actually expires", async () => {
+		vi.useFakeTimers();
+		try {
+			const { run, session } = await freshRun();
+			await primeRun(run, session, {
+				case: { ...caseData, simulation_duration: 1 },
+			});
+			await vi.advanceTimersByTimeAsync(60_000);
+			expect(run.timeExpired).toBe(true);
+
+			// The backend's own grace period (services/simulations.ts's expiresAt) elapses later,
+			// well after this client-side flag already flipped -- #handleExpired's existing
+			// auto-restart fires exactly as it does today.
+			mockClientMutation.mockResolvedValue(
+				makeRunState({
+					run_id: "run-2",
+					case: caseData,
+					contacts: [makeContact({ id: "mary" })],
+					active_persona_id: "mary",
+				}),
+			);
+			setFakeQuery(
+				GET_SIMULATION_STATE,
+				{ runId: "run-1" },
+				{ error: new Error("Run expired.") },
+			);
+			setFakeQuery(
+				GET_SIMULATION_STATE,
+				{ runId: "run-2" },
+				{
+					data: makeRunState({
+						run_id: "run-2",
+						case: caseData,
+						contacts: [makeContact({ id: "mary" })],
+						active_persona_id: "mary",
+					}),
+				},
+			);
+
+			await vi.waitFor(() => expect(session.runId).toBe("run-2"));
+			expect(run.timeExpired).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
 describe("hostile and degenerate client-side send guards", () => {
 	// The client trims exactly like startTurn does (services/turn.ts) and otherwise sends the
 	// text through untouched. Any other reshaping -- truncating, collapsing whitespace,
