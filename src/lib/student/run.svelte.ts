@@ -388,7 +388,6 @@ export class RunStore {
 		// composer is permanently disabled, recoverable only by reloading the page.
 		this.isSending = false;
 		this.#sendingPersonaId = null;
-		this.#sendingBaseline = 0;
 		this.activeContactId = null;
 		// A restart gets a brand-new run_id, whose own (empty) notes need
 		// re-seeding from storage below — otherwise the just-expired run's
@@ -535,7 +534,6 @@ export class RunStore {
 		// personaId is always activeContactId at the moment sendMessage calls this (see its
 		// own body), so #historyQuery and #turn -- both keyed on activeContactId -- are already
 		// this exact persona's data.
-		this.#sendingBaseline = this.#historyQuery.data?.length ?? 0;
 		this.#sentOverStreamId = this.#turn?.streamId ?? null;
 		this.#sendingPersonaId = personaId;
 		this.isSending = true;

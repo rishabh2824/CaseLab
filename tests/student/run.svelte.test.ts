@@ -396,7 +396,7 @@ describe("sendMessage guards", () => {
 });
 
 describe("sendMessage lifecycle", () => {
-	it("isSending stays true through the user's own message landing, and only clears once the reply lands too", async () => {
+	it("isSending stays true until the sent turn settles, however many messages that adds to the history", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		setFakeQuery(
@@ -404,6 +404,7 @@ describe("sendMessage lifecycle", () => {
 			{ runId: "run-1", personaId: "mary" },
 			{ data: [message("user", "prior q"), message("assistant", "prior a")] },
 		);
+		setTurn({ streamId: "old", status: "done", settled: true });
 		run.activeContactId = "mary";
 		await vi.waitFor(() => expect(run.activeMessages).toHaveLength(2));
 		mockClientMutation.mockResolvedValue(undefined);
@@ -411,15 +412,16 @@ describe("sendMessage lifecycle", () => {
 		run.sendMessage("New question");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		// The mutation resolving alone must not clear isSending -- only a persisted reply
-		// (reflected via the live query) does, since runTurn finishes asynchronously.
+		// The mutation resolving alone must not clear isSending, and neither must the previous
+		// turn -- which the subscription still shows, already settled, until the new one replaces it.
 		await Promise.resolve();
 		expect(run.isSending).toBe(true);
 
-		// startTurn (services/turn.ts) persists the user's own message before runTurn ever
-		// runs -- the live query reflects that first, with no reply yet. isSending must NOT
-		// clear here: this is exactly the regression where the Send button read "Send"
-		// instead of showing the typing indicator while the reply was still generating.
+		// The new turn starts, and the user's own message lands in the history (startTurn
+		// no longer stores it -- runTurn does, once the classifier clears it -- but either way
+		// a history change alone must NOT clear isSending: this is the regression where the Send
+		// button read "Send" instead of showing the typing indicator mid-reply).
+		setTurn({ streamId: "new", status: "streaming", text: "The rep" });
 		setFakeQuery(
 			GET_PERSONA_HISTORY,
 			{ runId: "run-1", personaId: "mary" },
@@ -434,8 +436,8 @@ describe("sendMessage lifecycle", () => {
 		await Promise.resolve();
 		expect(run.isSending).toBe(true);
 
-		// Simulate the turn completing server-side: the live query now also returns the
-		// reply (applyDecisions/applyBoundary both insert exactly one assistant message).
+		// applyDecisions/applyBoundary insert the reply and settle the turn in one transaction.
+		setTurn({ streamId: "new", status: "done", settled: true });
 		setFakeQuery(
 			GET_PERSONA_HISTORY,
 			{ runId: "run-1", personaId: "mary" },
@@ -450,12 +452,37 @@ describe("sendMessage lifecycle", () => {
 		);
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(run.activeMessages).toEqual([
-			message("user", "prior q"),
-			message("assistant", "prior a"),
-			message("user", "New question"),
-			message("assistant", "the reply"),
-		]);
+		expect(run.activeMessages).toHaveLength(4);
+	});
+
+	// REGRESSION: a flagged message is never stored, so the canned boundary reply grows the history
+	// by ONE, not two. Clearing on "history grew by 2" left isSending stuck true -- silently
+	// blocking every later send, to every persona, until a reload.
+	it("clears isSending after a boundary reply, though it adds only one message to the history", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		setFakeQuery(
+			GET_PERSONA_HISTORY,
+			{ runId: "run-1", personaId: "mary" },
+			{ data: [] },
+		);
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
+
+		run.sendMessage("asdf asdf asdf");
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
+
+		setTurn({ status: "streaming" });
+		setTurn({ status: "done", settled: true });
+		setFakeQuery(
+			GET_PERSONA_HISTORY,
+			{ runId: "run-1", personaId: "mary" },
+			{ data: [message("assistant", "I am not able to follow that.")] },
+		);
+
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(toast).not.toHaveBeenCalled();
+		expect(run.sendMessage("a real question")).toBe(true);
 	});
 
 	it("a rejected mutation (e.g. rate limited, conversation ended) clears isSending immediately and shows a toast", async () => {
