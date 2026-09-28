@@ -22,6 +22,7 @@ import type * as lib_llm from "../lib/llm.js";
 import type * as lib_prompt from "../lib/prompt.js";
 import type * as lib_rateLimits from "../lib/rateLimits.js";
 import type * as lib_replyStream from "../lib/replyStream.js";
+import type * as lib_streaming from "../lib/streaming.js";
 import type * as lib_turnState from "../lib/turnState.js";
 import type * as models_cases from "../models/cases.js";
 import type * as services_admins from "../services/admins.js";
@@ -53,6 +54,7 @@ declare const fullApi: ApiFromModules<{
   "lib/prompt": typeof lib_prompt;
   "lib/rateLimits": typeof lib_rateLimits;
   "lib/replyStream": typeof lib_replyStream;
+  "lib/streaming": typeof lib_streaming;
   "lib/turnState": typeof lib_turnState;
   "models/cases": typeof models_cases;
   "services/admins": typeof services_admins;
@@ -93,5 +95,6 @@ export declare const internal: FilterApi<
 export declare const components: {
   betterAuth: import("@convex-dev/better-auth/_generated/component.js").ComponentApi<"betterAuth">;
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
+  persistentTextStreaming: import("@convex-dev/persistent-text-streaming/_generated/component.js").ComponentApi<"persistentTextStreaming">;
   staticHosting: import("@convex-dev/static-hosting/_generated/component.js").ComponentApi<"staticHosting">;
 };

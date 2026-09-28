@@ -1,7 +1,9 @@
+import type { StreamId } from "@convex-dev/persistent-text-streaming";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { simulationLimit } from "../lib/rateLimits";
+import { streaming } from "../lib/streaming";
 import {
 	type ChatStateMap,
 	type ChatStateOut,
@@ -195,7 +197,7 @@ async function queryPersonaMessages(
 // ever renders one persona's messages at a time (the active chat panel) and export goes
 // through the separate exportRun query below, which legitimately needs everyone's transcript
 // at once -- so getPersonaHistory (below) is its own scoped query instead, the same
-// reasoning as services/turn.ts's streamingReplies being its own table rather than a field
+// reasoning as the turnStreams table (schema.ts) being its own table rather than a field
 // on this one.
 export type RunStateOut = {
 	run_id: Id<"runs">;
@@ -387,9 +389,9 @@ export async function exportSimulation(
 	return { case: { id: c._id, case_name: c.name }, personas };
 }
 
-// Deletes every row scoped to a run -- its messages and any in-progress streaming-preview
-// row -- before the run document itself. Convex has no FK cascade, so this has to be
-// explicit: without it, a deleted run's runMessages/streamingReplies rows are unreachable
+// Deletes every row scoped to a run -- its messages and each persona's turnStreams row (with
+// its component stream) -- before the run document itself. Convex has no FK cascade, so this
+// has to be explicit: without it, a deleted run's rows are unreachable
 // (nothing can look them up by runId once the run is gone) but never actually removed, the
 // same class of leak files are exposed to (see services/files.ts). Both `destroy`
 // (api/simulations.ts, the primary per-run expiry path) and deleteExpiredRuns below (the
@@ -411,11 +413,14 @@ export async function deleteRunCascade(
 		.collect();
 	for (const message of messages) await ctx.db.delete(message._id);
 
-	const streamingRows = await ctx.db
-		.query("streamingReplies")
+	const turns = await ctx.db
+		.query("turnStreams")
 		.withIndex("by_run_persona", (q) => q.eq("runId", runId))
 		.collect();
-	for (const row of streamingRows) await ctx.db.delete(row._id);
+	for (const turn of turns) {
+		await streaming.deleteStream(ctx, turn.streamId as StreamId);
+		await ctx.db.delete(turn._id);
+	}
 
 	await ctx.db.delete(runId);
 }

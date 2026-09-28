@@ -1,4 +1,5 @@
-import { internal } from "../_generated/api";
+import type { StreamId } from "@convex-dev/persistent-text-streaming";
+import { components, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -19,6 +20,7 @@ import {
 } from "../lib/prompt";
 import { messageLimit } from "../lib/rateLimits";
 import { ReplyExtractor } from "../lib/replyStream";
+import { streaming } from "../lib/streaming";
 import {
 	boundaryReply,
 	type ChatStateOut,
@@ -50,8 +52,8 @@ async function appendMessage(
 	personaId: string,
 	role: "user" | "assistant",
 	content: string,
-): Promise<void> {
-	await ctx.db.insert("runMessages", {
+): Promise<Id<"runMessages">> {
+	return await ctx.db.insert("runMessages", {
 		runId,
 		personaKey: personaId,
 		role,
@@ -64,14 +66,25 @@ async function appendMessage(
 // persisted history: getTurnContext replays the last RECENT_HISTORY_LIMIT runMessages rows as
 // trusted prior-turn context into every later generation, so a flagged message stored anyway
 // would keep re-poisoning that context window turn after turn even though it was never treated
-// as valid input the first time.
+// as valid input the first time. Returns the row's id so a turn that then fails can take the
+// message back out (removeUserMessage below).
 export async function appendUserMessage(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
 	personaId: string,
 	message: string,
+): Promise<Id<"runMessages">> {
+	return await appendMessage(ctx, runId, personaId, "user", message);
+}
+
+// Called by runTurn's catch: a failed turn tells the student to resend, so the message it
+// already stored has to go, or the resend would leave it in the persona's history twice. The
+// get() guards a run deleted mid-turn, whose cascade already removed it.
+export async function removeUserMessage(
+	ctx: MutationCtx,
+	messageId: Id<"runMessages">,
 ): Promise<void> {
-	await appendMessage(ctx, runId, personaId, "user", message);
+	if (await ctx.db.get(messageId)) await ctx.db.delete(messageId);
 }
 
 // Split at the boundary Convex requires: this mutation covers validation/availability-check/
@@ -121,16 +134,13 @@ export async function startTurn(
 	// outright -- only pay for the rate-limit write once a message could plausibly succeed.
 	await messageLimit(ctx, runId);
 
-	// Claimed last, once nothing above can still reject the turn: this both allocates the
-	// streamingReplies row runTurn will write batched deltas to (see claimStreamingSlot) AND
-	// is the enforcement point for "only one turn in flight per persona at a time" -- see its
-	// own comment for why.
-	const streamId = await claimStreamingSlot(ctx, runId, personaId);
+	// Claimed last, once nothing above can still reject the turn: this both creates the stream
+	// the reply will be generated into AND is the enforcement point for "only one turn in
+	// flight per persona at a time" -- see claimTurnSlot's own comment. Nothing is scheduled
+	// here: generation starts when a client watching this persona sees the claimable turn (via
+	// getTurnStream) and POSTs to /turn-stream (http.ts).
+	await claimTurnSlot(ctx, runId, personaId, message);
 
-	// The raw message is NOT persisted here -- runTurn only writes it once classifyHarassment
-	// clears it as "normal" (see appendUserMessage's own comment for why). It's still passed
-	// through to the scheduled action below so the reply generation has it even before it's
-	// stored.
 	// Skipped when it's already this persona -- the common case, since a student's next
 	// message is usually to whoever they're already talking to. A patch invalidates the
 	// getSimulationState subscription (services/simulations.ts) regardless of whether any
@@ -139,76 +149,109 @@ export async function startTurn(
 	if (run.activePersonaKey !== personaId) {
 		await ctx.db.patch(runId, { activePersonaKey: personaId });
 	}
-
-	await ctx.scheduler.runAfter(0, internal.api.turn.runTurn, {
-		runId,
-		personaId,
-		message,
-		streamId,
-	});
 }
 
 // A killed action (a deploy racing an in-flight turn, an enforced max-duration, an OOM) skips
-// runTurn's own catch, so markStreamingError never runs and a row can be left at "streaming"
-// forever -- claimStreamingSlot would then refuse every future turn on this persona for the
-// rest of the run (up to RUN_LIFETIME_MINUTES), with no self-service recovery. updatedAt is
-// refreshed on every legitimate write to a streamingReplies row (claim, preview flush,
-// terminal patch -- see each of their own comments), so a genuinely stuck row is one nothing
-// has touched in a while, not one that's merely slow to produce its first delta or between
-// flushes. LLM_ATTEMPT_TIMEOUT_MS * PERSONA_REPLY_RETRIES (lib/llm.ts) is the worst-case time
-// personaReplyStream itself allows before it gives up, so anything idle well past that can
-// only mean the process died mid-turn, never that it's still legitimately working. Exported
-// so tests can pin behavior right at the boundary without hard-coding a second copy of it.
+// runTurn's own catch, so its stream is left "streaming" until the component's own 20-minute
+// timeout sweep -- claimTurnSlot would refuse every turn on this persona until then.
+// LLM_ATTEMPT_TIMEOUT_MS * PERSONA_REPLY_RETRIES (lib/llm.ts) is the worst-case time
+// personaReplyStream itself allows before it gives up, so a turn open well past that can only
+// mean the process died mid-turn, never that it's still legitimately working. Exported so
+// tests can pin behavior right at the boundary without hard-coding a second copy of it.
 export const STREAMING_SLOT_STALE_MS =
 	LLM_ATTEMPT_TIMEOUT_MS * PERSONA_REPLY_RETRIES + 30_000;
 
-// Claims this persona's streamingReplies row for a new turn, rejecting if one is already in
-// flight -- this IS the concurrency guard for turns on the same persona, not just a defense
-// against its symptoms (contrast with applyBoundary's endReason latch below, kept as a
-// defensive backstop but no longer the primary protection). Two concurrent startTurn calls
-// for the same (runId, personaId) both read and write this exact row, so Convex's own
-// transaction isolation serializes them: whichever commits second sees the first's
-// "streaming" status already there and is rejected, before it can insert a message, consume
-// rate-limit budget, or schedule a second runTurn that would interleave writes with the
-// first. Returning the row's id (rather than callers re-querying it by index every time) is
-// also what lets writeStreamingPreview become a plain patch-by-id -- see its own comment.
+type TurnStreamStatus = "pending" | "streaming" | "done" | "error" | "timeout";
+
+async function streamStatus(
+	ctx: QueryCtx | MutationCtx,
+	streamId: string,
+): Promise<TurnStreamStatus> {
+	return await ctx.runQuery(
+		components.persistentTextStreaming.lib.getStreamStatus,
+		{ streamId },
+	);
+}
+
+// Starts a new turn on this persona's turnStreams row, rejecting if one is already in flight
+// -- this IS the concurrency guard for turns on the same persona (contrast with
+// applyBoundary's endReason latch below, kept only as a defensive backstop). Two concurrent
+// startTurn calls for the same (runId, personaId) both read and write this exact row, so
+// Convex's transaction isolation serializes them: whichever commits second sees the first's
+// open stream and is rejected, before it can consume rate-limit budget or start a second
+// generation. "In flight" is the component's own stream status, not `settled`: a settled turn
+// still has its final chunk to write, and deleting its stream underneath it would fail that
+// write. A stream open past STREAMING_SLOT_STALE_MS is reclaimed instead -- see that
+// constant's comment.
 //
-// A "streaming" row older than STREAMING_SLOT_STALE_MS is reclaimed instead of rejected --
-// see that constant's comment for why an unconditional rejection would otherwise strand a
-// persona whenever the action generating its reply gets killed rather than erroring cleanly.
-async function claimStreamingSlot(
+// The previous turn's stream is deleted here, so each persona holds at most one stream: once
+// a turn settles its reply lives in runMessages, and the stream only mattered while it was
+// live.
+async function claimTurnSlot(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
 	personaId: string,
-): Promise<Id<"streamingReplies">> {
+	message: string,
+): Promise<void> {
 	const existing = await ctx.db
-		.query("streamingReplies")
+		.query("turnStreams")
 		.withIndex("by_run_persona", (q) =>
 			q.eq("runId", runId).eq("personaKey", personaId),
 		)
 		.first();
 	const now = Date.now();
 	if (existing) {
-		const isStale = now - existing.updatedAt >= STREAMING_SLOT_STALE_MS;
-		if (existing.status === "streaming" && !isStale) {
+		const status = await streamStatus(ctx, existing.streamId);
+		const open = status === "pending" || status === "streaming";
+		if (open && now - existing.startedAt < STREAMING_SLOT_STALE_MS) {
 			throw new Error(
 				"A reply is already being generated for this contact. Please wait.",
 			);
 		}
-		await ctx.db.patch(existing._id, {
-			text: "",
-			status: "streaming",
-			updatedAt: now,
-		});
-		return existing._id;
+		await streaming.deleteStream(ctx, existing.streamId as StreamId);
 	}
-	return await ctx.db.insert("streamingReplies", {
-		runId,
-		personaKey: personaId,
-		text: "",
-		status: "streaming",
-		updatedAt: now,
-	});
+	const turn = {
+		streamId: await streaming.createStream(ctx),
+		startedAt: now,
+		message,
+		settled: false,
+	};
+	if (existing) await ctx.db.patch(existing._id, turn);
+	else
+		await ctx.db.insert("turnStreams", {
+			runId,
+			personaKey: personaId,
+			...turn,
+		});
+}
+
+export type ClaimedTurn = {
+	turnId: Id<"turnStreams">;
+	runId: Id<"runs">;
+	personaId: string;
+	message: string;
+};
+
+// Called by /turn-stream (http.ts) before it starts generating. Taking the message is the
+// atomic claim: the component's own stream() only checks "still pending" non-transactionally,
+// so two tabs watching the same persona could otherwise both start a generation. Whichever
+// commits second finds the message gone and gets null.
+export async function claimTurn(
+	ctx: MutationCtx,
+	streamId: string,
+): Promise<ClaimedTurn | null> {
+	const row = await ctx.db
+		.query("turnStreams")
+		.withIndex("by_stream", (q) => q.eq("streamId", streamId))
+		.unique();
+	if (!row?.message) return null;
+	await ctx.db.patch(row._id, { message: undefined });
+	return {
+		turnId: row._id,
+		runId: row.runId,
+		personaId: row.personaKey,
+		message: row.message,
+	};
 }
 
 type PendingReferral = {
@@ -335,7 +378,7 @@ export async function applyBoundary(
 	personaId: string,
 	label: string,
 	personaName: string,
-	streamId: Id<"streamingReplies">,
+	turnId: Id<"turnStreams">,
 ): Promise<ChatStateOut> {
 	const run = await ctx.db.get(runId);
 	if (!run) throw new Error("Run not found.");
@@ -343,7 +386,7 @@ export async function applyBoundary(
 	const previous = getChatState(run.personaChatState, personaId);
 	const warningCount = previous.warningCount + 1;
 	// startTurn already refuses a turn on a persona whose chat has ended (before
-	// claimStreamingSlot even claims a slot for it), so this always runs with
+	// claimTurnSlot even claims a slot for it), so this always runs with
 	// previous.ended false -- there is no "already ended, latch to the earlier reason" case
 	// to handle.
 	const ended = warningCount >= NONSENSE_THRESHOLD;
@@ -361,10 +404,7 @@ export async function applyBoundary(
 
 	const reply = boundaryReply(personaName, ended);
 	await appendMessage(ctx, runId, personaId, "assistant", reply);
-	// A boundary reply is generated instantly, without ever streaming through
-	// writeStreamingPreview -- clear the row claimStreamingSlot set to "streaming" anyway, so
-	// every terminal path (this one and applyDecisions below) leaves it consistent.
-	await clearStreamingPreview(ctx, streamId);
+	await ctx.db.patch(turnId, { settled: true });
 
 	return { ended, endReason: endReason ?? null, warningCount };
 }
@@ -373,7 +413,9 @@ export type UnlockedReferral = { referredPersonaId: string };
 export type SharedFileInput = { fileId: Id<"files"> };
 
 // Persists the reply, any newly-unlocked referrals, and any newly-shared files, all in one
-// mutation. Doesn't also build/return a ContactOut/SharedFileOut payload for an SSE meta
+// mutation. Marking the turn settled in this same transaction (here and in applyBoundary) is
+// what swaps the client's live bubble for the persisted reply with no gap or duplicate -- see
+// getTurnStream. Doesn't also build/return a ContactOut/SharedFileOut payload for an SSE meta
 // frame -- there's no synchronous caller waiting on one; the reactive getSimulationState
 // query (services/simulations.ts) already derives contacts/shared files fresh from this same
 // data on every read.
@@ -384,19 +426,10 @@ export async function applyDecisions(
 	reply: string,
 	unlockedReferrals: UnlockedReferral[],
 	sharedFiles: SharedFileInput[],
-	streamId: Id<"streamingReplies">,
+	turnId: Id<"turnStreams">,
 ): Promise<void> {
 	const run = await ctx.db.get(runId);
 	if (!run) throw new Error("Run not found.");
-
-	// Mirrors turn.py's behavior of erroring out (nothing committed) on an empty/unusable
-	// reply, rather than persisting a blank assistant bubble: an empty `reply` means the LLM
-	// call itself produced nothing usable, so the whole turn is treated as failed -- no
-	// referral/file unlocks either, same as any other failure path into markStreamingError.
-	if (!reply.trim()) {
-		await markStreamingError(ctx, streamId);
-		return;
-	}
 
 	const elapsed = elapsedMinutes(run.startTime, Date.now());
 	const unlockedReferredIds = [...run.unlockedReferredIds];
@@ -416,97 +449,58 @@ export async function applyDecisions(
 		sharedFiles: [...sharedFileIds],
 	});
 	await appendMessage(ctx, runId, personaId, "assistant", reply);
-	await clearStreamingPreview(ctx, streamId);
+	await ctx.db.patch(turnId, { settled: true });
 }
 
-// How often runTurn (below) pushes an accumulated preview to `streamingReplies` while a
-// reply is generating -- one write per batch of raw stream chunks, not one per chunk, so a
-// long reply doesn't turn into dozens of tiny mutation calls. ~250ms is the plan's own stated
-// target for feeling responsive to a subscribed client without excessive function-call volume.
-const STREAM_BATCH_INTERVAL_MS = 250;
-
-// Overwrites the streamingReplies row claimStreamingSlot (above) already created for this
-// turn with the latest accumulated preview text. Always the FULL preview so far, not a delta
-// to append -- callers don't need to track what the row already contains. A plain patch by
-// id, not an index lookup first: the row's existence and id are guaranteed by the time
-// runTurn (services/turn.ts) calls this, since startTurn always claims/creates it before
-// ever scheduling runTurn -- looking it up again here on every single delta (this runs once
-// per STREAM_BATCH_INTERVAL_MS, the hottest write path in the whole turn) would double the
-// DB operations for no benefit.
-export async function writeStreamingPreview(
-	ctx: MutationCtx,
-	streamId: Id<"streamingReplies">,
-	text: string,
-): Promise<void> {
-	await ctx.db.patch(streamId, {
-		text,
-		status: "streaming",
-		updatedAt: Date.now(),
-	});
-}
-
-// Called by applyDecisions and applyBoundary (both above) once a turn has reached a terminal
-// state -- clears the accumulated text and marks the row "done" so a client's streamingPreview
-// subscription (frontend/src/lib/student/run.svelte.ts) stops showing it: streamingPreview
-// only surfaces text while status is "streaming", so this is what makes the live bubble
-// disappear once the canonical reply has landed in runMessages. Safe to patch by id
-// unconditionally, same reasoning as writeStreamingPreview above -- both callers already
-// confirmed the run itself still exists (via their own `ctx.db.get(runId)`), and the
-// streamingReplies row is deleted in the same cascade as the run (deleteRunCascade,
-// services/simulations.ts), so if the run's still there, so is this row.
-async function clearStreamingPreview(
-	ctx: MutationCtx,
-	streamId: Id<"streamingReplies">,
-): Promise<void> {
-	await ctx.db.patch(streamId, {
-		text: "",
-		status: "done",
-		updatedAt: Date.now(),
-	});
-}
-
-export type StreamingPreviewOut = {
+export type TurnStreamOut = {
+	streamId: string;
+	status: TurnStreamStatus;
+	settled: boolean;
+	// No tab has started generating this turn yet -- a client seeing this POSTs the streamId
+	// to /turn-stream (http.ts) to drive it; claimTurn makes sure only one does.
+	claimable: boolean;
+	// The component's persisted copy of the reply so far ("" unless `withText`).
 	text: string;
-	status: "streaming" | "done" | "error";
 } | null;
 
-// Marks streamId's row "error" so a client's streamingPreview subscription
-// (frontend/src/lib/student/run.svelte.ts) stops rendering whatever partial text had
-// streamed in as if generation were still live, and can clear isSending / toast a failure
-// instead of waiting forever for a reply that's never coming. Called from runTurn's catch
-// (below) on ANY failure -- before any delta has streamed just as much as mid-stream, since
-// claimStreamingSlot guarantees the row already exists by the time runTurn ever runs (unlike
-// before this was threaded through as an id, there's no "no row yet" case to handle here
-// anymore).
-export async function markStreamingError(
-	ctx: MutationCtx,
-	streamId: Id<"streamingReplies">,
-): Promise<void> {
-	await ctx.db.patch(streamId, { status: "error", updatedAt: Date.now() });
-}
-
-// Deliberately scoped to just this one small streamingReplies document, not folded into
-// getSimulationState's RunStateOut -- a client subscribed to THIS query only re-renders on
-// this persona's own reply deltas. If the deltas instead lived on the run document
-// getSimulationState reads, every delta would re-push the entire run state (contacts,
-// every persona's history, shared files) to every subscriber, not just the ~40 bytes of new
-// text one student watching one reply actually needs.
-export async function getStreamingPreview(
+// The student's live view of this persona's latest turn. A tab driving the turn reads the
+// reply off its own HTTP stream and passes withText=false, so its subscription only re-runs
+// on the handful of status changes per turn; any other tab (a reload, a second window) passes
+// true and follows the component's sentence-by-sentence persisted copy instead. Deliberately
+// its own small query, not part of getSimulationState's RunStateOut, so a turn's writes
+// never re-push the whole run state.
+export async function getTurnStream(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 	personaId: string,
-): Promise<StreamingPreviewOut> {
+	withText: boolean,
+): Promise<TurnStreamOut> {
 	const row = await ctx.db
-		.query("streamingReplies")
+		.query("turnStreams")
 		.withIndex("by_run_persona", (q) =>
 			q.eq("runId", runId).eq("personaKey", personaId),
 		)
 		.first();
-	return row ? { text: row.text, status: row.status } : null;
+	if (!row) return null;
+	const turn = {
+		streamId: row.streamId,
+		settled: row.settled,
+		claimable: row.message !== undefined,
+	};
+	if (!withText || row.settled)
+		return { ...turn, status: await streamStatus(ctx, row.streamId), text: "" };
+	return {
+		...turn,
+		...(await streaming.getStreamBody(ctx, row.streamId as StreamId)),
+	};
 }
 
-// Runs inside an action since both the classifier and the reply LLM call are I/O. Ends by
-// calling applyBoundary or applyDecisions (both mutations) to persist the outcome.
+export const TURN_FAILED_PREFIX = "Turn failed:";
+
+// The body of /turn-stream (http.ts): runs as the persistentTextStreaming component's stream
+// writer, so every `append` goes straight to the driving tab's HTTP response and, at sentence
+// boundaries, to the component's persisted copy. Ends by calling applyBoundary or
+// applyDecisions (both mutations) to persist the outcome.
 //
 // Referral/file eligibility is no longer a separate classifier fan-out: the same Sonnet call
 // that writes the persona's reply also judges each candidate's condition itself (see
@@ -516,37 +510,28 @@ export async function getStreamingPreview(
 // runs CONCURRENTLY with the (much slower) Sonnet reply stream rather than gating it, so the
 // common case doesn't pay the classifier's round-trip as extra latency before the reply even
 // starts generating. The two are reconciled via `cleared` below: nothing streamed from Sonnet
-// is ever written to streamingReplies (and so never shown to the client) until harassment has
-// resolved to "normal" -- if it resolves any other way, the Sonnet output is discarded
+// is ever appended (and so never shown to the client) until harassment has resolved to
+// "normal" -- if it resolves any other way, the Sonnet output is discarded
 // entirely and applyBoundary's canned reply is used instead, with no visible flicker either
 // way, at the cost of occasionally paying for a Sonnet generation that goes unused.
 //
 // The same "normal" resolution also gates persisting the student's own message (see
 // appendUserMessage): `appendUserMessagePromise` fires the instant the classifier clears, in
 // parallel with the still-streaming reply, and is awaited (both on the success path and in the
-// catch below) before runTurn returns -- so a flagged message never touches runMessages, but a
-// cleared one is durably stored even if the reply generation itself goes on to fail.
+// catch below) before runTurn returns -- so a flagged message never touches runMessages.
 //
-// The whole body is one try/catch, not one per I/O stage: this is a scheduled action
-// nothing awaits (startTurn just fires it via ctx.scheduler.runAfter), so an uncaught throw
-// anywhere in here is otherwise invisible -- it fails the scheduled job silently, in Convex's
-// own logs only. Two things depend on this catch actually running: isSending client-side
-// never clears (no assistant message ever gets inserted for the effect watching
-// serverHistories to observe), and if streaming had already begun, streamingReplies is left
-// frozen at status "streaming" with partial text -- streamingPreview only stops showing that
-// once status changes, so without this it renders as a live bubble forever. markStreamingError
-// closes both: the frontend now clears isSending and toasts on status "error", the same way a
-// synchronous startTurn rejection already does.
+// Any throw fails the turn: the component marks the stream "error", which the client turns
+// into a "please resend" toast. The catch first takes back the student's message if it was
+// already stored (see removeUserMessage for why).
 export async function runTurn(
 	ctx: ActionCtx,
-	runId: Id<"runs">,
-	personaId: string,
-	message: string,
-	streamId: Id<"streamingReplies">,
+	{ turnId, runId, personaId, message }: ClaimedTurn,
+	append: (text: string) => Promise<void>,
 ): Promise<void> {
 	// Declared outside the try so the catch below can still await it -- a failure partway
 	// through the reply stream must not strand this mid-flight (see its own comment).
-	let appendUserMessagePromise: Promise<void> = Promise.resolve();
+	let appendUserMessagePromise: Promise<Id<"runMessages"> | null> =
+		Promise.resolve(null);
 	try {
 		const context = await ctx.runQuery(internal.api.turn.getTurnContext, {
 			runId,
@@ -564,9 +549,9 @@ export async function runTurn(
 		// the loop re-checks it, same as any other microtask-ordering guarantee in JS.
 		let cleared = false;
 		appendUserMessagePromise = harassmentPromise.then(async (label) => {
-			if (label !== "normal") return;
+			if (label !== "normal") return null;
 			cleared = true;
-			await ctx.runMutation(internal.api.turn.appendUserMessage, {
+			return await ctx.runMutation(internal.api.turn.appendUserMessage, {
 				runId,
 				personaId,
 				message,
@@ -615,9 +600,9 @@ export async function runTurn(
 
 		let fullText = "";
 		let extractor = new ReplyExtractor();
-		let previewText = "";
-		let flushedText = "";
-		let lastFlushedAt = 0;
+		// Decoded reply text not yet appended -- held back until harassment clears.
+		let pending = "";
+		let appended = false;
 		// context.decisionHistory is already bounded to RECENT_HISTORY_LIMIT at the query level
 		// (getTurnContext above), so no further slicing is needed here. It holds only PRIOR
 		// turns now -- the current message is appended in-memory rather than fetched back from
@@ -632,34 +617,23 @@ export async function runTurn(
 			replyHistory,
 		)) {
 			if (delta.type === "reset") {
-				// The stream retried after a failed attempt -- drop everything that attempt
-				// produced, including what it already flushed to the client's preview.
+				// The stream is retrying after a failed attempt. Appended text can't be taken
+				// back (the component's stream is append-only), so the retry is only safe while
+				// nothing has been shown yet -- otherwise fail the turn and let the student
+				// resend.
+				if (appended)
+					throw new Error("Reply failed after it started streaming.");
 				fullText = "";
-				previewText = "";
+				pending = "";
 				extractor = new ReplyExtractor();
-				if (cleared && flushedText !== "") {
-					flushedText = "";
-					await ctx.runMutation(internal.api.turn.writeStreamingPreview, {
-						streamId,
-						text: "",
-					});
-				}
 				continue;
 			}
 			fullText += delta.text;
-			previewText += extractor.feed(delta.text);
-			if (!cleared) continue;
-			const now = Date.now();
-			if (
-				previewText !== flushedText &&
-				now - lastFlushedAt >= STREAM_BATCH_INTERVAL_MS
-			) {
-				flushedText = previewText;
-				lastFlushedAt = now;
-				await ctx.runMutation(internal.api.turn.writeStreamingPreview, {
-					streamId,
-					text: previewText,
-				});
+			pending += extractor.feed(delta.text);
+			if (cleared && pending) {
+				await append(pending);
+				pending = "";
+				appended = true;
 			}
 		}
 
@@ -674,20 +648,18 @@ export async function runTurn(
 				personaId,
 				label,
 				personaName: context.persona.name,
-				streamId,
+				turnId,
 			});
 			return;
 		}
 
-		if (previewText !== flushedText) {
-			await ctx.runMutation(internal.api.turn.writeStreamingPreview, {
-				streamId,
-				text: previewText,
-			});
-		}
+		if (pending) await append(pending);
 
 		const parsed = parseReply(fullText);
 		const reply = cleanReply((parsed?.reply as string | undefined) ?? "");
+		// Mirrors turn.py: an empty/unusable reply fails the whole turn (no referral/file
+		// unlocks either) rather than persisting a blank assistant bubble.
+		if (!reply.trim()) throw new Error("The reply came back empty.");
 
 		const unlockedReferrals = [...new Set(coerceHandles(parsed?.introduce))]
 			.map((handle) => referralByHandle.get(handle))
@@ -705,18 +677,21 @@ export async function runTurn(
 			reply,
 			unlockedReferrals,
 			sharedFiles,
-			streamId,
+			turnId,
 		});
 	} catch (err) {
 		// Swallow (don't let a failure here shadow the real error below), but still wait for
 		// it: classifyHarassment fails open (lib/llm.ts), so it can resolve "normal" and start
 		// this write even when the failure below is the reply stream's own fetch throwing --
-		// without this await, runTurn could return/throw while that write is still in flight
-		// and the student's own message would be silently dropped.
-		await appendUserMessagePromise.catch(() => {});
-		await ctx.runMutation(internal.api.turn.markStreamingError, { streamId });
-		throw err instanceof Error
-			? err
-			: new Error("Something went wrong. Please resend your message.");
+		// without this await, that write could land after the removal below and survive it.
+		const messageId = await appendUserMessagePromise.catch(() => null);
+		if (messageId)
+			await ctx.runMutation(internal.api.turn.removeUserMessage, { messageId });
+		// The component rethrows this from a promise nothing awaits, so it surfaces as an
+		// unhandled rejection -- the fixed prefix is what lets vite.config.ts's onUnhandledError
+		// tell an expected turn failure apart from a real one.
+		throw new Error(
+			`${TURN_FAILED_PREFIX} ${err instanceof Error ? err.message : String(err)}`,
+		);
 	}
 }

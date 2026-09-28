@@ -2,6 +2,7 @@ import { makeFunctionReference } from "convex/server";
 import { getConvexClient, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
+import { resolveConvexSiteUrl } from "../convexUrl.js";
 import { session } from "../session.svelte.js";
 import type { ChatMessage, Contact, SharedFile } from "../types.js";
 import { personaAvailability } from "./availability.js";
@@ -20,8 +21,8 @@ const getSimulationStateRef = makeFunctionReference<"query">(
 const getPersonaHistoryRef = makeFunctionReference<"query">(
 	"api/simulations:getPersonaHistory",
 );
-const getStreamingPreviewRef = makeFunctionReference<"query">(
-	"api/turn:getStreamingPreview",
+const getTurnStreamRef = makeFunctionReference<"query">(
+	"api/turn:getTurnStream",
 );
 const startTurnRef = makeFunctionReference<"mutation">("api/turn:start");
 
@@ -29,7 +30,7 @@ import type {
 	ExportSimulationOut,
 	RunStateOut,
 } from "../../../convex/services/simulations.js";
-import type { StreamingPreviewOut } from "../../../convex/services/turn.js";
+import type { TurnStreamOut } from "../../../convex/services/turn.js";
 
 // RunStateOut/ExportSimulationOut as-is, except run_id/case.id come back de-branded to plain
 // `string`. Server-side those are Convex's Id<"runs">/Id<"cases">, but the student flow
@@ -127,21 +128,15 @@ export class RunStore {
 	// (below) reads it, and a plain field write wouldn't be visible to that $derived.
 	#nowTick = $state(Date.now());
 	#availabilityTickInterval: number | null = null;
-	// Set by #runSend, cleared once serverHistories[personaId] grows by 2 past the count
-	// captured at send time -- see the constructor's effect below. It takes 2, not 1: the
-	// live query observes startTurn's own user-message insert (services/turn.ts) first,
-	// before the reply exists, so clearing at +1 turned the input back on (and the guard
-	// in sendMessage back off) while the reply was still generating -- confirmed live, not
-	// just in theory: the Send button read "Send" instead of showing the typing indicator
-	// mid-reply. +2 waits for that user message AND the one assistant message that follows
-	// it, whether from a normal reply (applyDecisions) or a boundary reply (applyBoundary) --
-	// both insert exactly one.
+	// Set by #runSend, cleared once the sent turn settles or fails -- see the constructor's
+	// effect below. Deliberately not "the history grew by N": a flagged message is never
+	// stored (services/turn.ts's appendUserMessage), so a boundary reply grows the history by
+	// one, not two, and any count-based check leaves the composer disabled until a reload.
 	// $state, not a plain field: the effect below reads #sendingPersonaId, and a plain
 	// field write is invisible to Svelte -- the effect would run once at construction
 	// (when it's still null) and never again, so #runSend setting it later would silently
 	// never trigger the recheck.
 	#sendingPersonaId = $state<string | null>(null);
-	#sendingBaseline = 0;
 
 	// The run's live state -- contacts, shared files, case info -- as a reactive Convex
 	// subscription, not a one-shot fetch. This is what lets a completed turn (newly-unlocked
@@ -163,15 +158,28 @@ export class RunStore {
 			? { runId: session.runId, personaId: this.activeContactId }
 			: "skip",
 	);
-	// Reactive subscription scoped to just the active persona's streamingReplies row (see
-	// convex/services/turn.ts's getStreamingPreview) -- NOT the full run state, so runTurn's
-	// batched deltas only re-render this one query's subscribers, not everything reading
-	// `raw` below.
-	#streamingPreviewQuery = useQuery(getStreamingPreviewRef, () =>
+	// The turn this tab is driving (it won /turn-stream's claim -- see #drive) and the reply
+	// read off its HTTP response so far. $state, not plain fields: streamingPreview and
+	// #turnQuery's args read them.
+	#driven = $state<{ personaId: string; streamId: string } | null>(null);
+	#drivenText = $state("");
+	#attemptedStreams = new Set<string>();
+	// The active persona's latest turn (see convex/services/turn.ts's getTurnStream). The
+	// persisted reply text is only requested when this tab isn't driving that turn -- a driving
+	// tab reads it off its own HTTP stream, so its subscription only re-runs on status changes.
+	#turnQuery = useQuery(getTurnStreamRef, () =>
 		session.runId && this.activeContactId
-			? { runId: session.runId, personaId: this.activeContactId }
+			? {
+					runId: session.runId,
+					personaId: this.activeContactId,
+					withText: this.#driven?.personaId !== this.activeContactId,
+				}
 			: "skip",
 	);
+	#turn = $derived((this.#turnQuery.data as TurnStreamOut | undefined) ?? null);
+	// The turn that was current when #runSend started -- so the failure effect below doesn't
+	// mistake an earlier turn's "error" for the new one's before the new turn replaces it.
+	#sentOverStreamId: string | null = null;
 
 	raw = $derived<StartedRun | null>(this.#runStateQuery.data ?? null);
 	caseData = $derived(this.raw?.case ?? null);
@@ -206,15 +214,18 @@ export class RunStore {
 	// The active persona's transcript, live from Convex -- see #historyQuery's comment for
 	// why this is scoped to just the active persona rather than every visible one.
 	activeMessages = $derived<ChatMessage[]>(this.#historyQuery.data ?? []);
-	// The active persona's in-progress reply, live from Convex -- null once the row is
-	// missing/done/error, so callers don't need to check `status` themselves.
-	streamingPreview = $derived<string | null>(
-		(this.#streamingPreviewQuery.data as StreamingPreviewOut)?.status ===
-			"streaming"
-			? ((this.#streamingPreviewQuery.data as StreamingPreviewOut)?.text ??
-					null)
-			: null,
-	);
+	// The active persona's in-progress reply -- off this tab's own HTTP stream when it's driving
+	// the turn, else the persisted copy. Null once the turn has settled (its reply is in
+	// activeMessages, swapped in by the same server transaction) or failed, so callers don't
+	// need to check status themselves.
+	streamingPreview = $derived.by<string | null>(() => {
+		const turn = this.#turn;
+		if (!turn || turn.settled) return null;
+		if (turn.status !== "pending" && turn.status !== "streaming") return null;
+		return this.#driven?.streamId === turn.streamId
+			? this.#drivenText
+			: turn.text;
+	});
 	activeContact = $derived(
 		this.contacts.find((c) => c.id === this.activeContactId) ??
 			this.contacts[0] ??
@@ -267,43 +278,36 @@ export class RunStore {
 		$effect(() => {
 			if (this.raw) this.#afterLoad();
 		});
-		// Clears isSending once the persona being sent to has both its new user message
-		// AND a reply persisted -- see #sendingPersonaId's comment for why +2, not +1.
-		// Scoped to the currently-viewed contact, matching #historyQuery's own scope (see its
-		// comment): if the student switches away from the persona they just messaged before
-		// the reply lands, this won't observe it there, the same limitation the error-
-		// detection effect below already has.
+		// Starts generating any turn on the active persona that no tab has claimed yet -- the one
+		// this tab just sent, or one a closed/reloaded tab sent but never got to start. If
+		// several tabs try, /turn-stream lets exactly one through (see #drive).
 		$effect(() => {
-			const personaId = this.#sendingPersonaId;
-			if (!personaId || personaId !== this.activeContactId) return;
-			const count = this.#historyQuery.data?.length ?? 0;
-			if (count >= this.#sendingBaseline + 2) {
-				this.#sendingPersonaId = null;
-				this.isSending = false;
-			}
+			const turn = this.#turn;
+			const personaId = this.activeContactId;
+			if (!turn?.claimable || !personaId) return;
+			if (this.#attemptedStreams.has(turn.streamId)) return;
+			this.#attemptedStreams.add(turn.streamId);
+			void this.#drive(personaId, turn.streamId);
 		});
-		// Clears isSending (and notifies) if runTurn failed server-side instead of ever
-		// persisting a reply -- see convex/services/turn.ts's markStreamingError. Without
-		// this, a failed turn left isSending stuck true forever: the effect above only ever
-		// clears it by observing a new persisted message, and a failed turn never produces
-		// one. Scoped to the currently-viewed contact, matching streamingPreview's own scope
-		// (see its comment) -- if the student switches away from the persona they just
-		// messaged before the reply fails, this won't catch it there, the same pre-existing
-		// limitation the effect above has (neither watches a persona once it's no longer
-		// active).
+		// Clears isSending once the turn this tab sent ends: settled (the reply -- a normal or a
+		// boundary one -- is persisted, in the same transaction that sets the flag, so it's already
+		// in activeMessages), or failed ("error", or "timeout" from the component's own sweep of
+		// a turn whose generation died), which also notifies. Scoped to the currently-viewed
+		// contact, matching #turnQuery's own scope -- if the student switches away from the
+		// persona they just messaged before the turn ends, this won't observe it there.
 		$effect(() => {
 			const personaId = this.#sendingPersonaId;
 			if (!personaId || personaId !== this.activeContactId) return;
-			if (
-				(this.#streamingPreviewQuery.data as StreamingPreviewOut)?.status !==
-				"error"
-			)
-				return;
+			const turn = this.#turn;
+			if (!turn || turn.streamId === this.#sentOverStreamId) return;
+			const failed = turn.status === "error" || turn.status === "timeout";
+			if (!turn.settled && !failed) return;
 			this.#sendingPersonaId = null;
 			this.isSending = false;
-			notify(
-				"Something went wrong generating a reply. Please resend your message.",
-			);
+			if (failed)
+				notify(
+					"Something went wrong generating a reply. Please resend your message.",
+				);
 		});
 	});
 
@@ -521,16 +525,18 @@ export class RunStore {
 
 	// A plain Convex mutation (api/turn:start): it only confirms the message was accepted (or
 	// rejects with a plain, user-presentable Error -- rate limited, conversation ended,
-	// persona unavailable, message too long). The actual reply streams in via
-	// streamingPreview above, the final persisted message arrives via #historyQuery, and
-	// updated contacts/shared files arrive via the live getSimulationState subscription (raw)
-	// -- nothing here needs to patch any of that in by hand.
+	// persona unavailable, message too long). Generation starts once #turnQuery shows the new
+	// turn as claimable (see the effect that calls #drive), the reply streams in via
+	// streamingPreview, the final persisted message arrives via #historyQuery, and updated
+	// contacts/shared files arrive via the live getSimulationState subscription (raw) --
+	// nothing here needs to patch any of that in by hand.
 	async #runSend(personaId: string, message: string): Promise<void> {
 		const runId = session.runId;
 		// personaId is always activeContactId at the moment sendMessage calls this (see its
-		// own body), so #historyQuery -- keyed on activeContactId -- is already this exact
-		// persona's data.
+		// own body), so #historyQuery and #turn -- both keyed on activeContactId -- are already
+		// this exact persona's data.
 		this.#sendingBaseline = this.#historyQuery.data?.length ?? 0;
+		this.#sentOverStreamId = this.#turn?.streamId ?? null;
 		this.#sendingPersonaId = personaId;
 		this.isSending = true;
 		try {
@@ -547,6 +553,35 @@ export class RunStore {
 				(err instanceof Error && err.message) ||
 					"Message failed. Please try again.",
 			);
+		}
+	}
+
+	// Generates a claimed turn via /turn-stream (convex/http.ts) and reads the reply straight
+	// off the response. The body is sent as a plain string, so fetch labels it text/plain --
+	// that keeps this a CORS "simple" request with no preflight round trip before the reply
+	// can start. A 409 (another tab claimed the turn first) or a dropped connection isn't a
+	// failed turn -- generation carries on server-side either way -- so this tab just falls
+	// back to following the persisted copy, via #turnQuery's withText.
+	async #drive(personaId: string, streamId: string): Promise<void> {
+		this.#driven = { personaId, streamId };
+		this.#drivenText = "";
+		try {
+			const response = await fetch(`${resolveConvexSiteUrl()}/turn-stream`, {
+				method: "POST",
+				body: JSON.stringify({ streamId }),
+			});
+			if (!response.ok || !response.body)
+				throw new Error(`/turn-stream answered ${response.status}`);
+			const reader = response.body
+				.pipeThrough(new TextDecoderStream())
+				.getReader();
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) return;
+				if (this.#driven?.streamId === streamId) this.#drivenText += value;
+			}
+		} catch {
+			if (this.#driven?.streamId === streamId) this.#driven = null;
 		}
 	}
 }

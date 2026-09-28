@@ -13,6 +13,7 @@ import { api } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { CaseStructure } from "../models/cases";
 import {
+	driveTurn,
 	makeLlmFetch,
 	newTestConvex,
 	withAdmin,
@@ -109,7 +110,7 @@ async function send(
 	message: string,
 ) {
 	await t.run((ctx) => startTurn(ctx, runId, personaId, message));
-	await t.finishAllScheduledFunctions(() => {});
+	await driveTurn(t, runId, personaId);
 }
 
 describe("a persona that is both a root and a referral target", () => {
@@ -469,7 +470,7 @@ describe("student message boundaries", () => {
 				startTurn(ctx, state.run_id, "A", Array(50).fill("word").join(" ")),
 			),
 		).resolves.toBeNull();
-		await t.finishAllScheduledFunctions(() => {});
+		await driveTurn(t, state.run_id, "A");
 		await expect(
 			t.run((ctx) =>
 				startTurn(ctx, state.run_id, "A", Array(51).fill("word").join(" ")),
@@ -489,7 +490,7 @@ describe("student message boundaries", () => {
 		await t
 			.run((ctx) => startTurn(ctx, state.run_id, "A", huge))
 			.catch(() => {});
-		await t.finishAllScheduledFunctions(() => {});
+		await driveTurn(t, state.run_id, "A").catch(() => {});
 
 		// Whatever happened, a normal follow-up message still works.
 		await expect(

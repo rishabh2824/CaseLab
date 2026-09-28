@@ -78,6 +78,11 @@ export default defineConfig({
 	],
 	test: {
 		expect: { requireAssertions: true },
+		// A failed persona turn is rethrown by the persistentTextStreaming component from a
+		// promise nothing awaits (see convex/services/turn.ts's runTurn and TURN_FAILED_PREFIX)
+		// -- expected in the convex failure tests, which assert on the stream's "error" status
+		// instead. Any other unhandled error still fails the run.
+		onUnhandledError: (error) => !error.message?.startsWith("Turn failed:"),
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov"],

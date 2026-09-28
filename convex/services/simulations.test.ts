@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { components } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CaseStructure } from "../models/cases";
 import { newTestConvex } from "../test.setup";
@@ -10,6 +11,7 @@ import {
 	getSimulationState,
 	startSimulation,
 } from "./simulations";
+import { startTurn } from "./turn";
 
 async function seedCase(
 	t: ReturnType<typeof newTestConvex>,
@@ -324,7 +326,7 @@ describe("exportSimulation", () => {
 });
 
 describe("deleteRunCascade", () => {
-	it("deletes the run's messages and streaming-preview rows along with the run itself", async () => {
+	it("deletes the run's messages and turn streams along with the run itself", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		await t.run((ctx) =>
@@ -335,15 +337,10 @@ describe("deleteRunCascade", () => {
 				content: "hi",
 			}),
 		);
-		await t.run((ctx) =>
-			ctx.db.insert("streamingReplies", {
-				runId: state.run_id,
-				personaKey: "A",
-				text: "",
-				status: "streaming",
-				updatedAt: Date.now(),
-			}),
-		);
+		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi"));
+		const { streamId } = (await t.run((ctx) =>
+			ctx.db.query("turnStreams").first(),
+		))!;
 
 		await t.run((ctx) => deleteRunCascade(ctx, state.run_id));
 
@@ -354,14 +351,20 @@ describe("deleteRunCascade", () => {
 				.withIndex("by_run_persona", (q) => q.eq("runId", state.run_id))
 				.collect(),
 		);
-		const streaming = await t.run((ctx) =>
+		const turns = await t.run((ctx) =>
 			ctx.db
-				.query("streamingReplies")
+				.query("turnStreams")
 				.withIndex("by_run_persona", (q) => q.eq("runId", state.run_id))
 				.collect(),
 		);
 		expect(messages).toHaveLength(0);
-		expect(streaming).toHaveLength(0);
+		expect(turns).toHaveLength(0);
+		// The component's own stream (and its chunks) go too, not just our pointer to it.
+		await expect(
+			t.query(components.persistentTextStreaming.lib.getStreamText, {
+				streamId,
+			}),
+		).rejects.toThrow("Stream not found");
 	});
 });
 

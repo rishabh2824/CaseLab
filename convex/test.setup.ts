@@ -1,9 +1,11 @@
 /// <reference types="vite/client" />
 
 import betterAuthTest from "@convex-dev/better-auth/test";
+import persistentTextStreaming from "@convex-dev/persistent-text-streaming/test";
 import rateLimiter from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { components } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 // Called from every *.test.ts file to get a fresh in-memory backend. Lives at the convex/
@@ -23,7 +25,33 @@ export function newTestConvex() {
 	// authComponent.safeGetAuthUser, which looks up real rows in the betterAuth component's
 	// own session/user tables -- same registration story as rateLimiter above.
 	betterAuthTest.register(t);
+	// Every turn streams through this component (lib/streaming.ts) -- same story again.
+	persistentTextStreaming.register(t);
 	return t;
+}
+
+// Stands in for the student's tab after a successful `start`: POSTs this persona's claimable
+// turn to /turn-stream (http.ts) the way run.svelte.ts does, and reads the reply body to the
+// end -- which is also when the turn has finished, since the component closes the body only
+// after runTurn returns or throws.
+export async function driveTurn(
+	t: ReturnType<typeof newTestConvex>,
+	runId: Id<"runs">,
+	personaId: string,
+): Promise<{ status: number; text: string }> {
+	const turn = await t.run((ctx) =>
+		ctx.db
+			.query("turnStreams")
+			.withIndex("by_run_persona", (q) =>
+				q.eq("runId", runId).eq("personaKey", personaId),
+			)
+			.first(),
+	);
+	const response = await t.fetch("/turn-stream", {
+		method: "POST",
+		body: JSON.stringify({ streamId: turn?.streamId }),
+	});
+	return { status: response.status, text: await response.text() };
 }
 
 // Seeds betterAuth `user` and `session` rows directly via the component's generic adapter

@@ -3,7 +3,7 @@ import type { Id } from "../_generated/dataModel";
 import { RECENT_HISTORY_LIMIT } from "../lib/llm";
 import { NONSENSE_THRESHOLD } from "../lib/turnState";
 import type { CaseStructure } from "../models/cases";
-import { newTestConvex } from "../test.setup";
+import { driveTurn, newTestConvex } from "../test.setup";
 import {
 	caseStructure,
 	fileEntry,
@@ -15,7 +15,7 @@ import {
 	getSimulationState,
 	startSimulation,
 } from "./simulations";
-import { applyDecisions, getStreamingPreview, startTurn } from "./turn";
+import { applyDecisions, getTurnStream, startTurn } from "./turn";
 
 type LlmStubOptions = {
 	harassment?: string | ((message: string, conversation: string) => string);
@@ -134,7 +134,7 @@ async function send(
 	message: string,
 ) {
 	await t.run((ctx) => startTurn(ctx, runId, personaId, message));
-	await t.finishAllScheduledFunctions(() => {});
+	return await driveTurn(t, runId, personaId);
 }
 
 describe("startTurn validation", () => {
@@ -308,7 +308,9 @@ describe("normal turn happy path", () => {
 		expect(fullHistory).toHaveLength(14);
 	});
 
-	it("marks the stream errored and appends no assistant turn when the reply is empty", async () => {
+	// A failed turn tells the student to resend, so the message it already stored is taken back
+	// out -- otherwise the resend would leave it in the persona's history twice.
+	it("marks the stream errored and leaves no trace of the turn when the reply is empty", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		stubLlm({ replyText: "" });
@@ -318,10 +320,14 @@ describe("normal turn happy path", () => {
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
-		expect(history.map((m) => m.role)).toEqual(["user"]);
+		expect(history).toEqual([]);
+		const turn = await t.run((ctx) =>
+			getTurnStream(ctx, state.run_id, "A", false),
+		);
+		expect(turn?.status).toBe("error");
 	});
 
-	it("preserves the user's message and marks the stream errored when the LLM call fails", async () => {
+	it("marks the stream errored and leaves no trace of the turn when the LLM call fails", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		vi.stubGlobal(
@@ -334,8 +340,19 @@ describe("normal turn happy path", () => {
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
-		expect(history.map((m) => m.role)).toEqual(["user"]);
-		expect(history[0]!.content).toBe("hi");
+		expect(history).toEqual([]);
+		const turn = await t.run((ctx) =>
+			getTurnStream(ctx, state.run_id, "A", false),
+		);
+		expect(turn?.status).toBe("error");
+
+		// And the persona isn't left locked: an immediate resend goes through.
+		stubLlm({ replyText: "Hello." });
+		await send(t, state.run_id, "A", "hi");
+		const retried = await t.run((ctx) =>
+			getPersonaHistory(ctx, state.run_id, "A"),
+		);
+		expect(retried.map((m) => m.content)).toEqual(["hi", "Hello."]);
 	});
 });
 
@@ -372,13 +389,15 @@ describe("harassment/boundary escalation", () => {
 			replyText: "this in-character reply must never be shown",
 		});
 
-		await send(t, state.run_id, "A", "bad message");
+		const { text } = await send(t, state.run_id, "A", "bad message");
 
-		// Nothing was ever written to the live preview a client subscribes to mid-stream.
-		const preview = await t.run((ctx) =>
-			getStreamingPreview(ctx, state.run_id, "A"),
+		// Nothing was ever appended -- not to the driving tab's stream, nor to the persisted
+		// copy every other tab reads.
+		expect(text).toBe("");
+		const turn = await t.run((ctx) =>
+			getTurnStream(ctx, state.run_id, "A", true),
 		);
-		expect(preview).toEqual({ text: "", status: "done" });
+		expect(turn).toMatchObject({ status: "done", settled: true });
 
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
@@ -581,13 +600,13 @@ describe("referrals", () => {
 	it("re-unlocking an already-unlocked persona (a retried applyDecisions call) is a no-op", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseWithOneReferral());
-		const streamId = await t.run((ctx) =>
-			ctx.db.insert("streamingReplies", {
+		const turnId = await t.run((ctx) =>
+			ctx.db.insert("turnStreams", {
 				runId: state.run_id,
 				personaKey: "A",
-				text: "",
-				status: "streaming",
-				updatedAt: Date.now(),
+				streamId: "unused",
+				startedAt: Date.now(),
+				settled: false,
 			}),
 		);
 		await t.run((ctx) =>
@@ -598,7 +617,7 @@ describe("referrals", () => {
 				"Sure, meet Bob.",
 				[{ referredPersonaId: "B" }],
 				[],
-				streamId,
+				turnId,
 			),
 		);
 		const firstUnlockedAt = (await t.run((ctx) => ctx.db.get(state.run_id)))!
@@ -617,7 +636,7 @@ describe("referrals", () => {
 				"Sure, meet Bob again.",
 				[{ referredPersonaId: "B" }],
 				[],
-				streamId,
+				turnId,
 			),
 		);
 

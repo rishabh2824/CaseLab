@@ -1,6 +1,5 @@
 import { v } from "convex/values";
 import {
-	internalAction,
 	internalMutation,
 	internalQuery,
 	mutation,
@@ -10,48 +9,42 @@ import {
 	appendUserMessage as appendUserMessageService,
 	applyBoundary as applyBoundaryService,
 	applyDecisions as applyDecisionsService,
-	getStreamingPreview as getStreamingPreviewService,
+	claimTurn as claimTurnService,
 	getTurnContext as getTurnContextService,
-	markStreamingError as markStreamingErrorService,
-	runTurn as runTurnService,
+	getTurnStream as getTurnStreamService,
+	removeUserMessage as removeUserMessageService,
 	startTurn,
-	writeStreamingPreview as writeStreamingPreviewService,
 } from "../services/turn";
 
-// Split at the mutation/action boundary Convex requires -- see services/turn.ts's startTurn
-// for why. Public and unauthenticated, same as the rest of the student-facing simulation API.
+// Validation, rate limit, and the turn lock -- generation itself runs in /turn-stream
+// (http.ts), driven by the client. Public and unauthenticated, same as the rest of the
+// student-facing simulation API.
 export const start = mutation({
 	args: { runId: v.id("runs"), personaId: v.string(), message: v.string() },
 	handler: async (ctx, args) =>
 		await startTurn(ctx, args.runId, args.personaId, args.message),
 });
 
-// Not client-callable. Bundles everything runTurn (an action, no direct db access) needs to
-// run its classifier fan-out and build the reply prompt.
+// Public and unauthenticated, same as the rest of the student-facing simulation reads. See
+// services/turn.ts's getTurnStream for what withText trades off.
+export const getTurnStream = query({
+	args: { runId: v.id("runs"), personaId: v.string(), withText: v.boolean() },
+	handler: async (ctx, args) =>
+		await getTurnStreamService(ctx, args.runId, args.personaId, args.withText),
+});
+
+// Not client-callable. Called by /turn-stream (http.ts) before it starts generating.
+export const claimTurn = internalMutation({
+	args: { streamId: v.string() },
+	handler: async (ctx, args) => await claimTurnService(ctx, args.streamId),
+});
+
+// Not client-callable. Bundles everything runTurn (no direct db access) needs to run its
+// classifier fan-out and build the reply prompt.
 export const getTurnContext = internalQuery({
 	args: { runId: v.id("runs"), personaId: v.string() },
 	handler: async (ctx, args) =>
 		await getTurnContextService(ctx, args.runId, args.personaId),
-});
-
-// Not client-callable. Scheduled by start (above) once the user's message is persisted.
-// streamId is the streamingReplies row startTurn already claimed (services/turn.ts's
-// claimStreamingSlot) -- threaded through so nothing downstream needs to re-look it up.
-export const runTurn = internalAction({
-	args: {
-		runId: v.id("runs"),
-		personaId: v.string(),
-		message: v.string(),
-		streamId: v.id("streamingReplies"),
-	},
-	handler: async (ctx, args) =>
-		await runTurnService(
-			ctx,
-			args.runId,
-			args.personaId,
-			args.message,
-			args.streamId,
-		),
 });
 
 // Not client-callable. Called by runTurn the instant classifyHarassment clears the message as
@@ -68,26 +61,11 @@ export const appendUserMessage = internalMutation({
 		),
 });
 
-// Not client-callable. Called by runTurn to push a batched preview of the in-progress reply
-// to the streamingReplies row a client would subscribe to -- by id, not (runId, personaKey),
-// since claimStreamingSlot (services/turn.ts) already resolved that id once per turn.
-export const writeStreamingPreview = internalMutation({
-	args: { streamId: v.id("streamingReplies"), text: v.string() },
+// Not client-callable. Called by runTurn's catch when a turn fails after storing the message.
+export const removeUserMessage = internalMutation({
+	args: { messageId: v.id("runMessages") },
 	handler: async (ctx, args) =>
-		await writeStreamingPreviewService(ctx, args.streamId, args.text),
-});
-
-// Public and unauthenticated, same as the rest of the student-facing simulation reads.
-// Scoped to a single small streamingReplies document (see services/turn.ts's
-// getStreamingPreview for why) -- the frontend subscribes to this instead of the
-// getSimulationState-equivalent `api/simulations:get` query, so an in-progress reply's
-// deltas don't re-push the entire run state to every subscriber. Still keyed by
-// (runId, personaId), not an id -- unlike the internal mutations above, the frontend never
-// has a streamId to key off of.
-export const getStreamingPreview = query({
-	args: { runId: v.id("runs"), personaId: v.string() },
-	handler: async (ctx, args) =>
-		await getStreamingPreviewService(ctx, args.runId, args.personaId),
+		await removeUserMessageService(ctx, args.messageId),
 });
 
 // Not client-callable. Called by runTurn when the harassment classifier flags the message.
@@ -97,7 +75,7 @@ export const applyBoundary = internalMutation({
 		personaId: v.string(),
 		label: v.string(),
 		personaName: v.string(),
-		streamId: v.id("streamingReplies"),
+		turnId: v.id("turnStreams"),
 	},
 	handler: async (ctx, args) =>
 		await applyBoundaryService(
@@ -106,17 +84,8 @@ export const applyBoundary = internalMutation({
 			args.personaId,
 			args.label,
 			args.personaName,
-			args.streamId,
+			args.turnId,
 		),
-});
-
-// Not client-callable. Called by runTurn's catch on any failure, so a client's
-// streamingPreview subscription can stop showing stale "streaming" state and the frontend
-// can clear isSending / toast instead of waiting forever for a reply that failed.
-export const markStreamingError = internalMutation({
-	args: { streamId: v.id("streamingReplies") },
-	handler: async (ctx, args) =>
-		await markStreamingErrorService(ctx, args.streamId),
 });
 
 // Not client-callable. Called by runTurn once the persona's reply has been generated.
@@ -127,7 +96,7 @@ export const applyDecisions = internalMutation({
 		reply: v.string(),
 		unlockedReferrals: v.array(v.object({ referredPersonaId: v.string() })),
 		sharedFiles: v.array(v.object({ fileId: v.id("files") })),
-		streamId: v.id("streamingReplies"),
+		turnId: v.id("turnStreams"),
 	},
 	handler: async (ctx, args) =>
 		await applyDecisionsService(
@@ -137,6 +106,6 @@ export const applyDecisions = internalMutation({
 			args.reply,
 			args.unlockedReferrals,
 			args.sharedFiles,
-			args.streamId,
+			args.turnId,
 		),
 });

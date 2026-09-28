@@ -360,7 +360,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		return await t.mutation(api.api.simulations.start, { accessCode });
 	}
 
-	it("start/get/getPersonaHistory/exportRun/getStreamingPreview all work with no identity", async () => {
+	it("start/get/getPersonaHistory/exportRun/getTurnStream all work with no identity", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t);
 		expect(state.run_id).toBeDefined();
@@ -378,9 +378,10 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 			t.query(api.api.simulations.exportRun, { runId: state.run_id }),
 		).resolves.toMatchObject({ case: { case_name: "Owned Case" } });
 		await expect(
-			t.query(api.api.turn.getStreamingPreview, {
+			t.query(api.api.turn.getTurnStream, {
 				runId: state.run_id,
 				personaId: "A",
+				withText: true,
 			}),
 		).resolves.toBeNull();
 	});
@@ -423,7 +424,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 				.map(([, name]) => name!)
 				.sort();
 
-		expect(publicExports(turnSource)).toEqual(["getStreamingPreview", "start"]);
+		expect(publicExports(turnSource)).toEqual(["getTurnStream", "start"]);
 		expect(publicExports(simulationsSource)).toEqual([
 			"exportRun",
 			"get",

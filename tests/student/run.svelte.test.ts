@@ -81,7 +81,34 @@ vi.mock("convex-svelte", () => ({
 
 const GET_SIMULATION_STATE = "api/simulations:get";
 const GET_PERSONA_HISTORY = "api/simulations:getPersonaHistory";
-const GET_STREAMING_PREVIEW = "api/turn:getStreamingPreview";
+const GET_TURN_STREAM = "api/turn:getTurnStream";
+
+// Pushes mary's latest turn (api/turn:getTurnStream) under the args RunStore subscribes with --
+// withText is true unless this tab is driving that turn.
+function setTurn(
+	turn: Partial<{
+		streamId: string;
+		status: string;
+		settled: boolean;
+		claimable: boolean;
+		text: string;
+	}>,
+	withText = true,
+): void {
+	setFakeQuery(
+		GET_TURN_STREAM,
+		{ runId: "run-1", personaId: "mary", withText },
+		{
+			data: {
+				streamId: "s1",
+				settled: false,
+				claimable: false,
+				text: "",
+				...turn,
+			},
+		},
+	);
+}
 
 // A case with no configured duration keeps #ensureExpiryWatch's early-return
 // branch active, so tests never touch `window.setInterval` incidentally —
@@ -148,6 +175,7 @@ beforeEach(() => {
 
 afterEach(() => {
 	for (const run of liveRuns.splice(0)) run.destroy();
+	vi.unstubAllGlobals();
 });
 
 describe("startSession", () => {
@@ -446,29 +474,68 @@ describe("sendMessage lifecycle", () => {
 		});
 	});
 
-	it("streamingPreview surfaces the live streamingReplies row's text only while status is 'streaming'", async () => {
+	// A turn this tab isn't driving (a reload, a second window) follows the persisted copy.
+	it("streamingPreview shows an undriven turn's persisted text, and clears once the turn settles", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 
 		expect(run.streamingPreview).toBeNull();
 
-		setFakeQuery(
-			GET_STREAMING_PREVIEW,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: { status: "streaming", text: "Partial re" } },
-		);
+		setTurn({ status: "streaming", text: "Partial re" });
 		await vi.waitFor(() => expect(run.streamingPreview).toBe("Partial re"));
 
-		setFakeQuery(
-			GET_STREAMING_PREVIEW,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: { status: "done", text: "" } },
-		);
+		setTurn({ status: "streaming", text: "Partial re", settled: true });
 		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
 	});
 
-	it("a failed runTurn (streamingReplies status 'error') clears isSending and toasts, instead of leaving it stuck forever", async () => {
+	it("drives a claimable turn over /turn-stream exactly once and shows the reply as it streams", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		const body = new TransformStream<Uint8Array, Uint8Array>();
+		const writer = body.writable.getWriter();
+		const fetchMock = vi.fn(async () => new Response(body.readable));
+		vi.stubGlobal("fetch", fetchMock);
+
+		setTurn({ status: "pending", claimable: true });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+		expect(fetchMock).toHaveBeenCalledWith(
+			expect.stringMatching(/\.convex\.site\/turn-stream$/),
+			{ method: "POST", body: JSON.stringify({ streamId: "s1" }) },
+		);
+
+		// Driving, this tab stops asking the server for the text -- it reads its own stream.
+		setTurn({ status: "streaming" }, false);
+		const encoder = new TextEncoder();
+		await writer.write(encoder.encode("Hel"));
+		await vi.waitFor(() => expect(run.streamingPreview).toBe("Hel"));
+		await writer.write(encoder.encode("lo."));
+		await vi.waitFor(() => expect(run.streamingPreview).toBe("Hello."));
+
+		setTurn({ status: "done", settled: true }, false);
+		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
+		await writer.close();
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("falls back to the persisted copy when another tab claimed the turn first", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		const fetchMock = vi.fn(async () => new Response(null, { status: 409 }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		setTurn({ status: "pending", claimable: true });
+		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+		setTurn({ status: "streaming", text: "From the other tab" });
+		await vi.waitFor(() =>
+			expect(run.streamingPreview).toBe("From the other tab"),
+		);
+	});
+
+	it("a failed turn (stream status 'error') clears isSending and toasts, instead of leaving it stuck forever", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
@@ -477,14 +544,10 @@ describe("sendMessage lifecycle", () => {
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		// runTurn's catch (services/turn.ts) marks the row "error" on any failure -- unlike a
-		// synchronous startTurn rejection, this arrives asynchronously via the reactive
-		// subscription, not a rejected mutation promise, since the mutation already resolved.
-		setFakeQuery(
-			GET_STREAMING_PREVIEW,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: { status: "error", text: "" } },
-		);
+		// The component marks the stream "error" when runTurn throws -- unlike a synchronous
+		// startTurn rejection, this arrives asynchronously via the reactive subscription, not a
+		// rejected mutation promise, since the mutation already resolved.
+		setTurn({ status: "error" });
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 		expect(run.streamingPreview).toBeNull();
@@ -492,6 +555,24 @@ describe("sendMessage lifecycle", () => {
 			"Something went wrong generating a reply. Please resend your message.",
 			{ duration: 4000 },
 		);
+	});
+
+	// Until the new turn replaces it, the subscription still shows the previous one -- which may
+	// itself have failed. That stale "error" must not cancel the send that just started.
+	it("does not mistake the previous turn's error for the new send failing", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		setTurn({ streamId: "old", status: "error" });
+		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
+		mockClientMutation.mockResolvedValue(undefined);
+
+		run.sendMessage("hello again");
+		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
+		await Promise.resolve();
+
+		expect(run.isSending).toBe(true);
+		expect(toast).not.toHaveBeenCalled();
 	});
 });
 

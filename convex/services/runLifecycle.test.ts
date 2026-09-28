@@ -13,6 +13,7 @@ import { newTestConvex } from "../test.setup";
 import { caseStructure, personaPayload } from "../testFactories";
 import { deleteCase, updateCase } from "./cases";
 import { deleteExpiredRuns, startSimulation } from "./simulations";
+import { startTurn } from "./turn";
 
 type T = ReturnType<typeof newTestConvex>;
 
@@ -111,7 +112,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		).resolves.toBeNull();
 	});
 
-	it("leaves no orphaned messages or streaming rows behind", async () => {
+	it("leaves no orphaned messages or turn streams behind", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
@@ -122,23 +123,17 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 				role: "user",
 				content: "hello",
 			});
-			await ctx.db.insert("streamingReplies", {
-				runId: state.run_id,
-				personaKey: "A",
-				text: "partial",
-				status: "streaming",
-				updatedAt: Date.now(),
-			});
 		});
+		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi"));
 
 		await t.mutation(internal.api.simulations.destroy, { runId: state.run_id });
 
 		const leftovers = await t.run(async (ctx) => ({
 			run: await ctx.db.get(state.run_id),
 			messages: await ctx.db.query("runMessages").collect(),
-			streaming: await ctx.db.query("streamingReplies").collect(),
+			turns: await ctx.db.query("turnStreams").collect(),
 		}));
-		expect(leftovers).toEqual({ run: null, messages: [], streaming: [] });
+		expect(leftovers).toEqual({ run: null, messages: [], turns: [] });
 	});
 
 	// The scheduled job is what makes the "no snapshot on a run" design safe (see schema.ts):
@@ -170,7 +165,7 @@ describe("reads against a run that has gone away", () => {
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
 		await t.mutation(internal.api.simulations.destroy, { runId: state.run_id });
 
-		// getPersonaHistory/getStreamingPreview deliberately skip loadLiveRun -- the client's
+		// getPersonaHistory/getTurnStream deliberately skip loadLiveRun -- the client's
 		// getSimulationState subscription is what surfaces the expiry -- so they must answer
 		// emptily rather than erroring, or a destroyed run turns into two competing error toasts.
 		await expect(
@@ -180,9 +175,10 @@ describe("reads against a run that has gone away", () => {
 			}),
 		).resolves.toEqual([]);
 		await expect(
-			t.query(api.api.turn.getStreamingPreview, {
+			t.query(api.api.turn.getTurnStream, {
 				runId: state.run_id,
 				personaId: "A",
+				withText: true,
 			}),
 		).resolves.toBeNull();
 	});

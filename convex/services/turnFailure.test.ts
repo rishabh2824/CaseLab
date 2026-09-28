@@ -5,12 +5,17 @@
 // and adversarial content inside the reply -- and asserts the same invariant for every one of
 // them: a bad generation may cost the student a turn, but must never corrupt run state (no
 // referral unlocked, no file shared, no blank assistant bubble) and must never leave the
-// persona's streaming slot stuck "streaming", which is what locks that contact for the rest of
-// the run.
+// persona's turn stuck open, which is what locks that contact.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { components } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CaseStructure } from "../models/cases";
-import { makeLlmFetch, newTestConvex, sseStream } from "../test.setup";
+import {
+	driveTurn,
+	makeLlmFetch,
+	newTestConvex,
+	sseStream,
+} from "../test.setup";
 import {
 	caseStructure,
 	fileEntry,
@@ -18,11 +23,7 @@ import {
 	referralEdge,
 } from "../testFactories";
 import { getPersonaHistory, startSimulation } from "./simulations";
-import {
-	getStreamingPreview,
-	STREAMING_SLOT_STALE_MS,
-	startTurn,
-} from "./turn";
+import { getTurnStream, STREAMING_SLOT_STALE_MS, startTurn } from "./turn";
 
 type T = ReturnType<typeof newTestConvex>;
 
@@ -66,7 +67,7 @@ async function send(
 	message: string,
 ) {
 	await t.run((ctx) => startTurn(ctx, runId, personaId, message));
-	await t.finishAllScheduledFunctions(() => {});
+	return await driveTurn(t, runId, personaId);
 }
 
 // The invariant every malformed-generation case below has to satisfy.
@@ -80,12 +81,12 @@ async function expectTurnFailedCleanly(
 	);
 	expect(history.filter((m) => m.role === "assistant")).toEqual([]);
 
-	const preview = await t.run((ctx) =>
-		getStreamingPreview(ctx, runId, personaId),
+	const turn = await t.run((ctx) =>
+		getTurnStream(ctx, runId, personaId, false),
 	);
-	// Never left "streaming" -- claimStreamingSlot rejects a new turn on a persona whose row is
-	// still "streaming", so a stuck row bricks that contact for the rest of the run.
-	expect(preview?.status).not.toBe("streaming");
+	// Ended "error", never left open -- claimTurnSlot rejects a new turn on a persona whose
+	// stream is still open, so a stuck one locks that contact.
+	expect(turn?.status).toBe("error");
 
 	const run = (await t.run((ctx) => ctx.db.get(runId)))!;
 	expect({
@@ -169,10 +170,9 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 		},
 	);
 
-	// The student's own message must survive every one of these -- losing it would make a failed
-	// turn look like the message was never sent, and the frontend has no local copy to restore
-	// from (it renders straight off the server's getPersonaHistory subscription).
-	it("always preserves the student's message so it can be resent", async () => {
+	// A failed turn tells the student to resend, so the message it already stored is taken back
+	// out -- otherwise the resend would leave it in the persona's history twice.
+	it("takes the student's message back out so a resend isn't stored twice", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		stub({ replyChunks: ["not json at all"] });
@@ -182,9 +182,7 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
-		expect(history).toEqual([
-			{ role: "user", content: "Can I see the budget?" },
-		]);
+		expect(history).toEqual([]);
 	});
 
 	// A failed turn must not brick the contact: the next attempt has to be able to re-claim the
@@ -202,7 +200,6 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
 		expect(history.map((m) => m.content)).toEqual([
-			"first try",
 			"second try",
 			"Sure, here you go.",
 		]);
@@ -481,20 +478,21 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 	});
 });
 
-describe("streaming preview lifecycle", () => {
-	it("clears the preview text on a successful turn so no bubble is left behind", async () => {
+describe("turn stream lifecycle", () => {
+	it("settles the turn on success so no live bubble is left behind", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		stub({ replyText: "Done." });
 
-		await send(t, state.run_id, "A", "hi");
+		const { text } = await send(t, state.run_id, "A", "hi");
 
+		expect(text).toBe("Done.");
 		expect(
-			await t.run((ctx) => getStreamingPreview(ctx, state.run_id, "A")),
-		).toEqual({ text: "", status: "done" });
+			await t.run((ctx) => getTurnStream(ctx, state.run_id, "A", true)),
+		).toMatchObject({ status: "done", settled: true, claimable: false });
 	});
 
-	it("marks the preview errored (never left streaming) when generation fails", async () => {
+	it("marks the stream errored (never left open) when generation fails", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		stub({ replyThrows: new Error("boom") });
@@ -502,36 +500,122 @@ describe("streaming preview lifecycle", () => {
 		await send(t, state.run_id, "A", "hi");
 
 		expect(
-			await t.run((ctx) => getStreamingPreview(ctx, state.run_id, "A")),
-		).toMatchObject({ status: "error" });
+			await t.run((ctx) => getTurnStream(ctx, state.run_id, "A", false)),
+		).toMatchObject({ status: "error", settled: false });
 	});
 
-	// A run destroyed mid-turn (expiry racing a slow generation) deletes the run out from
-	// under the scheduled action -- getTurnContext's loadLiveRun throws "Run not found."
-	// before any streaming happens. Nothing awaits a scheduled action's outcome (runTurn is
-	// fired via ctx.scheduler.runAfter, not awaited), so this pins that the failure -- even
-	// a secondary one from markStreamingError patching an already-deleted streamingReplies
-	// row -- never surfaces as an unhandled rejection the caller sees.
-	it("does not crash the scheduled action when the run is destroyed mid-generation", async () => {
+	// A run destroyed mid-turn (expiry racing a slow generation) deletes the run out from under
+	// the generation -- getTurnContext's loadLiveRun throws "Run not found." before anything
+	// streams. The turn must still end cleanly, not hang the driving tab's request.
+	it("fails the turn cleanly when the run is destroyed mid-generation", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		stub({ replyText: "too late" });
 
 		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi"));
-		// Destroy the run in the window between startTurn scheduling runTurn and runTurn running.
-		await t.run(async (ctx) => {
-			for (const row of await ctx.db.query("streamingReplies").collect()) {
-				await ctx.db.delete(row._id);
-			}
-			for (const row of await ctx.db.query("runMessages").collect()) {
-				await ctx.db.delete(row._id);
-			}
-			await ctx.db.delete(state.run_id);
+		await t.run((ctx) => ctx.db.delete(state.run_id));
+
+		expect(await driveTurn(t, state.run_id, "A")).toEqual({
+			status: 200,
+			text: "",
 		});
+	});
+
+	// Reply attempts answer with `bodies` in order (the classifier still goes through
+	// makeLlmFetch), each after a short delay so the harassment classifier has already cleared
+	// by the time any reply text arrives -- otherwise nothing would be appended either way.
+	function stubReplyAttempts(bodies: string[]) {
+		const { calls, fetch } = makeLlmFetch();
+		let attempt = 0;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string, init: RequestInit) => {
+				const response = await fetch(url, init);
+				if (!JSON.parse(init.body as string).stream) return response;
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				return new Response(bodies[attempt++], { status: 200 });
+			}),
+		);
+		return calls;
+	}
+	const envelope = (reply: string) =>
+		sseStream([JSON.stringify({ reply, introduce: [], send_files: [] })]);
+
+	it("retries silently when the failed attempt showed the student nothing", async () => {
+		const t = newTestConvex();
+		const { state } = await startRunWithCandidates(t);
+		// Truncated before a single reply character -- only the JSON prefix, which the student
+		// never sees.
+		const calls = stubReplyAttempts([
+			sseStream(['{"reply": "']),
+			envelope("Second try."),
+		]);
+
+		const { text } = await send(t, state.run_id, "A", "hi");
+
+		expect(text).toBe("Second try.");
+		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(2);
+		const history = await t.run((ctx) =>
+			getPersonaHistory(ctx, state.run_id, "A"),
+		);
+		expect(history.map((m) => m.content)).toEqual(["hi", "Second try."]);
+	});
+
+	// Appended text can't be taken back, so a retry at this point would show the student the
+	// dead attempt's text followed by the new one. The turn fails instead.
+	it("fails instead of retrying once text has reached the student", async () => {
+		const t = newTestConvex();
+		const { state } = await startRunWithCandidates(t);
+		const calls = stubReplyAttempts([
+			sseStream(['{"reply": "Hello the']),
+			envelope("Never used."),
+		]);
+
+		const { text } = await send(t, state.run_id, "A", "hi");
+
+		expect(text).toBe("Hello the");
+		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(1);
+		await expectTurnFailedCleanly(t, state.run_id);
+		expect(
+			await t.run((ctx) => getPersonaHistory(ctx, state.run_id, "A")),
+		).toEqual([]);
+	});
+
+	// Once a turn settles its reply lives in runMessages, so each persona keeps at most one
+	// stream: the next turn deletes the previous one's.
+	it("deletes the previous turn's stream when the next one starts", async () => {
+		const t = newTestConvex();
+		const { state } = await startRunWithCandidates(t);
+		stub({ replyText: "First." });
+		await send(t, state.run_id, "A", "one");
+		const first = await t.run((ctx) =>
+			getTurnStream(ctx, state.run_id, "A", false),
+		);
+
+		stub({ replyText: "Second." });
+		await send(t, state.run_id, "A", "two");
 
 		await expect(
-			t.finishAllScheduledFunctions(() => {}),
-		).resolves.toBeUndefined();
+			t.query(components.persistentTextStreaming.lib.getStreamText, {
+				streamId: first!.streamId,
+			}),
+		).rejects.toThrow("Stream not found");
+	});
+
+	// Only one tab gets to generate a turn: claimTurn hands the message to the first POST and
+	// every later one gets 409 (and follows the persisted copy instead).
+	it("lets exactly one request drive a turn", async () => {
+		const t = newTestConvex();
+		const { state } = await startRunWithCandidates(t);
+		const calls = stub({ replyText: "Once." });
+
+		await send(t, state.run_id, "A", "hi");
+
+		expect(await driveTurn(t, state.run_id, "A")).toEqual({
+			status: 409,
+			text: "",
+		});
+		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(1);
 	});
 });
 
@@ -546,7 +630,7 @@ describe("the concurrency guard is the real serialization point", () => {
 			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
 		).rejects.toThrow(/already being generated/);
 
-		await t.finishAllScheduledFunctions(() => {});
+		await driveTurn(t, state.run_id, "A");
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
@@ -554,7 +638,7 @@ describe("the concurrency guard is the real serialization point", () => {
 	});
 
 	// The rejected second turn must not have written anything: no orphan user message, and in
-	// particular no second scheduled runTurn that would interleave writes with the first.
+	// particular no second generation that would interleave writes with the first.
 	it("writes nothing at all for the rejected second turn", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
@@ -564,7 +648,7 @@ describe("the concurrency guard is the real serialization point", () => {
 		await t
 			.run((ctx) => startTurn(ctx, state.run_id, "A", "second message"))
 			.catch(() => {});
-		await t.finishAllScheduledFunctions(() => {});
+		await driveTurn(t, state.run_id, "A");
 
 		const rows = await t.run((ctx) => ctx.db.query("runMessages").collect());
 		expect(rows.map((r) => r.content)).not.toContain("second message");
@@ -586,7 +670,8 @@ describe("the concurrency guard is the real serialization point", () => {
 		await expect(
 			t.run((ctx) => startTurn(ctx, state.run_id, "B", "to B")),
 		).resolves.toBeNull();
-		await t.finishAllScheduledFunctions(() => {});
+		await driveTurn(t, state.run_id, "A");
+		await driveTurn(t, state.run_id, "B");
 
 		const [a, b] = await Promise.all([
 			t.run((ctx) => getPersonaHistory(ctx, state.run_id, "A")),
@@ -623,54 +708,49 @@ describe("the concurrency guard is the real serialization point", () => {
 		await t.run((ctx) =>
 			startTurn(ctx, state.run_id, "B", "connect me with D"),
 		);
-		await t.finishAllScheduledFunctions(() => {});
+		await driveTurn(t, state.run_id, "A");
+		await driveTurn(t, state.run_id, "B");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect([...run.unlockedReferredIds].sort()).toEqual(["C", "D"]);
 	});
 });
 
-describe("a stuck streaming slot is reclaimed once it's stale", () => {
-	// A platform-level kill (a deploy racing an in-flight action, an enforced max-duration, an
-	// OOM) skips runTurn's own catch entirely, so markStreamingError never runs and the row
-	// claimStreamingSlot created is left at "streaming" forever. Modeled here by letting the
-	// first turn run to completion (so there's no leftover scheduled runTurn to bleed into a
-	// later finishAllScheduledFunctions call) and then forcing the row's status back to
-	// "streaming" -- claimStreamingSlot only ever looks at this row's own status/updatedAt, not
-	// at whether some scheduled function is still pending, so this is an equally faithful
-	// stand-in for "the process that owned this row died mid-turn".
-	async function leaveSlotStreaming(t: T) {
+describe("a stuck turn is reclaimed once it's stale", () => {
+	// A platform-level kill (a deploy racing an in-flight turn, an enforced max-duration, an OOM)
+	// skips runTurn's own catch, so the turn's stream is never closed. Modeled here by a turn no
+	// tab ever drives: claimTurnSlot only looks at whether the stream is still open and when the
+	// turn started, so an undriven turn is an equally faithful stand-in.
+	async function leaveTurnOpen(t: T) {
 		const state = await startRun(t);
 		stub({ replyText: "first" });
 		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first message"));
-		await t.finishAllScheduledFunctions(() => {});
-		const stuckRow = await t.run((ctx) =>
+		const turn = await t.run((ctx) =>
 			ctx.db
-				.query("streamingReplies")
+				.query("turnStreams")
 				.withIndex("by_run_persona", (q) =>
 					q.eq("runId", state.run_id).eq("personaKey", "A"),
 				)
 				.first(),
 		);
-		await t.run((ctx) => ctx.db.patch(stuckRow!._id, { status: "streaming" }));
-		return { state, stuckRowId: stuckRow!._id };
+		return { state, turnId: turn!._id };
 	}
 
-	it("still rejects a second turn while the row is fresh", async () => {
+	it("still rejects a second turn while the turn is fresh", async () => {
 		const t = newTestConvex();
-		const { state } = await leaveSlotStreaming(t);
+		const { state } = await leaveTurnOpen(t);
 
 		await expect(
 			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
 		).rejects.toThrow(/already being generated/);
 	});
 
-	it("still rejects a row idle for just under the staleness threshold", async () => {
+	it("still rejects a turn open for just under the staleness threshold", async () => {
 		const t = newTestConvex();
-		const { state, stuckRowId } = await leaveSlotStreaming(t);
+		const { state, turnId } = await leaveTurnOpen(t);
 		await t.run((ctx) =>
-			ctx.db.patch(stuckRowId, {
-				updatedAt: Date.now() - STREAMING_SLOT_STALE_MS + 1_000,
+			ctx.db.patch(turnId, {
+				startedAt: Date.now() - STREAMING_SLOT_STALE_MS + 1_000,
 			}),
 		);
 
@@ -679,32 +759,24 @@ describe("a stuck streaming slot is reclaimed once it's stale", () => {
 		).rejects.toThrow(/already being generated/);
 	});
 
-	// This is the fix: without it, the persona above stays locked for up to
-	// RUN_LIFETIME_MINUTES with no way for the student (or anyone) to recover it.
-	it("reclaims a row idle past the staleness threshold, instead of rejecting forever", async () => {
+	// Without this, the persona above stays locked until the component's own 20-minute timeout
+	// sweep, with no way for the student to recover it.
+	it("reclaims a turn open past the staleness threshold, instead of rejecting", async () => {
 		const t = newTestConvex();
-		const { state, stuckRowId } = await leaveSlotStreaming(t);
+		const { state, turnId } = await leaveTurnOpen(t);
 		await t.run((ctx) =>
-			ctx.db.patch(stuckRowId, {
-				updatedAt: Date.now() - STREAMING_SLOT_STALE_MS - 1,
+			ctx.db.patch(turnId, {
+				startedAt: Date.now() - STREAMING_SLOT_STALE_MS - 1,
 			}),
 		);
 
 		stub({ replyText: "second" });
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
-		).resolves.toBeNull();
-		await t.finishAllScheduledFunctions(() => {});
+		await send(t, state.run_id, "A", "second message");
 
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
-		expect(history.map((m) => m.content)).toEqual([
-			"first message",
-			"first",
-			"second message",
-			"second",
-		]);
+		expect(history.map((m) => m.content)).toEqual(["second message", "second"]);
 	});
 });
 
@@ -712,9 +784,8 @@ describe("rate limiting", () => {
 	// A token bucket refills continuously (15/minute == one token every 4 seconds), so a
 	// real-clock test of exhaustion is inherently flaky: 15 sequential sends take long enough to
 	// earn a token back. Freeze only Date (not setTimeout) -- the rate limiter reads the clock
-	// through Date.now(), while convex-test's scheduler needs real timers to drain the runTurn
-	// job at all, and a fully-faked clock advanced far enough to drain would also fire the run's
-	// own destroy job and delete the run mid-test.
+	// through Date.now(), and a fully-faked clock advanced far enough would also fire the run's
+	// own scheduled destroy job and delete the run mid-test.
 	function freezeClock() {
 		vi.useFakeTimers({ toFake: ["Date"] });
 	}
@@ -765,7 +836,7 @@ describe("rate limiting", () => {
 		}
 	});
 
-	// startTurn consumes rate-limit budget BEFORE claimStreamingSlot can reject -- but a Convex
+	// startTurn consumes rate-limit budget BEFORE claimTurnSlot can reject -- but a Convex
 	// mutation is one transaction, so the guard's throw rolls the token consumption back with
 	// everything else. That rollback is what stops a client retry-storm against a busy persona
 	// from burning the student's own allowance and locking them out of a run they're mid-way
@@ -785,7 +856,7 @@ describe("rate limiting", () => {
 					t.run((ctx) => startTurn(ctx, state.run_id, "A", `retry ${i}`)),
 				).rejects.toThrow(/already being generated/);
 			}
-			await t.finishAllScheduledFunctions(() => {});
+			await driveTurn(t, state.run_id, "A");
 
 			// 1 token spent, 14 left: the student can still finish their conversation.
 			for (let i = 0; i < 14; i++) {

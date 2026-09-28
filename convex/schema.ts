@@ -145,27 +145,24 @@ export default defineSchema({
 		content: v.string(),
 	}).index("by_run_persona", ["runId", "personaKey"]),
 
-	// Live in-progress persona replies, batched-written by the streaming action
-	// (convex/api/turn.ts's runTurn) and subscribed to by the frontend instead
-	// of an SSE connection. Deliberately its own table, not a field on `runs`: if
-	// deltas instead touched the run document, every delta would re-push the whole
-	// run state (contacts, histories, etc.) to every subscriber instead of ~40 bytes
-	// to the one client watching this persona's reply.
-	streamingReplies: defineTable({
+	// One row per (run, persona): that persona's latest turn -- its persistentTextStreaming
+	// stream (lib/streaming.ts), and the turn lock (services/turn.ts's claimTurnSlot). The reply
+	// text itself lives in the component. Deliberately its own table, not a field on `runs`:
+	// a turn's writes here would otherwise re-push the whole run state to every subscriber.
+	turnStreams: defineTable({
 		runId: v.id("runs"),
 		personaKey: v.string(),
-		text: v.string(),
-		status: v.union(
-			v.literal("streaming"),
-			v.literal("done"),
-			v.literal("error"),
-		),
-		// Refreshed on every write to this row (claim, preview flush, terminal patch) -- lets
-		// claimStreamingSlot (services/turn.ts) tell "still generating" apart from "the process
-		// that was generating this died" for a row stuck at status "streaming", instead of
-		// treating every "streaming" row as permanently in flight. See claimStreamingSlot's own
-		// comment for why a killed action can otherwise strand this row until the run itself
-		// expires.
-		updatedAt: v.number(),
-	}).index("by_run_persona", ["runId", "personaKey"]),
+		streamId: v.string(),
+		// When this turn was claimed -- claimTurnSlot treats a still-open stream older than
+		// STREAMING_SLOT_STALE_MS as dead (its action was killed) rather than in flight.
+		startedAt: v.number(),
+		// The student's message, held until /turn-stream's claimTurn takes it. Present means
+		// no tab has started generating this turn yet (see getTurnStream's `claimable`).
+		message: v.optional(v.string()),
+		// Set by applyDecisions/applyBoundary in the same transaction as the persona's reply
+		// insert, so the live bubble disappears exactly as the persisted reply appears.
+		settled: v.boolean(),
+	})
+		.index("by_run_persona", ["runId", "personaKey"])
+		.index("by_stream", ["streamId"]),
 });

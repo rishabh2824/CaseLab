@@ -31,11 +31,10 @@ export type ChatMessage = {
 //
 // Disarming the abort in a `finally` around `fetch` alone (the obvious shape) leaves a streamed
 // body with no timeout at all, since fetch resolves at the headers. A provider that sends
-// headers and then stalls would hang the whole scheduled action, and that hang is not benign:
-// the platform eventually kills the action WITHOUT running runTurn's catch, so markStreamingError
-// never fires and the persona's streamingReplies row is left at status "streaming" forever --
-// which claimStreamingSlot (services/turn.ts) reads as "a turn is already in flight", bricking
-// that contact for the remainder of the run. Keeping the timer armed across the read loop makes
+// headers and then stalls would hang the whole turn, and that hang is not benign: the platform
+// eventually kills the action WITHOUT running runTurn's catch, leaving the turn's stream open --
+// which claimTurnSlot (services/turn.ts) reads as "a turn is already in flight", blocking that
+// contact until STREAMING_SLOT_STALE_MS. Keeping the timer armed across the read loop makes
 // timeoutMs a deadline for the entire attempt, which is what the retry budget already assumed.
 async function fetchWithTimeout(
 	url: string,
@@ -136,7 +135,8 @@ export const PERSONA_REPLY_SCHEMA = {
 };
 
 // "reset" tells the consumer to throw away everything streamed so far: the attempt that
-// produced it failed and a fresh one is about to start from scratch.
+// produced it failed and a fresh one is about to start from scratch. (runTurn can only honor it
+// while none of that text has reached the student yet -- see its own handling.)
 export type StreamDelta = { type: "delta"; text: string } | { type: "reset" };
 
 // A failure the stream loop should retry regardless of whether text already streamed.
