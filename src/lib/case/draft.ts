@@ -1,5 +1,5 @@
+import { ACCESS_CODE_FORMAT } from "../../../convex/lib/constants.js";
 import type { CaseStructure } from "../../../convex/models/cases.js";
-import { ACCESS_CODE_FORMAT } from "../../../convex/schema.js";
 import type { Persona, PersonaFieldErrors, ReferralEdge } from "../types.js";
 
 // Parses a numeric string to a whole number, returning null for blank or non-numeric input.
@@ -164,10 +164,6 @@ export const referralsTo = (
 	personaId: string,
 ): ReferralEdge[] =>
 	referrals.filter((referral) => referral.to_id === personaId);
-
-// Returns whether the persona id is one of the roots.
-export const isRoot = (roots: string[], personaId: string): boolean =>
-	roots.includes(personaId);
 
 // Indexes personas by id.
 export const personasById = (personas: Persona[]): Map<string, Persona> =>

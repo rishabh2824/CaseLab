@@ -20,6 +20,6 @@ export default defineConfig({
 		url: BASE_URL,
 		reuseExistingServer: !process.env.CI,
 		timeout: 120_000,
-		env: { E2E: "true" },
+		env: { E2E: "true", BUILD_DIR: "build-e2e" },
 	},
 });

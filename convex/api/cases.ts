@@ -34,7 +34,7 @@ export const getForEdit = adminQuery({
 		const c = await loadCaseForAccess(ctx, args.caseId, ctx.admin);
 		const collaboratorRows = await ctx.db
 			.query("collaborators")
-			.withIndex("by_case", (q) => q.eq("caseId", c._id))
+			.withIndex("by_case_and_admin", (q) => q.eq("caseId", c._id))
 			.collect();
 		return {
 			...c,

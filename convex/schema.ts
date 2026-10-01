@@ -3,13 +3,6 @@ import { v } from "convex/values";
 import { caseStructureValidator } from "./models/cases";
 
 export const adminRole = v.union(v.literal("super"), v.literal("admin"));
-export type AdminRole = "super" | "admin";
-
-export const RUN_LIFETIME_MINUTES = 120;
-
-export const MAX_MESSAGE_WORDS = 50;
-
-export const ACCESS_CODE_FORMAT = /^[a-z]+$/;
 
 const chatState = v.object({
 	warningCount: v.number(),
@@ -41,7 +34,6 @@ export default defineSchema({
 		adminId: v.id("admins"),
 		addedAt: v.number(),
 	})
-		.index("by_case", ["caseId"])
 		.index("by_admin", ["adminId"])
 		.index("by_case_and_admin", ["caseId", "adminId"]),
 
@@ -66,8 +58,7 @@ export default defineSchema({
 		unlockedAt: v.record(v.string(), v.number()),
 		sharedFiles: v.array(v.id("files")),
 		personaChatState: v.record(v.string(), chatState),
-		destroyJobId: v.optional(v.id("_scheduled_functions")),
-	}).index("by_expiry", ["expiresAt"]),
+	}),
 
 	runMessages: defineTable({
 		runId: v.id("runs"),

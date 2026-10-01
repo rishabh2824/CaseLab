@@ -101,11 +101,6 @@ export class CaseGraph {
 		this.#applyRemoval(toRemove);
 	}
 
-	// Removes a single referral edge with the same unreachable-persona cleanup.
-	removeReferral(referral: ReferralEdge): void {
-		this.removeReferralsFrom(referral.from_id, [referral.to_id]);
-	}
-
 	// Deletes the given personas and any referrals that touch them.
 	#applyRemoval(toRemove: Set<string>): void {
 		if (toRemove.size === 0) return;

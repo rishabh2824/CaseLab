@@ -8,6 +8,8 @@ import { defineConfig } from "vitest/config";
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const isE2E = process.env.E2E === "true";
+// The E2E mock build must not overwrite build/, the folder that gets deployed.
+const buildDir = process.env.BUILD_DIR ?? "build";
 
 export default defineConfig({
 	resolve: isE2E
@@ -42,7 +44,11 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes("node_modules") ? undefined : true,
 			},
-			adapter: adapter({ fallback: "index.html" }),
+			adapter: adapter({
+				pages: buildDir,
+				assets: buildDir,
+				fallback: "index.html",
+			}),
 		}),
 	],
 	test: {
@@ -51,7 +57,11 @@ export default defineConfig({
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov"],
-			include: ["src/lib/**/*.{ts,svelte}", "convex/**/*.ts"],
+			include: [
+				"src/lib/**/*.{ts,svelte}",
+				"src/routes/**/*.svelte",
+				"convex/**/*.ts",
+			],
 			exclude: [
 				"src/lib/*.d.ts",
 				"convex/_generated/**",

@@ -139,7 +139,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		const remainingCollaborators = await t.run((ctx) =>
 			ctx.db
 				.query("collaborators")
-				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
 				.collect(),
 		);
 		expect(remainingCollaborators).toHaveLength(0);

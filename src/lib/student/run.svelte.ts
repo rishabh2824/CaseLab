@@ -88,8 +88,15 @@ export class RunStore {
 	loadError = $state("");
 	activeContactId = $state<string | null>(null);
 	notes = $state("");
-	isSending = $state(false);
 	timeExpired = $state(false);
+
+	// Whether the active contact has a reply in flight; other contacts stay free to message.
+	get isSending(): boolean {
+		return (
+			this.#sendingPersonaId !== null &&
+			this.#sendingPersonaId === this.activeContactId
+		);
+	}
 
 	#notesInitialized = false;
 	#notesSaveTimer: number | null = null;
@@ -213,7 +220,6 @@ export class RunStore {
 			const failed = turn.status === "error" || turn.status === "timeout";
 			if (!turn.settled && !failed) return;
 			this.#sendingPersonaId = null;
-			this.isSending = false;
 			if (failed)
 				notify(
 					"Something went wrong generating a reply. Please resend your message.",
@@ -359,7 +365,6 @@ export class RunStore {
 		const runId = session.runId;
 		this.#sentOverStreamId = this.#turn?.streamId ?? null;
 		this.#sendingPersonaId = personaId;
-		this.isSending = true;
 		try {
 			await getConvexClient().mutation(startTurnRef, {
 				runId,
@@ -369,7 +374,6 @@ export class RunStore {
 		} catch (err) {
 			console.error(err);
 			this.#sendingPersonaId = null;
-			this.isSending = false;
 			notify(getErrorMessage(err, "Message failed. Please try again."));
 		}
 	}

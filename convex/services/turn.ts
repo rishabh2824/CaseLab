@@ -2,6 +2,7 @@ import type { StreamId } from "@convex-dev/persistent-text-streaming";
 import { components, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
+import { MAX_MESSAGE_WORDS } from "../lib/constants";
 import {
 	classifyHarassment,
 	LLM_ATTEMPT_TIMEOUT_MS,
@@ -30,7 +31,6 @@ import {
 	NONSENSE_THRESHOLD,
 	personaAvailability,
 } from "../lib/turnState";
-import { MAX_MESSAGE_WORDS } from "../schema";
 import {
 	flattenPersonas,
 	graphReferrals,

@@ -6,7 +6,6 @@ import {
 	getPersonaFieldErrors,
 	getPersonaLabel,
 	hasFieldErrors,
-	isRoot,
 	normalizePersona,
 	normalizeReferral,
 	reachableFrom,
@@ -190,18 +189,6 @@ describe("getPersonaFieldErrors / hasFieldErrors", () => {
 			availability_minutes: 1,
 		});
 		expect(getPersonaFieldErrors(persona).availability).toBeUndefined();
-	});
-});
-
-describe("isRoot", () => {
-	// Tests that isRoot is true for an id in the roots list.
-	it("returns true when the id is in the roots list", () => {
-		expect(isRoot(["p1", "p2"], "p1")).toBe(true);
-	});
-
-	// Tests that isRoot is false for an id outside the roots list.
-	it("returns false when the id is not in the roots list", () => {
-		expect(isRoot(["p1", "p2"], "p3")).toBe(false);
 	});
 });
 

@@ -98,24 +98,3 @@ describe("CaseGraph.removeReferralsFrom", () => {
 		expect(graph.referrals).toEqual(before.referrals);
 	});
 });
-
-describe("CaseGraph.removeReferral", () => {
-	// Tests that removeReferral removes a single edge with the same cascade as removeReferralsFrom.
-	it("delegates to removeReferralsFrom for a single edge", () => {
-		const graph = diamondGraph();
-
-		graph.removeReferral(makeReferral("p2", "p4"));
-
-		expect(graph.personas.map((p) => p.id).sort()).toEqual([
-			"p1",
-			"p2",
-			"p3",
-			"p4",
-		]);
-		expect(graph.referrals).toEqual([
-			makeReferral("p1", "p2"),
-			makeReferral("p1", "p3"),
-			makeReferral("p3", "p4"),
-		]);
-	});
-});

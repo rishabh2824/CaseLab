@@ -1,13 +1,13 @@
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { ACCESS_CODE_FORMAT, RUN_LIFETIME_MINUTES } from "../lib/constants";
 import type {
 	CaseStructure,
 	FileRefPayload,
 	PersonaPayload,
 	ReferralEdgePayload,
 } from "../models/cases";
-import { ACCESS_CODE_FORMAT, RUN_LIFETIME_MINUTES } from "../schema";
 import { type ResolvedFileRef, resolveFileRefs, syncCaseFiles } from "./files";
 
 const ACCESS_CODE_CONFLICT =
@@ -384,7 +384,7 @@ async function replaceCollaborators(
 ): Promise<void> {
 	const existing = await ctx.db
 		.query("collaborators")
-		.withIndex("by_case", (q) => q.eq("caseId", caseId))
+		.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
 		.collect();
 	const existingAdminIds = new Set(existing.map((row) => row.adminId));
 	const desiredAdminIds = new Set(collaboratorIds);

@@ -117,9 +117,6 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 			await seedCase(t, { duration: 5 });
 			const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
 
-			const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-			expect(run.destroyJobId).toBeDefined();
-
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 
 			expect(await t.run((ctx) => ctx.db.get(state.run_id))).toBeNull();

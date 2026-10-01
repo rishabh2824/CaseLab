@@ -344,7 +344,7 @@ describe("sendMessage guards", () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		session.setRunId("");
+		session.clearRun();
 
 		expect(run.sendMessage("hello")).toBe(false);
 		expect(mockClientMutation).not.toHaveBeenCalled();
@@ -376,10 +376,28 @@ describe("sendMessage guards", () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		run.isSending = true;
+		mockClientMutation.mockResolvedValue(undefined);
 
+		expect(run.sendMessage("first")).toBe(true);
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(mockClientMutation).toHaveBeenCalledTimes(1);
+	});
+
+	// Tests that a reply in flight for one contact does not block messaging another contact.
+	it("lets the student message another contact while a reply is in flight", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session, {
+			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
+		});
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
+		run.sendMessage("first");
+		expect(run.isSending).toBe(true);
+
+		run.activeContactId = "bob";
+		expect(run.isSending).toBe(false);
+		expect(run.sendMessage("second")).toBe(true);
+		expect(mockClientMutation).toHaveBeenCalledTimes(2);
 	});
 
 	// Tests that sendMessage returns false and sends nothing when the active persona is unavailable.
@@ -642,6 +660,150 @@ describe("sendMessage lifecycle", () => {
 
 		expect(run.isSending).toBe(true);
 		expect(toast).not.toHaveBeenCalled();
+	});
+});
+
+describe("stuck-turn recovery", () => {
+	// Tests that a turn the server marks timed out unlocks the composer and toasts.
+	it("a timed-out turn clears isSending and toasts", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
+
+		run.sendMessage("hello");
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
+
+		setTurn({ status: "timeout" });
+
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(run.streamingPreview).toBeNull();
+		expect(toast).toHaveBeenCalledWith(
+			"Something went wrong generating a reply. Please resend your message.",
+			{ duration: 4000 },
+		);
+	});
+
+	// Tests that a turn still pending or streaming keeps the composer locked, and only the server's verdict unlocks it.
+	it("stays locked while the turn is pending or streaming", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
+
+		run.sendMessage("hello");
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
+
+		setTurn({ streamId: "new", status: "pending" });
+		await Promise.resolve();
+		expect(run.isSending).toBe(true);
+		expect(run.sendMessage("again")).toBe(false);
+
+		setTurn({ streamId: "new", status: "streaming", text: "Par" });
+		await Promise.resolve();
+		expect(run.isSending).toBe(true);
+		expect(toast).not.toHaveBeenCalled();
+	});
+
+	// Tests that after a failure the student can immediately resend.
+	it("lets the student resend right after a failed turn", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
+
+		run.sendMessage("hello");
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
+		setTurn({ streamId: "new", status: "timeout" });
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+
+		expect(run.sendMessage("hello again")).toBe(true);
+		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalledTimes(2));
+		expect(run.isSending).toBe(true);
+	});
+
+	// Tests that a failure on another persona neither unlocks nor locks the composer for the persona that was messaged.
+	it("ignores a failed turn on a persona other than the one being messaged", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session, {
+			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
+		});
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
+
+		run.sendMessage("hello");
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
+
+		run.selectContact("bob");
+		setFakeQuery(
+			GET_TURN_STREAM,
+			{ runId: "run-1", personaId: "bob", withText: true },
+			{
+				data: { streamId: "b1", status: "error", settled: false, text: "" },
+			},
+		);
+		await Promise.resolve();
+
+		expect(run.isSending).toBe(false);
+		expect(toast).not.toHaveBeenCalled();
+		run.selectContact("mary");
+		expect(run.isSending).toBe(true);
+	});
+
+	// Tests that a turn that failed while the student was on another persona is recovered on return.
+	it("recovers a turn that timed out while the student was viewing someone else", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session, {
+			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
+		});
+		run.activeContactId = "mary";
+		mockClientMutation.mockResolvedValue(undefined);
+
+		run.sendMessage("hello");
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
+		run.selectContact("bob");
+		setTurn({ streamId: "m2", status: "timeout" });
+
+		run.selectContact("mary");
+
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(toast).toHaveBeenCalledWith(
+			"Something went wrong generating a reply. Please resend your message.",
+			{ duration: 4000 },
+		);
+	});
+
+	// Tests that a reply already in progress on the server is reported and does not leave the composer locked.
+	it("unlocks and explains when the server says a reply is already in progress", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockRejectedValue(
+			clientStudentError(
+				"api/turn:start",
+				STUDENT_ERROR.REPLY_IN_PROGRESS,
+				"Please wait for the current reply to finish.",
+			),
+		);
+
+		run.sendMessage("hello");
+
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(toast).toHaveBeenCalledWith(
+			"Please wait for the current reply to finish.",
+			{ duration: 4000 },
+		);
+	});
+
+	// Tests that a reload during a stuck turn does not leave the fresh composer locked.
+	it("starts a reloaded run with an unlocked composer", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		setTurn({ streamId: "stuck", status: "pending" });
+
+		expect(run.isSending).toBe(false);
+		expect(run.sendMessage("hello")).toBe(true);
 	});
 });
 

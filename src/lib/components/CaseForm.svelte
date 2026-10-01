@@ -17,7 +17,7 @@ import { getErrorMessage } from "$lib/errors.js";
 import { type SaveResult, unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import { api } from "../../../convex/_generated/api.js";
 import type { Id } from "../../../convex/_generated/dataModel.js";
-import { RUN_LIFETIME_MINUTES } from "../../../convex/schema.js";
+import { RUN_LIFETIME_MINUTES } from "../../../convex/lib/constants.js";
 import CaseGraphEditor from "./CaseGraphEditor.svelte";
 import CaseInfoFields from "./CaseInfoFields.svelte";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
@@ -377,7 +377,7 @@ onDestroy(() => {
 	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<div class="mx-auto max-w-4xl px-6 py-10">
 		<div class="rounded-2xl border border-line bg-white p-8 shadow-soft">
-			<form onsubmit={handleSubmit} class="flex flex-col gap-6">
+			<form novalidate onsubmit={handleSubmit} class="flex flex-col gap-6">
 				<fieldset disabled={isSubmitting || isLoadingSource} class="contents">
 				<div class="relative">
 					<div class="text-center">

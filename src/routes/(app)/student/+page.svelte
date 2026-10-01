@@ -8,7 +8,7 @@ import { countWords, getPersonaInitials } from "$lib/format.js";
 import { session } from "$lib/session.svelte.js";
 import type { ExportRunOut } from "$lib/student/run.svelte.js";
 import { createRunStore, exportRunRef } from "$lib/student/run.svelte.js";
-import { MAX_MESSAGE_WORDS } from "../../../../convex/schema.js";
+import { MAX_MESSAGE_WORDS } from "../../../../convex/lib/constants.js";
 
 const run = createRunStore();
 

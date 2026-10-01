@@ -69,10 +69,10 @@ describe("persona availability: src/lib/student/availability.ts vs convex/lib/tu
 	});
 });
 
-describe("message word limit: convex/schema.ts's MAX_MESSAGE_WORDS", () => {
+describe("message word limit: convex/lib/constants.ts's MAX_MESSAGE_WORDS", () => {
 	// Tests that the server's message word limit uses MAX_MESSAGE_WORDS rather than a hard-coded literal.
 	it("validates the word count against MAX_MESSAGE_WORDS, not a hard-coded literal", () => {
-		expect(turnSource).toContain('from "../schema"');
+		expect(turnSource).toContain('from "../lib/constants"');
 		expect(turnSource).toContain(".length > MAX_MESSAGE_WORDS");
 	});
 
@@ -124,11 +124,11 @@ describe("message word limit: convex/schema.ts's MAX_MESSAGE_WORDS", () => {
 	});
 });
 
-describe("access code format: src/lib/case/draft.ts's getCaseInfoErrors vs convex/schema.ts", () => {
+describe("access code format: src/lib/case/draft.ts's getCaseInfoErrors vs convex/lib/constants.ts", () => {
 	// Tests that the client imports the shared ACCESS_CODE_FORMAT instead of defining a second literal.
 	it("imports the shared constant instead of a second literal", () => {
 		expect(draftSource).toContain(
-			'import { ACCESS_CODE_FORMAT } from "../../../convex/schema.js"',
+			'import { ACCESS_CODE_FORMAT } from "../../../convex/lib/constants.js"',
 		);
 		expect(draftSource).not.toMatch(/const ACCESS_CODE_FORMAT =/);
 	});

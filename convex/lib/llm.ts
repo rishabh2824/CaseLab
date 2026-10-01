@@ -235,30 +235,17 @@ export async function* personaReplyStream(
 			release();
 		}
 	}
-	throw new Error("Persona reply stream failed after all retries.");
 }
 
 export const RECENT_HISTORY_LIMIT = 10;
 
-// Formats the recent conversation as 'role: content' lines and counts user and assistant turns.
-function formatTranscript(
-	conversation: ChatMessage[],
-	limit = RECENT_HISTORY_LIMIT,
-): { transcript: string; userCount: number; assistantCount: number } {
-	const lines: string[] = [];
-	let userCount = 0;
-	let assistantCount = 0;
-	for (const message of conversation.slice(-limit)) {
-		if (message.role === "system") continue;
-		lines.push(`${message.role}: ${message.content}`);
-		if (message.role === "user") userCount += 1;
-		else if (message.role === "assistant") assistantCount += 1;
-	}
-	return {
-		transcript: lines.length > 0 ? lines.join("\n") : "No conversation yet.",
-		userCount,
-		assistantCount,
-	};
+// Formats the recent conversation as 'role: content' lines.
+function formatTranscript(conversation: ChatMessage[]): string {
+	const lines = conversation
+		.slice(-RECENT_HISTORY_LIMIT)
+		.filter((message) => message.role !== "system")
+		.map((message) => `${message.role}: ${message.content}`);
+	return lines.length > 0 ? lines.join("\n") : "No conversation yet.";
 }
 
 export type HarassmentLabel = "normal" | "nonsense";
@@ -268,7 +255,7 @@ export async function classifyHarassment(
 	userMessage: string,
 	conversation: ChatMessage[],
 ): Promise<HarassmentLabel> {
-	const { transcript } = formatTranscript(conversation);
+	const transcript = formatTranscript(conversation);
 	const systemPrompt =
 		"You are a strict conversation safety classifier for a case simulation. " +
 		"Classify the latest user message in context. " +

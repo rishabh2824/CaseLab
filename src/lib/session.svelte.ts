@@ -73,12 +73,6 @@ class SessionStore {
 		this.#persist();
 	}
 
-	// Sets the current run id.
-	setRunId(runId: string) {
-		this.runId = runId;
-		this.#persist();
-	}
-
 	// Clears all run fields from the session.
 	clearRun() {
 		this.runId = "";

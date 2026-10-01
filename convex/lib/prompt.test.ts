@@ -218,6 +218,64 @@ describe("systemPrompt", () => {
 			);
 		});
 
+		// Tests that names ending in non-ASCII letters or a period are still redacted.
+		it.each([
+			["Zoë", "Ask Zoë about the budget."],
+			["José", "José signs off on spend."],
+			["Chen Jr.", "Chen Jr. approves refunds."],
+		])("redacts %s despite a non-word boundary character", (name, facts) => {
+			const prompt = systemPrompt(
+				BRIEF,
+				COMMON_INFO,
+				personaDetail({ knownFacts: facts }),
+				[{ handle: "R1", name, role: "Lead", conditionTrigger: "cond" }],
+				[],
+			);
+			const line = prompt
+				.split("\n")
+				.find((l) => l.startsWith("Persona information:"));
+			expect(line).toContain("[undisclosed contact]");
+			expect(line).not.toContain(name);
+		});
+
+		// Tests that a name inside a longer non-ASCII word is left alone.
+		it("does not redact a name embedded in a longer accented word", () => {
+			const prompt = systemPrompt(
+				BRIEF,
+				COMMON_INFO,
+				personaDetail({ knownFacts: "Renée works on Renéeland." }),
+				[
+					{
+						handle: "R1",
+						name: "René",
+						role: "Analyst",
+						conditionTrigger: "cond",
+					},
+				],
+				[],
+			);
+			expect(prompt).toContain("Renée works on Renéeland.");
+		});
+
+		// Tests that every occurrence is redacted, including next to punctuation, and each candidate in turn.
+		it("redacts every occurrence and every candidate", () => {
+			const prompt = systemPrompt(
+				BRIEF,
+				COMMON_INFO,
+				personaDetail({
+					knownFacts: "Karen, (Dave) and Karen's boss Dave: Karen.",
+				}),
+				[
+					{ handle: "R1", name: "Karen", role: "Lead", conditionTrigger: "c" },
+					{ handle: "R2", name: "Dave", role: "Boss", conditionTrigger: "c" },
+				],
+				[],
+			);
+			expect(prompt).toContain(
+				"Persona information: [undisclosed contact], ([undisclosed contact]) and [undisclosed contact]'s boss [undisclosed contact]: [undisclosed contact].",
+			);
+		});
+
 		// Tests that a blank candidate name is skipped without error while a real one is still redacted.
 		it("skips a blank/whitespace candidate name without erroring, and still redacts a real one", () => {
 			const prompt = systemPrompt(

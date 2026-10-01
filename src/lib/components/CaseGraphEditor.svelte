@@ -1,5 +1,9 @@
 <script lang="ts">
-import { getPersonaLabel } from "$lib/case/draft.js";
+import {
+	getPersonaFieldErrors,
+	getPersonaLabel,
+	hasFieldErrors,
+} from "$lib/case/draft.js";
 import type { CaseGraph } from "$lib/case/graph.svelte.js";
 import type { Persona } from "$lib/types.js";
 import PersonaFields from "./PersonaFields.svelte";
@@ -14,6 +18,11 @@ let { graph, showFieldErrors, revealErrors }: Props = $props();
 
 const graphValidation = $derived(graph.validation);
 const rootPersonasError = $derived(graphValidation.rootsError);
+
+// Whether a persona card should be forced open to show its field errors.
+function hasVisibleErrors(persona: Persona): boolean {
+	return showFieldErrors && hasFieldErrors(getPersonaFieldErrors(persona));
+}
 
 // Adds a new root persona and reveals validation errors.
 function addRoot(): void {
@@ -49,7 +58,7 @@ function removeRoot(rootId: string): void {
 		{#each graph.roots as rootId, index (rootId)}
 			{@const persona = graph.byId.get(rootId) as Persona}
 			{@const personaLabel = getPersonaLabel(persona, `Persona ${index + 1}`)}
-			<details class="rounded-xl border border-line-soft bg-cream/40">
+			<details class="rounded-xl border border-line-soft bg-cream/40" open={hasVisibleErrors(persona)}>
 				<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-ink">
 					<span>{personaLabel}</span>
 					<button

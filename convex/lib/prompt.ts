@@ -73,7 +73,10 @@ export function systemPrompt(
 		for (const c of candidateReferrals) {
 			if (!c.name.trim()) continue;
 			knownFacts = knownFacts.replace(
-				new RegExp(`\\b${escapeRegExp(c.name)}\\b`, "g"),
+				new RegExp(
+					`(?<![\\p{L}\\p{N}_])${escapeRegExp(c.name)}(?![\\p{L}\\p{N}_])`,
+					"gu",
+				),
 				"[undisclosed contact]",
 			);
 		}

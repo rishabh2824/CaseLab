@@ -297,7 +297,7 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 		const rowBefore = await t.run((ctx) =>
 			ctx.db
 				.query("collaborators")
-				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
 				.first(),
 		);
 
@@ -315,7 +315,7 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 		const rowAfter = await t.run((ctx) =>
 			ctx.db
 				.query("collaborators")
-				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
 				.first(),
 		);
 
@@ -335,7 +335,7 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 		const originalRowBefore = await t.run((ctx) =>
 			ctx.db
 				.query("collaborators")
-				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
 				.first(),
 		);
 
@@ -351,7 +351,7 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 		const rows = await t.run((ctx) =>
 			ctx.db
 				.query("collaborators")
-				.withIndex("by_case", (q) => q.eq("caseId", caseId))
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
 				.collect(),
 		);
 		expect(rows).toHaveLength(2);

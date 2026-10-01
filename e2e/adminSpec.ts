@@ -133,7 +133,6 @@ test("creating a case submits the expected payload", async ({ page }) => {
 	await page.getByLabel("Access code").fill("riverside");
 
 	await page.getByRole("button", { name: "+ Add root persona" }).click();
-	await page.getByText("Persona 1").click();
 	await page.getByLabel("Persona name").fill("Sam Rivera");
 	await page.getByLabel("Title/Role").fill("Operations Lead");
 
@@ -371,7 +370,6 @@ test("double-clicking Submit creates the case once, not twice", async ({
 	await page.getByLabel("Initial brief").fill("Cut logistics costs by 10%.");
 	await page.getByLabel("Access code").fill("riverside");
 	await page.getByRole("button", { name: "+ Add root persona" }).click();
-	await page.getByText("Persona 1").click();
 	await page.getByLabel("Persona name").fill("Sam Rivera");
 	await page.getByLabel("Title/Role").fill("Operations Lead");
 
@@ -438,7 +436,6 @@ test("a server-rejected save keeps the admin's draft on screen", async ({
 	await page.getByLabel("Initial brief").fill("Cut logistics costs by 10%.");
 	await page.getByLabel("Access code").fill("riverside");
 	await page.getByRole("button", { name: "+ Add root persona" }).click();
-	await page.getByText("Persona 1").click();
 	await page.getByLabel("Persona name").fill("Sam Rivera");
 	await page.getByLabel("Title/Role").fill("Operations Lead");
 	await page.getByRole("button", { name: "Submit" }).click();

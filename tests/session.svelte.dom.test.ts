@@ -130,12 +130,4 @@ describe("SessionStore mutators", () => {
 			startTime: null,
 		});
 	});
-
-	// Tests that setRunId writes through to sessionStorage.
-	it("setRunId writes through to sessionStorage", () => {
-		session.setRunId("run-5");
-
-		expect(session.runId).toBe("run-5");
-		expect(readRaw().runId).toBe("run-5");
-	});
 });

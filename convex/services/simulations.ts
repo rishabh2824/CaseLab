@@ -2,6 +2,7 @@ import type { StreamId } from "@convex-dev/persistent-text-streaming";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { RUN_LIFETIME_MINUTES } from "../lib/constants";
 import { simulationLimit } from "../lib/rateLimits";
 import { streaming } from "../lib/streaming";
 import { STUDENT_ERROR, studentError } from "../lib/studentErrors";
@@ -10,7 +11,6 @@ import {
 	type ChatStateOut,
 	getChatState,
 } from "../lib/turnState";
-import { RUN_LIFETIME_MINUTES } from "../schema";
 import {
 	flattenPersonas,
 	graphPersonas,
@@ -224,12 +224,9 @@ export async function startSimulation(
 		sharedFiles: [],
 		personaChatState: {},
 	});
-	const destroyJobId = await ctx.scheduler.runAt(
-		expiresAt,
-		internal.api.simulations.destroy,
-		{ runId },
-	);
-	await ctx.db.patch(runId, { destroyJobId });
+	await ctx.scheduler.runAt(expiresAt, internal.api.simulations.destroy, {
+		runId,
+	});
 
 	return {
 		run_id: runId,

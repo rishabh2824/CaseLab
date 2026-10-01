@@ -3,7 +3,7 @@ import { components } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { authComponent } from "../auth";
-import type { AdminRole } from "../schema";
+import type { AdminRole } from "../lib/constants";
 import { deleteCaseUnchecked } from "./cases";
 
 // Trims and lower-cases an email so lookups ignore casing and padding.
@@ -88,7 +88,7 @@ export async function deleteAdminWithCascade(
 		const collaborators = (
 			await ctx.db
 				.query("collaborators")
-				.withIndex("by_case", (q) => q.eq("caseId", c._id))
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", c._id))
 				.collect()
 		).sort((a, b) => a.addedAt - b.addedAt);
 

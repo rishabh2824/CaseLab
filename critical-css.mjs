@@ -2,7 +2,10 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const buildDir = join(dirname(fileURLToPath(import.meta.url)), "build");
+const buildDir = join(
+	dirname(fileURLToPath(import.meta.url)),
+	process.env.BUILD_DIR ?? "build",
+);
 const targets = ["index.html"];
 
 let failed = false;
@@ -26,11 +29,7 @@ for (const name of targets) {
 				(_match, quote, rel) =>
 					`url(${quote}${new URL(rel, `https://_${cssDir}`).pathname}${quote})`,
 			);
-			return (
-				`<style>${css}</style>` +
-				`<link rel="preload" href="${href}" as="style" onload="this.onload=null;this.rel='stylesheet'">` +
-				`<noscript><link href="${href}" rel="stylesheet"></noscript>`
-			);
+			return `<style>${css}</style>`;
 		},
 	);
 

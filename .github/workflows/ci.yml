@@ -45,6 +45,9 @@ jobs:
       - name: Unit tests
         run: pnpm exec vitest run --coverage
 
+      - name: Production build
+        run: pnpm run build
+
   e2e:
     name: e2e
     runs-on: ubuntu-latest
