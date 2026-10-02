@@ -72,9 +72,6 @@ export default defineSchema({
 		personaKey: v.string(),
 		streamId: v.string(),
 		startedAt: v.number(),
-		message: v.optional(v.string()),
 		settled: v.boolean(),
-	})
-		.index("by_run_persona", ["runId", "personaKey"])
-		.index("by_stream", ["streamId"]),
+	}).index("by_run_persona", ["runId", "personaKey"]),
 });

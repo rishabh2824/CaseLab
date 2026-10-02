@@ -23,10 +23,10 @@ test("student enters an access code and messages a persona", async ({
 		],
 		mutations: {
 			"api/simulations:start": () => runState(),
-			"api/turn:start": turnHandler({
-				reply: "Our current vendor is Acme Supplies.",
-			}),
 		},
+		turn: turnHandler({
+			reply: "Our current vendor is Acme Supplies.",
+		}),
 	});
 
 	await page.goto("/");
@@ -198,9 +198,9 @@ test("typing over the word limit blocks Send without sending a message", async (
 		],
 		mutations: {
 			"api/simulations:start": () => runState(),
-			"api/turn:start": () => {
-				turnCalled = true;
-			},
+		},
+		turn: () => {
+			turnCalled = true;
 		},
 	});
 
@@ -232,11 +232,11 @@ test("a referral unlock adds the new contact and fires a toast", async ({
 		],
 		mutations: {
 			"api/simulations:start": () => runState(),
-			"api/turn:start": turnHandler({
-				reply: "I'll connect you with Bob.",
-				nextRunState: runState({ contacts: [contact(), bob] }),
-			}),
 		},
+		turn: turnHandler({
+			reply: "I'll connect you with Bob.",
+			nextRunState: runState({ contacts: [contact(), bob] }),
+		}),
 	});
 
 	await page.goto("/");
@@ -274,11 +274,11 @@ test("a shared file appears in the file list and fires a toast", async ({
 		],
 		mutations: {
 			"api/simulations:start": () => runState(),
-			"api/turn:start": turnHandler({
-				reply: "Here's the vendor contract.",
-				nextRunState: runState({ shared_files: [file] }),
-			}),
 		},
+		turn: turnHandler({
+			reply: "Here's the vendor contract.",
+			nextRunState: runState({ shared_files: [file] }),
+		}),
 	});
 
 	await page.goto("/");
@@ -313,15 +313,15 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 		],
 		mutations: {
 			"api/simulations:start": () => runState(),
-			"api/turn:start": turnHandler({
-				reply: "I'm done talking to you.",
-				nextRunState: runState({
-					contacts: [
-						contact({ chat_ended: true, chat_end_reason: "harassment" }),
-					],
-				}),
-			}),
 		},
+		turn: turnHandler({
+			reply: "I'm done talking to you.",
+			nextRunState: runState({
+				contacts: [
+					contact({ chat_ended: true, chat_end_reason: "harassment" }),
+				],
+			}),
+		}),
 	});
 
 	await page.goto("/");
@@ -379,8 +379,8 @@ test("an unavailable contact cannot be selected or messaged", async ({
 	).toBeVisible();
 });
 
-// Tests that a mid-stream failure removes the user's message, drops the partial reply and shows a toast.
-test("a mid-stream failure removes the user's message, drops the partial reply, and shows a toast", async ({
+// Tests that a mid-stream failure drops the student's message and the partial reply and shows a toast.
+test("a mid-stream failure drops the student's message and the partial reply, and shows a toast", async ({
 	page,
 }) => {
 	await mockApi(page, {
@@ -393,11 +393,11 @@ test("a mid-stream failure removes the user's message, drops the partial reply, 
 		],
 		mutations: {
 			"api/simulations:start": () => runState(),
-			"api/turn:start": turnHandler({
-				reply: null,
-				partialText: "Let me check on that...",
-			}),
 		},
+		turn: turnHandler({
+			reply: null,
+			partialText: "Let me check on that...",
+		}),
 	});
 
 	await page.goto("/");
@@ -532,12 +532,12 @@ test("a rejected turn re-enables the composer so the student can retry", async (
 		],
 		mutations: {
 			"api/simulations:start": () => runState(),
-			"api/turn:start": () => {
-				throw studentError(
-					STUDENT_ERROR.MESSAGE_RATE_LIMITED,
-					"Rate limit exceeded.",
-				);
-			},
+		},
+		turn: () => {
+			throw studentError(
+				STUDENT_ERROR.REPLY_IN_PROGRESS,
+				"Please wait for the current reply.",
+			);
 		},
 	});
 
@@ -550,7 +550,9 @@ test("a rejected turn re-enables the composer so the student can retry", async (
 	await composer.fill("first attempt");
 	await page.getByRole("button", { name: "Send" }).click();
 
-	await expect(page.getByText("Rate limit exceeded.")).toBeVisible();
+	await expect(
+		page.getByText("Please wait for the current reply."),
+	).toBeVisible();
 	await composer.fill("second attempt");
 	await expect(page.getByRole("button", { name: "Send" })).toBeEnabled();
 });

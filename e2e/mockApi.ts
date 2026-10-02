@@ -44,14 +44,15 @@ export type MockApiConfig = {
 	queries?: QuerySeed[];
 	mutations?: Record<string, ConvexHandler>;
 	actions?: Record<string, ConvexHandler>;
+	turn?: ConvexHandler;
 };
 
-// Installs the mock Convex backend on a page: seeds queries and routes mutations and actions to handlers.
+// Installs the mock Convex backend on a page: seeds queries and routes mutations, actions and /turn-stream to handlers.
 export async function mockApi(
 	page: Page,
 	config: MockApiConfig,
 ): Promise<void> {
-	const { queries = [], mutations = {}, actions = {} } = config;
+	const { queries = [], mutations = {}, actions = {}, turn } = config;
 
 	await page.route("**/api/auth/**", (route) => route.abort());
 
@@ -77,6 +78,31 @@ export async function mockApi(
 			[name, args, entry] as const,
 		);
 	};
+
+	await page.route("**/turn-stream", async (route) => {
+		if (!turn) return await route.abort();
+		const headers = {
+			"Access-Control-Allow-Origin": "*",
+			"Access-Control-Expose-Headers": "X-Stream-Id",
+		};
+		try {
+			const streamId = await turn(route.request().postDataJSON(), {
+				page,
+				setQuery,
+			});
+			await route.fulfill({
+				headers: { ...headers, "X-Stream-Id": String(streamId) },
+				body: "",
+			});
+		} catch (err) {
+			if (!(err instanceof MockStudentError)) throw err;
+			await route.fulfill({
+				status: 400,
+				headers,
+				json: { code: err.code, message: err.message },
+			});
+		}
+	});
 
 	await page.exposeFunction(
 		"__e2eConvexCall",
@@ -181,7 +207,7 @@ export const runState = (overrides: Parameters<typeof makeRunState>[0] = {}) =>
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 let turnCounter = 0;
-// Builds a mutation handler that simulates a turn by updating history and the reply stream, or failing it.
+// Builds a /turn-stream handler that simulates a turn by updating history and the reply stream, or failing it.
 export function turnHandler({
 	reply,
 	history = [],
@@ -212,50 +238,37 @@ export function turnHandler({
 					data: {
 						streamId,
 						settled: false,
-						claimable: false,
 						text: "",
 						...turn,
 					},
 				},
 			);
-		const withUser: ChatMessage[] = [
-			...history,
-			{ role: "user", content: message },
-		];
-		await setQuery(
-			"api/simulations:getPersonaHistory",
-			{ runId, personaId },
-			{ data: withUser },
-		);
-
 		if (reply === null) {
 			if (partialText) {
 				await pushTurn({ status: "streaming", text: partialText });
 			}
-			await setQuery(
-				"api/simulations:getPersonaHistory",
-				{ runId, personaId },
-				{ data: history },
-			);
 			await pushTurn({ status: "error" });
-			return;
+			return streamId;
 		}
 
 		const split = Math.ceil(reply.length / 2);
 		await pushTurn({ status: "streaming", text: reply.slice(0, split) });
 		const withReply: ChatMessage[] = [
-			...withUser,
+			...history,
+			{ role: "user", content: message },
 			{ role: "assistant", content: reply },
 		];
+		// The real server commits both in one transaction; settling first keeps the pending bubble and the saved copy from overlapping here.
+		await pushTurn({ status: "done", settled: true });
 		await setQuery(
 			"api/simulations:getPersonaHistory",
 			{ runId, personaId },
 			{ data: withReply },
 		);
-		await pushTurn({ status: "done", settled: true });
 		if (nextRunState) {
 			await setQuery("api/simulations:get", { runId }, { data: nextRunState });
 		}
+		return streamId;
 	};
 }
 

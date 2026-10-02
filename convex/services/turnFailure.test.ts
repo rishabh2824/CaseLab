@@ -4,11 +4,10 @@ import type { Id } from "../_generated/dataModel";
 import { STUDENT_ERROR } from "../lib/studentErrors";
 import type { CaseStructure } from "../models/cases";
 import {
-	driveTurn,
 	makeLlmFetch,
 	newTestConvex,
+	sendTurn as send,
 	sseStream,
-	studentRejection,
 } from "../test.setup";
 import {
 	caseStructure,
@@ -54,17 +53,6 @@ async function startRun(t: T, structure: CaseStructure = caseStructure()) {
 		}),
 	);
 	return await t.run((ctx) => startSimulation(ctx, "sterling"));
-}
-
-// Starts a turn and drives its reply stream to completion.
-async function send(
-	t: T,
-	runId: Id<"runs">,
-	personaId: string,
-	message: string,
-) {
-	await t.run((ctx) => startTurn(ctx, runId, personaId, message));
-	return await driveTurn(t, runId, personaId);
 }
 
 // Asserts a failed turn left no assistant reply, an errored stream and no persisted user message.
@@ -479,7 +467,7 @@ describe("turn stream lifecycle", () => {
 		expect(text).toBe("Done.");
 		expect(
 			await t.run((ctx) => getTurnStream(ctx, state.run_id, "A", true)),
-		).toMatchObject({ status: "done", settled: true, claimable: false });
+		).toMatchObject({ status: "done", settled: true });
 	});
 
 	// Tests that a failed generation marks the stream errored rather than leaving it open.
@@ -499,15 +487,22 @@ describe("turn stream lifecycle", () => {
 	it("fails the turn cleanly when the run is destroyed mid-generation", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
-		stub({ replyText: "too late" });
+		const { fetch } = makeLlmFetch({ replyText: "too late" });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (url: string, init: RequestInit) => {
+				if (JSON.parse(init.body as string).stream)
+					await t.run((ctx) => ctx.db.delete(state.run_id));
+				return await fetch(url, init);
+			}),
+		);
 
-		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi"));
-		await t.run((ctx) => ctx.db.delete(state.run_id));
+		const { status } = await send(t, state.run_id, "A", "hi");
 
-		expect(await driveTurn(t, state.run_id, "A")).toEqual({
-			status: 200,
-			text: "",
-		});
+		expect(status).toBe(200);
+		expect(
+			await t.run((ctx) => getTurnStream(ctx, state.run_id, "A", false)),
+		).toMatchObject({ status: "error", settled: false });
 	});
 
 	function stubReplyAttempts(bodies: string[]) {
@@ -584,54 +579,22 @@ describe("turn stream lifecycle", () => {
 			}),
 		).rejects.toThrow("Stream not found");
 	});
-
-	// Tests that exactly one request drives a turn.
-	it("lets exactly one request drive a turn", async () => {
-		const t = newTestConvex();
-		const { state } = await startRunWithCandidates(t);
-		const calls = stub({ replyText: "Once." });
-
-		await send(t, state.run_id, "A", "hi");
-
-		expect(await driveTurn(t, state.run_id, "A")).toEqual({
-			status: 409,
-			text: "",
-		});
-		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(1);
-	});
 });
 
 describe("the concurrency guard is the real serialization point", () => {
-	// Tests that a second turn on the same persona is rejected without consuming the first.
-	it("rejects a second turn on the same persona while one is in flight, without consuming the first", async () => {
+	// Tests that a second turn on the same persona is rejected, over HTTP, and writes nothing.
+	it("rejects a second turn on the same persona while one is in flight and writes nothing for it", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		stub({ replyText: "first" });
 
 		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first message"));
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
-		).rejects.toThrow(/already being generated/);
+		const second = await send(t, state.run_id, "A", "second message");
 
-		await driveTurn(t, state.run_id, "A");
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
-		expect(history.map((m) => m.content)).toEqual(["first message", "first"]);
-	});
-
-	// Tests that a rejected second turn writes nothing at all.
-	it("writes nothing at all for the rejected second turn", async () => {
-		const t = newTestConvex();
-		const { state } = await startRunWithCandidates(t);
-		stub({ replyText: "first" });
-
-		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first message"));
-		await t
-			.run((ctx) => startTurn(ctx, state.run_id, "A", "second message"))
-			.catch(() => {});
-		await driveTurn(t, state.run_id, "A");
-
+		expect(second.status).toBe(400);
+		expect(JSON.parse(second.text)).toMatchObject({
+			code: STUDENT_ERROR.REPLY_IN_PROGRESS,
+		});
 		const rows = await t.run((ctx) => ctx.db.query("runMessages").collect());
 		expect(rows.map((r) => r.content)).not.toContain("second message");
 	});
@@ -649,17 +612,10 @@ describe("the concurrency guard is the real serialization point", () => {
 		stub({ replyText: "reply" });
 
 		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "to A"));
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "B", "to B")),
-		).resolves.toBeNull();
-		await driveTurn(t, state.run_id, "A");
-		await driveTurn(t, state.run_id, "B");
+		await send(t, state.run_id, "B", "to B");
 
-		const [a, b] = await Promise.all([
-			t.run((ctx) => getPersonaHistory(ctx, state.run_id, "A")),
-			t.run((ctx) => getPersonaHistory(ctx, state.run_id, "B")),
-		]);
-		expect([a.length, b.length]).toEqual([2, 2]);
+		const b = await t.run((ctx) => getPersonaHistory(ctx, state.run_id, "B"));
+		expect(b.map((m) => m.content)).toEqual(["to B", "reply"]);
 	});
 
 	// Tests that one persona's unlock is not lost when two turns patch the run around each other.
@@ -683,14 +639,10 @@ describe("the concurrency guard is the real serialization point", () => {
 		);
 		stub({ replyText: "meet them", introduce: ["R1"] });
 
-		await t.run((ctx) =>
-			startTurn(ctx, state.run_id, "A", "connect me with C"),
-		);
-		await t.run((ctx) =>
-			startTurn(ctx, state.run_id, "B", "connect me with D"),
-		);
-		await driveTurn(t, state.run_id, "A");
-		await driveTurn(t, state.run_id, "B");
+		await Promise.all([
+			send(t, state.run_id, "A", "connect me with C"),
+			send(t, state.run_id, "B", "connect me with D"),
+		]);
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect([...run.unlockedReferredIds].sort()).toEqual(["C", "D"]);
@@ -755,125 +707,5 @@ describe("a stuck turn is reclaimed once it's stale", () => {
 			getPersonaHistory(ctx, state.run_id, "A"),
 		);
 		expect(history.map((m) => m.content)).toEqual(["second message", "second"]);
-	});
-});
-
-describe("rate limiting", () => {
-	function freezeClock() {
-		vi.useFakeTimers({ toFake: ["Date"] });
-	}
-
-	// Tests that the 16th message in a minute is rejected and the run continues after the limit refills.
-	it("rejects the 16th message in a minute and lets the run continue after refill", async () => {
-		freezeClock();
-		try {
-			const t = newTestConvex();
-			const state = await startRun(t);
-			stub({ replyText: "ok" });
-
-			for (let i = 0; i < 15; i++) {
-				await send(t, state.run_id, "A", `message ${i}`);
-			}
-			expect(
-				await studentRejection(
-					t.run((ctx) => startTurn(ctx, state.run_id, "A", "one too many")),
-				),
-			).toMatchObject({ code: STUDENT_ERROR.MESSAGE_RATE_LIMITED });
-
-			vi.setSystemTime(Date.now() + 60_000);
-			await expect(
-				t.run((ctx) => startTurn(ctx, state.run_id, "A", "after refill")),
-			).resolves.toBeNull();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	// Tests that the message rate limit is keyed per run, not per case.
-	it("keys the message limit per run, not per case", async () => {
-		freezeClock();
-		try {
-			const t = newTestConvex();
-			const a = await startRun(t);
-			const b = await t.run((ctx) => startSimulation(ctx, "sterling"));
-			stub({ replyText: "ok" });
-
-			for (let i = 0; i < 15; i++) await send(t, a.run_id, "A", `msg ${i}`);
-			expect(
-				await studentRejection(
-					t.run((ctx) => startTurn(ctx, a.run_id, "A", "over")),
-				),
-			).toMatchObject({ code: STUDENT_ERROR.MESSAGE_RATE_LIMITED });
-
-			await expect(
-				t.run((ctx) => startTurn(ctx, b.run_id, "A", "unaffected")),
-			).resolves.toBeNull();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	// Tests that a turn rejected by the concurrency guard does not consume message budget.
-	it("does not consume message budget for a turn the concurrency guard rejects", async () => {
-		freezeClock();
-		try {
-			const t = newTestConvex();
-			const state = await startRun(t);
-			stub({ replyText: "ok" });
-
-			await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first"));
-			for (let i = 0; i < 30; i++) {
-				await expect(
-					t.run((ctx) => startTurn(ctx, state.run_id, "A", `retry ${i}`)),
-				).rejects.toThrow(/already being generated/);
-			}
-			await driveTurn(t, state.run_id, "A");
-
-			for (let i = 0; i < 14; i++) {
-				await send(t, state.run_id, "A", `after storm ${i}`);
-			}
-			expect(
-				await studentRejection(
-					t.run((ctx) => startTurn(ctx, state.run_id, "A", "sixteenth")),
-				),
-			).toMatchObject({ code: STUDENT_ERROR.MESSAGE_RATE_LIMITED });
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	const SIMULATION_START_BURST = 300;
-
-	async function driveSimulationStartToExhaustion(
-		t: T,
-		accessCode: string,
-	): Promise<void> {
-		for (let i = 0; i < SIMULATION_START_BURST; i++) {
-			try {
-				await t.run((ctx) => startSimulation(ctx, accessCode));
-			} catch {}
-		}
-	}
-
-	// Tests that a burst of simulation starts against one access code is throttled.
-	it("throttles a burst of simulation starts against one access code", async () => {
-		const t = newTestConvex();
-		await startRun(t);
-		await driveSimulationStartToExhaustion(t, "sterling");
-		expect(
-			await studentRejection(t.run((ctx) => startSimulation(ctx, "sterling"))),
-		).toMatchObject({ code: STUDENT_ERROR.SIMULATION_RATE_LIMITED });
-	});
-
-	// Tests that varying the access code's casing or padding cannot dodge the start throttle.
-	it("cannot be dodged by varying the access code's casing or padding", async () => {
-		const t = newTestConvex();
-		await startRun(t);
-		await driveSimulationStartToExhaustion(t, "sterling");
-		expect(
-			await studentRejection(
-				t.run((ctx) => startSimulation(ctx, "  STERLING  ")),
-			),
-		).toMatchObject({ code: STUDENT_ERROR.SIMULATION_RATE_LIMITED });
 	});
 });

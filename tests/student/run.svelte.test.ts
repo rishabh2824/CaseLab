@@ -18,6 +18,19 @@ import {
 
 const mockClientMutation = vi.fn();
 const mockClientQuery = vi.fn();
+const mockTurnFetch = vi.fn();
+
+// Builds a /turn-stream response that accepted the message and streams the given body.
+function acceptedTurn(body: BodyInit | null = null, streamId = "s1"): Response {
+	return new Response(body ?? new ReadableStream(), {
+		headers: { "X-Stream-Id": streamId },
+	});
+}
+
+// Builds a /turn-stream response rejecting the message with a student error.
+function rejectedTurn(code: string, message: string): Response {
+	return new Response(JSON.stringify({ code, message }), { status: 400 });
+}
 
 type FakeQueryEntry = { data?: unknown; error?: Error };
 const fakeQueryData = new Map<string, FakeQueryEntry>();
@@ -84,7 +97,6 @@ function setTurn(
 		streamId: string;
 		status: string;
 		settled: boolean;
-		claimable: boolean;
 		text: string;
 	}>,
 	withText = true,
@@ -96,7 +108,6 @@ function setTurn(
 			data: {
 				streamId: "s1",
 				settled: false,
-				claimable: false,
 				text: "",
 				...turn,
 			},
@@ -151,6 +162,9 @@ beforeEach(() => {
 	mockClientQuery.mockReset();
 	mockUseQuery.mockClear();
 	resetFakeQueries();
+	mockTurnFetch.mockReset();
+	mockTurnFetch.mockImplementation(() => new Promise(() => {}));
+	vi.stubGlobal("fetch", mockTurnFetch);
 });
 
 afterEach(() => {
@@ -339,17 +353,6 @@ describe("session resume / live-query errors", () => {
 });
 
 describe("sendMessage guards", () => {
-	// Tests that sendMessage returns false and sends nothing without a run id.
-	it("returns false and sends nothing when there is no run id", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-		session.clearRun();
-
-		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
-	});
-
 	// Tests that sendMessage returns false and sends nothing without an active contact.
 	it("returns false and sends nothing when there is no active contact", async () => {
 		const { run, session } = await freshRun();
@@ -357,7 +360,7 @@ describe("sendMessage guards", () => {
 		run.activeContactId = null;
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(mockTurnFetch).not.toHaveBeenCalled();
 	});
 
 	// Tests that sendMessage returns false and sends nothing for an empty or whitespace-only message.
@@ -368,19 +371,7 @@ describe("sendMessage guards", () => {
 
 		expect(run.sendMessage("")).toBe(false);
 		expect(run.sendMessage("   \n\t ")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
-	});
-
-	// Tests that sendMessage returns false and sends nothing while a send is in flight.
-	it("returns false and sends nothing while a send is already in flight", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
-
-		expect(run.sendMessage("first")).toBe(true);
-		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockClientMutation).toHaveBeenCalledTimes(1);
+		expect(mockTurnFetch).not.toHaveBeenCalled();
 	});
 
 	// Tests that a reply in flight for one contact does not block messaging another contact.
@@ -390,58 +381,33 @@ describe("sendMessage guards", () => {
 			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
 		});
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 		run.sendMessage("first");
 		expect(run.isSending).toBe(true);
 
 		run.activeContactId = "bob";
 		expect(run.isSending).toBe(false);
 		expect(run.sendMessage("second")).toBe(true);
-		expect(mockClientMutation).toHaveBeenCalledTimes(2);
+		expect(mockTurnFetch).toHaveBeenCalledTimes(2);
 	});
 
-	// Tests that sendMessage returns false and sends nothing when the active persona is unavailable.
-	it("returns false and sends nothing when the active persona is unavailable", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session, {
-			contacts: [makeContact({ id: "mary", available_at: 9999 })],
-		});
-		run.activeContactId = "mary";
-
-		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
-	});
-
-	// Tests that sendMessage returns false and sends nothing when the persona's chat has ended.
-	it("returns false and sends nothing when the active persona's chat has ended", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session, {
-			contacts: [makeContact({ id: "mary", chat_ended: true })],
-		});
-		run.activeContactId = "mary";
-
-		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
-	});
-
-	// Tests that an accepted message returns true and calls the api/turn:start mutation.
-	it("returns true and calls the api/turn:start mutation when the message is accepted", async () => {
+	// Tests that an accepted message returns true and posts it to /turn-stream.
+	it("returns true and posts the message to /turn-stream when it is accepted", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 
 		expect(run.sendMessage("hello")).toBe(true);
-		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
-		const [, args] = mockClientMutation.mock.calls[0] as [
-			unknown,
-			Record<string, unknown>,
-		];
-		expect(args).toEqual({
-			runId: "run-1",
-			personaId: "mary",
-			message: "hello",
-		});
+		expect(mockTurnFetch).toHaveBeenCalledWith(
+			expect.stringMatching(/\.convex\.site\/turn-stream$/),
+			{
+				method: "POST",
+				body: JSON.stringify({
+					runId: "run-1",
+					personaId: "mary",
+					message: "hello",
+				}),
+			},
+		);
 	});
 });
 
@@ -458,7 +424,6 @@ describe("sendMessage lifecycle", () => {
 		setTurn({ streamId: "old", status: "done", settled: true });
 		run.activeContactId = "mary";
 		await vi.waitFor(() => expect(run.activeMessages).toHaveLength(2));
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("New question");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -499,6 +464,29 @@ describe("sendMessage lifecycle", () => {
 		expect(run.activeMessages).toHaveLength(4);
 	});
 
+	// Tests that the sent message shows until the turn settles, and disappears if the server rejects it.
+	it("shows the sent message until the turn settles, and drops it if the server rejects it", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+
+		run.sendMessage("  What vendor do we use?  ");
+		expect(run.pendingMessage).toBe("What vendor do we use?");
+
+		setTurn({ streamId: "new", status: "done", settled: true });
+		await vi.waitFor(() => expect(run.pendingMessage).toBeNull());
+
+		mockTurnFetch.mockResolvedValue(
+			rejectedTurn(
+				STUDENT_ERROR.CONVERSATION_ENDED,
+				"This conversation has ended.",
+			),
+		);
+		run.sendMessage("one more");
+		expect(run.pendingMessage).toBe("one more");
+		await vi.waitFor(() => expect(run.pendingMessage).toBeNull());
+	});
+
 	// Tests that a boundary reply clears isSending even though it adds only one message.
 	it("clears isSending after a boundary reply, though it adds only one message to the history", async () => {
 		const { run, session, toast } = await freshRun();
@@ -509,7 +497,6 @@ describe("sendMessage lifecycle", () => {
 			{ data: [] },
 		);
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("asdf asdf asdf");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -527,14 +514,13 @@ describe("sendMessage lifecycle", () => {
 		expect(run.sendMessage("a real question")).toBe(true);
 	});
 
-	// Tests that a rejected mutation clears isSending immediately and shows a toast.
-	it("a rejected mutation (e.g. rate limited, conversation ended) clears isSending immediately and shows a toast", async () => {
+	// Tests that a rejected message clears isSending immediately and shows the server's message.
+	it("a rejected message (e.g. rate limited, conversation ended) clears isSending immediately and shows a toast", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockRejectedValue(
-			clientStudentError(
-				"api/turn:start",
+		mockTurnFetch.mockResolvedValue(
+			rejectedTurn(
 				STUDENT_ERROR.CONVERSATION_ENDED,
 				"This conversation has ended.",
 			),
@@ -548,12 +534,21 @@ describe("sendMessage lifecycle", () => {
 		});
 	});
 
-	// Tests that a real server error shows a generic toast rather than the client's wrapper text.
-	it("shows a generic toast, not the client's wrapper text, when the server hit a real error", async () => {
+	// Tests that a real server error or a network failure shows a generic toast.
+	it.each([
+		[
+			"a server error",
+			() => Promise.resolve(new Response("Server Error", { status: 500 })),
+		],
+		[
+			"a network failure",
+			() => Promise.reject(new TypeError("Failed to fetch")),
+		],
+	])("shows a generic toast after %s", async (_name, answer) => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockRejectedValue(clientServerError("api/turn:start"));
+		mockTurnFetch.mockImplementation(answer);
 
 		run.sendMessage("hello");
 
@@ -578,23 +573,16 @@ describe("sendMessage lifecycle", () => {
 		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
 	});
 
-	// Tests that a claimable turn is streamed exactly once and the reply shows as it streams.
-	it("drives a claimable turn over /turn-stream exactly once and shows the reply as it streams", async () => {
+	// Tests that the reply shows as it streams back over /turn-stream.
+	it("shows the reply as it streams back over /turn-stream", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 		const body = new TransformStream<Uint8Array, Uint8Array>();
 		const writer = body.writable.getWriter();
-		const fetchMock = vi.fn(async () => new Response(body.readable));
-		vi.stubGlobal("fetch", fetchMock);
+		mockTurnFetch.mockResolvedValue(acceptedTurn(body.readable));
 
-		setTurn({ status: "pending", claimable: true });
-		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-		expect(fetchMock).toHaveBeenCalledWith(
-			expect.stringMatching(/\.convex\.site\/turn-stream$/),
-			{ method: "POST", body: JSON.stringify({ streamId: "s1" }) },
-		);
-
+		run.sendMessage("hello");
 		setTurn({ status: "streaming" }, false);
 		const encoder = new TextEncoder();
 		await writer.write(encoder.encode("Hel"));
@@ -605,24 +593,6 @@ describe("sendMessage lifecycle", () => {
 		setTurn({ status: "done", settled: true }, false);
 		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
 		await writer.close();
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-	});
-
-	// Tests that the persisted reply is used when another tab claimed the turn first.
-	it("falls back to the persisted copy when another tab claimed the turn first", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-		const fetchMock = vi.fn(async () => new Response(null, { status: 409 }));
-		vi.stubGlobal("fetch", fetchMock);
-
-		setTurn({ status: "pending", claimable: true });
-		await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-
-		setTurn({ status: "streaming", text: "From the other tab" });
-		await vi.waitFor(() =>
-			expect(run.streamingPreview).toBe("From the other tab"),
-		);
 	});
 
 	// Tests that a failed stream clears isSending and toasts instead of leaving it stuck.
@@ -630,7 +600,6 @@ describe("sendMessage lifecycle", () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -652,10 +621,9 @@ describe("sendMessage lifecycle", () => {
 		run.activeContactId = "mary";
 		setTurn({ streamId: "old", status: "error" });
 		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("hello again");
-		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
+		await vi.waitFor(() => expect(mockTurnFetch).toHaveBeenCalled());
 		await Promise.resolve();
 
 		expect(run.isSending).toBe(true);
@@ -669,7 +637,6 @@ describe("stuck-turn recovery", () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -689,7 +656,6 @@ describe("stuck-turn recovery", () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -697,7 +663,6 @@ describe("stuck-turn recovery", () => {
 		setTurn({ streamId: "new", status: "pending" });
 		await Promise.resolve();
 		expect(run.isSending).toBe(true);
-		expect(run.sendMessage("again")).toBe(false);
 
 		setTurn({ streamId: "new", status: "streaming", text: "Par" });
 		await Promise.resolve();
@@ -710,7 +675,6 @@ describe("stuck-turn recovery", () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -718,7 +682,7 @@ describe("stuck-turn recovery", () => {
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 
 		expect(run.sendMessage("hello again")).toBe(true);
-		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalledTimes(2));
+		expect(mockTurnFetch).toHaveBeenCalledTimes(2);
 		expect(run.isSending).toBe(true);
 	});
 
@@ -729,7 +693,6 @@ describe("stuck-turn recovery", () => {
 			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
 		});
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -757,7 +720,6 @@ describe("stuck-turn recovery", () => {
 			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
 		});
 		run.activeContactId = "mary";
-		mockClientMutation.mockResolvedValue(undefined);
 
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -778,9 +740,8 @@ describe("stuck-turn recovery", () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockRejectedValue(
-			clientStudentError(
-				"api/turn:start",
+		mockTurnFetch.mockResolvedValue(
+			rejectedTurn(
 				STUDENT_ERROR.REPLY_IN_PROGRESS,
 				"Please wait for the current reply to finish.",
 			),
@@ -941,7 +902,6 @@ describe("a run that expires while a message is in flight", () => {
 			{ runId: "run-1", personaId: "mary" },
 			{ data: [] },
 		);
-		mockClientMutation.mockResolvedValue(undefined);
 
 		expect(run.sendMessage("are you there?")).toBe(true);
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -961,7 +921,7 @@ describe("a run that expires while a message is in flight", () => {
 
 		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
 		expect(session.runId).toBe("");
-		expect(mockClientMutation).toHaveBeenCalledTimes(1);
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 });
 
@@ -982,8 +942,6 @@ describe("run-level time expiry", () => {
 
 			expect(run.timeExpired).toBe(true);
 			expect(run.activePersonaAvailable).toBe(false);
-			expect(run.sendMessage("are you there?")).toBe(false);
-			expect(mockClientMutation).not.toHaveBeenCalled();
 			expect(session.runId).toBe("run-1");
 			expect(goto).not.toHaveBeenCalled();
 		} finally {
@@ -1030,45 +988,15 @@ describe("hostile and degenerate client-side send guards", () => {
 	it("trims exactly like the server and otherwise sends unicode and newlines untouched", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
-		mockClientMutation.mockResolvedValue(undefined);
 		const typed = "  Café ☕\nQ3 — 40 % ↑ 🙂  ";
 
 		expect(run.sendMessage(typed)).toBe(true);
 
-		await vi.waitFor(() =>
-			expect(mockClientMutation).toHaveBeenCalledWith(expect.anything(), {
-				runId: "run-1",
-				personaId: "mary",
-				message: typed.trim(),
-			}),
-		);
-	});
-
-	// Tests that a burst of sends collapses into exactly one mutation.
-	it("collapses a burst of sends into exactly one mutation", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		mockClientMutation.mockResolvedValue(undefined);
-
-		const accepted = [
-			run.sendMessage("one"),
-			run.sendMessage("two"),
-			run.sendMessage("three"),
-		];
-
-		expect(accepted).toEqual([true, false, false]);
-		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalledTimes(1));
-	});
-
-	// Tests that sending to a contact whose chat has ended is refused.
-	it("refuses to send to a contact whose chat has already ended", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session, {
-			contacts: [makeContact({ id: "mary", chat_ended: true })],
+		const [, init] = mockTurnFetch.mock.calls[0] as [string, RequestInit];
+		expect(JSON.parse(init.body as string)).toEqual({
+			runId: "run-1",
+			personaId: "mary",
+			message: typed.trim(),
 		});
-		run.activeContactId = "mary";
-
-		expect(run.sendMessage("hello?")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 });

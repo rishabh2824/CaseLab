@@ -17,9 +17,9 @@ import type * as api_uploads from "../api/uploads.js";
 import type * as auth from "../auth.js";
 import type * as http from "../http.js";
 import type * as lib_adminFunctions from "../lib/adminFunctions.js";
+import type * as lib_constants from "../lib/constants.js";
 import type * as lib_llm from "../lib/llm.js";
 import type * as lib_prompt from "../lib/prompt.js";
-import type * as lib_rateLimits from "../lib/rateLimits.js";
 import type * as lib_replyStream from "../lib/replyStream.js";
 import type * as lib_streaming from "../lib/streaming.js";
 import type * as lib_studentErrors from "../lib/studentErrors.js";
@@ -49,9 +49,9 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   http: typeof http;
   "lib/adminFunctions": typeof lib_adminFunctions;
+  "lib/constants": typeof lib_constants;
   "lib/llm": typeof lib_llm;
   "lib/prompt": typeof lib_prompt;
-  "lib/rateLimits": typeof lib_rateLimits;
   "lib/replyStream": typeof lib_replyStream;
   "lib/streaming": typeof lib_streaming;
   "lib/studentErrors": typeof lib_studentErrors;
@@ -94,7 +94,6 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   betterAuth: import("@convex-dev/better-auth/_generated/component.js").ComponentApi<"betterAuth">;
-  rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
   persistentTextStreaming: import("@convex-dev/persistent-text-streaming/_generated/component.js").ComponentApi<"persistentTextStreaming">;
   staticHosting: import("@convex-dev/static-hosting/_generated/component.js").ComponentApi<"staticHosting">;
 };

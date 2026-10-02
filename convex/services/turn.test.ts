@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Id } from "../_generated/dataModel";
 import { RECENT_HISTORY_LIMIT } from "../lib/llm";
 import { STUDENT_ERROR } from "../lib/studentErrors";
 import { NONSENSE_THRESHOLD } from "../lib/turnState";
 import type { CaseStructure } from "../models/cases";
-import { driveTurn, newTestConvex, studentRejection } from "../test.setup";
+import {
+	newTestConvex,
+	sendTurn as send,
+	studentRejection,
+} from "../test.setup";
 import {
 	caseStructure,
 	fileEntry,
@@ -122,17 +125,6 @@ async function startRun(
 		}),
 	);
 	return await t.run((ctx) => startSimulation(ctx, accessCode));
-}
-
-// Starts a turn and drives its reply stream to completion.
-async function send(
-	t: ReturnType<typeof newTestConvex>,
-	runId: Id<"runs">,
-	personaId: string,
-	message: string,
-) {
-	await t.run((ctx) => startTurn(ctx, runId, personaId, message));
-	return await driveTurn(t, runId, personaId);
 }
 
 describe("startTurn validation", () => {
@@ -642,6 +634,7 @@ describe("referrals", () => {
 				ctx,
 				state.run_id,
 				"A",
+				"hi",
 				"Sure, meet Bob.",
 				[{ referredPersonaId: "B" }],
 				[],
@@ -660,6 +653,7 @@ describe("referrals", () => {
 				ctx,
 				state.run_id,
 				"A",
+				"hi",
 				"Sure, meet Bob again.",
 				[{ referredPersonaId: "B" }],
 				[],

@@ -1,5 +1,5 @@
 import { makeFunctionReference } from "convex/server";
-import { getConvexClient, useQuery } from "convex-svelte";
+import { useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
 import { resolveConvexSiteUrl } from "../convexUrl.js";
@@ -23,7 +23,6 @@ const getPersonaHistoryRef = makeFunctionReference<"query">(
 const getTurnStreamRef = makeFunctionReference<"query">(
 	"api/turn:getTurnStream",
 );
-const startTurnRef = makeFunctionReference<"mutation">("api/turn:start");
 
 import {
 	STUDENT_ERROR,
@@ -107,6 +106,7 @@ export class RunStore {
 	#nowTick = $state(Date.now());
 	#availabilityTickInterval: number | null = null;
 	#sendingPersonaId = $state<string | null>(null);
+	#sentMessage = $state("");
 
 	#runStateQuery = useQuery(getSimulationStateRef, () =>
 		session.runId ? { runId: session.runId } : "skip",
@@ -118,7 +118,6 @@ export class RunStore {
 	);
 	#driven = $state<{ personaId: string; streamId: string } | null>(null);
 	#drivenText = $state("");
-	#attemptedStreams = new Set<string>();
 	#turnQuery = useQuery(getTurnStreamRef, () =>
 		session.runId && this.activeContactId
 			? {
@@ -129,7 +128,16 @@ export class RunStore {
 			: "skip",
 	);
 	#turn = $derived((this.#turnQuery.data as TurnStreamOut | undefined) ?? null);
-	#sentOverStreamId: string | null = null;
+	#sentOverStreamId = $state<string | null>(null);
+	// How the turn started by the last send ended, or null while it is still running.
+	#sentTurnOutcome = $derived.by<"saved" | "failed" | null>(() => {
+		const turn = this.#turn;
+		if (!turn || turn.streamId === this.#sentOverStreamId) return null;
+		if (turn.settled) return "saved";
+		return turn.status === "error" || turn.status === "timeout"
+			? "failed"
+			: null;
+	});
 
 	raw = $derived<StartedRun | null>(this.#runStateQuery.data ?? null);
 	caseData = $derived(this.raw?.case ?? null);
@@ -155,6 +163,10 @@ export class RunStore {
 	);
 	sharedFiles = $derived<SharedFile[]>(this.raw?.shared_files ?? []);
 	activeMessages = $derived<ChatMessage[]>(this.#historyQuery.data ?? []);
+	// The student's message, shown until the server saves it together with the reply.
+	pendingMessage = $derived(
+		this.isSending && !this.#sentTurnOutcome ? this.#sentMessage : null,
+	);
 	streamingPreview = $derived.by<string | null>(() => {
 		const turn = this.#turn;
 		if (!turn || turn.settled) return null;
@@ -205,22 +217,12 @@ export class RunStore {
 			if (this.raw) this.#afterLoad();
 		});
 		$effect(() => {
-			const turn = this.#turn;
-			const personaId = this.activeContactId;
-			if (!turn?.claimable || !personaId) return;
-			if (this.#attemptedStreams.has(turn.streamId)) return;
-			this.#attemptedStreams.add(turn.streamId);
-			void this.#drive(personaId, turn.streamId);
-		});
-		$effect(() => {
 			const personaId = this.#sendingPersonaId;
 			if (!personaId || personaId !== this.activeContactId) return;
-			const turn = this.#turn;
-			if (!turn || turn.streamId === this.#sentOverStreamId) return;
-			const failed = turn.status === "error" || turn.status === "timeout";
-			if (!turn.settled && !failed) return;
+			const outcome = this.#sentTurnOutcome;
+			if (!outcome) return;
 			this.#sendingPersonaId = null;
-			if (failed)
+			if (outcome === "failed")
 				notify(
 					"Something went wrong generating a reply. Please resend your message.",
 				);
@@ -350,45 +352,34 @@ export class RunStore {
 		this.#expiryInterval = null;
 	}
 
-	// Sends a trimmed message to the active contact if allowed and returns whether it was accepted.
+	// Sends a trimmed message to the active contact, returning whether it was sent. The composer handles every other check.
 	sendMessage(rawMessage: string): boolean {
-		const message = (rawMessage ?? "").trim();
-		const activeContactId = this.activeContactId;
-		if (!session.runId || !activeContactId || !message) return false;
-		if (!this.activePersonaAvailable || this.isSending) return false;
-		this.#runSend(activeContactId, message);
+		const message = rawMessage.trim();
+		const personaId = this.activeContactId;
+		if (!message || !personaId) return false;
+		this.#runSend(personaId, message);
 		return true;
 	}
 
-	// Starts the turn on the server and resets the sending state with a toast if it is rejected.
+	// Posts the message to /turn-stream and shows the reply as it streams, toasting if it is rejected.
 	async #runSend(personaId: string, message: string): Promise<void> {
-		const runId = session.runId;
 		this.#sentOverStreamId = this.#turn?.streamId ?? null;
 		this.#sendingPersonaId = personaId;
-		try {
-			await getConvexClient().mutation(startTurnRef, {
-				runId,
-				personaId,
-				message,
-			});
-		} catch (err) {
-			console.error(err);
+		this.#sentMessage = message;
+		const response = await fetch(`${resolveConvexSiteUrl()}/turn-stream`, {
+			method: "POST",
+			body: JSON.stringify({ runId: session.runId, personaId, message }),
+		}).catch(() => null);
+		const streamId = response?.ok ? response.headers.get("X-Stream-Id") : null;
+		if (!response?.body || !streamId) {
+			const error = await response?.json().catch(() => null);
 			this.#sendingPersonaId = null;
-			notify(getErrorMessage(err, "Message failed. Please try again."));
+			notify(error?.message ?? "Message failed. Please try again.");
+			return;
 		}
-	}
-
-	// Drives a claimed turn by reading its reply stream so the text shows live.
-	async #drive(personaId: string, streamId: string): Promise<void> {
 		this.#driven = { personaId, streamId };
 		this.#drivenText = "";
 		try {
-			const response = await fetch(`${resolveConvexSiteUrl()}/turn-stream`, {
-				method: "POST",
-				body: JSON.stringify({ streamId }),
-			});
-			if (!response.ok || !response.body)
-				throw new Error(`/turn-stream answered ${response.status}`);
 			const reader = response.body
 				.pipeThrough(new TextDecoderStream())
 				.getReader();

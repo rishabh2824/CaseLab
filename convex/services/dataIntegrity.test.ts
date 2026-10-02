@@ -3,9 +3,9 @@ import { api } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { CaseStructure } from "../models/cases";
 import {
-	driveTurn,
 	makeLlmFetch,
 	newTestConvex,
+	sendTurn,
 	withAdmin,
 	withGoogleIdentity,
 } from "../test.setup";
@@ -101,8 +101,7 @@ async function send(
 	personaId: string,
 	message: string,
 ) {
-	await t.run((ctx) => startTurn(ctx, runId, personaId, message));
-	await driveTurn(t, runId, personaId);
+	await sendTurn(t, runId, personaId, message);
 }
 
 describe("a persona that is both a root and a referral target", () => {
@@ -437,12 +436,10 @@ describe("student message boundaries", () => {
 		const state = await startRunWithStructure(t, caseStructure());
 		stub({ replyText: "ok" });
 
-		await expect(
-			t.run((ctx) =>
-				startTurn(ctx, state.run_id, "A", Array(50).fill("word").join(" ")),
-			),
-		).resolves.toBeNull();
-		await driveTurn(t, state.run_id, "A");
+		expect(
+			(await sendTurn(t, state.run_id, "A", Array(50).fill("word").join(" ")))
+				.status,
+		).toBe(200);
 		await expect(
 			t.run((ctx) =>
 				startTurn(ctx, state.run_id, "A", Array(51).fill("word").join(" ")),
@@ -457,14 +454,11 @@ describe("student message boundaries", () => {
 		stub({ replyText: "ok" });
 		const huge = Array(50).fill("x".repeat(50_000)).join(" ");
 
-		await t
-			.run((ctx) => startTurn(ctx, state.run_id, "A", huge))
-			.catch(() => {});
-		await driveTurn(t, state.run_id, "A").catch(() => {});
+		await sendTurn(t, state.run_id, "A", huge).catch(() => {});
 
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", "a normal question")),
-		).resolves.toBeNull();
+		expect(
+			(await sendTurn(t, state.run_id, "A", "a normal question")).status,
+		).toBe(200);
 	});
 });
 

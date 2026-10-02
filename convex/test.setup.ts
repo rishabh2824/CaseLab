@@ -2,7 +2,6 @@
 
 import betterAuthTest from "@convex-dev/better-auth/test";
 import persistentTextStreaming from "@convex-dev/persistent-text-streaming/test";
-import rateLimiter from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -14,29 +13,21 @@ const modules = import.meta.glob(["./**/*.*s", "!./**/*.test.*s"]);
 // Creates an in-memory Convex test instance with the app's components registered.
 export function newTestConvex() {
 	const t = convexTest(schema, modules);
-	rateLimiter.register(t);
 	betterAuthTest.register(t);
 	persistentTextStreaming.register(t);
 	return t;
 }
 
-// Drives a persona's pending turn through the /turn-stream endpoint and returns its response.
-export async function driveTurn(
+// Sends a message through the /turn-stream endpoint and returns its response.
+export async function sendTurn(
 	t: ReturnType<typeof newTestConvex>,
 	runId: Id<"runs">,
 	personaId: string,
+	message: string,
 ): Promise<{ status: number; text: string }> {
-	const turn = await t.run((ctx) =>
-		ctx.db
-			.query("turnStreams")
-			.withIndex("by_run_persona", (q) =>
-				q.eq("runId", runId).eq("personaKey", personaId),
-			)
-			.first(),
-	);
 	const response = await t.fetch("/turn-stream", {
 		method: "POST",
-		body: JSON.stringify({ streamId: turn?.streamId }),
+		body: JSON.stringify({ runId, personaId, message }),
 	});
 	return { status: response.status, text: await response.text() };
 }

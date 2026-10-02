@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { CaseStructure } from "../models/cases";
-import { newTestConvex } from "../test.setup";
+import { newTestConvex, sendTurn } from "../test.setup";
 import { caseStructure, personaPayload } from "../testFactories";
 import { deleteCase, updateCase } from "./cases";
 import { startSimulation } from "./simulations";
@@ -164,13 +164,10 @@ describe("reads against a run that has gone away", () => {
 		await expect(
 			t.query(api.api.simulations.exportRun, { runId: state.run_id }),
 		).rejects.toThrow("Run expired.");
-		await expect(
-			t.mutation(api.api.turn.start, {
-				runId: state.run_id,
-				personaId: "A",
-				message: "hi",
-			}),
-		).rejects.toThrow("Run expired.");
+		expect(await sendTurn(t, state.run_id, "A", "hi")).toMatchObject({
+			status: 400,
+			text: expect.stringContaining("Run expired."),
+		});
 		expect(await t.run((ctx) => ctx.db.get(state.run_id))).not.toBeNull();
 	});
 

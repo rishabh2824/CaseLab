@@ -1,8 +1,9 @@
 const LLM_BASE_URL = "https://openrouter.ai/api/v1";
-const LLM_MODEL = "anthropic/claude-sonnet-5";
+const LLM_MODEL = "anthropic/claude-sonnet-5.5";
 const LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-4.5";
 
-export const LLM_ATTEMPT_TIMEOUT_MS = 30_000;
+export const LLM_ATTEMPT_TIMEOUT_MS = 10_000;
+const CLASSIFIER_TIMEOUT_MS = 6_000;
 export const PERSONA_REPLY_RETRIES = 2;
 
 // Returns the LLM API key from the environment, throwing if it is missing.
@@ -130,7 +131,7 @@ export async function* personaReplyStream(
 			...history,
 		],
 		max_tokens: 1000,
-		temperature: 0.7,
+		temperature: 0.4,
 		stream: true,
 		response_format: {
 			type: "json_schema",
@@ -141,7 +142,7 @@ export async function* personaReplyStream(
 			},
 		},
 		provider: { order: ["anthropic"], allow_fallbacks: false },
-		reasoning: { enabled: false },
+		reasoning: { effort: "low" },
 	};
 
 	for (let attempt = 1; attempt <= PERSONA_REPLY_RETRIES; attempt++) {
@@ -277,7 +278,7 @@ export async function classifyHarassment(
 			],
 			temperature: 0,
 			maxTokens: 50,
-			timeoutMs: LLM_ATTEMPT_TIMEOUT_MS,
+			timeoutMs: CLASSIFIER_TIMEOUT_MS,
 		});
 	} catch {
 		return "normal";

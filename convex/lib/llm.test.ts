@@ -141,15 +141,15 @@ describe("personaReplyStream", () => {
 		]);
 	});
 
-	// Tests that the reply request explicitly disables reasoning so it doesn't eat into the attempt timeout.
-	it("explicitly disables reasoning -- adaptive thinking left on by default eats into the 30s attempt timeout", async () => {
+	// Tests that the reply request caps reasoning effort so it does not eat into the attempt timeout.
+	it("caps reasoning effort -- Sonnet 5.5 mandates reasoning (enabled:false is a 400), so keep it low to stay inside the 30s attempt timeout", async () => {
 		const fetchMock = vi
 			.fn()
 			.mockResolvedValue(sseResponse([deltaLine(REPLY_JSON), "[DONE]"]));
 		vi.stubGlobal("fetch", fetchMock);
 		await drain();
 		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
-		expect(body.reasoning).toEqual({ enabled: false });
+		expect(body.reasoning).toEqual({ effort: "low" });
 	});
 
 	// Tests that streamed delta lines with no text content are skipped.

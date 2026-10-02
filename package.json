@@ -27,7 +27,6 @@
 	"dependencies": {
 		"@convex-dev/better-auth": ">=0.12.5",
 		"@convex-dev/persistent-text-streaming": ">=0.3.3",
-		"@convex-dev/rate-limiter": ">=0.4.0",
 		"@convex-dev/static-hosting": ">=0.2.1",
 		"@fontsource/ibm-plex-sans": ">=5.3.0",
 		"@fontsource/space-grotesk": ">=5.3.0",

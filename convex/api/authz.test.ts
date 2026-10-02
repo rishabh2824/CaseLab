@@ -427,7 +427,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 				.map(([, name]) => name!)
 				.sort();
 
-		expect(publicExports(turnSource)).toEqual(["getTurnStream", "start"]);
+		expect(publicExports(turnSource)).toEqual(["getTurnStream"]);
 		expect(publicExports(simulationsSource)).toEqual([
 			"exportRun",
 			"get",

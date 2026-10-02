@@ -47,21 +47,25 @@ describe("student-facing errors", () => {
 	// Tests that the student error message and code are read from the ConvexError data.
 	it("reads the message and code from .data, whatever the wrapper says", () => {
 		const err = clientStudentError(
-			"api/turn:start",
-			STUDENT_ERROR.MESSAGE_RATE_LIMITED,
-			"Rate limit exceeded.",
+			"api/simulations:start",
+			STUDENT_ERROR.REPLY_IN_PROGRESS,
+			"Please wait for the current reply.",
 		);
-		expect(err.message).toContain("[CONVEX M(api/turn:start)]");
-		expect(getErrorMessage(err, "fallback")).toBe("Rate limit exceeded.");
+		expect(err.message).toContain("[CONVEX M(api/simulations:start)]");
+		expect(getErrorMessage(err, "fallback")).toBe(
+			"Please wait for the current reply.",
+		);
 		expect(studentErrorData(err)).toEqual({
-			code: STUDENT_ERROR.MESSAGE_RATE_LIMITED,
-			message: "Rate limit exceeded.",
+			code: STUDENT_ERROR.REPLY_IN_PROGRESS,
+			message: "Please wait for the current reply.",
 		});
 	});
 
 	// Tests that redacted server errors, plain string ConvexErrors and unknown codes are not student errors.
 	it("treats a redacted server error, an admin string ConvexError, and unknown codes as not student errors", () => {
-		expect(studentErrorData(clientServerError("api/turn:start"))).toBeNull();
+		expect(
+			studentErrorData(clientServerError("api/simulations:start")),
+		).toBeNull();
 		expect(studentErrorData(new ConvexError("Not signed in."))).toBeNull();
 		expect(
 			studentErrorData(new ConvexError({ code: "MADE_UP", message: "x" })),

@@ -1,6 +1,5 @@
 import betterAuth from "@convex-dev/better-auth/convex.config";
 import persistentTextStreaming from "@convex-dev/persistent-text-streaming/convex.config.js";
-import rateLimiter from "@convex-dev/rate-limiter/convex.config.js";
 import staticHosting from "@convex-dev/static-hosting/convex.config";
 import { defineApp } from "convex/server";
 import { v } from "convex/values";
@@ -11,7 +10,6 @@ const app = defineApp({
 	},
 });
 app.use(betterAuth);
-app.use(rateLimiter);
 app.use(persistentTextStreaming);
 app.use(staticHosting);
 

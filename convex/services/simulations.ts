@@ -3,7 +3,6 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { RUN_LIFETIME_MINUTES } from "../lib/constants";
-import { simulationLimit } from "../lib/rateLimits";
 import { streaming } from "../lib/streaming";
 import { STUDENT_ERROR, studentError } from "../lib/studentErrors";
 import {
@@ -190,7 +189,6 @@ export async function startSimulation(
 			STUDENT_ERROR.ACCESS_CODE_REQUIRED,
 			"Access code is required.",
 		);
-	await simulationLimit(ctx, accessCode);
 	const c = await ctx.db
 		.query("cases")
 		.withIndex("by_access_code", (q) => q.eq("accessCode", accessCode))
