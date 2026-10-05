@@ -2,19 +2,19 @@
 import { getConvexClient, useQuery } from "convex-svelte";
 import { onDestroy, onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
-import { beforeNavigate, goto } from "$app/navigation";
-import { getViewerContext } from "$lib/adminViewer.js";
+import { getViewerContext } from "#lib/adminViewer.js";
 import {
 	getCaseInfoErrors,
 	hasFieldErrors,
 	parseCaseStructure,
-} from "$lib/case/draft.js";
-import { buildHTMLForm, downloadForm } from "$lib/case/exportCase.js";
-import { CaseGraph } from "$lib/case/graph.svelte.js";
-import { CaseImportError, parseHTMLForm } from "$lib/case/importCase.js";
-import { submitCase } from "$lib/case/submitCase.js";
-import { getErrorMessage } from "$lib/errors.js";
-import { type SaveResult, unsavedGuard } from "$lib/unsavedGuard.svelte.js";
+} from "#lib/case/draft.js";
+import { buildHTMLForm, downloadForm } from "#lib/case/exportCase.js";
+import { CaseGraph } from "#lib/case/graph.svelte.js";
+import { CaseImportError, parseHTMLForm } from "#lib/case/importCase.js";
+import { submitCase } from "#lib/case/submitCase.js";
+import { getErrorMessage } from "#lib/errors.js";
+import { type SaveResult, unsavedGuard } from "#lib/unsavedGuard.svelte.js";
+import { beforeNavigate, goto } from "$app/navigation";
 import { api } from "../../../convex/_generated/api.js";
 import type { Id } from "../../../convex/_generated/dataModel.js";
 import { RUN_LIFETIME_MINUTES } from "../../../convex/lib/constants.js";

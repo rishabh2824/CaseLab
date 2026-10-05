@@ -19,7 +19,7 @@ let listState: { data?: Row[]; isLoading: boolean; error?: Error };
 type MutationMock = Mock<(...args: unknown[]) => unknown>;
 const mutations = new Map<string, MutationMock>();
 
-vi.mock("$lib/adminViewer.js", () => ({
+vi.mock("#lib/adminViewer.js", () => ({
 	getViewerContext: () => viewer,
 }));
 

@@ -3,8 +3,8 @@ import {
 	getPersonaLabel,
 	personasById as personasByIdOf,
 	referralsFrom,
-} from "$lib/case/draft.js";
-import type { Persona, ReferralEdge } from "$lib/types.js";
+} from "#lib/case/draft.js";
+import type { Persona, ReferralEdge } from "#lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 
 type Props = {

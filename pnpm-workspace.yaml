@@ -7,3 +7,4 @@ allowBuilds:
 overrides:
   cookie: '>=0.7.0 <2.0.0'
   brace-expansion: '>=2.1.4'
+  dompurify: '>=3.4.16'

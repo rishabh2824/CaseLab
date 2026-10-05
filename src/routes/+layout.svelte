@@ -2,7 +2,7 @@
 import { setupConvex } from "convex-svelte";
 import type { Snippet } from "svelte";
 import "../app.css";
-import { resolveConvexUrl } from "$lib/convexUrl.js";
+import { resolveConvexUrl } from "#lib/convexUrl.js";
 
 type Props = { children: Snippet };
 

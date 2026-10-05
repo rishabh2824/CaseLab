@@ -5,8 +5,8 @@ import {
 	parseCaseStructure,
 	referredWithParents,
 	rootPersonas as rootPersonasOf,
-} from "$lib/case/draft.js";
-import { getErrorMessage } from "$lib/errors.js";
+} from "#lib/case/draft.js";
+import { getErrorMessage } from "#lib/errors.js";
 import { api } from "../../../convex/_generated/api.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";

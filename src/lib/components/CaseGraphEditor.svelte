@@ -3,9 +3,9 @@ import {
 	getPersonaFieldErrors,
 	getPersonaLabel,
 	hasFieldErrors,
-} from "$lib/case/draft.js";
-import type { CaseGraph } from "$lib/case/graph.svelte.js";
-import type { Persona } from "$lib/types.js";
+} from "#lib/case/draft.js";
+import type { CaseGraph } from "#lib/case/graph.svelte.js";
+import type { Persona } from "#lib/types.js";
 import PersonaFields from "./PersonaFields.svelte";
 
 type Props = {
@@ -70,7 +70,7 @@ function removeRoot(rootId: string): void {
 					</button>
 				</summary>
 				<div class="border-t border-line-soft px-4 py-4">
-					<PersonaFields {persona} {graph} {showFieldErrors} />
+					<PersonaFields bind:persona={() => persona, () => {}} {graph} {showFieldErrors} />
 				</div>
 			</details>
 		{/each}
@@ -80,7 +80,7 @@ function removeRoot(rootId: string): void {
 					{item.label} &larr; {item.parentLabel}
 				</summary>
 				<div class="border-t border-line-soft px-4 py-4">
-					<PersonaFields persona={item.persona} {graph} {showFieldErrors} />
+					<PersonaFields bind:persona={() => item.persona, () => {}} {graph} {showFieldErrors} />
 				</div>
 			</details>
 		{/each}

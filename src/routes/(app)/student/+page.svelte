@@ -2,12 +2,12 @@
 import { getConvexClient } from "convex-svelte";
 import { onDestroy, onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
-import SimulationClock from "$lib/components/SimulationClock.svelte";
-import { downloadBlob } from "$lib/download.js";
-import { countWords, getPersonaInitials } from "$lib/format.js";
-import { session } from "$lib/session.svelte.js";
-import type { ExportRunOut } from "$lib/student/run.svelte.js";
-import { createRunStore, exportRunRef } from "$lib/student/run.svelte.js";
+import SimulationClock from "#lib/components/SimulationClock.svelte";
+import { downloadBlob } from "#lib/download.js";
+import { countWords, getPersonaInitials } from "#lib/format.js";
+import { session } from "#lib/session.svelte.js";
+import type { ExportRunOut } from "#lib/student/run.svelte.js";
+import { createRunStore, exportRunRef } from "#lib/student/run.svelte.js";
 import { MAX_MESSAGE_WORDS } from "../../../../convex/lib/constants.js";
 
 const run = createRunStore();
@@ -62,7 +62,7 @@ function handleSend(): void {
 
 // Preloads the PDF module so exporting feels instant.
 function preloadPdfModule(): void {
-	import("$lib/student/pdf.js").catch(() => {});
+	import("#lib/student/pdf.js").catch(() => {});
 }
 
 // Fetches the run's export data and downloads it as a PDF along with the student's notes.
@@ -73,7 +73,7 @@ async function handleExportPdf(): Promise<void> {
 		const data = (await getConvexClient().query(exportRunRef, {
 			runId: session.runId,
 		})) as ExportRunOut;
-		const { buildChatPdfBlob } = await import("$lib/student/pdf.js");
+		const { buildChatPdfBlob } = await import("#lib/student/pdf.js");
 		const blob = buildChatPdfBlob(data.personas ?? [], run.notes);
 		downloadBlob(blob, "chats.pdf");
 	} catch (err) {

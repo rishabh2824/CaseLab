@@ -8,7 +8,7 @@ vi.mock("$app/navigation", () => ({
 	afterNavigate: vi.fn(),
 }));
 
-vi.mock("$app/environment", () => ({
+vi.mock("$app/env", () => ({
 	browser: false,
 	building: false,
 	dev: true,
@@ -26,6 +26,6 @@ vi.mock("svelte-sonner", () => {
 	return { toast };
 });
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());

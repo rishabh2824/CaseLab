@@ -9,7 +9,7 @@ let viewer: { data?: { role: string }; isLoading: boolean } = {
 	isLoading: false,
 };
 
-vi.mock("$lib/adminViewer.js", () => ({
+vi.mock("#lib/adminViewer.js", () => ({
 	getViewerContext: () => viewer,
 }));
 

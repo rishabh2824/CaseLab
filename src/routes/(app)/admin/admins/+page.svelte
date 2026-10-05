@@ -1,11 +1,11 @@
 <script lang="ts">
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
+import { getViewerContext } from "#lib/adminViewer.js";
+import DestructiveConfirmDialog from "#lib/components/DestructiveConfirmDialog.svelte";
+import { getErrorMessage } from "#lib/errors.js";
+import type { AdminRole } from "#lib/types.js";
 import { goto } from "$app/navigation";
-import { getViewerContext } from "$lib/adminViewer.js";
-import DestructiveConfirmDialog from "$lib/components/DestructiveConfirmDialog.svelte";
-import { getErrorMessage } from "$lib/errors.js";
-import type { AdminRole } from "$lib/types.js";
 import { api } from "../../../../../convex/_generated/api.js";
 import type { Doc } from "../../../../../convex/_generated/dataModel.js";
 

@@ -1,8 +1,8 @@
 <script lang="ts">
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
-import { getErrorMessage } from "$lib/errors.js";
-import type { CaseSummary } from "$lib/types.js";
+import { getErrorMessage } from "#lib/errors.js";
+import type { CaseSummary } from "#lib/types.js";
 import { api } from "../../../convex/_generated/api.js";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 

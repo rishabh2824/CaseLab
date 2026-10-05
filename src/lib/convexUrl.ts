@@ -1,8 +1,7 @@
-import { PUBLIC_CONVEX_URL } from "$env/static/public";
+import { PUBLIC_CONVEX_URL } from "$app/env/public";
 
-// Returns the Convex deployment URL, from the PUBLIC_CONVEX_URL env var.
 export function resolveConvexUrl(): string {
-	return PUBLIC_CONVEX_URL;
+	return import.meta.env.VITE_CONVEX_URL ?? PUBLIC_CONVEX_URL;
 }
 
 // Returns the Convex HTTP (.convex.site) URL derived from the deployment URL.

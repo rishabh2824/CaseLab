@@ -10,7 +10,7 @@ import {
 
 const mockSignOut = vi.fn();
 
-vi.mock("$lib/auth-client.js", () => ({
+vi.mock("#lib/auth-client.js", () => ({
 	authClient: { signOut: (...args: unknown[]) => mockSignOut(...args) },
 }));
 

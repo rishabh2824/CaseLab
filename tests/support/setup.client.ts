@@ -3,6 +3,9 @@ import { cleanup } from "@testing-library/svelte";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
 import { server } from "./msw.js";
 
+// SvelteKit's generated dev env module reads this global, which only exists in a running app.
+(globalThis as Record<string, unknown>).__sveltekit_dev = { env: {} };
+
 vi.mock("$app/navigation", () => ({
 	goto: vi.fn(async () => {}),
 	invalidateAll: vi.fn(async () => {}),
@@ -10,7 +13,7 @@ vi.mock("$app/navigation", () => ({
 	afterNavigate: vi.fn(),
 }));
 
-vi.mock("$app/environment", () => ({
+vi.mock("$app/env", () => ({
 	browser: true,
 	building: false,
 	dev: true,
@@ -39,7 +42,7 @@ if (!globalThis.crypto?.randomUUID) {
 URL.createObjectURL = vi.fn(() => "blob:mock");
 URL.revokeObjectURL = vi.fn();
 
-beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 afterEach(() => {
 	cleanup();
 	document.body.style.pointerEvents = "";

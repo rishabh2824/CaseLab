@@ -4,8 +4,8 @@ import {
 	getCaseInfoErrors,
 	isSelectableCollaborator,
 	parseIntOrNull,
-} from "$lib/case/draft.js";
-import type { AdminRow } from "$lib/types.js";
+} from "#lib/case/draft.js";
+import type { AdminRow } from "#lib/types.js";
 
 type Props = {
 	caseName: string;

@@ -1,5 +1,5 @@
 <script lang="ts">
-import { getViewerContext } from "$lib/adminViewer.js";
+import { getViewerContext } from "#lib/adminViewer.js";
 
 const viewer = getViewerContext();
 const isSuperAdmin = $derived(viewer.data?.role === "super");

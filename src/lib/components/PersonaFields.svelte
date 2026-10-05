@@ -4,9 +4,9 @@ import {
 	getPersonaLabel,
 	parseIntOrNull,
 	referralsFrom,
-} from "$lib/case/draft.js";
-import type { CaseGraph } from "$lib/case/graph.svelte.js";
-import type { Persona, ReferralEdge } from "$lib/types.js";
+} from "#lib/case/draft.js";
+import type { CaseGraph } from "#lib/case/graph.svelte.js";
+import type { Persona, ReferralEdge } from "#lib/types.js";
 
 type Props = {
 	persona: Persona;
@@ -14,7 +14,7 @@ type Props = {
 	showFieldErrors: boolean;
 };
 
-let { persona, graph, showFieldErrors }: Props = $props();
+let { persona = $bindable(), graph, showFieldErrors }: Props = $props();
 const uid = $props.id();
 
 const errors = $derived(showFieldErrors ? getPersonaFieldErrors(persona) : {});

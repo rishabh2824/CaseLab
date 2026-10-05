@@ -1,9 +1,9 @@
 <script lang="ts">
 import House from "@lucide/svelte/icons/house";
 import LogOut from "@lucide/svelte/icons/log-out";
+import { authClient } from "#lib/auth-client.js";
+import { unsavedGuard } from "#lib/unsavedGuard.svelte.js";
 import { goto } from "$app/navigation";
-import { authClient } from "$lib/auth-client.js";
-import { unsavedGuard } from "$lib/unsavedGuard.svelte.js";
 import UnsavedChangesModal from "./UnsavedChangesModal.svelte";
 
 // Signs the admin out and navigates to the landing page.

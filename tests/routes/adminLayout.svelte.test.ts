@@ -27,7 +27,7 @@ vi.mock("convex-svelte", () => ({
 	useQuery: () => viewer,
 }));
 
-vi.mock("$lib/auth-client.js", () => ({
+vi.mock("#lib/auth-client.js", () => ({
 	authClient: {
 		signIn: { social: (...args: unknown[]) => mockSocial(...args) },
 		signOut: (...args: unknown[]) => mockSignOut(...args),

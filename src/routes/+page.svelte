@@ -1,9 +1,9 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
+import { session } from "#lib/session.svelte.js";
+import type { StartedRun } from "#lib/student/run.svelte.js";
+import { startSimulationRef } from "#lib/student/run.svelte.js";
 import { goto } from "$app/navigation";
-import { session } from "$lib/session.svelte.js";
-import type { StartedRun } from "$lib/student/run.svelte.js";
-import { startSimulationRef } from "$lib/student/run.svelte.js";
 import { studentErrorData } from "../../convex/lib/studentErrors.js";
 
 let accessCode = $state("");
