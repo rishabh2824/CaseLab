@@ -309,6 +309,7 @@ export const caseDoc = (
 	duration: null,
 	accessCode: "sterling",
 	ownerAdminId: "admin1",
+	isDemo: false,
 	structure: {
 		personas: [personaEntry()],
 		referrals: [],

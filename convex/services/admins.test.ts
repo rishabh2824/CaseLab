@@ -74,6 +74,8 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 	) {
 		return await t.run((ctx) =>
 			ctx.db.insert("cases", {
+				commonInformation: "",
+				isDemo: false,
 				name: "Case",
 				brief: "Brief",
 				accessCode: "seedcode",
@@ -126,7 +128,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		});
 		const caseId = await seedCase(t, ownerId);
 		await t.run((ctx) =>
-			ctx.db.insert("collaborators", { caseId, adminId: collabId, addedAt: 1 }),
+			ctx.db.insert("collaborators", { caseId, adminId: collabId }),
 		);
 
 		const result = await asUser.mutation(api.api.admins.deleteWithCascade, {
@@ -156,9 +158,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		await t.run((ctx) =>
 			ctx.db.insert("runs", {
 				caseId: liveCaseId,
-				startTime: 0,
 				expiresAt: Date.now() + 1_000_000,
-				unlockedReferredIds: [],
 				unlockedAt: {},
 				sharedFiles: [],
 				personaChatState: {},

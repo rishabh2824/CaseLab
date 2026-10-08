@@ -1,7 +1,9 @@
-import { v } from "convex/values";
-import type { Id } from "../_generated/dataModel";
-import { env } from "../_generated/server";
-import { adminMutation, adminQuery } from "../lib/adminFunctions";
+import { ConvexError, v } from "convex/values";
+import {
+	adminMutation,
+	adminQuery,
+	superAdminMutation,
+} from "../lib/adminFunctions";
 import {
 	personaPayloadValidator,
 	referralEdgeValidator,
@@ -10,20 +12,38 @@ import {
 	createCase,
 	deleteCase as deleteCaseWithAccess,
 	listCases,
+	listDemoCases,
 	loadCaseForAccess,
 	updateCase,
 } from "../services/cases";
 
-// Returns the configured demo case, or null if none is set or it cannot be loaded.
-export const getDemo = adminQuery({
+// Lists the cases flagged as demos, by id and name only.
+export const listDemos = adminQuery({
 	args: {},
 	handler: async (ctx) => {
-		if (!env.DEMO_CASE_ID) return null;
-		try {
-			return await ctx.db.get("cases", env.DEMO_CASE_ID as Id<"cases">);
-		} catch {
-			return null;
-		}
+		return await listDemoCases(ctx);
+	},
+});
+
+// Returns a demo case without its access code or owner, or null if the id is not a demo case.
+export const getDemo = adminQuery({
+	args: { caseId: v.string() },
+	handler: async (ctx, args) => {
+		const id = ctx.db.normalizeId("cases", args.caseId);
+		const c = id ? await ctx.db.get("cases", id) : null;
+		if (!c?.isDemo) return null;
+		const { accessCode: _accessCode, ownerAdminId: _ownerAdminId, ...demo } = c;
+		return demo;
+	},
+});
+
+// Turns a case's demo flag on or off; super admins only.
+export const setDemo = superAdminMutation({
+	args: { caseId: v.id("cases"), isDemo: v.boolean() },
+	handler: async (ctx, args) => {
+		if (!(await ctx.db.get("cases", args.caseId)))
+			throw new ConvexError("Case not found.");
+		await ctx.db.patch("cases", args.caseId, { isDemo: args.isDemo });
 	},
 });
 
@@ -62,7 +82,7 @@ export const deleteCase = adminMutation({
 const casePayloadArgs = {
 	name: v.string(),
 	brief: v.string(),
-	commonInformation: v.optional(v.string()),
+	commonInformation: v.string(),
 	duration: v.optional(v.number()),
 	accessCode: v.string(),
 	personas: v.array(personaPayloadValidator),

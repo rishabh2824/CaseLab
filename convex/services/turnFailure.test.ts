@@ -45,6 +45,8 @@ async function startRun(t: T, structure: CaseStructure = caseStructure()) {
 	);
 	await t.run((ctx) =>
 		ctx.db.insert("cases", {
+			commonInformation: "",
+			isDemo: false,
 			name: "Case",
 			brief: "Brief",
 			accessCode: "sterling",
@@ -73,7 +75,7 @@ async function expectTurnFailedCleanly(
 
 	const run = (await t.run((ctx) => ctx.db.get(runId)))!;
 	expect({
-		unlocked: run.unlockedReferredIds,
+		unlocked: Object.keys(run.unlockedAt),
 		shared: run.sharedFiles,
 	}).toEqual({
 		unlocked: [],
@@ -206,7 +208,7 @@ describe("hostile / off-schema decision fields", () => {
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect({
-			unlocked: run.unlockedReferredIds,
+			unlocked: Object.keys(run.unlockedAt),
 			shared: run.sharedFiles,
 		}).toEqual({ unlocked: [], shared: [] });
 	});
@@ -224,7 +226,7 @@ describe("hostile / off-schema decision fields", () => {
 		await send(t, state.run_id, "A", "hi");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual([]);
+		expect(Object.keys(run.unlockedAt)).toEqual([]);
 		expect(run.sharedFiles).toEqual([]);
 	});
 
@@ -241,7 +243,7 @@ describe("hostile / off-schema decision fields", () => {
 		await send(t, state.run_id, "A", "budget and B please");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual(["B"]);
+		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
 		expect(run.sharedFiles).toEqual([fileId]);
 	});
 
@@ -259,7 +261,7 @@ describe("hostile / off-schema decision fields", () => {
 		await send(t, state.run_id, "A", "hi");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual(["B"]);
+		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
 	});
 
 	// Tests that adversarial instruction text in a reply is stored as plain content without being acted on.
@@ -281,7 +283,7 @@ describe("hostile / off-schema decision fields", () => {
 		);
 		expect(history.at(-1)).toEqual({ role: "assistant", content: injection });
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual([]);
+		expect(Object.keys(run.unlockedAt)).toEqual([]);
 		expect(run.sharedFiles).toEqual([]);
 	});
 });
@@ -431,7 +433,7 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 		await send(t, state.run_id, "A", "asdkjhaskjdh");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual([]);
+		expect(Object.keys(run.unlockedAt)).toEqual([]);
 		expect(run.sharedFiles).not.toContain(fileId);
 		const history = await t.run((ctx) =>
 			getPersonaHistory(ctx, state.run_id, "A"),
@@ -645,7 +647,7 @@ describe("the concurrency guard is the real serialization point", () => {
 		]);
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect([...run.unlockedReferredIds].sort()).toEqual(["C", "D"]);
+		expect([...Object.keys(run.unlockedAt)].sort()).toEqual(["C", "D"]);
 	});
 });
 

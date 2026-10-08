@@ -17,8 +17,8 @@ export function personaPayload(
 		name: `Persona ${id}`,
 		role: "Role",
 		profile_photo: null,
-		known_facts: null,
-		personality_traits: null,
+		known_facts: "",
+		personality_traits: "",
 		availability_minutes: null,
 		files: [],
 		...overrides,
@@ -43,7 +43,7 @@ export function uniqueAccessCode(): string {
 export function referralEdge(
 	from_id: string,
 	to_id: string,
-	conditions: string | null = null,
+	conditions = "",
 ): ReferralEdgePayload {
 	return { from_id, to_id, conditions };
 }
@@ -53,9 +53,9 @@ export function fileEntry(
 	overrides: Partial<{
 		storage_id: Id<"_storage">;
 		file_name: string;
-		content_type: string | null;
-		share_conditions: string | null;
-		perceived_contents: string | null;
+		content_type: string;
+		share_conditions: string;
+		perceived_contents: string;
 	}> = {},
 ): FileEntryPayload {
 	const {

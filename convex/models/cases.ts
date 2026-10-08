@@ -1,37 +1,35 @@
 import { type Infer, v } from "convex/values";
 
-const nullableString = v.optional(v.union(v.string(), v.null()));
-
 export const fileRefValidator = v.union(
 	v.null(),
 	v.object({
 		storage_id: v.id("_storage"),
 		file_name: v.string(),
-		content_type: nullableString,
+		content_type: v.optional(v.string()),
 	}),
 );
 
 export const fileEntryValidator = v.object({
-	file: v.optional(fileRefValidator),
-	share_conditions: nullableString,
-	perceived_contents: nullableString,
+	file: fileRefValidator,
+	share_conditions: v.string(),
+	perceived_contents: v.string(),
 });
 
 export const personaPayloadValidator = v.object({
 	id: v.string(),
 	name: v.string(),
 	role: v.string(),
-	profile_photo: v.optional(fileRefValidator),
-	known_facts: nullableString,
-	personality_traits: nullableString,
-	availability_minutes: v.optional(v.union(v.number(), v.null())),
-	files: v.optional(v.array(fileEntryValidator)),
+	profile_photo: fileRefValidator,
+	known_facts: v.string(),
+	personality_traits: v.string(),
+	availability_minutes: v.union(v.number(), v.null()),
+	files: v.array(fileEntryValidator),
 });
 
 export const referralEdgeValidator = v.object({
 	from_id: v.string(),
 	to_id: v.string(),
-	conditions: nullableString,
+	conditions: v.string(),
 });
 
 export const caseStructureValidator = v.object({

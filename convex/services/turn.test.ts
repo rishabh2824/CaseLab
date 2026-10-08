@@ -101,7 +101,14 @@ beforeEach(() => {
 afterEach(() => {
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
+	vi.useRealTimers();
 });
+
+// Moves the clock forward, so a run started earlier looks that many minutes old.
+function advanceClock(minutes: number) {
+	if (!vi.isFakeTimers()) vi.useFakeTimers({ toFake: ["Date"] });
+	vi.setSystemTime(Date.now() + minutes * 60_000);
+}
 
 // Seeds a case with the given structure and access code and starts a run on it.
 async function startRun(
@@ -117,6 +124,8 @@ async function startRun(
 	);
 	await t.run((ctx) =>
 		ctx.db.insert("cases", {
+			commonInformation: "",
+			isDemo: false,
 			name: "Case",
 			brief: "Brief",
 			accessCode,
@@ -188,9 +197,7 @@ describe("startTurn validation", () => {
 		const state = await startRun(t, caseStructure(), "timed");
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		await t.run((ctx) => ctx.db.patch(run.caseId, { duration: 10 }));
-		await t.run((ctx) =>
-			ctx.db.patch(state.run_id, { startTime: run.startTime - 15 * 60_000 }),
-		);
+		advanceClock(15);
 		expect(
 			await studentRejection(
 				t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi")),
@@ -208,9 +215,7 @@ describe("startTurn validation", () => {
 			personas: [personaPayload("A", { availability_minutes: 5 })],
 		});
 		const state = await startRun(t, structure);
-		await t.run((ctx) =>
-			ctx.db.patch(state.run_id, { startTime: Date.now() - 10 * 60_000 }),
-		);
+		advanceClock(10);
 		expect(
 			await studentRejection(
 				t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi")),
@@ -551,7 +556,7 @@ describe("referrals", () => {
 		);
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toContain("B");
+		expect(Object.keys(run.unlockedAt)).toContain("B");
 		expect(run.unlockedAt.B).toBeDefined();
 
 		const live = await t.run((ctx) => getSimulationState(ctx, state.run_id));
@@ -589,7 +594,7 @@ describe("referrals", () => {
 			"[undisclosed contact]",
 		);
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual([]);
+		expect(Object.keys(run.unlockedAt)).toEqual([]);
 	});
 
 	// Tests that a handle the model hallucinates that was never offered is ignored.
@@ -601,7 +606,7 @@ describe("referrals", () => {
 		await send(t, state.run_id, "A", "hi");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual([]);
+		expect(Object.keys(run.unlockedAt)).toEqual([]);
 	});
 
 	// Tests that a persona is unlocked only once even if the model repeats its handle in one reply.
@@ -613,7 +618,7 @@ describe("referrals", () => {
 		await send(t, state.run_id, "A", "hi");
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual(["B"]);
+		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
 	});
 
 	// Tests that re-unlocking an already-unlocked persona, as in a retried applyDecisions call, is a no-op.
@@ -644,10 +649,7 @@ describe("referrals", () => {
 		const firstUnlockedAt = (await t.run((ctx) => ctx.db.get(state.run_id)))!
 			.unlockedAt.B;
 
-		const before = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		await t.run((ctx) =>
-			ctx.db.patch(state.run_id, { startTime: before.startTime - 5 * 60_000 }),
-		);
+		advanceClock(5);
 		await t.run((ctx) =>
 			applyDecisions(
 				ctx,
@@ -662,7 +664,7 @@ describe("referrals", () => {
 		);
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual(["B"]);
+		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
 		expect(run.unlockedAt.B).toBe(firstUnlockedAt);
 	});
 
@@ -756,7 +758,7 @@ describe("referrals", () => {
 		);
 		expect(replyCall.body.messages[0].content).not.toContain("Bob");
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.unlockedReferredIds).toEqual([]);
+		expect(Object.keys(run.unlockedAt)).toEqual([]);
 	});
 });
 

@@ -10,6 +10,7 @@ import EditCase from "../../src/routes/(app)/admin/cases/[id]/edit/+page.svelte"
 import NewCase from "../../src/routes/(app)/admin/cases/new/+page.svelte";
 import EditList from "../../src/routes/(app)/admin/edit/+page.svelte";
 import Demo from "../../src/routes/(app)/admin/new/demo/+page.svelte";
+import DemoDetail from "../../src/routes/(app)/admin/new/demo/[id]/+page.svelte";
 import Template from "../../src/routes/(app)/admin/new/template/+page.svelte";
 
 const mockSetupConvex = vi.fn();
@@ -93,10 +94,17 @@ describe("admin case pages", () => {
 		expect(propsOf(TemplatePicker)).toMatchObject({ mode: "template" });
 	});
 
-	// Tests that the demo page renders the read-only demo view.
-	it("renders the demo view", () => {
+	// Tests that the demo page lists the demo cases through the picker.
+	it("renders the picker in demo mode", () => {
 		render(Demo);
-		expect(DemoCaseView as unknown as Mock).toHaveBeenCalledOnce();
+		expect(propsOf(TemplatePicker)).toMatchObject({ mode: "demo" });
+	});
+
+	// Tests that the demo detail page renders the read-only view for the case in the URL.
+	it("renders the demo view for the case in the URL", () => {
+		pageState.params = { id: "case-7" };
+		render(DemoDetail);
+		expect(propsOf(DemoCaseView)).toMatchObject({ caseId: "case-7" });
 	});
 });
 

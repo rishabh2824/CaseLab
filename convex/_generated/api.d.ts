@@ -24,6 +24,7 @@ import type * as lib_replyStream from "../lib/replyStream.js";
 import type * as lib_streaming from "../lib/streaming.js";
 import type * as lib_studentErrors from "../lib/studentErrors.js";
 import type * as lib_turnState from "../lib/turnState.js";
+import type * as migrations from "../migrations.js";
 import type * as models_cases from "../models/cases.js";
 import type * as services_admins from "../services/admins.js";
 import type * as services_cases from "../services/cases.js";
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   "lib/streaming": typeof lib_streaming;
   "lib/studentErrors": typeof lib_studentErrors;
   "lib/turnState": typeof lib_turnState;
+  migrations: typeof migrations;
   "models/cases": typeof models_cases;
   "services/admins": typeof services_admins;
   "services/cases": typeof services_cases;

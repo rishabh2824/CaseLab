@@ -20,19 +20,20 @@ export default defineSchema({
 	cases: defineTable({
 		name: v.string(),
 		brief: v.string(),
-		commonInformation: v.optional(v.string()),
+		commonInformation: v.string(),
 		duration: v.optional(v.number()),
 		accessCode: v.string(),
 		ownerAdminId: v.id("admins"),
+		isDemo: v.boolean(),
 		structure: caseStructureValidator,
 	})
 		.index("by_owner", ["ownerAdminId"])
-		.index("by_access_code", ["accessCode"]),
+		.index("by_access_code", ["accessCode"])
+		.index("by_is_demo", ["isDemo"]),
 
 	collaborators: defineTable({
 		caseId: v.id("cases"),
 		adminId: v.id("admins"),
-		addedAt: v.number(),
 	})
 		.index("by_admin", ["adminId"])
 		.index("by_case_and_admin", ["caseId", "adminId"]),
@@ -52,9 +53,7 @@ export default defineSchema({
 
 	runs: defineTable({
 		caseId: v.id("cases"),
-		startTime: v.number(),
 		expiresAt: v.number(),
-		unlockedReferredIds: v.array(v.string()),
 		unlockedAt: v.record(v.string(), v.number()),
 		sharedFiles: v.array(v.id("files")),
 		personaChatState: v.record(v.string(), chatState),

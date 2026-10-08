@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { components } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { STUDENT_ERROR } from "../lib/studentErrors";
@@ -32,6 +32,8 @@ async function seedCase(
 	);
 	return await t.run((ctx) =>
 		ctx.db.insert("cases", {
+			commonInformation: "",
+			isDemo: false,
 			name: overrides.name ?? "Sterling Industries",
 			brief: overrides.brief ?? "Reduce office supply costs.",
 			duration: overrides.duration,
@@ -41,6 +43,10 @@ async function seedCase(
 		}),
 	);
 }
+
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 describe("startSimulation", () => {
 	// Tests that a blank access code is rejected before any case lookup.
@@ -195,20 +201,22 @@ describe("startSimulation", () => {
 	it("expiresAt reflects duration plus the grace period", async () => {
 		const t = newTestConvex();
 		await seedCase(t, { accessCode: "timed", duration: 45 });
+		vi.useFakeTimers({ toFake: ["Date"] });
 		const before = Date.now();
 		const state = await t.run((ctx) => startSimulation(ctx, "timed"));
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.expiresAt - run.startTime).toBe(60 * 60_000);
-		expect(run.startTime).toBeGreaterThanOrEqual(before);
+		expect(run.expiresAt - run._creationTime).toBeCloseTo(60 * 60_000, 1);
+		expect(run._creationTime).toBeGreaterThanOrEqual(before);
 	});
 
 	// Tests that expiresAt is capped at the run lifetime for a very long case duration.
 	it("caps expiresAt at the run lifetime for a very long case duration", async () => {
 		const t = newTestConvex();
+		vi.useFakeTimers({ toFake: ["Date"] });
 		await seedCase(t, { accessCode: "long", duration: 100_000 });
 		const state = await t.run((ctx) => startSimulation(ctx, "long"));
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
-		expect(run.expiresAt - run.startTime).toBe(120 * 60_000);
+		expect(run.expiresAt - run._creationTime).toBeCloseTo(120 * 60_000, 1);
 	});
 });
 
@@ -268,7 +276,6 @@ describe("getSimulationState", () => {
 		const state = await startRun(t, structure);
 		await t.run((ctx) =>
 			ctx.db.patch(state.run_id, {
-				unlockedReferredIds: ["B"],
 				unlockedAt: { B: 7 },
 			}),
 		);
@@ -301,7 +308,6 @@ describe("exportSimulation", () => {
 		const state = await startRun(t, structure);
 		await t.run((ctx) =>
 			ctx.db.patch(state.run_id, {
-				unlockedReferredIds: ["C", "D"],
 				unlockedAt: { D: 1, C: 5 },
 			}),
 		);

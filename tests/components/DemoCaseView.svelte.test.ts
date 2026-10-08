@@ -15,7 +15,6 @@ vi.mock("convex-svelte", () => ({
 function makeDemoCase() {
 	return {
 		name: "Demo Corp",
-		accessCode: "demo-code",
 		duration: 30,
 		brief: "Cut costs.",
 		commonInformation: "Founded in 1999.",
@@ -73,36 +72,53 @@ describe("DemoCaseView", () => {
 	// Tests that a loading state is shown while the query runs.
 	it("shows a loading message", () => {
 		stubQuery({ isLoading: true });
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(screen.getByText("Loading demo case...")).toBeInTheDocument();
 	});
 
 	// Tests that a real-shaped redacted error falls back to the friendly message.
 	it("shows a friendly message when the query fails", () => {
 		stubQuery({ error: clientServerError("api/cases:getDemo", "Q") });
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(
 			screen.getByText("Failed to load the demo case."),
 		).toBeInTheDocument();
 	});
 
-	// Tests that a deployment without a demo case says so.
-	it("says so when no demo case is configured", () => {
+	// Tests that a case which is missing or not a demo says so.
+	it("says so when the case is not available as a demo", () => {
 		stubQuery({ data: null });
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(
-			screen.getByText("No demo case is set up for this deployment."),
+			screen.getByText("This case is not available as a demo."),
 		).toBeInTheDocument();
+	});
+
+	// Tests that the page links back to the list of demo cases.
+	it("links back to the demo case list", () => {
+		stubQuery({ data: makeDemoCase() });
+		render(DemoCaseView, { props: { caseId: "case-1" } });
+		expect(
+			screen.getByRole("link", { name: /All demo cases/ }),
+		).toHaveAttribute("href", "/admin/new/demo");
+	});
+
+	// Tests that the query is made for the case id the page was given.
+	it("queries the demo case by its id", () => {
+		stubQuery({ data: makeDemoCase() });
+		render(DemoCaseView, { props: { caseId: "case-1" } });
+		const argsFn = mockUseQuery.mock.calls[0]?.[1] as () => unknown;
+		expect(argsFn()).toEqual({ caseId: "case-1" });
 	});
 
 	// Tests that the case details are rendered read-only.
 	it("renders the case information", () => {
 		stubQuery({ data: makeDemoCase() });
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(
 			screen.getByRole("heading", { name: "Demo Corp" }),
 		).toBeInTheDocument();
-		expect(screen.getByText("demo-code")).toBeInTheDocument();
+		expect(screen.queryByText("Access code")).toBeNull();
 		expect(screen.getByText("30")).toBeInTheDocument();
 		expect(screen.getByText("Cut costs.")).toBeInTheDocument();
 		expect(screen.getByText("Founded in 1999.")).toBeInTheDocument();
@@ -112,14 +128,14 @@ describe("DemoCaseView", () => {
 	// Tests that an unlimited case shows the placeholder instead of a blank duration.
 	it("shows Unlimited when the case has no duration", () => {
 		stubQuery({ data: { ...makeDemoCase(), duration: undefined } });
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(screen.getAllByText("Unlimited").length).toBeGreaterThan(0);
 	});
 
 	// Tests that root personas are listed by name and referred ones show who refers to them.
 	it("lists root personas and labels referred personas with their referrer", () => {
 		stubQuery({ data: makeDemoCase() });
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(
 			screen.getByText("Alice", { selector: "summary" }),
 		).toBeInTheDocument();
@@ -130,7 +146,7 @@ describe("DemoCaseView", () => {
 	// Tests that a persona's details, file and referral are rendered inside its card.
 	it("shows a persona's facts, files and referrals", () => {
 		stubQuery({ data: makeDemoCase() });
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		const card = screen
 			.getByText("Alice", { selector: "summary" })
 			.closest("details") as HTMLElement;
@@ -147,7 +163,7 @@ describe("DemoCaseView", () => {
 	// Tests that empty optional fields show their placeholders.
 	it("shows placeholders for empty persona fields", () => {
 		stubQuery({ data: makeDemoCase() });
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		const card = screen
 			.getByText("Bob ← Alice")
 			.closest("details") as HTMLElement;
@@ -164,7 +180,7 @@ describe("DemoCaseView", () => {
 				structure: { roots: [], personas: [], referrals: [] },
 			},
 		});
-		render(DemoCaseView);
+		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(screen.getByText("No personas in this case.")).toBeInTheDocument();
 	});
 });

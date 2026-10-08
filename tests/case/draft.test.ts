@@ -60,6 +60,8 @@ describe("normalizePersona", () => {
 						storage_id: "storage-key" as GenericId<"_storage">,
 						file_name: "a.pdf",
 					},
+					share_conditions: "When asked about the budget.",
+					perceived_contents: "Last quarter budget.",
 				},
 			],
 		};

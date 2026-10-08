@@ -1,6 +1,6 @@
-// Returns the whole minutes elapsed between two timestamps.
+// Returns the whole minutes elapsed between two timestamps, never negative.
 export function elapsedMinutes(startTime: number, now: number): number {
-	return Math.floor((now - startTime) / 60_000);
+	return Math.max(0, Math.floor((now - startTime) / 60_000));
 }
 
 export type Availability = {

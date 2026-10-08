@@ -58,11 +58,11 @@ describe("flattenPersonas", () => {
 		]);
 	});
 
-	// Tests that every referral becomes an edge, with a null condition turned into an empty string.
-	it("turns every referral into an edge, with a null condition becoming an empty string", () => {
+	// Tests that every referral becomes an edge, keeping an empty condition as an empty string.
+	it("turns every referral into an edge, keeping an empty condition as an empty string", () => {
 		const structure = caseStructure({
 			personas: [personaPayload("A"), personaPayload("B")],
-			referrals: [referralEdge("A", "B", null)],
+			referrals: [referralEdge("A", "B", "")],
 		});
 		const graph = flattenPersonas(structure);
 		expect(graph.referrals).toHaveLength(1);

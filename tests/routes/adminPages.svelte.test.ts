@@ -63,7 +63,7 @@ describe("new case chooser", () => {
 			screen.getByRole("link", { name: /Use Existing Case As Template/ }),
 		).toHaveAttribute("href", "/admin/new/template");
 		expect(
-			screen.getByRole("link", { name: /View a demo case/ }),
+			screen.getByRole("link", { name: /View demo cases/ }),
 		).toHaveAttribute("href", "/admin/new/demo");
 	});
 });

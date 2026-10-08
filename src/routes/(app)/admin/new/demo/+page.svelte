@@ -1,5 +1,5 @@
 <script lang="ts">
-import DemoCaseView from "#lib/components/DemoCaseView.svelte";
+import TemplatePicker from "#lib/components/TemplatePicker.svelte";
 </script>
 
-<DemoCaseView />
+<TemplatePicker mode="demo" />

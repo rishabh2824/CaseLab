@@ -72,9 +72,9 @@
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
 					Option 3
 				</p>
-				<h2 class="mt-2 font-display text-lg font-semibold text-ink">View a demo case</h2>
+				<h2 class="mt-2 font-display text-lg font-semibold text-ink">View demo cases</h2>
 				<p class="mt-1 text-sm leading-6 text-stone">
-					See a fully built-out example case before you start your own.
+					Browse fully built-out example cases before you start your own.
 				</p>
 			</div>
 			<span

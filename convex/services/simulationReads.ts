@@ -18,7 +18,7 @@ export type PersonaDetail = {
 	isReferred: boolean;
 };
 
-// Converts a persona payload into the persona detail shape, defaulting missing fields to null.
+// Converts a persona payload into the persona detail shape.
 function getPersonaDetails(
 	persona: PersonaPayload,
 	isReferred: boolean,
@@ -27,12 +27,12 @@ function getPersonaDetails(
 		id: persona.id,
 		name: persona.name,
 		role: persona.role,
-		profilePhoto: persona.profile_photo ?? null,
+		profilePhoto: persona.profile_photo,
 		profilePhotoUrl: null,
-		availabilityDuration: persona.availability_minutes ?? null,
-		knownFacts: persona.known_facts ?? null,
-		personalityTraits: persona.personality_traits ?? null,
-		files: persona.files ?? [],
+		availabilityDuration: persona.availability_minutes,
+		knownFacts: persona.known_facts,
+		personalityTraits: persona.personality_traits,
+		files: persona.files,
 		isReferred,
 	};
 }
@@ -68,7 +68,7 @@ export function flattenPersonas(structure: CaseStructure): PersonaGraph {
 	const referrals = referralPayloads.map((r) => ({
 		parentPersonaId: r.from_id,
 		referredPersonaId: r.to_id,
-		conditionTrigger: r.conditions || "",
+		conditionTrigger: r.conditions,
 	}));
 	return { personas, referrals, roots };
 }

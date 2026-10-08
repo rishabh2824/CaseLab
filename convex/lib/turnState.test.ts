@@ -150,6 +150,11 @@ describe("elapsedMinutes", () => {
 		expect(elapsedMinutes(1_000_000_000 - 90_000, 1_000_000_000)).toBe(1);
 	});
 
+	// Tests that a start time slightly in the future gives zero rather than a negative number.
+	it("never returns a negative number", () => {
+		expect(elapsedMinutes(1_000_000_000 + 0.001, 1_000_000_000)).toBe(0);
+	});
+
 	// Tests that elapsedMinutes handles an exact multiple of a minute.
 	it("handles an exact multiple of a minute", () => {
 		expect(elapsedMinutes(1_000_000_000 - 120_000, 1_000_000_000)).toBe(2);

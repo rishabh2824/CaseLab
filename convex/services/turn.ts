@@ -88,7 +88,7 @@ export async function startTurn(
 			"This conversation has ended.",
 		);
 
-	const elapsed = elapsedMinutes(run.startTime, Date.now());
+	const elapsed = elapsedMinutes(run._creationTime, Date.now());
 	if (c.duration && elapsed >= c.duration)
 		throw studentError(
 			STUDENT_ERROR.SIMULATION_ENDED,
@@ -101,8 +101,8 @@ export async function startTurn(
 		throw studentError(STUDENT_ERROR.PERSONA_NOT_FOUND, "Persona not found.");
 	const availableAt = graph.roots.includes(personaId)
 		? 0
-		: run.unlockedReferredIds.includes(personaId)
-			? (run.unlockedAt[personaId] ?? elapsed)
+		: Object.hasOwn(run.unlockedAt, personaId)
+			? run.unlockedAt[personaId]!
 			: null;
 	if (availableAt === null) throw personaUnavailable();
 	if (
@@ -192,8 +192,8 @@ type PendingReferral = {
 type PendingFile = {
 	fileId: Id<"files">;
 	fileName: string;
-	shareConditions: string | null;
-	perceivedContents: string | null;
+	shareConditions: string;
+	perceivedContents: string;
 };
 type DecisionMessage = { role: "user" | "assistant"; content: string };
 
@@ -217,7 +217,7 @@ async function buildTurnContext(
 	const pendingReferrals: PendingReferral[] = graphReferrals(graph, persona.id)
 		.filter(
 			(referral) =>
-				!run.unlockedReferredIds.includes(referral.referredPersonaId) &&
+				!Object.hasOwn(run.unlockedAt, referral.referredPersonaId) &&
 				!graph.roots.includes(referral.referredPersonaId) &&
 				referral.conditionTrigger.trim(),
 		)
@@ -234,7 +234,7 @@ async function buildTurnContext(
 	const pendingFiles: PendingFile[] = (
 		await Promise.all(
 			persona.files
-				.filter((entry) => entry.file && (entry.share_conditions ?? "").trim())
+				.filter((entry) => entry.file && entry.share_conditions.trim())
 				.map(async (entry) => {
 					const file = entry.file!;
 					const row = await ctx.db
@@ -247,8 +247,8 @@ async function buildTurnContext(
 					return {
 						fileId: row._id,
 						fileName: file.file_name || "file",
-						shareConditions: entry.share_conditions ?? null,
-						perceivedContents: entry.perceived_contents ?? null,
+						shareConditions: entry.share_conditions,
+						perceivedContents: entry.perceived_contents,
 					};
 				}),
 		)
@@ -265,7 +265,7 @@ async function buildTurnContext(
 
 	return {
 		caseBrief: c.brief,
-		commonInformation: c.commonInformation ?? null,
+		commonInformation: c.commonInformation,
 		persona,
 		pendingReferrals,
 		pendingFiles,
@@ -327,12 +327,10 @@ export async function applyDecisions(
 	const run = await ctx.db.get(runId);
 	if (!run) throw new Error("Run not found.");
 
-	const elapsed = elapsedMinutes(run.startTime, Date.now());
-	const unlockedReferredIds = [...run.unlockedReferredIds];
+	const elapsed = elapsedMinutes(run._creationTime, Date.now());
 	const unlockedAt = { ...run.unlockedAt };
 	for (const { referredPersonaId } of unlockedReferrals) {
-		if (unlockedReferredIds.includes(referredPersonaId)) continue;
-		unlockedReferredIds.push(referredPersonaId);
+		if (Object.hasOwn(unlockedAt, referredPersonaId)) continue;
 		unlockedAt[referredPersonaId] = elapsed;
 	}
 
@@ -340,7 +338,6 @@ export async function applyDecisions(
 	for (const file of sharedFiles) sharedFileIds.add(file.fileId);
 
 	await ctx.db.patch(runId, {
-		unlockedReferredIds,
 		unlockedAt,
 		sharedFiles: [...sharedFileIds],
 	});

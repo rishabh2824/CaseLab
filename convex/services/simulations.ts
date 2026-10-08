@@ -215,9 +215,7 @@ export async function startSimulation(
 	const expiresAt = computeExpiresAt(startTime, c.duration);
 	const runId = await ctx.db.insert("runs", {
 		caseId: c._id,
-		startTime,
 		expiresAt,
-		unlockedReferredIds: [],
 		unlockedAt: {},
 		sharedFiles: [],
 		personaChatState: {},
@@ -266,7 +264,7 @@ export async function getSimulationState(
 	const referredPersonas = await Promise.all(
 		graphPersonas(
 			graph,
-			referredContactIds(graph, run.unlockedReferredIds),
+			referredContactIds(graph, Object.keys(run.unlockedAt)),
 		).map((persona) => hydratePersona(ctx, persona)),
 	);
 	const contacts = buildContacts(
@@ -321,9 +319,10 @@ export async function exportSimulation(
 ): Promise<ExportSimulationOut> {
 	const { run, c } = await loadLiveRun(ctx, runId);
 	const graph = flattenPersonas(c.structure);
-	const referredIds = referredContactIds(graph, run.unlockedReferredIds).sort(
-		(a, b) => (run.unlockedAt[a] ?? 0) - (run.unlockedAt[b] ?? 0),
-	);
+	const referredIds = referredContactIds(
+		graph,
+		Object.keys(run.unlockedAt),
+	).sort((a, b) => (run.unlockedAt[a] ?? 0) - (run.unlockedAt[b] ?? 0));
 	const personaIds = [...graph.roots, ...referredIds];
 
 	const personas = await Promise.all(

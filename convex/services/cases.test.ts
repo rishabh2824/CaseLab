@@ -21,6 +21,7 @@ function payload(overrides: Partial<CasePayload> = {}): CasePayload {
 	return {
 		name: "Sterling Industries",
 		brief: "Reduce office supply costs.",
+		commonInformation: "",
 		accessCode: uniqueAccessCode(),
 		personas: [personaPayload("A")],
 		referrals: [],
@@ -320,7 +321,7 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 		);
 
 		expect(rowAfter?._id).toBe(rowBefore?._id);
-		expect(rowAfter?.addedAt).toBe(rowBefore?.addedAt);
+		expect(rowAfter?._creationTime).toBe(rowBefore?._creationTime);
 	});
 
 	// Tests that saving inserts a row only for a newly added collaborator.
@@ -357,7 +358,9 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 		expect(rows).toHaveLength(2);
 		const originalRowAfter = rows.find((row) => row.adminId === original._id);
 		expect(originalRowAfter?._id).toBe(originalRowBefore?._id);
-		expect(originalRowAfter?.addedAt).toBe(originalRowBefore?.addedAt);
+		expect(originalRowAfter?._creationTime).toBe(
+			originalRowBefore?._creationTime,
+		);
 	});
 });
 
@@ -463,13 +466,13 @@ describe("required fields (via createCase)", () => {
 		expect(structure.personas[0]).toMatchObject({ name: "Mary", role: "CFO" });
 	});
 
-	// Tests that common information stays unset when the payload omits it.
-	it("leaves common information unset when the payload doesn't provide it", async () => {
+	// Tests that an empty common information is stored as an empty string.
+	it("stores empty common information as an empty string", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const caseId = await t.run((ctx) => createCase(ctx, payload(), owner));
 		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
-		expect(c.commonInformation).toBeUndefined();
+		expect(c.commonInformation).toBe("");
 	});
 });
 

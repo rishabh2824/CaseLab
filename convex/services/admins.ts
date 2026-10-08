@@ -90,7 +90,7 @@ export async function deleteAdminWithCascade(
 				.query("collaborators")
 				.withIndex("by_case_and_admin", (q) => q.eq("caseId", c._id))
 				.collect()
-		).sort((a, b) => a.addedAt - b.addedAt);
+		).sort((a, b) => a._creationTime - b._creationTime);
 
 		if (collaborators.length === 0) {
 			await deleteCaseUnchecked(ctx, c._id);

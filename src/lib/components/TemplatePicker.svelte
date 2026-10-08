@@ -4,29 +4,67 @@ import { toast } from "svelte-sonner";
 import { getErrorMessage } from "#lib/errors.js";
 import type { CaseSummary } from "#lib/types.js";
 import { api } from "../../../convex/_generated/api.js";
+import DemoToggle from "./DemoToggle.svelte";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 
+type Mode = "template" | "edit" | "demo";
 type Props = {
-	mode?: "template" | "edit";
+	mode?: Mode;
+};
+type ListedCase = Pick<CaseSummary, "_id" | "name"> & Partial<CaseSummary>;
+
+const COPY: Record<
+	Mode,
+	{ eyebrow: string; title: string; description: string; empty: string }
+> = {
+	template: {
+		eyebrow: "Choose Template",
+		title: "Select an existing case",
+		description:
+			"The selected case will be copied into a new form. Saving it will create a brand-new case and leave the original untouched.",
+		empty: "No cases found.",
+	},
+	edit: {
+		eyebrow: "Edit Case",
+		title: "Select a case to edit",
+		description:
+			"The selected case will open in the form with all of its current details so you can edit it directly.",
+		empty: "No cases found.",
+	},
+	demo: {
+		eyebrow: "Demo Cases",
+		title: "Browse example cases",
+		description:
+			"These fully built-out cases are read-only examples of what a complete case looks like.",
+		empty: "No demo cases are available yet.",
+	},
 };
 
 let { mode = "template" }: Props = $props();
 
-const casesQuery = useQuery(api.api.cases.listAll, {});
+const listQuery = useQuery(api.api.cases.listAll, () =>
+	mode === "demo" ? "skip" : {},
+);
+const demosQuery = useQuery(api.api.cases.listDemos, () =>
+	mode === "demo" ? {} : "skip",
+);
+const casesQuery = $derived(mode === "demo" ? demosQuery : listQuery);
+const cases = $derived<ListedCase[]>(casesQuery.data ?? []);
+const copy = $derived(COPY[mode]);
 const deleteCase = useMutation(api.api.cases.deleteCase);
 
-let pendingDelete = $state<CaseSummary | null>(null);
+let pendingDelete = $state<ListedCase | null>(null);
 let isDeleting = $state(false);
 
-// Returns the link for a case: its edit page in edit mode, otherwise a new case seeded from it.
-function caseHref(caseItem: CaseSummary): string {
-	return mode === "edit"
-		? `/admin/cases/${caseItem._id}/edit`
-		: `/admin/cases/new?template=${caseItem._id}`;
+// Returns the link for a case: its edit page, its demo page, or a new case seeded from it.
+function caseHref(caseItem: ListedCase): string {
+	if (mode === "edit") return `/admin/cases/${caseItem._id}/edit`;
+	if (mode === "demo") return `/admin/new/demo/${caseItem._id}`;
+	return `/admin/cases/new?template=${caseItem._id}`;
 }
 
 // Marks a case as pending deletion so the confirm dialog opens.
-function requestDelete(caseItem: CaseSummary) {
+function requestDelete(caseItem: ListedCase) {
 	pendingDelete = caseItem;
 }
 
@@ -55,16 +93,14 @@ const isEditMode = $derived(mode === "edit");
 			<div class="flex items-center gap-3">
 				<span class="h-px w-8 bg-line"></span>
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
-					{isEditMode ? 'Edit Case' : 'Choose Template'}
+					{copy.eyebrow}
 				</p>
 			</div>
 			<h1 class="mt-4 font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
-				{isEditMode ? 'Select a case to edit' : 'Select an existing case'}
+				{copy.title}
 			</h1>
 			<p class="mt-4 text-sm leading-6 text-stone">
-				{isEditMode
-					? 'The selected case will open in the form with all of its current details so you can edit it directly.'
-					: 'The selected case will be copied into a new form. Saving it will create a brand-new case and leave the original untouched.'}
+				{copy.description}
 			</p>
 		</div>
 
@@ -77,12 +113,12 @@ const isEditMode = $derived(mode === "edit");
 				<div class="rounded-2xl border border-brand/20 bg-brand-tint p-5 text-sm text-brand">
 					{getErrorMessage(casesQuery.error, "Failed to load cases.")}
 				</div>
-			{:else if casesQuery.data.length === 0}
+			{:else if cases.length === 0}
 				<div class="rounded-2xl border border-line bg-white p-5 text-sm text-stone">
-					No cases found.
+					{copy.empty}
 				</div>
 			{:else}
-				{#each casesQuery.data as caseItem (caseItem._id)}
+				{#each cases as caseItem (caseItem._id)}
 					<div>
 						<a
 							href={caseHref(caseItem)}
@@ -91,12 +127,15 @@ const isEditMode = $derived(mode === "edit");
 							<p class="font-display text-lg font-semibold text-ink transition group-hover:text-brand">
 								{caseItem.name}
 							</p>
-							<p class="mt-1 font-mono text-xs uppercase tracking-[0.18em] text-stone-soft">
-								Access code: {caseItem.accessCode}
-							</p>
+							{#if caseItem.accessCode}
+								<p class="mt-1 font-mono text-xs uppercase tracking-[0.18em] text-stone-soft">
+									Access code: {caseItem.accessCode}
+								</p>
+							{/if}
 						</a>
 						{#if isEditMode}
-							<div class="mt-1.5 flex justify-end px-1">
+							<div class="mt-1.5 flex items-center justify-end gap-3 px-1">
+								<DemoToggle caseId={caseItem._id} isDemo={caseItem.isDemo === true} />
 								<button
 									type="button"
 									onclick={() => requestDelete(caseItem)}

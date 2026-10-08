@@ -11,7 +11,13 @@ import { api } from "../../../convex/_generated/api.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 import ReadOnlyPersonaCard from "./ReadOnlyPersonaCard.svelte";
 
-const caseQuery = useQuery(api.api.cases.getDemo, {});
+type Props = {
+	caseId: string;
+};
+
+let { caseId }: Props = $props();
+
+const caseQuery = useQuery(api.api.cases.getDemo, () => ({ caseId }));
 
 const parsedStructure = $derived(parseCaseStructure(caseQuery.data?.structure));
 const personas = $derived(parsedStructure.personas);
@@ -26,6 +32,12 @@ const referredPersonas = $derived(
 <div class="relative min-h-screen bg-parchment">
 	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<div class="mx-auto max-w-4xl px-6 py-10">
+		<a
+			href="/admin/new/demo"
+			class="mb-4 inline-block text-sm font-semibold text-stone transition hover:text-brand"
+		>
+			&larr; All demo cases
+		</a>
 		{#if caseQuery.isLoading}
 			<p class="text-center text-sm text-stone">Loading demo case...</p>
 		{:else if caseQuery.error}
@@ -57,7 +69,6 @@ const referredPersonas = $derived(
 						Case Information
 					</summary>
 					<div class="grid grid-cols-1 gap-4 border-t border-line-soft px-5 py-5 sm:grid-cols-2">
-						<ReadOnlyField label="Access code" value={caseQuery.data.accessCode} />
 						<ReadOnlyField
 							label="Simulation duration (minutes)"
 							value={caseQuery.data.duration}
@@ -116,7 +127,7 @@ const referredPersonas = $derived(
 			</div>
 		{:else}
 			<p class="text-center text-sm text-stone">
-				No demo case is set up for this deployment.
+				This case is not available as a demo.
 			</p>
 		{/if}
 	</div>

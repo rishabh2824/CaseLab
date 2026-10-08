@@ -19,6 +19,8 @@ async function seedCase(
 ): Promise<Id<"cases">> {
 	return await t.run((ctx) =>
 		ctx.db.insert("cases", {
+			commonInformation: "",
+			isDemo: false,
 			name: overrides.name ?? "Owned Case",
 			brief: "A brief.",
 			accessCode: overrides.accessCode ?? "seedcode",
@@ -33,6 +35,7 @@ function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 	return {
 		name: "Case",
 		brief: "Brief",
+		commonInformation: "",
 		accessCode: "authztestcode",
 		personas: [personaPayload("A")],
 		referrals: [],
@@ -52,7 +55,12 @@ describe("admin-only surface rejects anonymous callers", () => {
 		);
 		const caseId = await seedCase(t, adminId);
 		return [
-			["cases.getDemo", () => t.query(api.api.cases.getDemo, {})],
+			["cases.getDemo", () => t.query(api.api.cases.getDemo, { caseId })],
+			["cases.listDemos", () => t.query(api.api.cases.listDemos, {})],
+			[
+				"cases.setDemo",
+				() => t.mutation(api.api.cases.setDemo, { caseId, isDemo: true }),
+			],
 			["cases.getForEdit", () => t.query(api.api.cases.getForEdit, { caseId })],
 			["cases.listAll", () => t.query(api.api.cases.listAll, {})],
 			[
@@ -118,7 +126,16 @@ describe("admin-only surface rejects anonymous callers", () => {
 		const caseId = await seedCase(t, adminId);
 
 		const calls: [string, () => Promise<unknown>][] = [
-			["cases.getDemo", () => asStranger.query(api.api.cases.getDemo, {})],
+			[
+				"cases.getDemo",
+				() => asStranger.query(api.api.cases.getDemo, { caseId }),
+			],
+			["cases.listDemos", () => asStranger.query(api.api.cases.listDemos, {})],
+			[
+				"cases.setDemo",
+				() =>
+					asStranger.mutation(api.api.cases.setDemo, { caseId, isDemo: true }),
+			],
 			["cases.listAll", () => asStranger.query(api.api.cases.listAll, {})],
 			[
 				"cases.create",
@@ -216,13 +233,20 @@ describe("cross-admin case isolation (object ownership)", () => {
 		).rejects.toThrow(/access/i);
 	});
 
-	// Tests that getDemo cannot be pointed at another admin's case because it takes no caseId.
-	it("getDemo cannot be pointed at another admin's case -- it takes no caseId at all", async () => {
-		const source = await import("./cases?raw").then((m) => m.default as string);
-		const getDemoBlock = source.slice(source.indexOf("export const getDemo"));
-		expect(getDemoBlock.slice(0, getDemoBlock.indexOf("handler"))).not.toMatch(
-			/caseId/,
-		);
+	// Tests that getDemo only serves cases flagged as demos, so it cannot read a private case of another admin.
+	it("getDemo does not expose a private case of another admin", async () => {
+		const t = newTestConvex();
+		const owner = await withAdmin(t, { email: "owner6@test.caselab.invalid" });
+		const outsider = await withAdmin(t, {
+			email: "outsider6@test.caselab.invalid",
+		});
+		const caseId = await seedCase(t, owner.adminId, {
+			accessCode: "privatecode",
+		});
+
+		await expect(
+			outsider.asUser.query(api.api.cases.getDemo, { caseId }),
+		).resolves.toBeNull();
 	});
 
 	// Tests that a collaborator gets access to a case while an admin who was never added is refused.
@@ -240,7 +264,6 @@ describe("cross-admin case isolation (object ownership)", () => {
 			ctx.db.insert("collaborators", {
 				caseId,
 				adminId: collaborator.adminId,
-				addedAt: Date.now(),
 			}),
 		);
 
@@ -264,7 +287,6 @@ describe("cross-admin case isolation (object ownership)", () => {
 			ctx.db.insert("collaborators", {
 				caseId,
 				adminId: collaborator.adminId,
-				addedAt: Date.now(),
 			}),
 		);
 

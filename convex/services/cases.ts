@@ -47,11 +47,30 @@ export type CaseSummary = {
 	_id: Id<"cases">;
 	name: string;
 	accessCode: string;
+	isDemo: boolean;
 };
 
-// Reduces a case document to its id, name and access code.
+// Reduces a case document to its id, name, access code and demo flag.
 function toCaseSummary(c: Doc<"cases">): CaseSummary {
-	return { _id: c._id, name: c.name, accessCode: c.accessCode };
+	return {
+		_id: c._id,
+		name: c.name,
+		accessCode: c.accessCode,
+		isDemo: c.isDemo,
+	};
+}
+
+// Lists the cases flagged as demos, by name, without their access codes.
+export async function listDemoCases(
+	ctx: QueryCtx,
+): Promise<Pick<CaseSummary, "_id" | "name">[]> {
+	const demos = await ctx.db
+		.query("cases")
+		.withIndex("by_is_demo", (q) => q.eq("isDemo", true))
+		.collect();
+	return demos
+		.sort((a, b) => a.name.localeCompare(b.name))
+		.map(({ _id, name }) => ({ _id, name }));
 }
 
 // Lists the cases an admin can see by name: all for a super admin, otherwise owned plus collaborating.
@@ -247,12 +266,10 @@ export async function buildStructure(
 
 	const fileRefs = personas.flatMap((persona) => [
 		persona.profile_photo,
-		...(persona.files ?? []).map((entry) => entry.file),
+		...persona.files.map((entry) => entry.file),
 	]);
 	const resolved = await resolveFileRefs(ctx, fileRefs);
-	const lookup = (
-		ref: FileRefPayload | null | undefined,
-	): ResolvedFileRef | null =>
+	const lookup = (ref: FileRefPayload): ResolvedFileRef | null =>
 		ref ? (resolved.get(ref.storage_id) ?? null) : null;
 
 	const fileIds = new Set<Id<"files">>();
@@ -260,7 +277,7 @@ export async function buildStructure(
 		const profilePhoto = lookup(persona.profile_photo);
 		if (profilePhoto) fileIds.add(profilePhoto.fileId);
 
-		const files = (persona.files ?? []).flatMap((entry) => {
+		const files = persona.files.flatMap((entry) => {
 			if (!entry.file) return [];
 			const resolvedFile = lookup(entry.file);
 			if (!resolvedFile) return [];
@@ -324,7 +341,7 @@ async function resolveCollaboratorIds(
 export type CasePayload = {
 	name: string;
 	brief: string;
-	commonInformation?: string;
+	commonInformation: string;
 	duration?: number;
 	accessCode: string;
 	personas: PersonaPayload[];
@@ -394,11 +411,7 @@ async function replaceCollaborators(
 	}
 	for (const adminId of collaboratorIds) {
 		if (!existingAdminIds.has(adminId)) {
-			await ctx.db.insert("collaborators", {
-				caseId,
-				adminId,
-				addedAt: Date.now(),
-			});
+			await ctx.db.insert("collaborators", { caseId, adminId });
 		}
 	}
 }
@@ -413,7 +426,7 @@ async function resolveCasePayload(
 	fields: {
 		name: string;
 		brief: string;
-		commonInformation: string | undefined;
+		commonInformation: string;
 		accessCode: string;
 		duration: number | undefined;
 		structure: CaseStructure;
@@ -423,7 +436,7 @@ async function resolveCasePayload(
 }> {
 	const name = validateRequiredText(payload.name, "Case name");
 	const brief = validateRequiredText(payload.brief, "Initial brief");
-	const commonInformation = payload.commonInformation?.trim();
+	const commonInformation = payload.commonInformation.trim();
 	const accessCode = await validateAccessCode(
 		ctx,
 		payload.accessCode,
@@ -463,6 +476,7 @@ export async function createCase(
 	const caseId = await ctx.db.insert("cases", {
 		...fields,
 		ownerAdminId: admin._id,
+		isDemo: false,
 	});
 
 	await replaceCollaborators(ctx, caseId, collaboratorIds);

@@ -20,7 +20,7 @@ function toResolvedFileRef(file: Doc<"files">): ResolvedFileRef {
 // Maps each distinct storage id to its files row, reusing existing rows and creating missing ones.
 export async function resolveFileRefs(
 	ctx: MutationCtx,
-	fileRefs: (FileRefPayload | undefined)[],
+	fileRefs: FileRefPayload[],
 ): Promise<Map<Id<"_storage">, ResolvedFileRef>> {
 	const distinctRefs = new Map<Id<"_storage">, Exclude<FileRefPayload, null>>();
 	for (const ref of fileRefs) {
@@ -52,7 +52,7 @@ export async function resolveFileRefs(
 		const fileId = await ctx.db.insert("files", {
 			storageId: ref.storage_id,
 			name: ref.file_name,
-			contentType: ref.content_type ?? undefined,
+			contentType: ref.content_type,
 		});
 		resolved.set(ref.storage_id, { fileId, ...ref });
 	}

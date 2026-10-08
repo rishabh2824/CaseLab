@@ -27,6 +27,8 @@ async function seedCase(
 	);
 	const caseId = await t.run((ctx) =>
 		ctx.db.insert("cases", {
+			commonInformation: "",
+			isDemo: false,
 			name: "Sterling Industries",
 			brief: "Reduce office supply costs.",
 			duration: overrides.duration,
@@ -44,6 +46,7 @@ function payload(overrides: Record<string, unknown> = {}) {
 	return {
 		name: "Sterling Industries",
 		brief: "Reduce office supply costs.",
+		commonInformation: "",
 		accessCode: "sterling",
 		personas: [personaPayload("A")],
 		referrals: [],
