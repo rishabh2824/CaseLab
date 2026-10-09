@@ -3,13 +3,8 @@ import { getConvexClient, useQuery } from "convex-svelte";
 import { onDestroy, onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import { getViewerContext } from "#lib/adminViewer.js";
-import {
-	getCaseInfoErrors,
-	hasFieldErrors,
-	parseCaseStructure,
-} from "#lib/case/draft.js";
+import { CaseDraft } from "#lib/case/caseDraft.svelte.js";
 import { buildHTMLForm, downloadForm } from "#lib/case/exportCase.js";
-import { CaseGraph } from "#lib/case/graph.svelte.js";
 import { CaseImportError, parseHTMLForm } from "#lib/case/importCase.js";
 import { submitCase } from "#lib/case/submitCase.js";
 import { getErrorMessage } from "#lib/errors.js";
@@ -17,12 +12,9 @@ import { type SaveResult, unsavedGuard } from "#lib/unsavedGuard.svelte.js";
 import { beforeNavigate, goto } from "$app/navigation";
 import { api } from "../../../convex/_generated/api.js";
 import type { Id } from "../../../convex/_generated/dataModel.js";
-import { RUN_LIFETIME_MINUTES } from "../../../convex/lib/constants.js";
 import CaseGraphEditor from "./CaseGraphEditor.svelte";
 import CaseInfoFields from "./CaseInfoFields.svelte";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
-
-const MAX_SIMULATION_DURATION = RUN_LIFETIME_MINUTES;
 
 type Props = {
 	mode: "create" | "edit";
@@ -37,94 +29,15 @@ const editCaseId = $derived(isEditMode ? caseId : null);
 const sourceCaseId = $derived(editCaseId || templateId);
 const canImport = $derived(!sourceCaseId);
 
-let caseName = $state("");
-let initialBrief = $state("");
-let commonInformation = $state("");
-let simulationDurationMinutes = $state<number | null>(null);
-let accessCode = $state("");
-const graph = new CaseGraph();
+const draft = new CaseDraft();
 
 const adminsQuery = useQuery(api.admins.listAll, {});
 const allAdmins = $derived(adminsQuery.data ?? []);
 const viewerQuery = getViewerContext();
-let collaboratorAdminIds = $state<string[]>([]);
 let ownerAdminId = $state<string | null>(null);
 
-let baselineScalars = $state<{
-	caseName: string;
-	initialBrief: string;
-	commonInformation: string;
-	simulationDurationMinutes: number | null;
-	accessCode: string;
-	collaboratorAdminIds: string[];
-} | null>(null);
-let baselineGraphSnapshot = $state<string | null>(null);
-
-// Replaces File values with a small descriptor so the form can be snapshotted as JSON.
-function jsonReplacer(_key: string, value: unknown): unknown {
-	if (value instanceof File) {
-		return {
-			name: value.name,
-			size: value.size,
-			lastModified: value.lastModified,
-		};
-	}
-	return value;
-}
-
-// Serializes the persona graph to a string for change detection.
-function snapshotGraph(): string {
-	return JSON.stringify(
-		{
-			personas: graph.personas,
-			referrals: graph.referrals,
-			roots: graph.roots,
-		},
-		jsonReplacer,
-	);
-}
-
-// Records the current form values as the clean baseline for dirty tracking.
-function markSaved(): void {
-	baselineScalars = {
-		caseName,
-		initialBrief,
-		commonInformation,
-		simulationDurationMinutes,
-		accessCode,
-		collaboratorAdminIds: [...collaboratorAdminIds],
-	};
-	baselineGraphSnapshot = snapshotGraph();
-}
-
 // svelte-ignore state_referenced_locally
-if (!sourceCaseId) markSaved();
-
-const scalarsDirty = $derived.by(() => {
-	const baseline = baselineScalars;
-	if (baseline === null) return false;
-	return (
-		caseName !== baseline.caseName ||
-		initialBrief !== baseline.initialBrief ||
-		commonInformation !== baseline.commonInformation ||
-		simulationDurationMinutes !== baseline.simulationDurationMinutes ||
-		accessCode !== baseline.accessCode ||
-		collaboratorAdminIds.length !== baseline.collaboratorAdminIds.length ||
-		collaboratorAdminIds.some(
-			(id, i) => id !== baseline.collaboratorAdminIds[i],
-		)
-	);
-});
-const graphDirty = $derived(
-	baselineGraphSnapshot !== null && snapshotGraph() !== baselineGraphSnapshot,
-);
-const isDirty = $derived(scalarsDirty || graphDirty);
-
-let showFieldErrors = $state(false);
-// Turns on display of field validation errors.
-function revealErrors() {
-	showFieldErrors = true;
-}
+if (!sourceCaseId) draft.markSaved();
 
 let isLoadingSource = $state(untrack(() => Boolean(sourceCaseId)));
 let loadErrorMessage = $state("");
@@ -143,18 +56,8 @@ async function loadCase(id: string): Promise<void> {
 		caseId: id as Id<"cases">,
 	});
 	if (sourceCaseId !== id) return;
-	caseName = loadedCase.name ?? "";
-	initialBrief = loadedCase.brief ?? "";
-	commonInformation = loadedCase.commonInformation ?? "";
-	simulationDurationMinutes = loadedCase.duration ?? null;
-	accessCode = isEditMode ? loadedCase.accessCode : "";
-	graph.load(parseCaseStructure(loadedCase.structure));
-	if (isEditMode) {
-		collaboratorAdminIds = loadedCase.collaboratorAdminIds ?? [];
-		ownerAdminId = loadedCase.ownerAdminId ?? null;
-	}
-	revealErrors();
-	markSaved();
+	draft.load(loadedCase, { isEditMode });
+	if (isEditMode) ownerAdminId = loadedCase.ownerAdminId ?? null;
 }
 
 $effect(() => {
@@ -182,36 +85,11 @@ const effectiveOwnerId = $derived(
 	isEditMode ? ownerAdminId : (viewerQuery.data?._id ?? null),
 );
 
-const caseInfoErrors = $derived(
-	getCaseInfoErrors({
-		caseName,
-		initialBrief,
-		accessCode,
-		simulationDurationMinutes,
-		maxSimulationDuration: MAX_SIMULATION_DURATION,
-	}),
-);
-const caseInfoHasErrors = $derived(hasFieldErrors(caseInfoErrors));
-
-const graphValidation = $derived(graph.validation);
-const hasValidationErrors = $derived(
-	caseInfoHasErrors || graphValidation.hasErrors,
-);
 const displayedError = $derived(submitError || loadErrorMessage);
 
 // Exports the current form as a downloadable HTML template.
 function handleExportTemplate(): void {
-	const html = buildHTMLForm({
-		caseName,
-		accessCode,
-		simulationDurationMinutes,
-		initialBrief,
-		commonInformation,
-		personas: graph.personas,
-		referrals: graph.referrals,
-		roots: graph.roots,
-	});
-	downloadForm(html);
+	downloadForm(buildHTMLForm(draft.exportInput()));
 }
 
 // Opens the file picker for importing an exported case.
@@ -227,12 +105,7 @@ function handleImportFile(
 	event.currentTarget.value = "";
 	if (!file) return;
 
-	const hasExistingData =
-		caseName.trim() ||
-		initialBrief.trim() ||
-		accessCode.trim() ||
-		graph.personas.length > 0;
-	if (hasExistingData) {
+	if (draft.hasContent) {
 		pendingImportFile = file;
 		return;
 	}
@@ -252,18 +125,8 @@ async function performImport(file: File): Promise<void> {
 	try {
 		const text = await file.text();
 		const { data, warnings } = parseHTMLForm(text);
-		caseName = data.caseName;
-		accessCode = data.accessCode;
-		initialBrief = data.initialBrief;
-		commonInformation = data.commonInformation;
-		simulationDurationMinutes = data.simulationDurationMinutes;
-		graph.load({
-			personas: data.personas,
-			referrals: data.referrals,
-			roots: data.roots,
-		});
+		draft.applyImport(data);
 		importWarnings = warnings;
-		revealErrors();
 	} catch (err) {
 		toast(
 			err instanceof CaseImportError
@@ -287,8 +150,8 @@ function performSave(): Promise<SaveResult> {
 
 // Validates and submits the case, then updates the success, error and baseline state.
 async function runSave(): Promise<SaveResult> {
-	revealErrors();
-	if (hasValidationErrors) {
+	draft.revealErrors();
+	if (draft.hasErrors) {
 		const message = "Resolve the highlighted fields before saving.";
 		submitError = message;
 		return { ok: false, error: message };
@@ -299,18 +162,7 @@ async function runSave(): Promise<SaveResult> {
 	suppressInlineSuccess = false;
 	isSubmitting = true;
 	try {
-		const result = await submitCase({
-			editCaseId,
-			caseName,
-			initialBrief,
-			commonInformation,
-			simulationDurationMinutes,
-			accessCode,
-			personas: graph.personas,
-			referrals: graph.referrals,
-			roots: graph.roots,
-			collaboratorAdminIds,
-		});
+		const result = await submitCase(draft.submitInput(editCaseId));
 		lastSavedCaseId = result.caseId;
 		submitSuccess = isEditMode
 			? "Case updated successfully."
@@ -319,10 +171,10 @@ async function runSave(): Promise<SaveResult> {
 			try {
 				await loadCase(editCaseId);
 			} catch {
-				markSaved();
+				draft.markSaved();
 			}
 		} else {
-			markSaved();
+			draft.markSaved();
 		}
 		return { ok: true };
 	} catch (err) {
@@ -358,7 +210,7 @@ beforeNavigate((navigation) => {
 });
 
 onMount(() => {
-	unsavedGuard.register(() => isDirty, performSave);
+	unsavedGuard.register(() => draft.isDirty, performSave);
 	function handleBeforeUnload(event: BeforeUnloadEvent): void {
 		if (!unsavedGuard.isDirty) return;
 		event.preventDefault();
@@ -445,21 +297,17 @@ onDestroy(() => {
 				{/if}
 
 				<CaseInfoFields
-					bind:caseName
-					bind:initialBrief
-					bind:commonInformation
-					bind:simulationDurationMinutes
-					bind:accessCode
-					bind:collaboratorAdminIds
-					maxSimulationDuration={MAX_SIMULATION_DURATION}
+					{draft}
 					{allAdmins}
 					adminsLoading={adminsQuery.isLoading}
 					{effectiveOwnerId}
-					{showFieldErrors}
-					{revealErrors}
 				/>
 
-				<CaseGraphEditor {graph} {showFieldErrors} {revealErrors} />
+				<CaseGraphEditor
+					graph={draft.graph}
+					showFieldErrors={draft.showErrors}
+					revealErrors={() => draft.revealErrors()}
+				/>
 
 				{#if displayedError}
 					<p class="text-sm font-medium text-brand">{displayedError}</p>
@@ -467,7 +315,7 @@ onDestroy(() => {
 				{#if submitSuccess && !suppressInlineSuccess}
 					<p class="text-sm font-medium text-success">{submitSuccess}</p>
 				{/if}
-				{#if showFieldErrors && hasValidationErrors}
+				{#if draft.showErrors && draft.hasErrors}
 					<p class="text-sm font-medium text-brand">
 						Resolve the highlighted fields above before submitting.
 					</p>

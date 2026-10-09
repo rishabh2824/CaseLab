@@ -1,41 +1,21 @@
 <script lang="ts">
 import { Popover } from "bits-ui";
 import {
-	getCaseInfoErrors,
-	isSelectableCollaborator,
-	parseIntOrNull,
-} from "#lib/case/draft.js";
+	type CaseDraft,
+	MAX_SIMULATION_DURATION,
+} from "#lib/case/caseDraft.svelte.js";
+import { isSelectableCollaborator, parseIntOrNull } from "#lib/case/draft.js";
 import type { AdminRow } from "#lib/types.js";
+import FormField, { INPUT_CLASS } from "./FormField.svelte";
 
 type Props = {
-	caseName: string;
-	initialBrief: string;
-	commonInformation: string;
-	simulationDurationMinutes: number | null;
-	accessCode: string;
-	collaboratorAdminIds: string[];
-	maxSimulationDuration: number;
+	draft: CaseDraft;
 	allAdmins: AdminRow[];
 	adminsLoading: boolean;
 	effectiveOwnerId: string | null;
-	showFieldErrors: boolean;
-	revealErrors: () => void;
 };
 
-let {
-	caseName = $bindable(),
-	initialBrief = $bindable(),
-	commonInformation = $bindable(),
-	simulationDurationMinutes = $bindable(),
-	accessCode = $bindable(),
-	collaboratorAdminIds = $bindable(),
-	maxSimulationDuration,
-	allAdmins,
-	adminsLoading,
-	effectiveOwnerId,
-	showFieldErrors,
-	revealErrors,
-}: Props = $props();
+let { draft, allAdmins, adminsLoading, effectiveOwnerId }: Props = $props();
 
 const selectableAdmins = $derived(
 	allAdmins.filter((admin) =>
@@ -43,17 +23,7 @@ const selectableAdmins = $derived(
 	),
 );
 
-const errors = $derived(
-	showFieldErrors
-		? getCaseInfoErrors({
-				caseName,
-				initialBrief,
-				accessCode,
-				simulationDurationMinutes,
-				maxSimulationDuration,
-			})
-		: {},
-);
+const errors = $derived(draft.showErrors ? draft.errors : {});
 </script>
 
 <details class="rounded-2xl border border-line bg-white" open>
@@ -61,85 +31,72 @@ const errors = $derived(
 		Case Information
 	</summary>
 	<div class="flex flex-col gap-4 border-t border-line-soft px-5 py-5">
-		<div class="flex flex-col gap-1.5">
-			<label for="case-name" class="text-xs font-medium text-stone-soft">Case name</label>
+		<FormField label="Case name" id="case-name" error={errors.caseName}>
 			<input
 				id="case-name"
 				type="text"
 				required
 				placeholder="Enter case name"
-				bind:value={caseName}
-				oninput={revealErrors}
-				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+				bind:value={draft.caseName}
+				oninput={() => draft.revealErrors()}
+				class={INPUT_CLASS}
 			/>
-			{#if errors.caseName}
-				<p class="text-xs font-medium text-brand">{errors.caseName}</p>
-			{/if}
-		</div>
+		</FormField>
 
-		<div class="flex flex-col gap-1.5">
-			<label for="initial-brief" class="text-xs font-medium text-stone-soft">Initial brief</label>
+		<FormField label="Initial brief" id="initial-brief" error={errors.initialBrief}>
 			<textarea
 				id="initial-brief"
 				rows="3"
 				required
 				placeholder="Summarize the initial brief"
-				bind:value={initialBrief}
-				oninput={revealErrors}
-				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+				bind:value={draft.initialBrief}
+				oninput={() => draft.revealErrors()}
+				class={INPUT_CLASS}
 			></textarea>
-			{#if errors.initialBrief}
-				<p class="text-xs font-medium text-brand">{errors.initialBrief}</p>
-			{/if}
-		</div>
+		</FormField>
 
-		<div class="flex flex-col gap-1.5">
-			<label for="common-information" class="text-xs font-medium text-stone-soft">Enter Case Background</label>
+		<FormField label="Enter Case Background" id="common-information">
 			<textarea
 				id="common-information"
 				rows="3"
 				placeholder="Describe the common information"
-				bind:value={commonInformation}
-				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+				bind:value={draft.commonInformation}
+				class={INPUT_CLASS}
 			></textarea>
-		</div>
+		</FormField>
 
-		<div class="flex flex-col gap-1.5">
-			<label for="simulation-duration" class="text-xs font-medium text-stone-soft">Simulation duration (Minutes)</label>
+		<FormField
+			label="Simulation duration (Minutes)"
+			id="simulation-duration"
+			error={errors.simulationDuration}
+		>
 			<input
 				id="simulation-duration"
 				type="number"
 				min="1"
-				max={maxSimulationDuration}
+				max={MAX_SIMULATION_DURATION}
 				step="1"
 				placeholder="Leave empty for unlimited"
-				value={simulationDurationMinutes ?? ''}
+				value={draft.simulationDurationMinutes ?? ''}
 				oninput={(event) => {
-					revealErrors()
-					simulationDurationMinutes = parseIntOrNull(event.currentTarget.value)
+					draft.revealErrors()
+					draft.simulationDurationMinutes = parseIntOrNull(event.currentTarget.value)
 				}}
-				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+				class={INPUT_CLASS}
 			/>
-			{#if errors.simulationDuration}
-				<p class="text-xs font-medium text-brand">{errors.simulationDuration}</p>
-			{/if}
-		</div>
+		</FormField>
 
-		<div class="flex flex-col gap-1.5">
-			<label for="access-code" class="text-xs font-medium text-stone-soft">Access code</label>
+		<FormField label="Access code" id="access-code" error={errors.accessCode}>
 			<input
 				id="access-code"
 				type="text"
 				required
 				placeholder="Enter access code"
-				bind:value={accessCode}
-				oninput={revealErrors}
-				class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+				bind:value={draft.accessCode}
+				oninput={() => draft.revealErrors()}
+				class={INPUT_CLASS}
 			/>
-			{#if errors.accessCode}
-				<p class="text-xs font-medium text-brand">{errors.accessCode}</p>
-			{/if}
-		</div>
+		</FormField>
 
 		<div class="flex flex-col gap-1.5">
 			<span class="text-xs font-medium text-stone-soft">Add collaborators</span>
@@ -151,9 +108,9 @@ const errors = $derived(
 					class="flex w-fit items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition hover:border-brand hover:text-brand"
 				>
 					Add collaborators
-					{#if collaboratorAdminIds.length > 0}
+					{#if draft.collaboratorAdminIds.length > 0}
 						<span class="rounded-full bg-brand-tint px-2 py-0.5 text-xs font-semibold text-brand">
-							{collaboratorAdminIds.length} selected
+							{draft.collaboratorAdminIds.length} selected
 						</span>
 					{/if}
 					<span aria-hidden="true">▾</span>
@@ -173,12 +130,12 @@ const errors = $derived(
 									<label class="flex items-center gap-2 text-sm text-ink-soft">
 										<input
 											type="checkbox"
-											checked={collaboratorAdminIds.includes(admin._id)}
+											checked={draft.collaboratorAdminIds.includes(admin._id)}
 											onchange={(event) => {
 												const checked = event.currentTarget.checked
-												collaboratorAdminIds = checked
-													? [...collaboratorAdminIds, admin._id]
-													: collaboratorAdminIds.filter((id) => id !== admin._id)
+												draft.collaboratorAdminIds = checked
+													? [...draft.collaboratorAdminIds, admin._id]
+													: draft.collaboratorAdminIds.filter((id) => id !== admin._id)
 											}}
 											class="h-4 w-4 rounded border-line text-brand focus:ring-brand/30"
 										/>

@@ -1,5 +1,6 @@
 <script lang="ts">
 import { getViewerContext } from "#lib/adminViewer.js";
+import PageHeader from "#lib/components/PageHeader.svelte";
 
 const viewer = getViewerContext();
 const isSuperAdmin = $derived(viewer.data?.role === "super");
@@ -24,20 +25,11 @@ const isSuperAdmin = $derived(viewer.data?.role === "super");
 	{/if}
 
 	<div class="relative z-10 mx-auto flex min-h-[80vh] max-w-5xl flex-col justify-center">
-		<div class="max-w-2xl">
-			<div class="flex items-center gap-3">
-				<span class="h-px w-8 bg-line"></span>
-				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
-					Admin Panel
-				</p>
-			</div>
-			<h1 class="mt-4 font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
-				Choose what you want to work on
-			</h1>
-			<p class="mt-4 max-w-xl text-sm leading-6 text-stone">
-				Create a new simulation case from scratch or open an existing case for editing.
-			</p>
-		</div>
+		<PageHeader
+			eyebrow="Admin Panel"
+			title="Choose what you want to work on"
+			description="Create a new simulation case from scratch or open an existing case for editing."
+		/>
 
 		<div class="mt-12 grid gap-6 md:grid-cols-2">
 			<a

@@ -7,6 +7,7 @@ import {
 } from "#lib/case/draft.js";
 import type { CaseGraph } from "#lib/case/graph.svelte.js";
 import type { Persona, ReferralEdge } from "#lib/types.js";
+import FormField, { INPUT_CLASS } from "./FormField.svelte";
 
 type Props = {
 	persona: Persona;
@@ -72,74 +73,69 @@ function handleReferralConditionsChange(
 	referral.conditions = event.currentTarget.value;
 }
 </script>
-
 <div class="flex flex-col gap-4">
-	<div class="flex flex-col gap-1.5">
-		<label for="{uid}-name" class="text-xs font-medium text-stone-soft">Persona name</label>
+	<FormField label="Persona name" id="{uid}-name" error={errors.name}>
 		<input
 			id="{uid}-name"
 			type="text"
 			required
 			placeholder="Enter persona name"
 			bind:value={persona.name}
-			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+			class={INPUT_CLASS}
 		/>
-		{#if errors.name}<p class="text-xs font-medium text-brand">{errors.name}</p>{/if}
-	</div>
+	</FormField>
 
-	<div class="flex flex-col gap-1.5">
-		<label for="{uid}-role" class="text-xs font-medium text-stone-soft">Title/Role</label>
+	<FormField label="Title/Role" id="{uid}-role" error={errors.role}>
 		<input
 			id="{uid}-role"
 			type="text"
 			required
 			placeholder="Enter title or role"
 			bind:value={persona.role}
-			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+			class={INPUT_CLASS}
 		/>
-		{#if errors.role}<p class="text-xs font-medium text-brand">{errors.role}</p>{/if}
-	</div>
+	</FormField>
 
-	<div class="flex flex-col gap-1.5">
-		<label for="{uid}-photo" class="text-xs font-medium text-stone-soft">Profile photo</label>
+	<FormField label="Profile photo" id="{uid}-photo">
 		<input
 			id="{uid}-photo"
 			type="file"
 			accept="image/*"
 			onchange={handlePhotoChange}
-			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft file:mr-3 file:rounded-md file:border-0 file:bg-cream file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
+			class="{INPUT_CLASS} file:mr-3 file:rounded-md file:border-0 file:bg-cream file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
 		/>
 		{#if persona.profilePhoto instanceof File}
 			<p class="text-xs text-stone-soft">Selected: {persona.profilePhoto.name}</p>
 		{:else if persona.profilePhoto}
 			<p class="text-xs text-stone-soft">Existing photo: {persona.profilePhoto.fileName}</p>
 		{/if}
-	</div>
+	</FormField>
 
-	<div class="flex flex-col gap-1.5">
-		<label for="{uid}-known-facts" class="text-xs font-medium text-stone-soft">Enter Persona Related Information</label>
+	<FormField label="Enter Persona Related Information" id="{uid}-known-facts">
 		<textarea
 			id="{uid}-known-facts"
 			rows="3"
 			placeholder="Describe the persona's background, facts, and any other relevant information"
 			bind:value={persona.knownFacts}
-			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+			class={INPUT_CLASS}
 		></textarea>
-	</div>
+	</FormField>
 
-	<div class="flex flex-col gap-1.5">
-		<label for="{uid}-personality" class="text-xs font-medium text-stone-soft">Personality traits</label>
+	<FormField label="Personality traits" id="{uid}-personality">
 		<textarea
 			id="{uid}-personality"
 			rows="3"
 			placeholder="Describe personality traits"
 			bind:value={persona.personalityTraits}
-			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+			class={INPUT_CLASS}
 		></textarea>
-	</div>
+	</FormField>
 
-	<div class="flex flex-col gap-1.5">
-		<label for="{uid}-availability" class="text-xs font-medium text-stone-soft">How long is this persona available for?</label>
+	<FormField
+		label="How long is this persona available for?"
+		id="{uid}-availability"
+		error={errors.availability}
+	>
 		<input
 			id="{uid}-availability"
 			type="number"
@@ -150,10 +146,9 @@ function handleReferralConditionsChange(
 			oninput={(event) => {
 				persona.availabilityMinutes = parseIntOrNull(event.currentTarget.value)
 			}}
-			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+			class={INPUT_CLASS}
 		/>
-		{#if errors.availability}<p class="text-xs font-medium text-brand">{errors.availability}</p>{/if}
-	</div>
+	</FormField>
 
 	<div class="flex items-center justify-between gap-2">
 		<span class="text-xs font-medium text-stone-soft">Files this persona has access to</span>
@@ -181,42 +176,43 @@ function handleReferralConditionsChange(
 						</button>
 					</summary>
 					<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
-						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-file-{fileIndex}-upload" class="text-xs font-medium text-stone-soft">Upload file</label>
+						<FormField label="Upload file" id="{uid}-file-{fileIndex}-upload">
 							<input
 								id="{uid}-file-{fileIndex}-upload"
 								type="file"
 								onchange={(event) => handleFileChange(event, fileIndex)}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft file:mr-3 file:rounded-md file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
+								class="{INPUT_CLASS} file:mr-3 file:rounded-md file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
 							/>
 							{#if fileEntry.file instanceof File}
 								<p class="text-xs text-stone-soft">Selected: {fileEntry.file.name}</p>
 							{:else if fileEntry.file}
 								<p class="text-xs text-stone-soft">Existing file: {fileEntry.file.fileName}</p>
 							{/if}
-						</div>
-						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-file-{fileIndex}-conditions" class="text-xs font-medium text-stone-soft">
-								Describe the conditions under which the persona will share the file
-							</label>
+						</FormField>
+						<FormField
+							label="Describe the conditions under which the persona will share the file"
+							id="{uid}-file-{fileIndex}-conditions"
+						>
 							<textarea
 								id="{uid}-file-{fileIndex}-conditions"
 								rows="2"
 								placeholder="Describe the conditions"
 								bind:value={fileEntry.shareConditions}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+								class={INPUT_CLASS}
 							></textarea>
-						</div>
-						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-file-{fileIndex}-perceived" class="text-xs font-medium text-stone-soft">What does the persona think is in this file?</label>
+						</FormField>
+						<FormField
+							label="What does the persona think is in this file?"
+							id="{uid}-file-{fileIndex}-perceived"
+						>
 							<textarea
 								id="{uid}-file-{fileIndex}-perceived"
 								rows="2"
 								placeholder="Describe perceived contents"
 								bind:value={fileEntry.perceivedContents}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+								class={INPUT_CLASS}
 							></textarea>
-						</div>
+						</FormField>
 					</div>
 				</details>
 			{/each}
@@ -250,27 +246,28 @@ function handleReferralConditionsChange(
 						</button>
 					</summary>
 					<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
-						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-referral-{referral.toId}-name" class="text-xs font-medium text-stone-soft">Name</label>
+						<FormField label="Name" id="{uid}-referral-{referral.toId}-name">
 							<input
 								id="{uid}-referral-{referral.toId}-name"
 								type="text"
 								placeholder="Enter name"
 								bind:value={referredPersona.name}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+								class={INPUT_CLASS}
 							/>
-						</div>
-						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-referral-{referral.toId}-conditions" class="text-xs font-medium text-stone-soft">Describe the referral conditions</label>
+						</FormField>
+						<FormField
+							label="Describe the referral conditions"
+							id="{uid}-referral-{referral.toId}-conditions"
+						>
 							<textarea
 								id="{uid}-referral-{referral.toId}-conditions"
 								rows="2"
 								placeholder="Describe the referral conditions"
 								value={referral.conditions}
 								oninput={(event) => handleReferralConditionsChange(event, referral)}
-								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
+								class={INPUT_CLASS}
 							></textarea>
-						</div>
+						</FormField>
 					</div>
 				</details>
 			{/each}

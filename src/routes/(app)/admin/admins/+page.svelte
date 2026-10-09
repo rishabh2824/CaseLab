@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { getViewerContext } from "#lib/adminViewer.js";
 import DestructiveConfirmDialog from "#lib/components/DestructiveConfirmDialog.svelte";
+import PageHeader from "#lib/components/PageHeader.svelte";
 import { getErrorMessage } from "#lib/errors.js";
 import type { AdminRole } from "#lib/types.js";
 import { goto } from "$app/navigation";
@@ -101,19 +102,11 @@ async function confirmDelete(): Promise<void> {
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
 	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<div class="relative z-10 mx-auto max-w-4xl">
-		<div class="flex items-center gap-3">
-			<span class="h-px w-8 bg-line"></span>
-			<p class="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
-				Super Admin
-			</p>
-		</div>
-		<h1 class="mt-4 font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
-			Manage admins
-		</h1>
-		<p class="mt-4 max-w-xl text-sm leading-6 text-stone">
-			Add an admin by email. Deleting an admin deletes any case they own with no collaborators, and
-			reassigns ownership of cases they own with collaborators to the longest-standing collaborator.
-		</p>
+		<PageHeader
+			eyebrow="Super Admin"
+			title="Manage admins"
+			description="Add an admin by email. Deleting an admin deletes any case they own with no collaborators, and reassigns ownership of cases they own with collaborators to the longest-standing collaborator."
+		/>
 
 		<form
 			onsubmit={handleAdd}

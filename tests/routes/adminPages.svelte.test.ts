@@ -1,7 +1,6 @@
 import { render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminHome from "../../src/routes/(app)/admin/+page.svelte";
-// @ts-expect-error -- this page has no <script>, so svelte-check has no declaration for it
 import NewCase from "../../src/routes/(app)/admin/new/+page.svelte";
 
 let viewer: { data?: { role: string }; isLoading: boolean } = {

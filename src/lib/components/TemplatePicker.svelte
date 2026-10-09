@@ -6,6 +6,7 @@ import type { CaseSummary } from "#lib/types.js";
 import { api } from "../../../convex/_generated/api.js";
 import DemoToggle from "./DemoToggle.svelte";
 import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
+import PageHeader from "./PageHeader.svelte";
 
 type Mode = "template" | "edit" | "demo";
 type Props = {
@@ -89,20 +90,7 @@ const isEditMode = $derived(mode === "edit");
 <div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
 	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<div class="relative z-10 mx-auto max-w-4xl">
-		<div class="max-w-2xl">
-			<div class="flex items-center gap-3">
-				<span class="h-px w-8 bg-line"></span>
-				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
-					{copy.eyebrow}
-				</p>
-			</div>
-			<h1 class="mt-4 font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
-				{copy.title}
-			</h1>
-			<p class="mt-4 text-sm leading-6 text-stone">
-				{copy.description}
-			</p>
-		</div>
+		<PageHeader eyebrow={copy.eyebrow} title={copy.title} description={copy.description} />
 
 		<div class="mt-10 space-y-4">
 			{#if casesQuery.isLoading}
