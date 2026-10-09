@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { query } from "../_generated/server";
 import { authComponent } from "../auth";
-import { adminQuery, superAdminMutation } from "../lib/adminFunctions";
 import { adminRole } from "../schema";
+import { adminQuery, superAdminMutation } from "../services/adminFunctions";
 import {
 	createAdmin,
 	deleteAdminWithCascade,

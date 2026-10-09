@@ -37,6 +37,7 @@
 		"better-auth": ">=1.6.11 <1.7.0",
 		"bits-ui": ">=2.19.4",
 		"convex": ">=1.46.0",
+		"convex-helpers": ">=0.1.128",
 		"convex-svelte": ">=0.14.0",
 		"jspdf": ">=4.2.1",
 		"svelte-sonner": ">=1.2.1"

@@ -1,13 +1,13 @@
 import { ConvexError, v } from "convex/values";
 import {
-	adminMutation,
-	adminQuery,
-	superAdminMutation,
-} from "../lib/adminFunctions";
-import {
 	personaPayloadValidator,
 	referralEdgeValidator,
 } from "../models/cases";
+import {
+	adminMutation,
+	adminQuery,
+	superAdminMutation,
+} from "../services/adminFunctions";
 import {
 	createCase,
 	deleteCase as deleteCaseWithAccess,
