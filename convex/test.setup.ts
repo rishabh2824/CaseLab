@@ -38,7 +38,7 @@ export async function sendTurn(
 	personaId: string,
 	message: string,
 ): Promise<Id<"runMessages">> {
-	const { replyId } = await t.mutation(api.api.turn.sendMessage, {
+	const { replyId } = await t.mutation(api.turn.sendMessage, {
 		runId,
 		personaId,
 		message,
@@ -53,7 +53,7 @@ export async function lastReply(
 	runId: Id<"runs">,
 	personaId: string,
 ) {
-	const history = await t.query(api.api.simulations.getPersonaHistory, {
+	const history = await t.query(api.simulations.getPersonaHistory, {
 		runId,
 		personaId,
 	});

@@ -108,7 +108,7 @@ describe("admins list", () => {
 
 		listState = {
 			isLoading: false,
-			error: clientServerError("api/admins:listAll", "Q"),
+			error: clientServerError("admins:listAll", "Q"),
 		};
 		const failed = render(AdminsPage);
 		expect(screen.getByText("Failed to load admins.")).toBeInTheDocument();
@@ -123,7 +123,7 @@ describe("admins list", () => {
 describe("adding an admin", () => {
 	// Tests that the form sends trimmed values, then resets and confirms.
 	it("creates the admin with trimmed values, resets the form and toasts", async () => {
-		mutation("api/admins:create").mockResolvedValue("new-id");
+		mutation("admins:create").mockResolvedValue("new-id");
 		const user = userEvent.setup();
 		render(AdminsPage);
 		await user.type(screen.getByLabelText("Email"), "  new@wisc.edu ");
@@ -132,7 +132,7 @@ describe("adding an admin", () => {
 		await user.click(screen.getByRole("button", { name: "Add admin" }));
 
 		await waitFor(() =>
-			expect(mutation("api/admins:create")).toHaveBeenCalledWith({
+			expect(mutation("admins:create")).toHaveBeenCalledWith({
 				email: "new@wisc.edu",
 				name: "New Person",
 				role: "super",
@@ -148,13 +148,13 @@ describe("adding an admin", () => {
 
 	// Tests that a blank name is omitted instead of sent as an empty string.
 	it("omits a blank name", async () => {
-		mutation("api/admins:create").mockResolvedValue("new-id");
+		mutation("admins:create").mockResolvedValue("new-id");
 		const user = userEvent.setup();
 		render(AdminsPage);
 		await user.type(screen.getByLabelText("Email"), "new@wisc.edu");
 		await user.click(screen.getByRole("button", { name: "Add admin" }));
 		await waitFor(() =>
-			expect(mutation("api/admins:create")).toHaveBeenCalledWith({
+			expect(mutation("admins:create")).toHaveBeenCalledWith({
 				email: "new@wisc.edu",
 				name: undefined,
 				role: "admin",
@@ -164,8 +164,8 @@ describe("adding an admin", () => {
 
 	// Tests that a server failure toasts a safe message and keeps the typed values.
 	it("toasts a safe message and keeps the input when adding fails", async () => {
-		mutation("api/admins:create").mockRejectedValue(
-			clientServerError("api/admins:create"),
+		mutation("admins:create").mockRejectedValue(
+			clientServerError("admins:create"),
 		);
 		const user = userEvent.setup();
 		render(AdminsPage);
@@ -190,12 +190,12 @@ describe("deleting an admin", () => {
 		await waitFor(() =>
 			expect(screen.queryByText("Delete a@wisc.edu?")).toBeNull(),
 		);
-		expect(mutation("api/admins:deleteWithCascade")).not.toHaveBeenCalled();
+		expect(mutation("admins:deleteWithCascade")).not.toHaveBeenCalled();
 	});
 
 	// Tests that the toast summarises cases deleted and reassigned.
 	it("deletes and summarises deleted and reassigned cases", async () => {
-		mutation("api/admins:deleteWithCascade").mockResolvedValue({
+		mutation("admins:deleteWithCascade").mockResolvedValue({
 			casesDeleted: 1,
 			casesReassigned: 2,
 		});
@@ -209,14 +209,14 @@ describe("deleting an admin", () => {
 				{ duration: 4000 },
 			),
 		);
-		expect(mutation("api/admins:deleteWithCascade")).toHaveBeenCalledWith({
+		expect(mutation("admins:deleteWithCascade")).toHaveBeenCalledWith({
 			adminId: "a1",
 		});
 	});
 
 	// Tests that a plain delete says only that the admin was deleted.
 	it("toasts a plain message when no cases were affected", async () => {
-		mutation("api/admins:deleteWithCascade").mockResolvedValue({
+		mutation("admins:deleteWithCascade").mockResolvedValue({
 			casesDeleted: 0,
 			casesReassigned: 0,
 		});
@@ -233,8 +233,8 @@ describe("deleting an admin", () => {
 
 	// Tests that a failed delete keeps the dialog open with a safe error toast.
 	it("toasts a safe message when deleting fails", async () => {
-		mutation("api/admins:deleteWithCascade").mockRejectedValue(
-			clientServerError("api/admins:deleteWithCascade"),
+		mutation("admins:deleteWithCascade").mockRejectedValue(
+			clientServerError("admins:deleteWithCascade"),
 		);
 		const user = userEvent.setup();
 		render(AdminsPage);

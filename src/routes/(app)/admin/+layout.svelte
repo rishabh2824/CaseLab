@@ -19,7 +19,7 @@ let { children }: Props = $props();
 createSvelteAuthClient({ authClient, convexClient: getConvexClient() });
 
 const auth = useAuth();
-const viewer = useQuery(api.api.admins.viewer, {});
+const viewer = useQuery(api.admins.viewer, {});
 setViewerContext(viewer);
 
 const OTT_EXCHANGE_GRACE_MS = 4000;

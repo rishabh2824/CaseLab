@@ -42,16 +42,16 @@ const COPY: Record<
 
 let { mode = "template" }: Props = $props();
 
-const listQuery = useQuery(api.api.cases.listAll, () =>
+const listQuery = useQuery(api.cases.listAll, () =>
 	mode === "demo" ? "skip" : {},
 );
-const demosQuery = useQuery(api.api.cases.listDemos, () =>
+const demosQuery = useQuery(api.cases.listDemos, () =>
 	mode === "demo" ? {} : "skip",
 );
 const casesQuery = $derived(mode === "demo" ? demosQuery : listQuery);
 const cases = $derived<ListedCase[]>(casesQuery.data ?? []);
 const copy = $derived(COPY[mode]);
-const deleteCase = useMutation(api.api.cases.deleteCase);
+const deleteCase = useMutation(api.cases.deleteCase);
 
 let pendingDelete = $state<ListedCase | null>(null);
 let isDeleting = $state(false);

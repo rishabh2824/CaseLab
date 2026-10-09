@@ -73,8 +73,8 @@ vi.mock("convex-svelte", () => ({
 	useQuery: (...args: unknown[]) => mockUseQuery(...args),
 }));
 
-const GET_SIMULATION_STATE = "api/simulations:get";
-const GET_PERSONA_HISTORY = "api/simulations:getPersonaHistory";
+const GET_SIMULATION_STATE = "simulations:get";
+const GET_PERSONA_HISTORY = "simulations:getPersonaHistory";
 
 // Sets the fake chat history, and the state of the latest reply, for a persona.
 function setHistory(
@@ -254,7 +254,7 @@ describe("session resume / live-query errors", () => {
 			setFakeQuery(
 				GET_SIMULATION_STATE,
 				{ runId: "stale-run" },
-				{ error: clientStudentError("api/simulations:get", code, text, "Q") },
+				{ error: clientStudentError("simulations:get", code, text, "Q") },
 			);
 
 			await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
@@ -271,7 +271,7 @@ describe("session resume / live-query errors", () => {
 		setFakeQuery(
 			GET_SIMULATION_STATE,
 			{ runId: "run-1" },
-			{ error: clientServerError("api/simulations:get", "Q") },
+			{ error: clientServerError("simulations:get", "Q") },
 		);
 
 		await vi.waitFor(() =>
@@ -290,7 +290,7 @@ describe("session resume / live-query errors", () => {
 			{ runId: "run-1" },
 			{
 				error: clientStudentError(
-					"api/simulations:get",
+					"simulations:get",
 					STUDENT_ERROR.CASE_NOT_FOUND,
 					"Case not found.",
 					"Q",
@@ -309,7 +309,7 @@ describe("session resume / live-query errors", () => {
 		setFakeQuery(
 			GET_SIMULATION_STATE,
 			{ runId: "run-1" },
-			{ error: clientServerError("api/simulations:get", "Q") },
+			{ error: clientServerError("simulations:get", "Q") },
 		);
 		await vi.waitFor(() => expect(run.loadError).not.toBe(""));
 
@@ -384,7 +384,7 @@ describe("sendMessage guards", () => {
 			Parameters<typeof getFunctionName>[0],
 			unknown,
 		];
-		expect(getFunctionName(ref)).toBe("api/turn:sendMessage");
+		expect(getFunctionName(ref)).toBe("turn:sendMessage");
 		expect(args).toEqual({
 			runId: "run-1",
 			personaId: "mary",
@@ -462,7 +462,7 @@ describe("sendMessage lifecycle", () => {
 		run.activeContactId = "mary";
 		mockClientMutation.mockRejectedValue(
 			clientStudentError(
-				"api/turn:sendMessage",
+				"turn:sendMessage",
 				STUDENT_ERROR.CONVERSATION_ENDED,
 				"This conversation has ended.",
 			),
@@ -485,7 +485,7 @@ describe("sendMessage lifecycle", () => {
 		run.activeContactId = "mary";
 		mockClientMutation.mockRejectedValue(
 			clientStudentError(
-				"api/turn:sendMessage",
+				"turn:sendMessage",
 				STUDENT_ERROR.RUN_EXPIRED,
 				"Run expired.",
 			),
@@ -500,7 +500,7 @@ describe("sendMessage lifecycle", () => {
 
 	// Tests that a real server error or a network failure shows a generic toast.
 	it.each([
-		["a server error", () => clientServerError("api/turn:sendMessage")],
+		["a server error", () => clientServerError("turn:sendMessage")],
 		["a network failure", () => new TypeError("Failed to fetch")],
 	])("shows a generic toast after %s", async (_name, makeError) => {
 		const { run, session, toast } = await freshRun();
@@ -670,7 +670,7 @@ describe("failed and stuck replies", () => {
 		run.activeContactId = "mary";
 		mockClientMutation.mockRejectedValue(
 			clientStudentError(
-				"api/turn:sendMessage",
+				"turn:sendMessage",
 				STUDENT_ERROR.REPLY_IN_PROGRESS,
 				"Please wait for the current reply to finish.",
 			),
@@ -823,7 +823,7 @@ describe("a run that expires while a message is in flight", () => {
 			{ runId: "run-1" },
 			{
 				error: clientStudentError(
-					"api/simulations:get",
+					"simulations:get",
 					STUDENT_ERROR.RUN_EXPIRED,
 					"Run expired.",
 					"Q",
@@ -878,7 +878,7 @@ describe("run-level time expiry", () => {
 				{ runId: "run-1" },
 				{
 					error: clientStudentError(
-						"api/simulations:get",
+						"simulations:get",
 						STUDENT_ERROR.RUN_NOT_FOUND,
 						"Run not found.",
 						"Q",

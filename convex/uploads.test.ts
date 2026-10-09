@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { api } from "../_generated/api";
-import { newTestConvex, withAdmin } from "../test.setup";
+import { api } from "./_generated/api";
+import { newTestConvex, withAdmin } from "./test.setup";
 
 describe("generateUploadUrls (batched)", () => {
 	// Tests that generateUploadUrls returns exactly the requested number of distinct urls.
 	it("returns exactly `count` distinct urls", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t);
-		const urls = await asUser.mutation(api.api.uploads.generateUploadUrls, {
+		const urls = await asUser.mutation(api.uploads.generateUploadUrls, {
 			count: 5,
 		});
 		expect(urls).toHaveLength(5);
@@ -19,7 +19,7 @@ describe("generateUploadUrls (batched)", () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t);
 		await expect(
-			asUser.mutation(api.api.uploads.generateUploadUrls, { count: 0 }),
+			asUser.mutation(api.uploads.generateUploadUrls, { count: 0 }),
 		).resolves.toEqual([]);
 	});
 
@@ -36,7 +36,7 @@ describe("generateUploadUrls (batched)", () => {
 			const t = newTestConvex();
 			const { asUser } = await withAdmin(t);
 			await expect(
-				asUser.mutation(api.api.uploads.generateUploadUrls, { count }),
+				asUser.mutation(api.uploads.generateUploadUrls, { count }),
 			).rejects.toThrow(/count/i);
 		},
 	);
@@ -46,7 +46,7 @@ describe("generateUploadUrls (batched)", () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t);
 		await expect(
-			asUser.mutation(api.api.uploads.generateUploadUrls, { count: 200 }),
+			asUser.mutation(api.uploads.generateUploadUrls, { count: 200 }),
 		).resolves.toHaveLength(200);
 	});
 });
@@ -60,7 +60,7 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 			ctx.storage.store(new Blob(["orphan"])),
 		);
 
-		await asUser.mutation(api.api.uploads.discardUploads, {
+		await asUser.mutation(api.uploads.discardUploads, {
 			storageIds: [storageId],
 		});
 
@@ -95,7 +95,7 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 		);
 		await t.run((ctx) => ctx.db.insert("caseFiles", { caseId, storageId }));
 
-		await asUser.mutation(api.api.uploads.discardUploads, {
+		await asUser.mutation(api.uploads.discardUploads, {
 			storageIds: [storageId],
 		});
 
@@ -109,7 +109,7 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t);
 		await expect(
-			asUser.mutation(api.api.uploads.discardUploads, { storageIds: [] }),
+			asUser.mutation(api.uploads.discardUploads, { storageIds: [] }),
 		).resolves.toBeNull();
 	});
 });

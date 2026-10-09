@@ -135,8 +135,8 @@ export async function sendMessage(
 		status: "pending",
 		userMessageId,
 	});
-	await ctx.scheduler.runAfter(0, internal.api.turn.reply, { replyId });
-	await ctx.scheduler.runAfter(TURN_EXPIRY_MS, internal.api.turn.failTurn, {
+	await ctx.scheduler.runAfter(0, internal.turn.reply, { replyId });
+	await ctx.scheduler.runAfter(TURN_EXPIRY_MS, internal.turn.failTurn, {
 		replyId,
 	});
 	return { replyId };
@@ -377,11 +377,11 @@ export async function runReply(
 	replyId: Id<"runMessages">,
 ): Promise<void> {
 	try {
-		const job = await ctx.runQuery(internal.api.turn.turnContext, { replyId });
+		const job = await ctx.runQuery(internal.turn.turnContext, { replyId });
 		if (job) await generateReply(ctx, job);
 	} catch (err) {
 		console.error("Reply failed", err);
-		await ctx.runMutation(internal.api.turn.failTurn, { replyId });
+		await ctx.runMutation(internal.turn.failTurn, { replyId });
 	}
 }
 
@@ -447,7 +447,7 @@ async function generateReply(
 
 	const label = await harassmentPromise;
 	if (label !== "normal") {
-		await ctx.runMutation(internal.api.turn.applyBoundary, {
+		await ctx.runMutation(internal.turn.applyBoundary, {
 			replyId,
 			label,
 			personaName: context.persona.name,
@@ -469,7 +469,7 @@ async function generateReply(
 		.filter((f): f is PendingFile => f !== undefined)
 		.map((f) => ({ storageId: f.storageId }));
 
-	await ctx.runMutation(internal.api.turn.applyDecisions, {
+	await ctx.runMutation(internal.turn.applyDecisions, {
 		replyId,
 		reply,
 		unlockedReferrals,

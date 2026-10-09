@@ -156,7 +156,7 @@ describe("startTurn validation", () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		await expect(
-			t.mutation(api.api.turn.sendMessage, {
+			t.mutation(api.turn.sendMessage, {
 				runId: state.runId,
 				personaId: "A",
 				message: "   ",
@@ -171,7 +171,7 @@ describe("startTurn validation", () => {
 		const tooLong = Array(51).fill("word").join(" ");
 		expect(
 			await studentRejection(
-				t.mutation(api.api.turn.sendMessage, {
+				t.mutation(api.turn.sendMessage, {
 					runId: state.runId,
 					personaId: "A",
 					message: tooLong,
@@ -186,7 +186,7 @@ describe("startTurn validation", () => {
 		const state = await startRun(t, caseStructure());
 		expect(
 			await studentRejection(
-				t.mutation(api.api.turn.sendMessage, {
+				t.mutation(api.turn.sendMessage, {
 					runId: state.runId,
 					personaId: "does-not-exist",
 					message: "hi",
@@ -209,7 +209,7 @@ describe("startTurn validation", () => {
 		const state = await startRun(t, structure);
 		expect(
 			await studentRejection(
-				t.mutation(api.api.turn.sendMessage, {
+				t.mutation(api.turn.sendMessage, {
 					runId: state.runId,
 					personaId: "B",
 					message: "hi",
@@ -230,7 +230,7 @@ describe("startTurn validation", () => {
 		advanceClock(15);
 		expect(
 			await studentRejection(
-				t.mutation(api.api.turn.sendMessage, {
+				t.mutation(api.turn.sendMessage, {
 					runId: state.runId,
 					personaId: "A",
 					message: "hi",
@@ -252,7 +252,7 @@ describe("startTurn validation", () => {
 		advanceClock(10);
 		expect(
 			await studentRejection(
-				t.mutation(api.api.turn.sendMessage, {
+				t.mutation(api.turn.sendMessage, {
 					runId: state.runId,
 					personaId: "A",
 					message: "hi",
@@ -270,14 +270,14 @@ describe("concurrency guard (claimStreamingSlot)", () => {
 	it("rejects a second turn on the same persona while one is already in flight", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
-		await t.mutation(api.api.turn.sendMessage, {
+		await t.mutation(api.turn.sendMessage, {
 			runId: state.runId,
 			personaId: "A",
 			message: "first message",
 		});
 		expect(
 			await studentRejection(
-				t.mutation(api.api.turn.sendMessage, {
+				t.mutation(api.turn.sendMessage, {
 					runId: state.runId,
 					personaId: "A",
 					message: "second message",
@@ -319,7 +319,7 @@ describe("normal turn happy path", () => {
 		);
 		const before = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 
-		await t.mutation(api.api.turn.sendMessage, {
+		await t.mutation(api.turn.sendMessage, {
 			runId: state.runId,
 			personaId: "B",
 			message: "switching to B",
@@ -502,7 +502,7 @@ describe("harassment/boundary escalation", () => {
 
 		expect(
 			await studentRejection(
-				t.mutation(api.api.turn.sendMessage, {
+				t.mutation(api.turn.sendMessage, {
 					runId: state.runId,
 					personaId: "A",
 					message: "sorry, can we continue?",

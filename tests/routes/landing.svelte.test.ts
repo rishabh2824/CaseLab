@@ -47,7 +47,7 @@ describe("landing page access-code form", () => {
 		await submitCode("  Sterling-42 ");
 		await waitFor(() => expect(mockMutation).toHaveBeenCalledOnce());
 		const [ref, args] = mockMutation.mock.calls[0] as [never, unknown];
-		expect(getFunctionName(ref)).toBe("api/simulations:start");
+		expect(getFunctionName(ref)).toBe("simulations:start");
 		expect(args).toEqual({ accessCode: "sterling-42" });
 	});
 
@@ -65,7 +65,7 @@ describe("landing page access-code form", () => {
 	it("shows the message from a student error", async () => {
 		mockMutation.mockRejectedValue(
 			clientStudentError(
-				"api/simulations:start",
+				"simulations:start",
 				STUDENT_ERROR.INVALID_ACCESS_CODE,
 				"That access code was not recognised.",
 			),
@@ -81,7 +81,7 @@ describe("landing page access-code form", () => {
 
 	// Tests that a redacted production error falls back to the generic message.
 	it("shows the generic message for a redacted server error", async () => {
-		mockMutation.mockRejectedValue(clientServerError("api/simulations:start"));
+		mockMutation.mockRejectedValue(clientServerError("simulations:start"));
 		render(Landing);
 		await submitCode("sterling");
 		expect(
@@ -116,7 +116,7 @@ describe("landing page access-code form", () => {
 		await submitCode("sterling");
 		const busy = await screen.findByRole("button", { name: "Starting…" });
 		expect(busy).toBeDisabled();
-		fail(clientServerError("api/simulations:start"));
+		fail(clientServerError("simulations:start"));
 		expect(
 			await screen.findByRole("button", { name: "Open Case" }),
 		).toBeEnabled();
@@ -134,7 +134,7 @@ describe("landing page access-code form", () => {
 	// Tests that a later success clears the error left by an earlier failure.
 	it("clears an earlier error after a successful retry", async () => {
 		mockMutation
-			.mockRejectedValueOnce(clientServerError("api/simulations:start"))
+			.mockRejectedValueOnce(clientServerError("simulations:start"))
 			.mockResolvedValueOnce({ runId: "run-3" });
 		render(Landing);
 		const user = userEvent.setup();

@@ -44,7 +44,7 @@ let simulationDurationMinutes = $state<number | null>(null);
 let accessCode = $state("");
 const graph = new CaseGraph();
 
-const adminsQuery = useQuery(api.api.admins.listAll, {});
+const adminsQuery = useQuery(api.admins.listAll, {});
 const allAdmins = $derived(adminsQuery.data ?? []);
 const viewerQuery = getViewerContext();
 let collaboratorAdminIds = $state<string[]>([]);
@@ -139,7 +139,7 @@ let lastSavedCaseId: string | null = null;
 
 // Loads a case (or template) from the server into the form and marks it clean.
 async function loadCase(id: string): Promise<void> {
-	const loadedCase = await getConvexClient().query(api.api.cases.getForEdit, {
+	const loadedCase = await getConvexClient().query(api.cases.getForEdit, {
 		caseId: id as Id<"cases">,
 	});
 	if (sourceCaseId !== id) return;

@@ -698,7 +698,7 @@ describe("CaseForm", () => {
 		});
 
 		// Tests that the signed-in admin is excluded from the picker as the effective owner in create mode.
-		it("excludes the signed-in admin (api/admins:viewer) as the effective owner in create mode", async () => {
+		it("excludes the signed-in admin (admins:viewer) as the effective owner in create mode", async () => {
 			mockUseQuery.mockReturnValue({
 				data: [
 					makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
-import { internalMutation } from "../_generated/server";
-import { storageHasReferences } from "../services/files";
+import { internalMutation } from "./_generated/server";
+import { storageHasReferences } from "./services/files";
 
 // Deletes a stored file once no case references it any more.
 export const cleanupOrphanedFile = internalMutation({

@@ -1,12 +1,12 @@
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "../_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import {
 	deleteRunCascade,
 	exportSimulation,
 	getPersonaHistory as getPersonaHistoryService,
 	getSimulationState,
 	startSimulation,
-} from "../services/simulations";
+} from "./services/simulations";
 
 // Starts a simulation run for an access code and returns its initial state.
 export const start = mutation({

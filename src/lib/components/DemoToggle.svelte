@@ -16,7 +16,7 @@ type Props = {
 let { caseId, isDemo }: Props = $props();
 
 const viewer = getViewerContext();
-const setDemo = useMutation(api.api.cases.setDemo);
+const setDemo = useMutation(api.cases.setDemo);
 
 let isSaving = $state(false);
 

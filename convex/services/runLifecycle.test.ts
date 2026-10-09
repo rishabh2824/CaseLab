@@ -80,9 +80,9 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
 
-		await t.mutation(internal.api.simulations.destroy, { runId: state.runId });
+		await t.mutation(internal.simulations.destroy, { runId: state.runId });
 		await expect(
-			t.mutation(internal.api.simulations.destroy, { runId: state.runId }),
+			t.mutation(internal.simulations.destroy, { runId: state.runId }),
 		).resolves.toBeNull();
 	});
 
@@ -102,7 +102,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		});
 		await insertPendingReply(t, state.runId, "A", "hi");
 
-		await t.mutation(internal.api.simulations.destroy, { runId: state.runId });
+		await t.mutation(internal.simulations.destroy, { runId: state.runId });
 
 		const leftovers = await t.run(async (ctx) => ({
 			run: await ctx.db.get(state.runId),
@@ -134,16 +134,16 @@ describe("reads against a run that has gone away", () => {
 		const t = newTestConvex();
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
-		await t.mutation(internal.api.simulations.destroy, { runId: state.runId });
+		await t.mutation(internal.simulations.destroy, { runId: state.runId });
 
 		await expect(
-			t.query(api.api.simulations.getPersonaHistory, {
+			t.query(api.simulations.getPersonaHistory, {
 				runId: state.runId,
 				personaId: "A",
 			}),
 		).resolves.toEqual({ messages: [], reply: null });
 		await expect(
-			t.mutation(api.api.turn.sendMessage, {
+			t.mutation(api.turn.sendMessage, {
 				runId: state.runId,
 				personaId: "A",
 				message: "hi",
@@ -161,10 +161,10 @@ describe("reads against a run that has gone away", () => {
 		);
 
 		await expect(
-			t.query(api.api.simulations.get, { runId: state.runId }),
+			t.query(api.simulations.get, { runId: state.runId }),
 		).resolves.toMatchObject({ runId: state.runId });
 		await expect(
-			t.query(api.api.simulations.exportRun, { runId: state.runId }),
+			t.query(api.simulations.exportRun, { runId: state.runId }),
 		).resolves.toMatchObject({ personas: expect.any(Array) });
 		await expect(sendTurn(t, state.runId, "A", "hi")).rejects.toThrow(
 			"Run expired.",
@@ -180,7 +180,7 @@ describe("reads against a run that has gone away", () => {
 		await t.run((ctx) => ctx.db.delete(caseId));
 
 		await expect(
-			t.query(api.api.simulations.get, { runId: state.runId }),
+			t.query(api.simulations.get, { runId: state.runId }),
 		).rejects.toThrow("Case not found.");
 	});
 });

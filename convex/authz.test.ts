@@ -1,9 +1,11 @@
+/// <reference types="vite/client" />
+
 import { describe, expect, it } from "vitest";
-import { api } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
-import type { CaseStructure } from "../models/cases";
-import { newTestConvex, withAdmin, withStranger } from "../test.setup";
-import { caseStructure, personaPayload } from "../testFactories";
+import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import type { CaseStructure } from "./models/cases";
+import { newTestConvex, withAdmin, withStranger } from "./test.setup";
+import { caseStructure, personaPayload } from "./testFactories";
 
 type T = ReturnType<typeof newTestConvex>;
 
@@ -55,47 +57,40 @@ describe("admin-only surface rejects anonymous callers", () => {
 		);
 		const caseId = await seedCase(t, adminId);
 		return [
-			["cases.getDemo", () => t.query(api.api.cases.getDemo, { caseId })],
-			["cases.listDemos", () => t.query(api.api.cases.listDemos, {})],
+			["cases.getDemo", () => t.query(api.cases.getDemo, { caseId })],
+			["cases.listDemos", () => t.query(api.cases.listDemos, {})],
 			[
 				"cases.setDemo",
-				() => t.mutation(api.api.cases.setDemo, { caseId, isDemo: true }),
+				() => t.mutation(api.cases.setDemo, { caseId, isDemo: true }),
 			],
-			["cases.getForEdit", () => t.query(api.api.cases.getForEdit, { caseId })],
-			["cases.listAll", () => t.query(api.api.cases.listAll, {})],
-			[
-				"cases.create",
-				() => t.mutation(api.api.cases.create, casePayloadArgs()),
-			],
+			["cases.getForEdit", () => t.query(api.cases.getForEdit, { caseId })],
+			["cases.listAll", () => t.query(api.cases.listAll, {})],
+			["cases.create", () => t.mutation(api.cases.create, casePayloadArgs())],
 			[
 				"cases.update",
-				() =>
-					t.mutation(api.api.cases.update, { caseId, ...casePayloadArgs() }),
+				() => t.mutation(api.cases.update, { caseId, ...casePayloadArgs() }),
 			],
-			[
-				"cases.deleteCase",
-				() => t.mutation(api.api.cases.deleteCase, { caseId }),
-			],
-			["admins.listAll", () => t.query(api.api.admins.listAll, {})],
+			["cases.deleteCase", () => t.mutation(api.cases.deleteCase, { caseId })],
+			["admins.listAll", () => t.query(api.admins.listAll, {})],
 			[
 				"admins.create",
 				() =>
-					t.mutation(api.api.admins.create, {
+					t.mutation(api.admins.create, {
 						email: "x@y.z",
 						role: "admin" as const,
 					}),
 			],
 			[
 				"admins.deleteWithCascade",
-				() => t.mutation(api.api.admins.deleteWithCascade, { adminId }),
+				() => t.mutation(api.admins.deleteWithCascade, { adminId }),
 			],
 			[
 				"uploads.generateUploadUrls",
-				() => t.mutation(api.api.uploads.generateUploadUrls, { count: 2 }),
+				() => t.mutation(api.uploads.generateUploadUrls, { count: 2 }),
 			],
 			[
 				"uploads.discardUploads",
-				() => t.mutation(api.api.uploads.discardUploads, { storageIds: [] }),
+				() => t.mutation(api.uploads.discardUploads, { storageIds: [] }),
 			],
 		] as const;
 	}
@@ -126,26 +121,22 @@ describe("admin-only surface rejects anonymous callers", () => {
 		const caseId = await seedCase(t, adminId);
 
 		const calls: [string, () => Promise<unknown>][] = [
-			[
-				"cases.getDemo",
-				() => asStranger.query(api.api.cases.getDemo, { caseId }),
-			],
-			["cases.listDemos", () => asStranger.query(api.api.cases.listDemos, {})],
+			["cases.getDemo", () => asStranger.query(api.cases.getDemo, { caseId })],
+			["cases.listDemos", () => asStranger.query(api.cases.listDemos, {})],
 			[
 				"cases.setDemo",
-				() =>
-					asStranger.mutation(api.api.cases.setDemo, { caseId, isDemo: true }),
+				() => asStranger.mutation(api.cases.setDemo, { caseId, isDemo: true }),
 			],
-			["cases.listAll", () => asStranger.query(api.api.cases.listAll, {})],
+			["cases.listAll", () => asStranger.query(api.cases.listAll, {})],
 			[
 				"cases.create",
-				() => asStranger.mutation(api.api.cases.create, casePayloadArgs()),
+				() => asStranger.mutation(api.cases.create, casePayloadArgs()),
 			],
 			[
 				"cases.deleteCase",
-				() => asStranger.mutation(api.api.cases.deleteCase, { caseId }),
+				() => asStranger.mutation(api.cases.deleteCase, { caseId }),
 			],
-			["admins.listAll", () => asStranger.query(api.api.admins.listAll, {})],
+			["admins.listAll", () => asStranger.query(api.admins.listAll, {})],
 		];
 		const failures: string[] = [];
 		for (const [name, call] of calls) {
@@ -160,24 +151,24 @@ describe("admin-only surface rejects anonymous callers", () => {
 	// Tests that viewer returns null for anonymous and non-admin callers instead of throwing or leaking.
 	it("viewer returns null (rather than throwing or leaking) for anonymous and non-admin callers", async () => {
 		const t = newTestConvex();
-		expect(await t.query(api.api.admins.viewer, {})).toBeNull();
+		expect(await t.query(api.admins.viewer, {})).toBeNull();
 
 		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
-		expect(await asStranger.query(api.api.admins.viewer, {})).toBeNull();
+		expect(await asStranger.query(api.admins.viewer, {})).toBeNull();
 	});
 
 	// Tests that an admin loses access as soon as their admins row is deleted.
 	it("stops authorizing a signed-in admin once their admins row is deleted", async () => {
 		const t = newTestConvex();
 		const { asUser, adminId } = await withAdmin(t, { role: "admin" });
-		await expect(asUser.query(api.api.cases.listAll, {})).resolves.toEqual([]);
+		await expect(asUser.query(api.cases.listAll, {})).resolves.toEqual([]);
 
 		await t.run((ctx) => ctx.db.delete(adminId));
 
-		await expect(asUser.query(api.api.cases.listAll, {})).rejects.toThrow(
+		await expect(asUser.query(api.cases.listAll, {})).rejects.toThrow(
 			"Your account is not authorized.",
 		);
-		expect(await asUser.query(api.api.admins.viewer, {})).toBeNull();
+		expect(await asUser.query(api.admins.viewer, {})).toBeNull();
 	});
 });
 
@@ -194,20 +185,20 @@ describe("cross-admin case isolation (object ownership)", () => {
 		});
 
 		await expect(
-			outsider.asUser.query(api.api.cases.getForEdit, { caseId }),
+			outsider.asUser.query(api.cases.getForEdit, { caseId }),
 		).rejects.toThrow("You do not have access to this case.");
 		await expect(
-			outsider.asUser.mutation(api.api.cases.update, {
+			outsider.asUser.mutation(api.cases.update, {
 				caseId,
 				...casePayloadArgs(),
 			}),
 		).rejects.toThrow("You do not have access to this case.");
 		await expect(
-			outsider.asUser.mutation(api.api.cases.deleteCase, { caseId }),
+			outsider.asUser.mutation(api.cases.deleteCase, { caseId }),
 		).rejects.toThrow("You do not have access to this case.");
-		await expect(
-			outsider.asUser.query(api.api.cases.listAll, {}),
-		).resolves.toEqual([]);
+		await expect(outsider.asUser.query(api.cases.listAll, {})).resolves.toEqual(
+			[],
+		);
 	});
 
 	// Tests that getForEdit does not expose another admin's access code and persona secrets to an unrelated admin.
@@ -229,7 +220,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 		});
 
 		await expect(
-			outsider.asUser.query(api.api.cases.getForEdit, { caseId }),
+			outsider.asUser.query(api.cases.getForEdit, { caseId }),
 		).rejects.toThrow(/access/i);
 	});
 
@@ -245,7 +236,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 		});
 
 		await expect(
-			outsider.asUser.query(api.api.cases.getDemo, { caseId }),
+			outsider.asUser.query(api.cases.getDemo, { caseId }),
 		).resolves.toBeNull();
 	});
 
@@ -268,10 +259,10 @@ describe("cross-admin case isolation (object ownership)", () => {
 		);
 
 		await expect(
-			collaborator.asUser.query(api.api.cases.getForEdit, { caseId }),
+			collaborator.asUser.query(api.cases.getForEdit, { caseId }),
 		).resolves.toMatchObject({ _id: caseId });
 		await expect(
-			outsider.asUser.query(api.api.cases.getForEdit, { caseId }),
+			outsider.asUser.query(api.cases.getForEdit, { caseId }),
 		).rejects.toThrow("You do not have access to this case.");
 	});
 
@@ -290,7 +281,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 			}),
 		);
 
-		await collaborator.asUser.mutation(api.api.cases.update, {
+		await collaborator.asUser.mutation(api.cases.update, {
 			caseId,
 			...casePayloadArgs({ name: "Renamed by collaborator" }),
 		});
@@ -314,18 +305,18 @@ describe("role boundaries", () => {
 		});
 
 		await expect(
-			regular.asUser.mutation(api.api.admins.create, {
+			regular.asUser.mutation(api.admins.create, {
 				email: "me-again@test.caselab.invalid",
 				role: "super",
 			}),
 		).rejects.toThrow("Only a super admin can do this.");
 		await expect(
-			regular.asUser.mutation(api.api.admins.deleteWithCascade, {
+			regular.asUser.mutation(api.admins.deleteWithCascade, {
 				adminId: victim.adminId,
 			}),
 		).rejects.toThrow("Only a super admin can do this.");
 
-		const roster = await regular.asUser.query(api.api.admins.listAll, {});
+		const roster = await regular.asUser.query(api.admins.listAll, {});
 		expect(roster.map((a) => a.email).sort()).toEqual([
 			"regular@test.caselab.invalid",
 			"victim@test.caselab.invalid",
@@ -345,7 +336,7 @@ describe("role boundaries", () => {
 		});
 
 		await expect(
-			superAdmin.asUser.mutation(api.api.admins.deleteWithCascade, {
+			superAdmin.asUser.mutation(api.admins.deleteWithCascade, {
 				adminId: otherSuper.adminId,
 			}),
 		).rejects.toThrow("Super admins cannot be deleted.");
@@ -362,10 +353,10 @@ describe("role boundaries", () => {
 		const caseId = await seedCase(t, owner.adminId);
 
 		await expect(
-			superAdmin.asUser.query(api.api.cases.getForEdit, { caseId }),
+			superAdmin.asUser.query(api.cases.getForEdit, { caseId }),
 		).resolves.toMatchObject({ _id: caseId });
 		await expect(
-			superAdmin.asUser.query(api.api.cases.listAll, {}),
+			superAdmin.asUser.query(api.cases.listAll, {}),
 		).resolves.toHaveLength(1);
 	});
 });
@@ -379,7 +370,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 			}),
 		);
 		await seedCase(t, adminId, { accessCode });
-		return await t.mutation(api.api.simulations.start, { accessCode });
+		return await t.mutation(api.simulations.start, { accessCode });
 	}
 
 	// Tests that the student-facing functions work without any identity.
@@ -389,19 +380,19 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		expect(state.runId).toBeDefined();
 
 		await expect(
-			t.query(api.api.simulations.get, { runId: state.runId }),
+			t.query(api.simulations.get, { runId: state.runId }),
 		).resolves.toMatchObject({ runId: state.runId });
 		await expect(
-			t.query(api.api.simulations.getPersonaHistory, {
+			t.query(api.simulations.getPersonaHistory, {
 				runId: state.runId,
 				personaId: "A",
 			}),
 		).resolves.toEqual({ messages: [], reply: null });
 		await expect(
-			t.query(api.api.simulations.exportRun, { runId: state.runId }),
+			t.query(api.simulations.exportRun, { runId: state.runId }),
 		).resolves.toMatchObject({ case: { caseName: "Owned Case" } });
 		await expect(
-			t.mutation(api.api.turn.sendMessage, {
+			t.mutation(api.turn.sendMessage, {
 				runId: state.runId,
 				personaId: "no-such-persona",
 				message: "hi",
@@ -425,73 +416,97 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 			}),
 		);
 
-		const bHistory = await t.query(api.api.simulations.getPersonaHistory, {
+		const bHistory = await t.query(api.simulations.getPersonaHistory, {
 			runId: b.runId,
 			personaId: "A",
 		});
 		expect(bHistory.messages).toEqual([]);
 
-		const bExport = await t.query(api.api.simulations.exportRun, {
+		const bExport = await t.query(api.simulations.exportRun, {
 			runId: b.runId,
 		});
 		expect(JSON.stringify(bExport)).not.toContain("run A private message");
 	});
-
-	// Tests that every state-mutating turn/simulation function is declared internal rather than public.
-	it("keeps every state-mutating turn/simulation function declared internal, not public", async () => {
-		const [turnSource, simulationsSource] = await Promise.all([
-			import("./turn?raw").then((m) => m.default as string),
-			import("./simulations?raw").then((m) => m.default as string),
-		]);
-
-		const publicExports = (source: string): string[] =>
-			[...source.matchAll(/export const (\w+) = (\w+)\(/g)]
-				.filter(([, , kind]) => !kind!.startsWith("internal"))
-				.map(([, name]) => name!)
-				.sort();
-
-		expect(publicExports(turnSource)).toEqual(["sendMessage"]);
-		expect(publicExports(simulationsSource)).toEqual([
-			"exportRun",
-			"get",
-			"getPersonaHistory",
-			"start",
-		]);
-	});
 });
 
-describe("every export in the admin-facing api/ modules is gated or internal", () => {
+describe("the registered-function surface", () => {
+	// Raw source of every non-test, non-generated module under convex/, keyed by path relative to convex/.
+	const sources = Object.fromEntries(
+		Object.entries(
+			import.meta.glob(["./**/*.ts", "!./**/*.test.ts", "!./_generated/**"], {
+				query: "?raw",
+				import: "default",
+				eager: true,
+			}) as Record<string, string>,
+		).map(([path, source]) => [path.replace(/^(\.\.\/|\.\/)/, ""), source]),
+	);
+
+	// Files that hold plain logic and must never register a function (the admin wrapper builders are the one exception).
+	const isLogicFile = (path: string) => /^(services|lib|models)\//.test(path);
+	const BUILDER_FILE = "services/adminFunctions.ts";
+
 	const ADMIN_WRAPPERS = new Set([
 		"adminQuery",
 		"adminMutation",
 		"superAdminMutation",
 	]);
-	const UNGATED_EXCEPTIONS = new Set(["admins.viewer"]);
+	const PUBLIC_WRAPPERS = new Set(["query", "mutation", "action"]);
+	// The only functions anyone can call without being an admin: the student flow and the sign-in check.
+	const ANONYMOUS_SURFACE = [
+		"admins.viewer",
+		"simulations.exportRun",
+		"simulations.get",
+		"simulations.getPersonaHistory",
+		"simulations.start",
+		"turn.sendMessage",
+	];
 
-	// Tests that every export in the admins/cases/uploads/files modules uses an admin wrapper or is internal.
-	it("uses an admin wrapper, or is internal, for every export in admins/cases/uploads/files", async () => {
-		const moduleNames = ["admins", "cases", "uploads", "files"];
-		const sources = await Promise.all(
-			moduleNames.map((name) =>
-				import(`./${name}.ts?raw`).then((m) => m.default as string),
-			),
-		);
+	// Lists every `export const name = wrapper(` in the top-level modules as module.name plus its wrapper.
+	function registeredExports() {
+		return Object.entries(sources)
+			.filter(([path]) => !isLogicFile(path))
+			.flatMap(([path, source]) =>
+				[...source.matchAll(/export const (\w+) = (\w+)\(/g)].map(
+					([, name, wrapper]) => ({
+						qualified: `${path.replace(/\.ts$/, "")}.${name}`,
+						wrapper: wrapper!,
+					}),
+				),
+			);
+	}
 
-		const ungated: string[] = [];
-		moduleNames.forEach((moduleName, i) => {
-			for (const [, name, wrapper] of sources[i]!.matchAll(
-				/export const (\w+) = (\w+)\(/g,
-			)) {
-				const qualified = `${moduleName}.${name}`;
-				if (UNGATED_EXCEPTIONS.has(qualified)) {
-					expect(wrapper).toBe("query");
-					continue;
-				}
-				if (!ADMIN_WRAPPERS.has(wrapper!) && !wrapper!.startsWith("internal")) {
-					ungated.push(`${qualified} (${wrapper})`);
-				}
-			}
-		});
+	// Tests that exactly the pinned functions are callable without being an admin.
+	it("lets only the pinned student-flow and viewer functions be called anonymously", () => {
+		const anonymous = registeredExports()
+			.filter(({ wrapper }) => PUBLIC_WRAPPERS.has(wrapper))
+			.map(({ qualified }) => qualified)
+			.sort();
+		expect(anonymous).toEqual(ANONYMOUS_SURFACE);
+	});
+
+	// Tests that every other registered function is an admin function or internal, and no unknown wrapper is used.
+	it("gates every other registered function behind an admin wrapper or makes it internal", () => {
+		const ungated = registeredExports()
+			.filter(
+				({ wrapper }) =>
+					!PUBLIC_WRAPPERS.has(wrapper) &&
+					!ADMIN_WRAPPERS.has(wrapper) &&
+					!wrapper.startsWith("internal"),
+			)
+			.map(({ qualified, wrapper }) => `${qualified} (${wrapper})`);
 		expect(ungated).toEqual([]);
+	});
+
+	// Tests that no function is registered in services, lib or models, so the public surface is always a top-level module.
+	it("registers no functions in services, lib or models", () => {
+		const offenders = Object.entries(sources)
+			.filter(([path]) => isLogicFile(path) && path !== BUILDER_FILE)
+			.filter(([, source]) =>
+				/(?<![.\w])(query|mutation|action|httpAction|internalQuery|internalMutation|internalAction)\(/.test(
+					source.replace(/\/\/.*$/gm, ""),
+				),
+			)
+			.map(([path]) => path);
+		expect(offenders).toEqual([]);
 	});
 });

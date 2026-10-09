@@ -7,7 +7,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 	// Tests that an unauthenticated caller is rejected.
 	it("rejects an unauthenticated caller", async () => {
 		const t = newTestConvex();
-		await expect(t.query(api.api.admins.listAll, {})).rejects.toThrow(
+		await expect(t.query(api.admins.listAll, {})).rejects.toThrow(
 			"Not signed in.",
 		);
 	});
@@ -16,7 +16,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 	it("rejects a signed-in Google user with no matching admins row", async () => {
 		const t = newTestConvex();
 		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
-		await expect(asStranger.query(api.api.admins.listAll, {})).rejects.toThrow(
+		await expect(asStranger.query(api.admins.listAll, {})).rejects.toThrow(
 			"Your account is not authorized.",
 		);
 	});
@@ -26,7 +26,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "admin" });
 		await withAdmin(t, { email: "b@test.caselab.invalid", role: "admin" });
-		const admins = await asUser.query(api.api.admins.listAll, {});
+		const admins = await asUser.query(api.admins.listAll, {});
 		expect(admins).toHaveLength(2);
 	});
 
@@ -35,7 +35,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "admin" });
 		await expect(
-			asUser.mutation(api.api.admins.create, {
+			asUser.mutation(api.admins.create, {
 				email: "new@test.caselab.invalid",
 				role: "admin",
 			}),
@@ -46,7 +46,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 	it("allows a super admin to create another admin", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
-		const created = await asUser.mutation(api.api.admins.create, {
+		const created = await asUser.mutation(api.admins.create, {
 			email: "new@test.caselab.invalid",
 			role: "admin",
 		});
@@ -59,7 +59,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		const { asUser } = await withAdmin(t, { role: "super" });
 		await withAdmin(t, { email: "dup@test.caselab.invalid" });
 		await expect(
-			asUser.mutation(api.api.admins.create, {
+			asUser.mutation(api.admins.create, {
 				email: "dup@test.caselab.invalid",
 				role: "admin",
 			}),
@@ -94,7 +94,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 			email: "s2@test.caselab.invalid",
 		});
 		await expect(
-			asUser.mutation(api.api.admins.deleteWithCascade, {
+			asUser.mutation(api.admins.deleteWithCascade, {
 				adminId: otherSuperId,
 			}),
 		).rejects.toThrow("Super admins cannot be deleted.");
@@ -109,7 +109,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		});
 		const caseId = await seedCase(t, ownerId);
 
-		const result = await asUser.mutation(api.api.admins.deleteWithCascade, {
+		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
 		expect(result).toEqual({ ok: true, casesDeleted: 1, casesReassigned: 0 });
@@ -131,7 +131,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 			ctx.db.insert("collaborators", { caseId, adminId: collabId }),
 		);
 
-		const result = await asUser.mutation(api.api.admins.deleteWithCascade, {
+		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
 		expect(result).toEqual({ ok: true, casesDeleted: 0, casesReassigned: 1 });
@@ -165,7 +165,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 			}),
 		);
 
-		const result = await asUser.mutation(api.api.admins.deleteWithCascade, {
+		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
 		expect(result).toEqual({ ok: true, casesDeleted: 1, casesReassigned: 0 });
@@ -180,7 +180,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 			email: "owner@test.caselab.invalid",
 		});
 
-		await asUser.mutation(api.api.admins.deleteWithCascade, {
+		await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
 

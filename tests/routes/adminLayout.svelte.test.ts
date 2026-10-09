@@ -171,7 +171,7 @@ describe("admin layout viewer gate", () => {
 		viewer = {
 			data: undefined,
 			isLoading: false,
-			error: clientServerError("api/admins:viewer", "Q"),
+			error: clientServerError("admins:viewer", "Q"),
 		};
 		render(AdminLayout, { props: { children } });
 		expect(

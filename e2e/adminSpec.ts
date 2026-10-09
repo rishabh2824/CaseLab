@@ -73,7 +73,7 @@ test("a non-super admin visiting /admin/admins redirects to /admin", async ({
 });
 
 // Tests that /admin/edit lists cases from the API and deleting one removes it from the list.
-test("/admin/edit lists cases from api/cases:listAll and deleting one removes it", async ({
+test("/admin/edit lists cases from cases:listAll and deleting one removes it", async ({
 	page,
 }) => {
 	let cases = [
@@ -85,14 +85,11 @@ test("/admin/edit lists cases from api/cases:listAll and deleting one removes it
 		caseDoc({ _id: "case2", name: "Acme Corp", accessCode: "acme" }),
 	];
 	await mockApi(page, {
-		queries: [{ name: "api/cases:listAll", args: {}, data: cases }],
+		queries: [{ name: "cases:listAll", args: {}, data: cases }],
 		mutations: {
-			"api/cases:deleteCase": async (
-				args: { caseId: string },
-				{ setQuery },
-			) => {
+			"cases:deleteCase": async (args: { caseId: string }, { setQuery }) => {
 				cases = cases.filter((c) => c._id !== args.caseId);
-				await setQuery("api/cases:listAll", {}, { data: cases });
+				await setQuery("cases:listAll", {}, { data: cases });
 			},
 		},
 	});
@@ -119,7 +116,7 @@ test("creating a case submits the expected payload", async ({ page }) => {
 	let createArgs: Record<string, unknown> | undefined;
 	await mockApi(page, {
 		mutations: {
-			"api/cases:create": (args: Record<string, unknown>) => {
+			"cases:create": (args: Record<string, unknown>) => {
 				createArgs = args;
 				return { caseId: "new-case-id" };
 			},
@@ -174,13 +171,13 @@ test("editing a case populates the form and the save updates the existing case",
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/cases:getForEdit",
+				name: "cases:getForEdit",
 				args: { caseId: "case7" },
 				data: caseDoc({ _id: "case7" }),
 			},
 		],
 		mutations: {
-			"api/cases:update": (args: Record<string, unknown>) => {
+			"cases:update": (args: Record<string, unknown>) => {
 				updateArgs = args;
 				return { caseId: "case7" };
 			},
@@ -293,9 +290,9 @@ test("the admins page lists admins, adds one, and deletes one with a summary", a
 	];
 	let createArgs: Record<string, unknown> | undefined;
 	await mockApi(page, {
-		queries: [{ name: "api/admins:listAll", args: {}, data: admins }],
+		queries: [{ name: "admins:listAll", args: {}, data: admins }],
 		mutations: {
-			"api/admins:create": async (
+			"admins:create": async (
 				args: { email: string; name?: string; role: "super" | "admin" },
 				{ setQuery },
 			) => {
@@ -309,15 +306,15 @@ test("the admins page lists admins, adds one, and deletes one with a summary", a
 				admins = [...admins, created].sort((a, b) =>
 					(a.email as string).localeCompare(b.email as string),
 				);
-				await setQuery("api/admins:listAll", {}, { data: admins });
+				await setQuery("admins:listAll", {}, { data: admins });
 				return created;
 			},
-			"api/admins:deleteWithCascade": async (
+			"admins:deleteWithCascade": async (
 				args: { adminId: string },
 				{ setQuery },
 			) => {
 				admins = admins.filter((a) => a._id !== args.adminId);
-				await setQuery("api/admins:listAll", {}, { data: admins });
+				await setQuery("admins:listAll", {}, { data: admins });
 				return { ok: true, casesDeleted: 1, casesReassigned: 2 };
 			},
 		},
@@ -356,7 +353,7 @@ test("double-clicking Submit creates the case once, not twice", async ({
 	let createCalls = 0;
 	await mockApi(page, {
 		mutations: {
-			"api/cases:create": async () => {
+			"cases:create": async () => {
 				createCalls++;
 				await new Promise((resolve) => setTimeout(resolve, 300));
 				return { caseId: "new-case-id" };
@@ -394,9 +391,9 @@ test("a server-rejected delete keeps the case in the list and explains why", asy
 		}),
 	];
 	await mockApi(page, {
-		queries: [{ name: "api/cases:listAll", args: {}, data: cases }],
+		queries: [{ name: "cases:listAll", args: {}, data: cases }],
 		mutations: {
-			"api/cases:deleteCase": () => {
+			"cases:deleteCase": () => {
 				throw new Error("This case has an active simulation in progress.");
 			},
 		},
@@ -422,7 +419,7 @@ test("a server-rejected save keeps the admin's draft on screen", async ({
 }) => {
 	await mockApi(page, {
 		mutations: {
-			"api/cases:create": () => {
+			"cases:create": () => {
 				throw new Error(
 					"An access code with this value already exists on another case.",
 				);

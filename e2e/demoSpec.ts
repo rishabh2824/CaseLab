@@ -8,12 +8,12 @@ test("the demo list opens a read-only view of the chosen case", async ({
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/cases:listDemos",
+				name: "cases:listDemos",
 				args: {},
 				data: [{ _id: "case5", name: "Sterling Industries" }],
 			},
 			{
-				name: "api/cases:getDemo",
+				name: "cases:getDemo",
 				args: { caseId: "case5" },
 				data: caseDoc({ _id: "case5", isDemo: true, accessCode: undefined }),
 			},
@@ -37,7 +37,7 @@ test("a failed demo-case load surfaces an inline error", async ({ page }) => {
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/cases:getDemo",
+				name: "cases:getDemo",
 				args: { caseId: "case5" },
 				error: "Failed to load demo.",
 			},
@@ -54,9 +54,7 @@ test("a case that is not a demo shows a plain message, not an error", async ({
 	page,
 }) => {
 	await mockApi(page, {
-		queries: [
-			{ name: "api/cases:getDemo", args: { caseId: "case5" }, data: null },
-		],
+		queries: [{ name: "cases:getDemo", args: { caseId: "case5" }, data: null }],
 	});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
 	await page.goto("/admin/new/demo/case5");
@@ -71,7 +69,7 @@ test("the demo list shows an empty state when there are no demo cases", async ({
 	page,
 }) => {
 	await mockApi(page, {
-		queries: [{ name: "api/cases:listDemos", args: {}, data: [] }],
+		queries: [{ name: "cases:listDemos", args: {}, data: [] }],
 	});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
 	await page.goto("/admin/new/demo");
@@ -88,16 +86,16 @@ test("a super admin can toggle a case as a demo, a regular admin cannot", async 
 }) => {
 	let cases = [caseDoc({ _id: "case1", isDemo: false })];
 	await mockApi(page, {
-		queries: [{ name: "api/cases:listAll", args: {}, data: cases }],
+		queries: [{ name: "cases:listAll", args: {}, data: cases }],
 		mutations: {
-			"api/cases:setDemo": async (
+			"cases:setDemo": async (
 				args: { caseId: string; isDemo: boolean },
 				{ setQuery },
 			) => {
 				cases = cases.map((c) =>
 					c._id === args.caseId ? { ...c, isDemo: args.isDemo } : c,
 				);
-				await setQuery("api/cases:listAll", {}, { data: cases });
+				await setQuery("cases:listAll", {}, { data: cases });
 			},
 		},
 	});
@@ -113,7 +111,7 @@ test("a super admin can toggle a case as a demo, a regular admin cannot", async 
 
 	const regular = await browser.newPage();
 	await mockApi(regular, {
-		queries: [{ name: "api/cases:listAll", args: {}, data: cases }],
+		queries: [{ name: "cases:listAll", args: {}, data: cases }],
 	});
 	await signInAsAdmin(regular, { role: ADMIN_ROLE.ADMIN });
 	await regular.goto("/admin/edit");
@@ -126,12 +124,12 @@ test("choosing a template seeds a new case form", async ({ page }) => {
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/cases:listAll",
+				name: "cases:listAll",
 				args: {},
 				data: [caseDoc({ _id: "case5" })],
 			},
 			{
-				name: "api/cases:getForEdit",
+				name: "cases:getForEdit",
 				args: { caseId: "case5" },
 				data: caseDoc({ _id: "case5" }),
 			},
@@ -152,7 +150,7 @@ test("the template picker shows an empty state when there are no cases", async (
 	page,
 }) => {
 	await mockApi(page, {
-		queries: [{ name: "api/cases:listAll", args: {}, data: [] }],
+		queries: [{ name: "cases:listAll", args: {}, data: [] }],
 	});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
 	await page.goto("/admin/new/template");

@@ -554,14 +554,14 @@ describe("the concurrency guard is the real serialization point", () => {
 			vi.fn(() => new Promise(() => {})),
 		);
 
-		await t.mutation(api.api.turn.sendMessage, {
+		await t.mutation(api.turn.sendMessage, {
 			runId: state.runId,
 			personaId: "A",
 			message: "first message",
 		});
 
 		await expect(
-			t.mutation(api.api.turn.sendMessage, {
+			t.mutation(api.turn.sendMessage, {
 				runId: state.runId,
 				personaId: "A",
 				message: "second message",
@@ -583,7 +583,7 @@ describe("the concurrency guard is the real serialization point", () => {
 		);
 		stub({ replyText: "reply" });
 
-		await t.mutation(api.api.turn.sendMessage, {
+		await t.mutation(api.turn.sendMessage, {
 			runId: state.runId,
 			personaId: "A",
 			message: "to A",
@@ -633,7 +633,7 @@ describe("a stuck reply is failed by expiry", () => {
 		await insertPendingReply(t, state.runId, "A", "first message");
 
 		await expect(
-			t.mutation(api.api.turn.sendMessage, {
+			t.mutation(api.turn.sendMessage, {
 				runId: state.runId,
 				personaId: "A",
 				message: "second message",
@@ -647,7 +647,7 @@ describe("a stuck reply is failed by expiry", () => {
 		const state = await startRun(t);
 		const replyId = await insertPendingReply(t, state.runId, "A", "first");
 
-		await t.mutation(internal.api.turn.failTurn, { replyId });
+		await t.mutation(internal.turn.failTurn, { replyId });
 
 		expect((await lastReply(t, state.runId, "A"))?.status).toBe("failed");
 		expect(await visibleMessages(t, state.runId, "A")).toEqual([]);
@@ -663,7 +663,7 @@ describe("a stuck reply is failed by expiry", () => {
 		const t = newTestConvex();
 		const state = await startRun(t);
 		const replyId = await insertPendingReply(t, state.runId, "A", "first");
-		await t.mutation(internal.api.turn.failTurn, { replyId });
+		await t.mutation(internal.turn.failTurn, { replyId });
 
 		await t.run((ctx) =>
 			applyDecisions(
@@ -691,7 +691,7 @@ describe("a stuck reply is failed by expiry", () => {
 			vi.fn(() => new Promise(() => {})),
 		);
 
-		const { replyId } = await t.mutation(api.api.turn.sendMessage, {
+		const { replyId } = await t.mutation(api.turn.sendMessage, {
 			runId: state.runId,
 			personaId: "A",
 			message: "hi",

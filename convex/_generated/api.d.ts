@@ -8,13 +8,10 @@
  * @module
  */
 
-import type * as api_admins from "../api/admins.js";
-import type * as api_cases from "../api/cases.js";
-import type * as api_files from "../api/files.js";
-import type * as api_simulations from "../api/simulations.js";
-import type * as api_turn from "../api/turn.js";
-import type * as api_uploads from "../api/uploads.js";
+import type * as admins from "../admins.js";
 import type * as auth from "../auth.js";
+import type * as cases from "../cases.js";
+import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_llm from "../lib/llm.js";
@@ -31,7 +28,10 @@ import type * as services_files from "../services/files.js";
 import type * as services_simulationReads from "../services/simulationReads.js";
 import type * as services_simulations from "../services/simulations.js";
 import type * as services_turn from "../services/turn.js";
+import type * as simulations from "../simulations.js";
 import type * as testFactories from "../testFactories.js";
+import type * as turn from "../turn.js";
+import type * as uploads from "../uploads.js";
 
 import type {
   ApiFromModules,
@@ -40,13 +40,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  "api/admins": typeof api_admins;
-  "api/cases": typeof api_cases;
-  "api/files": typeof api_files;
-  "api/simulations": typeof api_simulations;
-  "api/turn": typeof api_turn;
-  "api/uploads": typeof api_uploads;
+  admins: typeof admins;
   auth: typeof auth;
+  cases: typeof cases;
+  files: typeof files;
   http: typeof http;
   "lib/constants": typeof lib_constants;
   "lib/llm": typeof lib_llm;
@@ -63,7 +60,10 @@ declare const fullApi: ApiFromModules<{
   "services/simulationReads": typeof services_simulationReads;
   "services/simulations": typeof services_simulations;
   "services/turn": typeof services_turn;
+  simulations: typeof simulations;
   testFactories: typeof testFactories;
+  turn: typeof turn;
+  uploads: typeof uploads;
 }>;
 
 /**

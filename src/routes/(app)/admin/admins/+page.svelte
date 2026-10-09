@@ -14,10 +14,10 @@ const ROLE_LABELS: Record<AdminRole, string> = {
 	admin: "Admin",
 };
 
-const adminsQuery = useQuery(api.api.admins.listAll, {});
+const adminsQuery = useQuery(api.admins.listAll, {});
 const admins = $derived(adminsQuery.data ?? []);
-const createAdmin = useMutation(api.api.admins.create);
-const deleteAdmin = useMutation(api.api.admins.deleteWithCascade);
+const createAdmin = useMutation(api.admins.create);
+const deleteAdmin = useMutation(api.admins.deleteWithCascade);
 
 const viewer = getViewerContext();
 const isSuperAdmin = $derived(viewer.data?.role === "super");

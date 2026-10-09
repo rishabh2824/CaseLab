@@ -1,13 +1,10 @@
 import { ConvexError, v } from "convex/values";
-import {
-	personaPayloadValidator,
-	referralEdgeValidator,
-} from "../models/cases";
+import { personaPayloadValidator, referralEdgeValidator } from "./models/cases";
 import {
 	adminMutation,
 	adminQuery,
 	superAdminMutation,
-} from "../services/adminFunctions";
+} from "./services/adminFunctions";
 import {
 	createCase,
 	deleteCase as deleteCaseWithAccess,
@@ -15,7 +12,7 @@ import {
 	listDemoCases,
 	loadCaseForAccess,
 	updateCase,
-} from "../services/cases";
+} from "./services/cases";
 
 // Lists the cases flagged as demos, by id and name only.
 export const listDemos = adminQuery({

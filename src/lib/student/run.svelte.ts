@@ -7,21 +7,16 @@ import { session } from "../session.svelte.js";
 import type { ChatMessage, Contact, SharedFile } from "../types.js";
 import { personaAvailability } from "./availability.js";
 
-export const startSimulationRef = makeFunctionReference<"mutation">(
-	"api/simulations:start",
-);
+export const startSimulationRef =
+	makeFunctionReference<"mutation">("simulations:start");
 export const exportRunRef = makeFunctionReference<"query">(
-	"api/simulations:exportRun",
+	"simulations:exportRun",
 );
-const getSimulationStateRef = makeFunctionReference<"query">(
-	"api/simulations:get",
-);
+const getSimulationStateRef = makeFunctionReference<"query">("simulations:get");
 const getPersonaHistoryRef = makeFunctionReference<"query">(
-	"api/simulations:getPersonaHistory",
+	"simulations:getPersonaHistory",
 );
-const sendMessageRef = makeFunctionReference<"mutation">(
-	"api/turn:sendMessage",
-);
+const sendMessageRef = makeFunctionReference<"mutation">("turn:sendMessage");
 
 import {
 	STUDENT_ERROR,

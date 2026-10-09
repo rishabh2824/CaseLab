@@ -17,7 +17,7 @@ type Props = {
 
 let { caseId }: Props = $props();
 
-const caseQuery = useQuery(api.api.cases.getDemo, () => ({ caseId }));
+const caseQuery = useQuery(api.cases.getDemo, () => ({ caseId }));
 
 const parsedStructure = $derived(parseCaseStructure(caseQuery.data?.structure));
 const personas = $derived(parsedStructure.personas);

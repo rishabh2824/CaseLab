@@ -14,7 +14,7 @@ type UploadedFileRef = Exclude<FileRefPayload, null>;
 // Requests the given number of upload URLs from Convex.
 async function generateUploadUrls(count: number): Promise<string[]> {
 	if (count === 0) return [];
-	return await getConvexClient().mutation(api.api.uploads.generateUploadUrls, {
+	return await getConvexClient().mutation(api.uploads.generateUploadUrls, {
 		count,
 	});
 }
@@ -108,7 +108,7 @@ async function discardNewUploads(
 	if (uploaded.size === 0) return;
 	const storageIds = [...uploaded.values()].map((ref) => ref.storageId);
 	try {
-		await getConvexClient().mutation(api.api.uploads.discardUploads, {
+		await getConvexClient().mutation(api.uploads.discardUploads, {
 			storageIds,
 		});
 	} catch {}
@@ -158,13 +158,13 @@ export async function submitCase({
 
 	try {
 		if (editCaseId !== null) {
-			return await getConvexClient().mutation(api.api.cases.update, {
+			return await getConvexClient().mutation(api.cases.update, {
 				caseId: editCaseId as Id<"cases">,
 				...scalars,
 			});
 		}
 
-		return await getConvexClient().mutation(api.api.cases.create, scalars);
+		return await getConvexClient().mutation(api.cases.create, scalars);
 	} catch (err) {
 		await discardNewUploads(uploaded);
 		throw err;

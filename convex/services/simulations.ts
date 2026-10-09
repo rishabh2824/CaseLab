@@ -226,7 +226,7 @@ export async function startSimulation(
 		sharedFiles: [],
 		personaChatState: {},
 	});
-	await ctx.scheduler.runAt(expiresAt, internal.api.simulations.destroy, {
+	await ctx.scheduler.runAt(expiresAt, internal.simulations.destroy, {
 		runId,
 	});
 

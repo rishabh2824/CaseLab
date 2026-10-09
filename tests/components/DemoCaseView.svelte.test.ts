@@ -78,7 +78,7 @@ describe("DemoCaseView", () => {
 
 	// Tests that a real-shaped redacted error falls back to the friendly message.
 	it("shows a friendly message when the query fails", () => {
-		stubQuery({ error: clientServerError("api/cases:getDemo", "Q") });
+		stubQuery({ error: clientServerError("cases:getDemo", "Q") });
 		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(
 			screen.getByText("Failed to load the demo case."),

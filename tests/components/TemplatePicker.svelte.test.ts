@@ -14,9 +14,7 @@ vi.mock("convex-svelte", async () => {
 	return {
 		useQuery: (...args: unknown[]) => mockUseQuery(...args),
 		useMutation: (ref: Parameters<typeof getFunctionName>[0]) =>
-			getFunctionName(ref) === "api/cases:setDemo"
-				? mockSetDemo
-				: mockDeleteCase,
+			getFunctionName(ref) === "cases:setDemo" ? mockSetDemo : mockDeleteCase,
 	};
 });
 

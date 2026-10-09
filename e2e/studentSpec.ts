@@ -16,13 +16,13 @@ test("student enters an access code and messages a persona", async ({
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => runState(),
+			"simulations:start": () => runState(),
 		},
 		turn: turnHandler({
 			reply: "Our current vendor is Acme Supplies.",
@@ -53,7 +53,7 @@ test("student enters an access code and messages a persona", async ({
 test("an invalid access code surfaces an inline error", async ({ page }) => {
 	await mockApi(page, {
 		mutations: {
-			"api/simulations:start": () => {
+			"simulations:start": () => {
 				throw studentError(
 					STUDENT_ERROR.INVALID_ACCESS_CODE,
 					"Invalid access code.",
@@ -77,7 +77,7 @@ test("an empty access code shows the inline error without a request", async ({
 	let mutationCalled = false;
 	await mockApi(page, {
 		mutations: {
-			"api/simulations:start": () => {
+			"simulations:start": () => {
 				mutationCalled = true;
 				return runState();
 			},
@@ -97,13 +97,13 @@ test("the access code is lower-cased before being sent", async ({ page }) => {
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": (args: { accessCode: string }) => {
+			"simulations:start": (args: { accessCode: string }) => {
 				sentAccessCode = args.accessCode;
 				return runState();
 			},
@@ -126,13 +126,13 @@ test("a reload mid-run resumes from the persisted runId instead of starting a ne
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => {
+			"simulations:start": () => {
 				startCalls++;
 				return runState();
 			},
@@ -158,7 +158,7 @@ test("an expired run sends the student home instead of starting a new run", asyn
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				error: {
 					code: STUDENT_ERROR.RUN_EXPIRED,
@@ -167,7 +167,7 @@ test("an expired run sends the student home instead of starting a new run", asyn
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => {
+			"simulations:start": () => {
 				startCalls++;
 				return runState({ runId: "testrun123" });
 			},
@@ -191,13 +191,13 @@ test("typing over the word limit blocks Send without sending a message", async (
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => runState(),
+			"simulations:start": () => runState(),
 		},
 		turn: () => {
 			turnCalled = true;
@@ -225,13 +225,13 @@ test("a referral unlock adds the new contact and fires a toast", async ({
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => runState(),
+			"simulations:start": () => runState(),
 		},
 		turn: turnHandler({
 			reply: "I'll connect you with Bob.",
@@ -267,13 +267,13 @@ test("a shared file appears in the file list and fires a toast", async ({
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => runState(),
+			"simulations:start": () => runState(),
 		},
 		turn: turnHandler({
 			reply: "Here's the vendor contract.",
@@ -306,13 +306,13 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => runState(),
+			"simulations:start": () => runState(),
 		},
 		turn: turnHandler({
 			reply: "I'm done talking to you.",
@@ -356,12 +356,12 @@ test("an unavailable contact cannot be selected or messaged", async ({
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: state,
 			},
 		],
-		mutations: { "api/simulations:start": () => state },
+		mutations: { "simulations:start": () => state },
 	});
 
 	await page.goto("/");
@@ -384,13 +384,13 @@ test("a failed reply drops the student's message and shows a toast", async ({
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => runState(),
+			"simulations:start": () => runState(),
 		},
 		turn: turnHandler({ reply: null }),
 	});
@@ -420,12 +420,12 @@ test("notes autosave writes to sessionStorage after a debounce, never to the bac
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
-		mutations: { "api/simulations:start": () => runState() },
+		mutations: { "simulations:start": () => runState() },
 	});
 
 	await page.goto("/");
@@ -451,12 +451,12 @@ test("exporting the PDF requests the export payload and triggers a download", as
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 			{
-				name: "api/simulations:exportRun",
+				name: "simulations:exportRun",
 				args: { runId: "testrun123" },
 				data: {
 					case: { id: "case1", caseName: "Sterling Industries" },
@@ -471,7 +471,7 @@ test("exporting the PDF requests the export payload and triggers a download", as
 				},
 			},
 		],
-		mutations: { "api/simulations:start": () => runState() },
+		mutations: { "simulations:start": () => runState() },
 	});
 
 	await page.goto("/");
@@ -493,7 +493,7 @@ test("a non-expiry backend error surfaces an inline alert instead of a silently 
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				error: {
 					code: STUDENT_ERROR.CASE_NOT_FOUND,
@@ -501,7 +501,7 @@ test("a non-expiry backend error surfaces an inline alert instead of a silently 
 				},
 			},
 		],
-		mutations: { "api/simulations:start": () => runState() },
+		mutations: { "simulations:start": () => runState() },
 	});
 
 	await page.goto("/");
@@ -519,13 +519,13 @@ test("a rejected turn re-enables the composer so the student can retry", async (
 	await mockApi(page, {
 		queries: [
 			{
-				name: "api/simulations:get",
+				name: "simulations:get",
 				args: { runId: "testrun123" },
 				data: runState(),
 			},
 		],
 		mutations: {
-			"api/simulations:start": () => runState(),
+			"simulations:start": () => runState(),
 		},
 		turn: () => {
 			throw studentError(

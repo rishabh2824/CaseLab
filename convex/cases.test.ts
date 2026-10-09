@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { api } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
-import { newTestConvex, withAdmin, withStranger } from "../test.setup";
+import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import { newTestConvex, withAdmin, withStranger } from "./test.setup";
 import {
 	caseStructure,
 	personaPayload,
 	uniqueAccessCode,
-} from "../testFactories";
+} from "./testFactories";
 
 type T = ReturnType<typeof newTestConvex>;
 
@@ -42,7 +42,7 @@ describe("cases.listDemos", () => {
 		});
 		await seedCase(t, owner.adminId, { name: "Private" });
 
-		const demos = await other.asUser.query(api.api.cases.listDemos, {});
+		const demos = await other.asUser.query(api.cases.listDemos, {});
 		expect(demos).toEqual([
 			{ _id: alpha, name: "Alpha" },
 			{ _id: zed, name: "Zed" },
@@ -58,7 +58,7 @@ describe("cases.getDemo", () => {
 		const other = await withAdmin(t, { email: "other@test.caselab.invalid" });
 		const caseId = await seedCase(t, owner.adminId, { isDemo: true });
 
-		const demo = await other.asUser.query(api.api.cases.getDemo, { caseId });
+		const demo = await other.asUser.query(api.cases.getDemo, { caseId });
 		expect(demo?._id).toBe(caseId);
 		expect(demo?.name).toBe("Demo Case");
 		expect(demo).not.toHaveProperty("accessCode");
@@ -71,9 +71,7 @@ describe("cases.getDemo", () => {
 		const owner = await withAdmin(t, { email: "owner@test.caselab.invalid" });
 		const other = await withAdmin(t, { email: "other@test.caselab.invalid" });
 		const caseId = await seedCase(t, owner.adminId);
-		expect(
-			await other.asUser.query(api.api.cases.getDemo, { caseId }),
-		).toBeNull();
+		expect(await other.asUser.query(api.cases.getDemo, { caseId })).toBeNull();
 	});
 
 	// Tests that a deleted case returns null rather than failing.
@@ -82,7 +80,7 @@ describe("cases.getDemo", () => {
 		const { asUser, adminId } = await withAdmin(t);
 		const caseId = await seedCase(t, adminId, { isDemo: true });
 		await t.run((ctx) => ctx.db.delete("cases", caseId));
-		expect(await asUser.query(api.api.cases.getDemo, { caseId })).toBeNull();
+		expect(await asUser.query(api.cases.getDemo, { caseId })).toBeNull();
 	});
 
 	// Tests that a malformed id returns null rather than failing.
@@ -90,7 +88,7 @@ describe("cases.getDemo", () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t);
 		expect(
-			await asUser.query(api.api.cases.getDemo, { caseId: "not-an-id" }),
+			await asUser.query(api.cases.getDemo, { caseId: "not-an-id" }),
 		).toBeNull();
 	});
 
@@ -100,9 +98,9 @@ describe("cases.getDemo", () => {
 		const owner = await withAdmin(t);
 		const caseId = await seedCase(t, owner.adminId, { isDemo: true });
 		const stranger = await withStranger(t);
-		await expect(
-			stranger.query(api.api.cases.getDemo, { caseId }),
-		).rejects.toThrow("Your account is not authorized.");
+		await expect(stranger.query(api.cases.getDemo, { caseId })).rejects.toThrow(
+			"Your account is not authorized.",
+		);
 	});
 });
 
@@ -117,16 +115,16 @@ describe("cases.setDemo", () => {
 		});
 		const caseId = await seedCase(t, owner.adminId);
 
-		await boss.asUser.mutation(api.api.cases.setDemo, { caseId, isDemo: true });
-		expect(await boss.asUser.query(api.api.cases.listDemos, {})).toEqual([
+		await boss.asUser.mutation(api.cases.setDemo, { caseId, isDemo: true });
+		expect(await boss.asUser.query(api.cases.listDemos, {})).toEqual([
 			{ _id: caseId, name: "Demo Case" },
 		]);
 
-		await boss.asUser.mutation(api.api.cases.setDemo, {
+		await boss.asUser.mutation(api.cases.setDemo, {
 			caseId,
 			isDemo: false,
 		});
-		expect(await boss.asUser.query(api.api.cases.listDemos, {})).toEqual([]);
+		expect(await boss.asUser.query(api.cases.listDemos, {})).toEqual([]);
 	});
 
 	// Tests that a regular admin, even the owner of the case, cannot change the flag.
@@ -135,7 +133,7 @@ describe("cases.setDemo", () => {
 		const owner = await withAdmin(t);
 		const caseId = await seedCase(t, owner.adminId);
 		await expect(
-			owner.asUser.mutation(api.api.cases.setDemo, { caseId, isDemo: true }),
+			owner.asUser.mutation(api.cases.setDemo, { caseId, isDemo: true }),
 		).rejects.toThrow("Only a super admin can do this.");
 		const stored = await t.run((ctx) => ctx.db.get("cases", caseId));
 		expect(stored?.isDemo).toBe(false);
@@ -148,7 +146,7 @@ describe("cases.setDemo", () => {
 		const caseId = await seedCase(t, boss.adminId);
 		await t.run((ctx) => ctx.db.delete("cases", caseId));
 		await expect(
-			boss.asUser.mutation(api.api.cases.setDemo, { caseId, isDemo: true }),
+			boss.asUser.mutation(api.cases.setDemo, { caseId, isDemo: true }),
 		).rejects.toThrow("Case not found.");
 	});
 });
@@ -158,7 +156,7 @@ describe("cases.create", () => {
 	it("returns the new case id and records the caller as owner", async () => {
 		const t = newTestConvex();
 		const { asUser, adminId } = await withAdmin(t);
-		const { caseId } = await asUser.mutation(api.api.cases.create, {
+		const { caseId } = await asUser.mutation(api.cases.create, {
 			name: "New Case",
 			brief: "Brief",
 			commonInformation: "",
@@ -180,7 +178,7 @@ describe("cases.update", () => {
 		const t = newTestConvex();
 		const { asUser, adminId } = await withAdmin(t);
 		const caseId = await seedCase(t, adminId, { isDemo: true });
-		await asUser.mutation(api.api.cases.update, {
+		await asUser.mutation(api.cases.update, {
 			caseId,
 			name: "Renamed",
 			brief: "Brief",
@@ -204,7 +202,7 @@ describe("cases.listAll", () => {
 		const { asUser, adminId } = await withAdmin(t);
 		await seedCase(t, adminId, { name: "A", isDemo: true });
 		await seedCase(t, adminId, { name: "B" });
-		const list = await asUser.query(api.api.cases.listAll, {});
+		const list = await asUser.query(api.cases.listAll, {});
 		expect(list.map((c) => [c.name, c.isDemo])).toEqual([
 			["A", true],
 			["B", false],

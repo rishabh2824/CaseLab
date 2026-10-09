@@ -4,7 +4,7 @@ import {
 	internalMutation,
 	internalQuery,
 	mutation,
-} from "../_generated/server";
+} from "./_generated/server";
 import {
 	applyBoundary as applyBoundaryService,
 	applyDecisions as applyDecisionsService,
@@ -12,7 +12,7 @@ import {
 	loadTurn,
 	runReply,
 	sendMessage as sendMessageService,
-} from "../services/turn";
+} from "./services/turn";
 
 // Saves a student message with a pending reply and starts generating the reply.
 export const sendMessage = mutation({

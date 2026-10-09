@@ -1,14 +1,14 @@
 import { v } from "convex/values";
-import { query } from "../_generated/server";
-import { authComponent } from "../auth";
-import { adminRole } from "../schema";
-import { adminQuery, superAdminMutation } from "../services/adminFunctions";
+import { query } from "./_generated/server";
+import { authComponent } from "./auth";
+import { adminRole } from "./schema";
+import { adminQuery, superAdminMutation } from "./services/adminFunctions";
 import {
 	createAdmin,
 	deleteAdminWithCascade,
 	getAdminByEmail,
 	listAdmins,
-} from "../services/admins";
+} from "./services/admins";
 
 // Returns the signed-in admin's basic profile, or null for anonymous and non-admin callers.
 export const viewer = query({

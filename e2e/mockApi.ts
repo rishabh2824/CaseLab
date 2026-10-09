@@ -47,14 +47,14 @@ export type MockApiConfig = {
 	turn?: ConvexHandler;
 };
 
-// Installs the mock Convex backend on a page: seeds queries and routes mutations and actions to handlers; turn handles api/turn:sendMessage.
+// Installs the mock Convex backend on a page: seeds queries and routes mutations and actions to handlers; turn handles turn:sendMessage.
 export async function mockApi(
 	page: Page,
 	config: MockApiConfig,
 ): Promise<void> {
 	const { queries = [], actions = {}, turn } = config;
 	const mutations = turn
-		? { ...config.mutations, "api/turn:sendMessage": turn }
+		? { ...config.mutations, "turn:sendMessage": turn }
 		: (config.mutations ?? {});
 
 	await page.route("**/api/auth/**", (route) => route.abort());
@@ -160,7 +160,7 @@ export async function signInAsAdmin(
 			w.__e2eConvexSeed = [
 				...(w.__e2eConvexSeed ?? []),
 				{
-					name: "api/admins:viewer",
+					name: "admins:viewer",
 					args: {},
 					data: { email: adminEmail, role: adminRole },
 				},
@@ -185,7 +185,7 @@ export const runState = (overrides: Parameters<typeof makeRunState>[0] = {}) =>
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 let turnCounter = 0;
-// Builds an api/turn:sendMessage handler that simulates a reply by pushing the persona history: pending, then done or failed.
+// Builds a turn:sendMessage handler that simulates a reply by pushing the persona history: pending, then done or failed.
 export function turnHandler({
 	reply,
 	history = [],
@@ -207,7 +207,7 @@ export function turnHandler({
 			status: "pending" | "done" | "failed",
 		) =>
 			setQuery(
-				"api/simulations:getPersonaHistory",
+				"simulations:getPersonaHistory",
 				{ runId, personaId },
 				{ data: { messages, reply: { id: replyId, status } } },
 			);
@@ -222,7 +222,7 @@ export function turnHandler({
 		}
 		await push([...asked, { role: "assistant", content: reply }], "done");
 		if (nextRunState) {
-			await setQuery("api/simulations:get", { runId }, { data: nextRunState });
+			await setQuery("simulations:get", { runId }, { data: nextRunState });
 		}
 		return { replyId };
 	};

@@ -50,7 +50,7 @@ export async function syncCaseFiles(
 	for (const row of existingRows) {
 		if (!desiredStorageIds.has(row.storageId)) {
 			await ctx.db.delete(row._id);
-			await ctx.scheduler.runAfter(0, internal.api.files.cleanupOrphanedFile, {
+			await ctx.scheduler.runAfter(0, internal.files.cleanupOrphanedFile, {
 				storageId: row.storageId,
 			});
 		}
