@@ -23,8 +23,6 @@ class FakeRun {
 		brief: string;
 	} | null>({ case_name: "Sterling Industries", brief: "Reduce costs." });
 	totalDurationSeconds = $state<number | null>(null);
-	streamingPreview = $state<string | null>(null);
-	pendingMessage = $state<string | null>(null);
 	activeMessages = $state<ChatMessage[]>([]);
 	contacts = $state<ReturnType<typeof makeDisplayContact>[]>([]);
 	sharedFiles = $state<{ file_id: string; file_name: string; url: string }[]>(
@@ -198,22 +196,21 @@ describe("chat pane", () => {
 		expect(screen.getByText("Chat history is empty.")).toBeInTheDocument();
 	});
 
-	// Tests that messages and the in-flight reply are rendered in order.
-	it("renders the history and the streaming reply", () => {
+	// Tests that messages are rendered in order.
+	it("renders the history in order", () => {
 		run.activeMessages = [
 			{ role: "user", content: "Hi Mary" },
 			{ role: "assistant", content: "Hello." },
 		];
-		run.streamingPreview = "Typing a rep";
 		render(StudentPage);
 		expect(screen.getByText("Hi Mary")).toBeInTheDocument();
 		expect(screen.getByText("Hello.")).toBeInTheDocument();
-		expect(screen.getByText("Typing a rep")).toBeInTheDocument();
 	});
 
-	// Tests that the student's unsaved message shows in an empty chat before the reply.
-	it("shows the student's pending message before the reply has been saved", () => {
-		run.pendingMessage = "What vendor do we use?";
+	// Tests that the student's message shows in an otherwise empty chat while its reply is pending.
+	it("shows the student's message while its reply is pending", () => {
+		run.activeMessages = [{ role: "user", content: "What vendor do we use?" }];
+		run.isSending = true;
 		render(StudentPage);
 		expect(screen.getByText("What vendor do we use?")).toBeInTheDocument();
 		expect(

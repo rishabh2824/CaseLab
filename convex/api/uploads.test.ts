@@ -52,8 +52,8 @@ describe("generateUploadUrls (batched)", () => {
 });
 
 describe("discardUploads (undoing a failed create/update's uploads)", () => {
-	// Tests that discardUploads deletes a storage object that no files row claims.
-	it("deletes a storage object no `files` row claims", async () => {
+	// Tests that discardUploads deletes a storage object that no case claims.
+	it("deletes a storage object no case claims", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t);
 		const storageId = await t.run((ctx) =>
@@ -69,20 +69,31 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 		).toBeNull();
 	});
 
-	// Tests that discardUploads leaves a storage object alone once a files row claims it.
-	it("leaves a storage object alone once a `files` row claims it", async () => {
+	// Tests that discardUploads leaves a storage object alone once a case claims it.
+	it("leaves a storage object alone once a case claims it", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t);
 		const storageId = await t.run((ctx) =>
 			ctx.storage.store(new Blob(["claimed"])),
 		);
-		await t.run((ctx) =>
-			ctx.db.insert("files", {
-				storageId,
-				name: "claimed.pdf",
-				contentType: "application/pdf",
+		const owner = await t.run((ctx) =>
+			ctx.db.insert("admins", {
+				email: "owner@test.caselab.invalid",
+				role: "admin",
 			}),
 		);
+		const caseId = await t.run((ctx) =>
+			ctx.db.insert("cases", {
+				name: "Case",
+				brief: "Brief",
+				commonInformation: "",
+				accessCode: "claimcode",
+				ownerAdminId: owner,
+				isDemo: false,
+				structure: { personas: [], referrals: [], roots: [] },
+			}),
+		);
+		await t.run((ctx) => ctx.db.insert("caseFiles", { caseId, storageId }));
 
 		await asUser.mutation(api.api.uploads.discardUploads, {
 			storageIds: [storageId],

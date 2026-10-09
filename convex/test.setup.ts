@@ -1,9 +1,9 @@
 /// <reference types="vite/client" />
 
 import betterAuthTest from "@convex-dev/better-auth/test";
-import persistentTextStreaming from "@convex-dev/persistent-text-streaming/test";
 import { convexTest } from "convex-test";
-import { components } from "./_generated/api";
+import { vi } from "vitest";
+import { api, components } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { studentErrorData } from "./lib/studentErrors";
 import schema from "./schema";
@@ -14,22 +14,76 @@ const modules = import.meta.glob(["./**/*.*s", "!./**/*.test.*s"]);
 export function newTestConvex() {
 	const t = convexTest(schema, modules);
 	betterAuthTest.register(t);
-	persistentTextStreaming.register(t);
 	return t;
 }
 
-// Sends a message through the /turn-stream endpoint and returns its response.
+// Waits until a reply is no longer pending, failing if it takes too long.
+export async function settleReply(
+	t: ReturnType<typeof newTestConvex>,
+	replyId: Id<"runMessages">,
+): Promise<void> {
+	await vi.waitFor(
+		async () => {
+			const row = await t.run((ctx) => ctx.db.get("runMessages", replyId));
+			if (row?.status === "pending") throw new Error("Reply is still pending.");
+		},
+		{ timeout: 5000, interval: 5 },
+	);
+}
+
+// Sends a student message, waits for the reply to settle and returns the reply row id.
 export async function sendTurn(
 	t: ReturnType<typeof newTestConvex>,
 	runId: Id<"runs">,
 	personaId: string,
 	message: string,
-): Promise<{ status: number; text: string }> {
-	const response = await t.fetch("/turn-stream", {
-		method: "POST",
-		body: JSON.stringify({ runId, personaId, message }),
+): Promise<Id<"runMessages">> {
+	const { replyId } = await t.mutation(api.api.turn.sendMessage, {
+		runId,
+		personaId,
+		message,
 	});
-	return { status: response.status, text: await response.text() };
+	await settleReply(t, replyId);
+	return replyId;
+}
+
+// Returns the state of the latest reply for a persona, or null if there is none.
+export async function lastReply(
+	t: ReturnType<typeof newTestConvex>,
+	runId: Id<"runs">,
+	personaId: string,
+) {
+	const history = await t.query(api.api.simulations.getPersonaHistory, {
+		runId,
+		personaId,
+	});
+	return history.reply;
+}
+
+// Inserts a student message with a pending reply, without starting a reply, and returns the reply id.
+export async function insertPendingReply(
+	t: ReturnType<typeof newTestConvex>,
+	runId: Id<"runs">,
+	personaId: string,
+	message: string,
+) {
+	return await t.run(async (ctx) => {
+		const userMessageId = await ctx.db.insert("runMessages", {
+			runId,
+			personaKey: personaId,
+			role: "user",
+			content: message,
+			status: "done",
+		});
+		return await ctx.db.insert("runMessages", {
+			runId,
+			personaKey: personaId,
+			role: "assistant",
+			content: "",
+			status: "pending",
+			userMessageId,
+		});
+	});
 }
 
 // Creates a Better Auth user and session for an email and returns a test client acting as them.

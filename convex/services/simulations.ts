@@ -1,9 +1,7 @@
-import type { StreamId } from "@convex-dev/persistent-text-streaming";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { RUN_LIFETIME_MINUTES } from "../lib/constants";
-import { streaming } from "../lib/streaming";
 import { STUDENT_ERROR, studentError } from "../lib/studentErrors";
 import {
 	type ChatStateMap,
@@ -134,36 +132,47 @@ export type SharedFileOut = {
 	url: string | null;
 };
 
-// Builds the student-facing shared file with its URL, or null if the file is gone.
+// Builds the student-facing shared file with its URL, or null if the upload is gone.
 async function toSharedFileOut(
 	ctx: QueryCtx | MutationCtx,
-	fileId: Id<"files">,
+	storageId: Id<"_storage">,
+	fileName: string | undefined,
 ): Promise<SharedFileOut | null> {
-	const file = await ctx.db.get(fileId);
-	if (!file) return null;
+	const stored = await ctx.db.system.get("_storage", storageId);
+	if (!stored) return null;
 	return {
-		file_id: fileId,
-		file_name: file.name,
-		content_type: file.contentType ?? null,
-		url: await fileUrl(ctx, file.storageId),
+		file_id: storageId,
+		file_name: fileName ?? "file",
+		content_type: stored.contentType ?? null,
+		url: await fileUrl(ctx, storageId),
 	};
 }
 
 export type ChatMessageOut = { role: "user" | "assistant"; content: string };
+export type ReplyStatusOut = {
+	id: Id<"runMessages">;
+	status: "pending" | "done" | "failed";
+} | null;
 
-// Loads a persona's chat messages for a run as role/content pairs.
-async function queryPersonaMessages(
+// Loads a persona's message rows for a run, oldest first.
+async function queryPersonaRows(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 	personaId: string,
-): Promise<ChatMessageOut[]> {
-	const rows = await ctx.db
+): Promise<Doc<"runMessages">[]> {
+	return await ctx.db
 		.query("runMessages")
 		.withIndex("by_run_persona", (q) =>
 			q.eq("runId", runId).eq("personaKey", personaId),
 		)
 		.collect();
-	return rows.map((row) => ({ role: row.role, content: row.content }));
+}
+
+// Reduces message rows to role/content pairs, hiding pending and failed replies.
+function toChatMessages(rows: Doc<"runMessages">[]): ChatMessageOut[] {
+	return rows
+		.filter((row) => row.role === "user" || row.status === "done")
+		.map((row) => ({ role: row.role, content: row.content }));
 }
 
 export type RunStateOut = {
@@ -178,11 +187,11 @@ export type RunStateOut = {
 	shared_files: SharedFileOut[];
 };
 
-// Starts a run for an access code, schedules its destruction and returns its initial state.
+// Starts a run for an access code and schedules its destruction. The run state is read with getSimulationState.
 export async function startSimulation(
 	ctx: MutationCtx,
 	accessCodeRaw: string,
-): Promise<RunStateOut> {
+): Promise<{ run_id: Id<"runs"> }> {
 	const accessCode = normalizeAccessCode(accessCodeRaw);
 	if (!accessCode)
 		throw studentError(
@@ -205,11 +214,6 @@ export async function startSimulation(
 			STUDENT_ERROR.NO_PERSONAS,
 			"This case has no personas configured.",
 		);
-	const rootPersonas = await Promise.all(
-		graphRootPersonas(graph).map((persona) => hydratePersona(ctx, persona)),
-	);
-
-	const contacts = buildContacts({}, {}, rootPersonas);
 
 	const startTime = Date.now();
 	const expiresAt = computeExpiresAt(startTime, c.duration);
@@ -224,39 +228,38 @@ export async function startSimulation(
 		runId,
 	});
 
-	return {
-		run_id: runId,
-		case: {
-			id: c._id,
-			case_name: c.name,
-			brief: c.brief,
-			simulation_duration: c.duration ?? null,
-		},
-		contacts,
-		shared_files: [],
-	};
+	return { run_id: runId };
 }
 
-// Loads a run and its case, throwing student errors if the run is missing, expired or orphaned.
-export async function loadLiveRun(
+// Loads a run and its case, throwing student errors if the run or its case is missing. Reads no clock, so it is safe in queries: the scheduled destroy is what ends a run.
+export async function loadRun(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 ): Promise<{ run: Doc<"runs">; c: Doc<"cases"> }> {
 	const run = await ctx.db.get(runId);
 	if (!run) throw studentError(STUDENT_ERROR.RUN_NOT_FOUND, "Run not found.");
-	if (Date.now() > run.expiresAt)
-		throw studentError(STUDENT_ERROR.RUN_EXPIRED, "Run expired.");
 	const c = await ctx.db.get(run.caseId);
 	if (!c) throw studentError(STUDENT_ERROR.CASE_NOT_FOUND, "Case not found.");
 	return { run, c };
 }
 
-// Returns a live run's case summary, contacts and shared files.
+// Like loadRun, but also rejects a run past its expiry, covering the gap before the scheduled destroy fires. Mutations only.
+export async function loadLiveRun(
+	ctx: MutationCtx,
+	runId: Id<"runs">,
+): Promise<{ run: Doc<"runs">; c: Doc<"cases"> }> {
+	const loaded = await loadRun(ctx, runId);
+	if (Date.now() > loaded.run.expiresAt)
+		throw studentError(STUDENT_ERROR.RUN_EXPIRED, "Run expired.");
+	return loaded;
+}
+
+// Returns a run's case summary, contacts and shared files.
 export async function getSimulationState(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 ): Promise<RunStateOut> {
-	const { run, c } = await loadLiveRun(ctx, runId);
+	const { run, c } = await loadRun(ctx, runId);
 	const graph = flattenPersonas(c.structure);
 	const rootPersonas = await Promise.all(
 		graphRootPersonas(graph).map((persona) => hydratePersona(ctx, persona)),
@@ -273,9 +276,20 @@ export async function getSimulationState(
 		rootPersonas,
 		referredPersonas,
 	);
+	const fileNames = new Map(
+		c.structure.personas.flatMap((persona) =>
+			persona.files.flatMap((entry) =>
+				entry.file
+					? [[entry.file.storage_id, entry.file.file_name] as const]
+					: [],
+			),
+		),
+	);
 	const sharedFiles = (
 		await Promise.all(
-			run.sharedFiles.map((fileId) => toSharedFileOut(ctx, fileId)),
+			run.sharedFiles.map((storageId) =>
+				toSharedFileOut(ctx, storageId, fileNames.get(storageId)),
+			),
 		)
 	).filter((file): file is SharedFileOut => file !== null);
 
@@ -292,13 +306,19 @@ export async function getSimulationState(
 	};
 }
 
-// Returns the chat history between the student and one persona.
+// Returns the chat history between the student and one persona, plus the state of the latest reply.
 export async function getPersonaHistory(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 	personaId: string,
-): Promise<ChatMessageOut[]> {
-	return await queryPersonaMessages(ctx, runId, personaId);
+): Promise<{ messages: ChatMessageOut[]; reply: ReplyStatusOut }> {
+	const rows = await queryPersonaRows(ctx, runId, personaId);
+	const last = rows.at(-1);
+	return {
+		messages: toChatMessages(rows),
+		reply:
+			last?.role === "assistant" ? { id: last._id, status: last.status } : null,
+	};
 }
 
 export type ExportPersonaOut = {
@@ -317,7 +337,7 @@ export async function exportSimulation(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 ): Promise<ExportSimulationOut> {
-	const { run, c } = await loadLiveRun(ctx, runId);
+	const { run, c } = await loadRun(ctx, runId);
 	const graph = flattenPersonas(c.structure);
 	const referredIds = referredContactIds(
 		graph,
@@ -328,7 +348,14 @@ export async function exportSimulation(
 	const personas = await Promise.all(
 		personaIds.map(async (personaId): Promise<ExportPersonaOut> => {
 			const persona = graph.personas.get(personaId);
-			const messages = await queryPersonaMessages(ctx, runId, personaId);
+			const rows = await queryPersonaRows(ctx, runId, personaId);
+			const last = rows.at(-1);
+			// A student message whose reply is still pending is left out of the export.
+			const messages = toChatMessages(
+				last?.role === "assistant" && last.status === "pending"
+					? rows.slice(0, -2)
+					: rows,
+			);
 			return {
 				id: personaId,
 				name: persona?.name ?? "",
@@ -341,7 +368,7 @@ export async function exportSimulation(
 	return { case: { id: c._id, case_name: c.name }, personas };
 }
 
-// Deletes a run together with its messages and turn streams; safe to call on a missing run.
+// Deletes a run together with its messages; safe to call on a missing run.
 export async function deleteRunCascade(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
@@ -353,15 +380,6 @@ export async function deleteRunCascade(
 		.withIndex("by_run_persona", (q) => q.eq("runId", runId))
 		.collect();
 	for (const message of messages) await ctx.db.delete(message._id);
-
-	const turns = await ctx.db
-		.query("turnStreams")
-		.withIndex("by_run_persona", (q) => q.eq("runId", runId))
-		.collect();
-	for (const turn of turns) {
-		await streaming.deleteStream(ctx, turn.streamId as StreamId);
-		await ctx.db.delete(turn._id);
-	}
 
 	await ctx.db.delete(runId);
 }

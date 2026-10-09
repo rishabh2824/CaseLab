@@ -1,5 +1,4 @@
-import type { StreamId } from "@convex-dev/persistent-text-streaming";
-import { components, internal } from "../_generated/api";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
 import { MAX_MESSAGE_WORDS } from "../lib/constants";
@@ -19,8 +18,6 @@ import {
 	replyInstructions,
 	systemPrompt,
 } from "../lib/prompt";
-import { ReplyExtractor } from "../lib/replyStream";
-import { streaming } from "../lib/streaming";
 import { STUDENT_ERROR, studentError } from "../lib/studentErrors";
 import {
 	boundaryReply,
@@ -36,7 +33,11 @@ import {
 	type PersonaDetail,
 	type PersonaGraph,
 } from "./simulationReads";
-import { loadLiveRun } from "./simulations";
+import { loadLiveRun, loadRun } from "./simulations";
+
+// How long a reply may stay pending before it is failed. Covers the slowest LLM attempts plus a margin.
+export const TURN_EXPIRY_MS =
+	LLM_ATTEMPT_TIMEOUT_MS * PERSONA_REPLY_RETRIES + 10_000;
 
 // Builds the student error for a persona that isn't available yet.
 const personaUnavailable = () =>
@@ -45,29 +46,28 @@ const personaUnavailable = () =>
 		"Persona is not available yet.",
 	);
 
-// Inserts a chat message for a persona in a run.
-async function appendMessage(
-	ctx: MutationCtx,
+// Returns the newest message row for a persona in a run.
+async function lastRow(
+	ctx: QueryCtx,
 	runId: Id<"runs">,
 	personaId: string,
-	role: "user" | "assistant",
-	content: string,
-): Promise<Id<"runMessages">> {
-	return await ctx.db.insert("runMessages", {
-		runId,
-		personaKey: personaId,
-		role,
-		content,
-	});
+): Promise<Doc<"runMessages"> | null> {
+	return await ctx.db
+		.query("runMessages")
+		.withIndex("by_run_persona", (q) =>
+			q.eq("runId", runId).eq("personaKey", personaId),
+		)
+		.order("desc")
+		.first();
 }
 
-// Validates a student's message and the persona's availability, claims the persona's reply slot and gathers the reply context.
-export async function startTurn(
+// Validates a student message, saves it with a pending reply row and schedules the reply and its expiry.
+export async function sendMessage(
 	ctx: MutationCtx,
 	runId: Id<"runs">,
 	personaId: string,
 	rawMessage: string,
-): Promise<ClaimedTurn> {
+): Promise<{ replyId: Id<"runMessages"> }> {
 	const message = rawMessage.trim();
 	if (!personaId || !message)
 		throw studentError(
@@ -112,76 +112,35 @@ export async function startTurn(
 		throw personaUnavailable();
 	}
 
-	const slot = await claimTurnSlot(ctx, runId, personaId);
-	const context = await buildTurnContext(ctx, run, c, graph, persona);
-	return { ...slot, runId, personaId, message, context };
-}
-
-export const STREAMING_SLOT_STALE_MS =
-	LLM_ATTEMPT_TIMEOUT_MS * PERSONA_REPLY_RETRIES;
-
-type TurnStreamStatus = "pending" | "streaming" | "done" | "error" | "timeout";
-
-// Returns the persistent-streaming status of a reply stream.
-async function streamStatus(
-	ctx: QueryCtx | MutationCtx,
-	streamId: string,
-): Promise<TurnStreamStatus> {
-	return await ctx.runQuery(
-		components.persistentTextStreaming.lib.getStreamStatus,
-		{ streamId },
-	);
-}
-
-// Creates a reply stream for the persona, rejecting if a fresh open one exists and reclaiming a stale one.
-async function claimTurnSlot(
-	ctx: MutationCtx,
-	runId: Id<"runs">,
-	personaId: string,
-): Promise<{ turnId: Id<"turnStreams">; streamId: string }> {
-	const existing = await ctx.db
-		.query("turnStreams")
-		.withIndex("by_run_persona", (q) =>
-			q.eq("runId", runId).eq("personaKey", personaId),
-		)
-		.first();
-	const now = Date.now();
-	if (existing) {
-		const status = await streamStatus(ctx, existing.streamId);
-		const open = status === "pending" || status === "streaming";
-		if (open && now - existing.startedAt < STREAMING_SLOT_STALE_MS) {
-			throw studentError(
-				STUDENT_ERROR.REPLY_IN_PROGRESS,
-				"A reply is already being generated for this contact. Please wait.",
-			);
-		}
-		await streaming.deleteStream(ctx, existing.streamId as StreamId);
+	const previous = await lastRow(ctx, runId, personaId);
+	if (previous?.role === "assistant" && previous.status === "pending") {
+		throw studentError(
+			STUDENT_ERROR.REPLY_IN_PROGRESS,
+			"A reply is already being generated for this contact. Please wait.",
+		);
 	}
-	const turn = {
-		streamId: await streaming.createStream(ctx),
-		startedAt: now,
-		settled: false,
-	};
-	if (existing) {
-		await ctx.db.patch(existing._id, turn);
-		return { turnId: existing._id, streamId: turn.streamId };
-	}
-	const turnId = await ctx.db.insert("turnStreams", {
+
+	const userMessageId = await ctx.db.insert("runMessages", {
 		runId,
 		personaKey: personaId,
-		...turn,
+		role: "user",
+		content: message,
+		status: "done",
 	});
-	return { turnId, streamId: turn.streamId };
+	const replyId = await ctx.db.insert("runMessages", {
+		runId,
+		personaKey: personaId,
+		role: "assistant",
+		content: "",
+		status: "pending",
+		userMessageId,
+	});
+	await ctx.scheduler.runAfter(0, internal.api.turn.reply, { replyId });
+	await ctx.scheduler.runAfter(TURN_EXPIRY_MS, internal.api.turn.failTurn, {
+		replyId,
+	});
+	return { replyId };
 }
-
-export type ClaimedTurn = {
-	turnId: Id<"turnStreams">;
-	streamId: string;
-	runId: Id<"runs">;
-	personaId: string;
-	message: string;
-	context: TurnContext;
-};
 
 type PendingReferral = {
 	referredPersonaId: string;
@@ -190,7 +149,7 @@ type PendingReferral = {
 	referredRole: string;
 };
 type PendingFile = {
-	fileId: Id<"files">;
+	storageId: Id<"_storage">;
 	fileName: string;
 	shareConditions: string;
 	perceivedContents: string;
@@ -199,20 +158,29 @@ type DecisionMessage = { role: "user" | "assistant"; content: string };
 
 export type TurnContext = {
 	caseBrief: string;
-	commonInformation: string | null;
+	commonInformation: string;
 	persona: PersonaDetail;
 	pendingReferrals: PendingReferral[];
 	pendingFiles: PendingFile[];
 	decisionHistory: DecisionMessage[];
 };
 
-// Gathers the pending referrals and files and the recent history needed to generate a persona's reply.
+export type ReplyJob = {
+	replyId: Id<"runMessages">;
+	runId: Id<"runs">;
+	personaId: string;
+	message: string;
+	context: TurnContext;
+};
+
+// Gathers the pending referrals and files and the history before the student message needed to generate a reply.
 async function buildTurnContext(
-	ctx: MutationCtx,
+	ctx: QueryCtx,
 	run: Doc<"runs">,
 	c: Doc<"cases">,
 	graph: PersonaGraph,
 	persona: PersonaDetail,
+	beforeCreationTime: number,
 ): Promise<TurnContext> {
 	const pendingReferrals: PendingReferral[] = graphReferrals(graph, persona.id)
 		.filter(
@@ -231,34 +199,33 @@ async function buildTurnContext(
 			};
 		});
 
-	const pendingFiles: PendingFile[] = (
-		await Promise.all(
-			persona.files
-				.filter((entry) => entry.file && entry.share_conditions.trim())
-				.map(async (entry) => {
-					const file = entry.file!;
-					const row = await ctx.db
-						.query("files")
-						.withIndex("by_storage_id", (q) =>
-							q.eq("storageId", file.storage_id),
-						)
-						.first();
-					if (!row || run.sharedFiles.includes(row._id)) return null;
-					return {
-						fileId: row._id,
-						fileName: file.file_name || "file",
-						shareConditions: entry.share_conditions,
-						perceivedContents: entry.perceived_contents,
-					};
-				}),
+	const pendingFiles: PendingFile[] = persona.files.flatMap((entry) => {
+		const file = entry.file;
+		if (
+			!file ||
+			!entry.share_conditions.trim() ||
+			run.sharedFiles.includes(file.storage_id)
 		)
-	).filter((f): f is PendingFile => f !== null);
+			return [];
+		return [
+			{
+				storageId: file.storage_id,
+				fileName: file.file_name || "file",
+				shareConditions: entry.share_conditions,
+				perceivedContents: entry.perceived_contents,
+			},
+		];
+	});
 
 	const rows = await ctx.db
 		.query("runMessages")
 		.withIndex("by_run_persona", (q) =>
-			q.eq("runId", run._id).eq("personaKey", persona.id),
+			q
+				.eq("runId", run._id)
+				.eq("personaKey", persona.id)
+				.lt("_creationTime", beforeCreationTime),
 		)
+		.filter((q) => q.eq(q.field("status"), "done"))
 		.order("desc")
 		.take(RECENT_HISTORY_LIMIT);
 	rows.reverse();
@@ -276,26 +243,81 @@ async function buildTurnContext(
 	};
 }
 
-// Records a warning or chat-ending boundary reply for a flagged message and settles the turn.
+// Loads what the reply action needs for a pending reply, or null if it already finished or was failed.
+export async function loadTurn(
+	ctx: QueryCtx,
+	replyId: Id<"runMessages">,
+): Promise<ReplyJob | null> {
+	const reply = await ctx.db.get("runMessages", replyId);
+	if (reply?.status !== "pending" || !reply.userMessageId) return null;
+	const userRow = await ctx.db.get("runMessages", reply.userMessageId);
+	if (!userRow) return null;
+
+	const { run, c } = await loadRun(ctx, reply.runId);
+	const graph = flattenPersonas(c.structure);
+	const persona = graph.personas.get(reply.personaKey);
+	if (!persona) return null;
+	const context = await buildTurnContext(
+		ctx,
+		run,
+		c,
+		graph,
+		persona,
+		userRow._creationTime,
+	);
+	return {
+		replyId,
+		runId: run._id,
+		personaId: persona.id,
+		message: userRow.content,
+		context,
+	};
+}
+
+// Returns the reply row if it is still pending, otherwise null so late callers do nothing.
+async function pendingReply(
+	ctx: MutationCtx,
+	replyId: Id<"runMessages">,
+): Promise<Doc<"runMessages"> | null> {
+	const reply = await ctx.db.get("runMessages", replyId);
+	return reply?.status === "pending" ? reply : null;
+}
+
+// Fails a pending reply: removes the student message and keeps a hidden failed row so the client can tell.
+export async function failTurn(
+	ctx: MutationCtx,
+	replyId: Id<"runMessages">,
+): Promise<void> {
+	const reply = await pendingReply(ctx, replyId);
+	if (!reply) return;
+	if (reply.userMessageId)
+		await ctx.db.delete("runMessages", reply.userMessageId);
+	await ctx.db.patch("runMessages", replyId, {
+		status: "failed",
+		userMessageId: undefined,
+	});
+}
+
+// Records a warning or chat-ending boundary reply for a flagged message, dropping that message.
 export async function applyBoundary(
 	ctx: MutationCtx,
-	runId: Id<"runs">,
-	personaId: string,
+	replyId: Id<"runMessages">,
 	label: string,
 	personaName: string,
-	turnId: Id<"turnStreams">,
-): Promise<ChatStateOut> {
-	const run = await ctx.db.get(runId);
-	if (!run) throw new Error("Run not found.");
+): Promise<ChatStateOut | null> {
+	const reply = await pendingReply(ctx, replyId);
+	if (!reply) return null;
+	const run = await ctx.db.get("runs", reply.runId);
+	if (!run) return null;
 
-	const previous = getChatState(run.personaChatState, personaId);
+	const previous = getChatState(run.personaChatState, reply.personaKey);
 	const warningCount = previous.warningCount + 1;
 	const ended = warningCount >= NONSENSE_THRESHOLD;
 	const endReason = ended ? label : previous.endReason;
-	await ctx.db.patch(runId, {
+	await ctx.db.patch("runs", run._id, {
 		personaChatState: {
 			...run.personaChatState,
-			[personaId]: {
+			[reply.personaKey]: {
 				warningCount,
 				ended,
 				endReason: endReason ?? undefined,
@@ -303,29 +325,31 @@ export async function applyBoundary(
 		},
 	});
 
-	const reply = boundaryReply(personaName, ended);
-	await appendMessage(ctx, runId, personaId, "assistant", reply);
-	await ctx.db.patch(turnId, { settled: true });
-
+	if (reply.userMessageId)
+		await ctx.db.delete("runMessages", reply.userMessageId);
+	await ctx.db.patch("runMessages", replyId, {
+		content: boundaryReply(personaName, ended),
+		status: "done",
+		userMessageId: undefined,
+	});
 	return { ended, endReason: endReason ?? null, warningCount };
 }
 
 export type UnlockedReferral = { referredPersonaId: string };
-export type SharedFileInput = { fileId: Id<"files"> };
+export type SharedFileInput = { storageId: Id<"_storage"> };
 
-// Saves the student's message and the reply, unlocks the introduced personas, records shared files and settles the turn.
+// Saves the finished reply, unlocks the introduced personas and records shared files.
 export async function applyDecisions(
 	ctx: MutationCtx,
-	runId: Id<"runs">,
-	personaId: string,
-	message: string,
-	reply: string,
+	replyId: Id<"runMessages">,
+	replyText: string,
 	unlockedReferrals: UnlockedReferral[],
 	sharedFiles: SharedFileInput[],
-	turnId: Id<"turnStreams">,
 ): Promise<void> {
-	const run = await ctx.db.get(runId);
-	if (!run) throw new Error("Run not found.");
+	const reply = await pendingReply(ctx, replyId);
+	if (!reply) return;
+	const run = await ctx.db.get("runs", reply.runId);
+	if (!run) return;
 
 	const elapsed = elapsedMinutes(run._creationTime, Date.now());
 	const unlockedAt = { ...run.unlockedAt };
@@ -335,61 +359,41 @@ export async function applyDecisions(
 	}
 
 	const sharedFileIds = new Set(run.sharedFiles);
-	for (const file of sharedFiles) sharedFileIds.add(file.fileId);
+	for (const file of sharedFiles) sharedFileIds.add(file.storageId);
 
-	await ctx.db.patch(runId, {
+	await ctx.db.patch("runs", run._id, {
 		unlockedAt,
 		sharedFiles: [...sharedFileIds],
 	});
-	await appendMessage(ctx, runId, personaId, "user", message);
-	await appendMessage(ctx, runId, personaId, "assistant", reply);
-	await ctx.db.patch(turnId, { settled: true });
+	await ctx.db.patch("runMessages", replyId, {
+		content: replyText,
+		status: "done",
+	});
 }
 
-export type TurnStreamOut = {
-	streamId: string;
-	status: TurnStreamStatus;
-	settled: boolean;
-	text: string;
-} | null;
-
-// Returns a persona's reply stream state, including its text while it is still streaming if requested.
-export async function getTurnStream(
-	ctx: QueryCtx,
-	runId: Id<"runs">,
-	personaId: string,
-	withText: boolean,
-): Promise<TurnStreamOut> {
-	const row = await ctx.db
-		.query("turnStreams")
-		.withIndex("by_run_persona", (q) =>
-			q.eq("runId", runId).eq("personaKey", personaId),
-		)
-		.first();
-	if (!row) return null;
-	const turn = { streamId: row.streamId, settled: row.settled };
-	if (!withText || row.settled)
-		return { ...turn, status: await streamStatus(ctx, row.streamId), text: "" };
-	return {
-		...turn,
-		...(await streaming.getStreamBody(ctx, row.streamId as StreamId)),
-	};
-}
-
-// Runs a claimed turn: classifies the message, streams the reply and applies its decisions.
-export async function runTurn(
+// Runs a pending reply: classifies the message, generates the reply and applies its outcome, failing the turn on any error.
+export async function runReply(
 	ctx: ActionCtx,
-	{ turnId, runId, personaId, message, context }: ClaimedTurn,
-	append: (text: string) => Promise<void>,
+	replyId: Id<"runMessages">,
+): Promise<void> {
+	try {
+		const job = await ctx.runQuery(internal.api.turn.turnContext, { replyId });
+		if (job) await generateReply(ctx, job);
+	} catch (err) {
+		console.error("Reply failed", err);
+		await ctx.runMutation(internal.api.turn.failTurn, { replyId });
+	}
+}
+
+// Generates the persona reply for a job and saves it, or saves a boundary reply if the message was flagged.
+async function generateReply(
+	ctx: ActionCtx,
+	{ replyId, message, context }: ReplyJob,
 ): Promise<void> {
 	const harassmentPromise = classifyHarassment(
 		message,
 		context.decisionHistory,
 	);
-	let cleared = false;
-	void harassmentPromise.then((label) => {
-		cleared = label === "normal";
-	});
 
 	const referralByHandle = new Map<string, PendingReferral>();
 	const candidateReferrals: CandidateReferral[] = context.pendingReferrals.map(
@@ -429,9 +433,6 @@ export async function runTurn(
 	const cacheableSystemPrompt = `${replyInstructions()}\n\n---\n\n${stable}`;
 
 	let fullText = "";
-	let extractor = new ReplyExtractor();
-	let pending = "";
-	let appended = false;
 	const replyHistory = [
 		...context.decisionHistory,
 		{ role: "user" as const, content: message },
@@ -440,35 +441,19 @@ export async function runTurn(
 		{ cacheable: cacheableSystemPrompt, dynamic },
 		replyHistory,
 	)) {
-		if (delta.type === "reset") {
-			if (appended) throw new Error("Reply failed after it started streaming.");
-			fullText = "";
-			pending = "";
-			extractor = new ReplyExtractor();
-			continue;
-		}
-		fullText += delta.text;
-		pending += extractor.feed(delta.text);
-		if (cleared && pending) {
-			await append(pending);
-			pending = "";
-			appended = true;
-		}
+		if (delta.type === "reset") fullText = "";
+		else fullText += delta.text;
 	}
 
 	const label = await harassmentPromise;
 	if (label !== "normal") {
 		await ctx.runMutation(internal.api.turn.applyBoundary, {
-			runId,
-			personaId,
+			replyId,
 			label,
 			personaName: context.persona.name,
-			turnId,
 		});
 		return;
 	}
-
-	if (pending) await append(pending);
 
 	const parsed = parseReply(fullText);
 	const reply = cleanReply((parsed?.reply as string | undefined) ?? "");
@@ -482,15 +467,12 @@ export async function runTurn(
 	const sharedFiles = [...new Set(coerceHandles(parsed?.send_files))]
 		.map((handle) => fileByHandle.get(handle))
 		.filter((f): f is PendingFile => f !== undefined)
-		.map((f) => ({ fileId: f.fileId }));
+		.map((f) => ({ storageId: f.storageId }));
 
 	await ctx.runMutation(internal.api.turn.applyDecisions, {
-		runId,
-		personaId,
-		message,
+		replyId,
 		reply,
 		unlockedReferrals,
 		sharedFiles,
-		turnId,
 	});
 }

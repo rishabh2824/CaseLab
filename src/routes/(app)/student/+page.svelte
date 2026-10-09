@@ -40,7 +40,7 @@ let scrollScheduled = false;
 let lastScrollKey = "";
 $effect(() => {
 	if (!run.activeContactId) return;
-	const key = `${run.activeContactId}:${activeMessages.length}:${run.pendingMessage !== null}`;
+	const key = `${run.activeContactId}:${activeMessages.length}`;
 	const changed = untrack(() => {
 		if (key === lastScrollKey) return false;
 		lastScrollKey = key;
@@ -242,7 +242,7 @@ async function handleExportPdf(): Promise<void> {
 			<div
 				class="mt-5 max-h-[55vh] min-h-72 overflow-y-auto rounded-2xl border border-dashed border-line bg-cream/40 p-6 text-center text-sm text-stone-soft"
 			>
-				{#if activeMessages.length === 0 && !run.pendingMessage && !run.streamingPreview}
+				{#if activeMessages.length === 0}
 					Chat history is empty.
 				{:else}
 					<div class="space-y-3 text-left">
@@ -255,20 +255,6 @@ async function handleExportPdf(): Promise<void> {
 								{msg.content}
 							</div>
 						{/each}
-						{#if run.pendingMessage}
-							<div
-								class="ml-auto max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-brand-tint px-4 py-3 text-sm text-ink-soft"
-							>
-								{run.pendingMessage}
-							</div>
-						{/if}
-						{#if run.streamingPreview}
-							<div
-								class="mr-auto max-w-[85%] whitespace-pre-wrap break-words rounded-2xl border border-line bg-white px-4 py-3 text-sm text-stone"
-							>
-								{run.streamingPreview}
-							</div>
-						{/if}
 						<div bind:this={messagesEndEl}></div>
 					</div>
 				{/if}

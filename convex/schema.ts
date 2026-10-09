@@ -38,24 +38,19 @@ export default defineSchema({
 		.index("by_admin", ["adminId"])
 		.index("by_case_and_admin", ["caseId", "adminId"]),
 
-	files: defineTable({
-		storageId: v.id("_storage"),
-		name: v.string(),
-		contentType: v.optional(v.string()),
-	}).index("by_storage_id", ["storageId"]),
-
+	// One row per case that references an uploaded file; the rows count references so shared files are only deleted when none is left.
 	caseFiles: defineTable({
 		caseId: v.id("cases"),
-		fileId: v.id("files"),
+		storageId: v.id("_storage"),
 	})
 		.index("by_case", ["caseId"])
-		.index("by_file", ["fileId"]),
+		.index("by_storage_id", ["storageId"]),
 
 	runs: defineTable({
 		caseId: v.id("cases"),
 		expiresAt: v.number(),
 		unlockedAt: v.record(v.string(), v.number()),
-		sharedFiles: v.array(v.id("files")),
+		sharedFiles: v.array(v.id("_storage")),
 		personaChatState: v.record(v.string(), chatState),
 	}),
 
@@ -64,13 +59,13 @@ export default defineSchema({
 		personaKey: v.string(),
 		role: v.union(v.literal("user"), v.literal("assistant")),
 		content: v.string(),
-	}).index("by_run_persona", ["runId", "personaKey"]),
-
-	turnStreams: defineTable({
-		runId: v.id("runs"),
-		personaKey: v.string(),
-		streamId: v.string(),
-		startedAt: v.number(),
-		settled: v.boolean(),
+		// User rows are always done. An assistant row starts pending and ends done or failed.
+		status: v.union(
+			v.literal("pending"),
+			v.literal("done"),
+			v.literal("failed"),
+		),
+		// Only set on assistant rows: the student message the reply answers.
+		userMessageId: v.optional(v.id("runMessages")),
 	}).index("by_run_persona", ["runId", "personaKey"]),
 });

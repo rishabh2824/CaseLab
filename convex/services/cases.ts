@@ -8,7 +8,7 @@ import type {
 	PersonaPayload,
 	ReferralEdgePayload,
 } from "../models/cases";
-import { type ResolvedFileRef, resolveFileRefs, syncCaseFiles } from "./files";
+import { existingStorageIds, syncCaseFiles } from "./files";
 
 const ACCESS_CODE_CONFLICT =
 	"An access code with this value already exists on another case.";
@@ -248,68 +248,50 @@ export function validateGraph(
 	}
 }
 
-// Strips the internal file id from a resolved file reference.
-function toFileRefPayload(resolved: ResolvedFileRef | null): FileRefPayload {
-	if (resolved === null) return null;
-	const { fileId: _fileId, ...ref } = resolved;
-	return ref;
-}
-
-// Validates the graph, resolves its file references and returns the cleaned structure plus its file ids.
+// Validates the graph, drops file references whose upload is gone and returns the cleaned structure plus the storage ids it uses.
 export async function buildStructure(
-	ctx: MutationCtx,
+	ctx: QueryCtx,
 	personas: PersonaPayload[],
 	referrals: ReferralEdgePayload[],
 	roots: string[],
-): Promise<{ structure: CaseStructure; fileIds: Set<Id<"files">> }> {
+): Promise<{ structure: CaseStructure; storageIds: Set<Id<"_storage">> }> {
 	validateGraph(personas, referrals, roots);
 
-	const fileRefs = personas.flatMap((persona) => [
-		persona.profile_photo,
-		...persona.files.map((entry) => entry.file),
-	]);
-	const resolved = await resolveFileRefs(ctx, fileRefs);
-	const lookup = (ref: FileRefPayload): ResolvedFileRef | null =>
-		ref ? (resolved.get(ref.storage_id) ?? null) : null;
+	const present = await existingStorageIds(
+		ctx,
+		personas.flatMap((persona) => [
+			persona.profile_photo,
+			...persona.files.map((entry) => entry.file),
+		]),
+	);
+	const kept = (ref: FileRefPayload): FileRefPayload =>
+		ref && present.has(ref.storage_id) ? ref : null;
 
-	const fileIds = new Set<Id<"files">>();
-	const outPersonas = personas.map((persona) => {
-		const profilePhoto = lookup(persona.profile_photo);
-		if (profilePhoto) fileIds.add(profilePhoto.fileId);
+	const outPersonas = personas.map((persona) => ({
+		id: persona.id,
+		name: persona.name.trim(),
+		role: persona.role.trim(),
+		profile_photo: kept(persona.profile_photo),
+		known_facts: persona.known_facts,
+		personality_traits: persona.personality_traits,
+		availability_minutes: persona.availability_minutes,
+		files: persona.files.flatMap((entry) => {
+			const file = kept(entry.file);
+			return file ? [{ ...entry, file }] : [];
+		}),
+	}));
 
-		const files = persona.files.flatMap((entry) => {
-			if (!entry.file) return [];
-			const resolvedFile = lookup(entry.file);
-			if (!resolvedFile) return [];
-			fileIds.add(resolvedFile.fileId);
-			return [
-				{
-					file: toFileRefPayload(resolvedFile),
-					share_conditions: entry.share_conditions,
-					perceived_contents: entry.perceived_contents,
-				},
-			];
-		});
-
-		return {
-			id: persona.id,
-			name: persona.name.trim(),
-			role: persona.role.trim(),
-			profile_photo: toFileRefPayload(profilePhoto),
-			known_facts: persona.known_facts,
-			personality_traits: persona.personality_traits,
-			availability_minutes: persona.availability_minutes,
-			files,
-		};
-	});
-
+	const storageIds = new Set(
+		outPersonas.flatMap((persona) =>
+			[
+				persona.profile_photo,
+				...persona.files.map((entry) => entry.file),
+			].flatMap((ref) => (ref ? [ref.storage_id] : [])),
+		),
+	);
 	return {
-		structure: {
-			personas: outPersonas,
-			referrals,
-			roots,
-		},
-		fileIds,
+		structure: { personas: outPersonas, referrals, roots },
+		storageIds,
 	};
 }
 
@@ -432,7 +414,7 @@ async function resolveCasePayload(
 		structure: CaseStructure;
 	};
 	collaboratorIds: Id<"admins">[];
-	fileIds: Set<Id<"files">>;
+	storageIds: Set<Id<"_storage">>;
 }> {
 	const name = validateRequiredText(payload.name, "Case name");
 	const brief = validateRequiredText(payload.brief, "Initial brief");
@@ -448,7 +430,7 @@ async function resolveCasePayload(
 		payload.collaboratorAdminIds,
 		ownerAdminId,
 	);
-	const { structure, fileIds } = await buildStructure(
+	const { structure, storageIds } = await buildStructure(
 		ctx,
 		payload.personas,
 		payload.referrals,
@@ -457,7 +439,7 @@ async function resolveCasePayload(
 	return {
 		fields: { name, brief, commonInformation, accessCode, duration, structure },
 		collaboratorIds,
-		fileIds,
+		storageIds,
 	};
 }
 
@@ -467,7 +449,7 @@ export async function createCase(
 	payload: CasePayload,
 	admin: Doc<"admins">,
 ): Promise<Id<"cases">> {
-	const { fields, collaboratorIds, fileIds } = await resolveCasePayload(
+	const { fields, collaboratorIds, storageIds } = await resolveCasePayload(
 		ctx,
 		payload,
 		admin._id,
@@ -480,7 +462,7 @@ export async function createCase(
 	});
 
 	await replaceCollaborators(ctx, caseId, collaboratorIds);
-	await syncCaseFiles(ctx, caseId, fileIds);
+	await syncCaseFiles(ctx, caseId, storageIds);
 
 	return caseId;
 }
@@ -494,7 +476,7 @@ export async function updateCase(
 ): Promise<void> {
 	const c = await loadCaseForAccess(ctx, caseId, admin);
 
-	const { fields, collaboratorIds, fileIds } = await resolveCasePayload(
+	const { fields, collaboratorIds, storageIds } = await resolveCasePayload(
 		ctx,
 		payload,
 		c.ownerAdminId,
@@ -504,5 +486,5 @@ export async function updateCase(
 	await ctx.db.patch(caseId, fields);
 
 	await replaceCollaborators(ctx, caseId, collaboratorIds);
-	await syncCaseFiles(ctx, caseId, fileIds);
+	await syncCaseFiles(ctx, caseId, storageIds);
 }

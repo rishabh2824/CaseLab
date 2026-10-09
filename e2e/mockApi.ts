@@ -47,12 +47,15 @@ export type MockApiConfig = {
 	turn?: ConvexHandler;
 };
 
-// Installs the mock Convex backend on a page: seeds queries and routes mutations, actions and /turn-stream to handlers.
+// Installs the mock Convex backend on a page: seeds queries and routes mutations and actions to handlers; turn handles api/turn:sendMessage.
 export async function mockApi(
 	page: Page,
 	config: MockApiConfig,
 ): Promise<void> {
-	const { queries = [], mutations = {}, actions = {}, turn } = config;
+	const { queries = [], actions = {}, turn } = config;
+	const mutations = turn
+		? { ...config.mutations, "api/turn:sendMessage": turn }
+		: (config.mutations ?? {});
 
 	await page.route("**/api/auth/**", (route) => route.abort());
 
@@ -78,31 +81,6 @@ export async function mockApi(
 			[name, args, entry] as const,
 		);
 	};
-
-	await page.route("**/turn-stream", async (route) => {
-		if (!turn) return await route.abort();
-		const headers = {
-			"Access-Control-Allow-Origin": "*",
-			"Access-Control-Expose-Headers": "X-Stream-Id",
-		};
-		try {
-			const streamId = await turn(route.request().postDataJSON(), {
-				page,
-				setQuery,
-			});
-			await route.fulfill({
-				headers: { ...headers, "X-Stream-Id": String(streamId) },
-				body: "",
-			});
-		} catch (err) {
-			if (!(err instanceof MockStudentError)) throw err;
-			await route.fulfill({
-				status: 400,
-				headers,
-				json: { code: err.code, message: err.message },
-			});
-		}
-	});
 
 	await page.exposeFunction(
 		"__e2eConvexCall",
@@ -207,17 +185,15 @@ export const runState = (overrides: Parameters<typeof makeRunState>[0] = {}) =>
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
 let turnCounter = 0;
-// Builds a /turn-stream handler that simulates a turn by updating history and the reply stream, or failing it.
+// Builds an api/turn:sendMessage handler that simulates a reply by pushing the persona history: pending, then done or failed.
 export function turnHandler({
 	reply,
 	history = [],
 	nextRunState,
-	partialText,
 }: {
 	reply: string | null;
 	history?: ChatMessage[];
 	nextRunState?: ReturnType<typeof runState>;
-	partialText?: string;
 }): ConvexHandler {
 	return async (args, { setQuery }) => {
 		const { runId, personaId, message } = args as {
@@ -225,50 +201,30 @@ export function turnHandler({
 			personaId: string;
 			message: string;
 		};
-		const streamId = `e2e-stream-${++turnCounter}`;
-		const pushTurn = (turn: {
-			status: string;
-			text?: string;
-			settled?: boolean;
-		}) =>
+		const replyId = `e2e-reply-${++turnCounter}`;
+		const push = (
+			messages: ChatMessage[],
+			status: "pending" | "done" | "failed",
+		) =>
 			setQuery(
-				"api/turn:getTurnStream",
-				{ runId, personaId, withText: true },
-				{
-					data: {
-						streamId,
-						settled: false,
-						text: "",
-						...turn,
-					},
-				},
+				"api/simulations:getPersonaHistory",
+				{ runId, personaId },
+				{ data: { messages, reply: { id: replyId, status } } },
 			);
-		if (reply === null) {
-			if (partialText) {
-				await pushTurn({ status: "streaming", text: partialText });
-			}
-			await pushTurn({ status: "error" });
-			return streamId;
-		}
-
-		const split = Math.ceil(reply.length / 2);
-		await pushTurn({ status: "streaming", text: reply.slice(0, split) });
-		const withReply: ChatMessage[] = [
+		const asked: ChatMessage[] = [
 			...history,
 			{ role: "user", content: message },
-			{ role: "assistant", content: reply },
 		];
-		// The real server commits both in one transaction; settling first keeps the pending bubble and the saved copy from overlapping here.
-		await pushTurn({ status: "done", settled: true });
-		await setQuery(
-			"api/simulations:getPersonaHistory",
-			{ runId, personaId },
-			{ data: withReply },
-		);
+		await push(asked, "pending");
+		if (reply === null) {
+			await push(history, "failed");
+			return { replyId };
+		}
+		await push([...asked, { role: "assistant", content: reply }], "done");
 		if (nextRunState) {
 			await setQuery("api/simulations:get", { runId }, { data: nextRunState });
 		}
-		return streamId;
+		return { replyId };
 	};
 }
 

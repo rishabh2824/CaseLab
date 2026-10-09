@@ -53,9 +53,6 @@ export default defineConfig({
 	],
 	test: {
 		expect: { requireAssertions: true },
-		onUnhandledError: (error) =>
-			!error.stack?.includes("persistent-text-streaming") &&
-			!/turn(Failure)?\.test\.ts/.test(error.stack ?? ""),
 		coverage: {
 			provider: "v8",
 			reporter: ["text", "lcov"],

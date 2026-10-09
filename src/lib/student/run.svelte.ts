@@ -1,8 +1,7 @@
 import { makeFunctionReference } from "convex/server";
-import { useQuery } from "convex-svelte";
+import { getConvexClient, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
-import { resolveConvexSiteUrl } from "../convexUrl.js";
 import { getErrorMessage } from "../errors.js";
 import { session } from "../session.svelte.js";
 import type { ChatMessage, Contact, SharedFile } from "../types.js";
@@ -20,8 +19,8 @@ const getSimulationStateRef = makeFunctionReference<"query">(
 const getPersonaHistoryRef = makeFunctionReference<"query">(
 	"api/simulations:getPersonaHistory",
 );
-const getTurnStreamRef = makeFunctionReference<"query">(
-	"api/turn:getTurnStream",
+const sendMessageRef = makeFunctionReference<"mutation">(
+	"api/turn:sendMessage",
 );
 
 import {
@@ -32,7 +31,6 @@ import type {
 	ExportSimulationOut,
 	RunStateOut,
 } from "../../../convex/services/simulations.js";
-import type { TurnStreamOut } from "../../../convex/services/turn.js";
 
 export type StartedRun = Omit<RunStateOut, "run_id" | "case"> & {
 	run_id: string;
@@ -40,6 +38,11 @@ export type StartedRun = Omit<RunStateOut, "run_id" | "case"> & {
 };
 export type ExportRunOut = Omit<ExportSimulationOut, "case"> & {
 	case: Omit<ExportSimulationOut["case"], "id"> & { id: string };
+};
+
+type PersonaHistory = {
+	messages: ChatMessage[];
+	reply: { id: string; status: "pending" | "done" | "failed" } | null;
 };
 
 export type DisplayContact = Contact & {
@@ -89,14 +92,6 @@ export class RunStore {
 	notes = $state("");
 	timeExpired = $state(false);
 
-	// Whether the active contact has a reply in flight; other contacts stay free to message.
-	get isSending(): boolean {
-		return (
-			this.#sendingPersonaId !== null &&
-			this.#sendingPersonaId === this.activeContactId
-		);
-	}
-
 	#notesInitialized = false;
 	#notesSaveTimer: number | null = null;
 	#seenContacts = new Set<string>();
@@ -105,8 +100,8 @@ export class RunStore {
 	#expiryInterval: number | null = null;
 	#nowTick = $state(Date.now());
 	#availabilityTickInterval: number | null = null;
-	#sendingPersonaId = $state<string | null>(null);
-	#sentMessage = $state("");
+	// The reply started by the last send, until the server reports it done or failed.
+	#awaitedReplyId = $state<string | null>(null);
 
 	#runStateQuery = useQuery(getSimulationStateRef, () =>
 		session.runId ? { runId: session.runId } : "skip",
@@ -116,28 +111,9 @@ export class RunStore {
 			? { runId: session.runId, personaId: this.activeContactId }
 			: "skip",
 	);
-	#driven = $state<{ personaId: string; streamId: string } | null>(null);
-	#drivenText = $state("");
-	#turnQuery = useQuery(getTurnStreamRef, () =>
-		session.runId && this.activeContactId
-			? {
-					runId: session.runId,
-					personaId: this.activeContactId,
-					withText: this.#driven?.personaId !== this.activeContactId,
-				}
-			: "skip",
-	);
-	#turn = $derived((this.#turnQuery.data as TurnStreamOut | undefined) ?? null);
-	#sentOverStreamId = $state<string | null>(null);
-	// How the turn started by the last send ended, or null while it is still running.
-	#sentTurnOutcome = $derived.by<"saved" | "failed" | null>(() => {
-		const turn = this.#turn;
-		if (!turn || turn.streamId === this.#sentOverStreamId) return null;
-		if (turn.settled) return "saved";
-		return turn.status === "error" || turn.status === "timeout"
-			? "failed"
-			: null;
-	});
+	#history = $derived(this.#historyQuery.data as PersonaHistory | undefined);
+	// Whether the active contact has a reply in flight; other contacts stay free to message.
+	isSending = $derived(this.#history?.reply?.status === "pending");
 
 	raw = $derived<StartedRun | null>(this.#runStateQuery.data ?? null);
 	caseData = $derived(this.raw?.case ?? null);
@@ -162,19 +138,7 @@ export class RunStore {
 		}),
 	);
 	sharedFiles = $derived<SharedFile[]>(this.raw?.shared_files ?? []);
-	activeMessages = $derived<ChatMessage[]>(this.#historyQuery.data ?? []);
-	// The student's message, shown until the server saves it together with the reply.
-	pendingMessage = $derived(
-		this.isSending && !this.#sentTurnOutcome ? this.#sentMessage : null,
-	);
-	streamingPreview = $derived.by<string | null>(() => {
-		const turn = this.#turn;
-		if (!turn || turn.settled) return null;
-		if (turn.status !== "pending" && turn.status !== "streaming") return null;
-		return this.#driven?.streamId === turn.streamId
-			? this.#drivenText
-			: turn.text;
-	});
+	activeMessages = $derived<ChatMessage[]>(this.#history?.messages ?? []);
 	activeContact = $derived(
 		this.contacts.find((c) => c.id === this.activeContactId) ??
 			this.contacts[0] ??
@@ -217,12 +181,11 @@ export class RunStore {
 			if (this.raw) this.#afterLoad();
 		});
 		$effect(() => {
-			const personaId = this.#sendingPersonaId;
-			if (!personaId || personaId !== this.activeContactId) return;
-			const outcome = this.#sentTurnOutcome;
-			if (!outcome) return;
-			this.#sendingPersonaId = null;
-			if (outcome === "failed")
+			const reply = this.#history?.reply;
+			if (!this.#awaitedReplyId || reply?.id !== this.#awaitedReplyId) return;
+			if (reply.status === "pending") return;
+			this.#awaitedReplyId = null;
+			if (reply.status === "failed")
 				notify(
 					"Something went wrong generating a reply. Please resend your message.",
 				);
@@ -356,40 +319,34 @@ export class RunStore {
 	sendMessage(rawMessage: string): boolean {
 		const message = rawMessage.trim();
 		const personaId = this.activeContactId;
-		if (!message || !personaId) return false;
-		this.#runSend(personaId, message);
+		if (!message || !personaId || !session.runId) return false;
+		this.#runSend(session.runId, personaId, message);
 		return true;
 	}
 
-	// Posts the message to /turn-stream and shows the reply as it streams, toasting if it is rejected.
-	async #runSend(personaId: string, message: string): Promise<void> {
-		this.#sentOverStreamId = this.#turn?.streamId ?? null;
-		this.#sendingPersonaId = personaId;
-		this.#sentMessage = message;
-		const response = await fetch(`${resolveConvexSiteUrl()}/turn-stream`, {
-			method: "POST",
-			body: JSON.stringify({ runId: session.runId, personaId, message }),
-		}).catch(() => null);
-		const streamId = response?.ok ? response.headers.get("X-Stream-Id") : null;
-		if (!response?.body || !streamId) {
-			const error = await response?.json().catch(() => null);
-			this.#sendingPersonaId = null;
-			notify(error?.message ?? "Message failed. Please try again.");
-			return;
-		}
-		this.#driven = { personaId, streamId };
-		this.#drivenText = "";
+	// Saves the message and starts its reply on the server, toasting if it is rejected.
+	async #runSend(
+		runId: string,
+		personaId: string,
+		message: string,
+	): Promise<void> {
 		try {
-			const reader = response.body
-				.pipeThrough(new TextDecoderStream())
-				.getReader();
-			for (;;) {
-				const { done, value } = await reader.read();
-				if (done) return;
-				if (this.#driven?.streamId === streamId) this.#drivenText += value;
+			const { replyId } = (await getConvexClient().mutation(sendMessageRef, {
+				runId,
+				personaId,
+				message,
+			})) as { replyId: string };
+			this.#awaitedReplyId = replyId;
+		} catch (err) {
+			const error = studentErrorData(err);
+			if (
+				error?.code === STUDENT_ERROR.RUN_EXPIRED ||
+				error?.code === STUDENT_ERROR.RUN_NOT_FOUND
+			) {
+				this.endSimulation();
+				return;
 			}
-		} catch {
-			if (this.#driven?.streamId === streamId) this.#driven = null;
+			notify(error?.message ?? "Message failed. Please try again.");
 		}
 	}
 }

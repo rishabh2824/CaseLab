@@ -379,8 +379,8 @@ test("an unavailable contact cannot be selected or messaged", async ({
 	).toBeVisible();
 });
 
-// Tests that a mid-stream failure drops the student's message and the partial reply and shows a toast.
-test("a mid-stream failure drops the student's message and the partial reply, and shows a toast", async ({
+// Tests that a failed reply drops the student's message and shows a toast.
+test("a failed reply drops the student's message and shows a toast", async ({
 	page,
 }) => {
 	await mockApi(page, {
@@ -394,10 +394,7 @@ test("a mid-stream failure drops the student's message and the partial reply, an
 		mutations: {
 			"api/simulations:start": () => runState(),
 		},
-		turn: turnHandler({
-			reply: null,
-			partialText: "Let me check on that...",
-		}),
+		turn: turnHandler({ reply: null }),
 	});
 
 	await page.goto("/");
@@ -416,7 +413,6 @@ test("a mid-stream failure drops the student's message and the partial reply, an
 		),
 	).toBeVisible();
 	await expect(page.getByText("What vendor do we use?")).not.toBeVisible();
-	await expect(page.getByText("Let me check on that...")).not.toBeVisible();
 });
 
 // Tests that notes autosave to sessionStorage after a debounce and never to the backend.

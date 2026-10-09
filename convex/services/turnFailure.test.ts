@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { components } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { STUDENT_ERROR } from "../lib/studentErrors";
 import type { CaseStructure } from "../models/cases";
 import {
+	insertPendingReply,
+	lastReply,
 	makeLlmFetch,
 	newTestConvex,
 	sendTurn as send,
+	settleReply,
 	sseStream,
 } from "../test.setup";
 import {
@@ -15,10 +17,24 @@ import {
 	personaPayload,
 	referralEdge,
 } from "../testFactories";
-import { getPersonaHistory, startSimulation } from "./simulations";
-import { getTurnStream, STREAMING_SLOT_STALE_MS, startTurn } from "./turn";
+import {
+	deleteRunCascade,
+	getPersonaHistory,
+	startSimulation,
+} from "./simulations";
+import { applyDecisions, TURN_EXPIRY_MS } from "./turn";
 
 type T = ReturnType<typeof newTestConvex>;
+
+// Returns a persona's visible chat messages for a run.
+async function visibleMessages(
+	t: ReturnType<typeof newTestConvex>,
+	runId: Id<"runs">,
+	personaId: string,
+) {
+	return (await t.run((ctx) => getPersonaHistory(ctx, runId, personaId)))
+		.messages;
+}
 
 beforeEach(() => {
 	vi.stubEnv("LLM_KEY", "test-key");
@@ -57,21 +73,16 @@ async function startRun(t: T, structure: CaseStructure = caseStructure()) {
 	return await t.run((ctx) => startSimulation(ctx, "sterling"));
 }
 
-// Asserts a failed turn left no assistant reply, an errored stream and no persisted user message.
+// Asserts a failed turn left no assistant reply, a failed reply row and no visible user message.
 async function expectTurnFailedCleanly(
 	t: T,
 	runId: Id<"runs">,
 	personaId = "A",
 ): Promise<void> {
-	const history = await t.run((ctx) =>
-		getPersonaHistory(ctx, runId, personaId),
-	);
+	const history = await visibleMessages(t, runId, personaId);
 	expect(history.filter((m) => m.role === "assistant")).toEqual([]);
 
-	const turn = await t.run((ctx) =>
-		getTurnStream(ctx, runId, personaId, false),
-	);
-	expect(turn?.status).toBe("error");
+	expect((await lastReply(t, runId, personaId))?.status).toBe("failed");
 
 	const run = (await t.run((ctx) => ctx.db.get(runId)))!;
 	expect({
@@ -88,13 +99,6 @@ async function startRunWithCandidates(t: T) {
 	const storageId = await t.run((ctx) =>
 		ctx.storage.store(new Blob(["budget"])),
 	);
-	const fileId = await t.run((ctx) =>
-		ctx.db.insert("files", {
-			storageId,
-			name: "budget.pdf",
-			contentType: "application/pdf",
-		}),
-	);
 	const structure = caseStructure({
 		personas: [
 			personaPayload("A", {
@@ -110,7 +114,7 @@ async function startRunWithCandidates(t: T) {
 		referrals: [referralEdge("A", "B", "the user asks for B")],
 		roots: ["A"],
 	});
-	return { state: await startRun(t, structure), fileId };
+	return { state: await startRun(t, structure), storageId };
 }
 
 describe("malformed LLM generations cannot corrupt run state", () => {
@@ -163,9 +167,7 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 
 		await send(t, state.run_id, "A", "Can I see the budget?");
 
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
+		const history = await visibleMessages(t, state.run_id, "A");
 		expect(history).toEqual([]);
 	});
 
@@ -179,9 +181,7 @@ describe("malformed LLM generations cannot corrupt run state", () => {
 		stub({ replyText: "Sure, here you go." });
 		await send(t, state.run_id, "A", "second try");
 
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
+		const history = await visibleMessages(t, state.run_id, "A");
 		expect(history.map((m) => m.content)).toEqual([
 			"second try",
 			"Sure, here you go.",
@@ -233,7 +233,7 @@ describe("hostile / off-schema decision fields", () => {
 	// Tests that a well-formed generation naming both handles does unlock and share (positive control).
 	it("positive control: a well-formed generation naming both handles does unlock and share", async () => {
 		const t = newTestConvex();
-		const { state, fileId } = await startRunWithCandidates(t);
+		const { state, storageId } = await startRunWithCandidates(t);
 		stub({
 			replyText: "Meet B, here's the budget.",
 			introduce: ["R1"],
@@ -244,7 +244,7 @@ describe("hostile / off-schema decision fields", () => {
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
-		expect(run.sharedFiles).toEqual([fileId]);
+		expect(run.sharedFiles).toEqual([storageId]);
 	});
 
 	// Tests that thousands of hallucinated handles are ignored and only the real one unlocks.
@@ -278,9 +278,7 @@ describe("hostile / off-schema decision fields", () => {
 
 		await send(t, state.run_id, "A", "hi");
 
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
+		const history = await visibleMessages(t, state.run_id, "A");
 		expect(history.at(-1)).toEqual({ role: "assistant", content: injection });
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
@@ -358,9 +356,7 @@ describe("transport-level provider failures", () => {
 
 		await send(t, state.run_id, "A", "hi");
 
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
+		const history = await visibleMessages(t, state.run_id, "A");
 		expect(history.at(-1)).toEqual({
 			role: "assistant",
 			content: "Hello there.",
@@ -396,9 +392,7 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 
 		await send(t, state.run_id, "A", "a perfectly normal question");
 
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
+		const history = await visibleMessages(t, state.run_id, "A");
 		expect(history.at(-1)).toEqual({ role: "assistant", content: "All good." });
 	});
 
@@ -413,16 +407,14 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 
 		await send(t, state.run_id, "A", "hello");
 
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
+		const history = await visibleMessages(t, state.run_id, "A");
 		expect(history.at(-1)).toEqual({ role: "assistant", content: "Fine." });
 	});
 
 	// Tests that a flagged turn's unlocks and shares are discarded along with its reply text.
 	it("discards a flagged turn's unlocks and shares, not just its reply text", async () => {
 		const t = newTestConvex();
-		const { state, fileId } = await startRunWithCandidates(t);
+		const { state, storageId } = await startRunWithCandidates(t);
 		stub({
 			harassment: "NONSENSE",
 			replyText: "Meet B and take the budget.",
@@ -434,10 +426,8 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 
 		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
-		expect(run.sharedFiles).not.toContain(fileId);
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
+		expect(run.sharedFiles).not.toContain(storageId);
+		const history = await visibleMessages(t, state.run_id, "A");
 		expect(history.at(-1)?.content).not.toContain("Meet B");
 	});
 
@@ -457,36 +447,34 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 	});
 });
 
-describe("turn stream lifecycle", () => {
-	// Tests that a successful turn settles its stream so no live bubble is left behind.
-	it("settles the turn on success so no live bubble is left behind", async () => {
+describe("reply lifecycle", () => {
+	// Tests that a successful reply is saved as done, with its student message kept.
+	it("saves the reply as done on success", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		stub({ replyText: "Done." });
 
-		const { text } = await send(t, state.run_id, "A", "hi");
+		await send(t, state.run_id, "A", "hi");
 
-		expect(text).toBe("Done.");
+		expect((await lastReply(t, state.run_id, "A"))?.status).toBe("done");
 		expect(
-			await t.run((ctx) => getTurnStream(ctx, state.run_id, "A", true)),
-		).toMatchObject({ status: "done", settled: true });
+			(await visibleMessages(t, state.run_id, "A")).map((m) => m.content),
+		).toEqual(["hi", "Done."]);
 	});
 
-	// Tests that a failed generation marks the stream errored rather than leaving it open.
-	it("marks the stream errored (never left open) when generation fails", async () => {
+	// Tests that a failed generation fails the reply rather than leaving it pending.
+	it("fails the reply (never left pending) when generation fails", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		stub({ replyThrows: new Error("boom") });
 
 		await send(t, state.run_id, "A", "hi");
 
-		expect(
-			await t.run((ctx) => getTurnStream(ctx, state.run_id, "A", false)),
-		).toMatchObject({ status: "error", settled: false });
+		expect((await lastReply(t, state.run_id, "A"))?.status).toBe("failed");
 	});
 
-	// Tests that the turn fails cleanly when the run is destroyed mid-generation.
-	it("fails the turn cleanly when the run is destroyed mid-generation", async () => {
+	// Tests that the run being destroyed mid-generation leaves nothing behind and does not throw.
+	it("leaves nothing behind when the run is destroyed mid-generation", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		const { fetch } = makeLlmFetch({ replyText: "too late" });
@@ -494,17 +482,16 @@ describe("turn stream lifecycle", () => {
 			"fetch",
 			vi.fn(async (url: string, init: RequestInit) => {
 				if (JSON.parse(init.body as string).stream)
-					await t.run((ctx) => ctx.db.delete(state.run_id));
+					await t.run((ctx) => deleteRunCascade(ctx, state.run_id));
 				return await fetch(url, init);
 			}),
 		);
 
-		const { status } = await send(t, state.run_id, "A", "hi");
+		await send(t, state.run_id, "A", "hi");
 
-		expect(status).toBe(200);
-		expect(
-			await t.run((ctx) => getTurnStream(ctx, state.run_id, "A", false)),
-		).toMatchObject({ status: "error", settled: false });
+		expect(await t.run((ctx) => ctx.db.query("runMessages").collect())).toEqual(
+			[],
+		);
 	});
 
 	function stubReplyAttempts(bodies: string[]) {
@@ -524,8 +511,8 @@ describe("turn stream lifecycle", () => {
 	const envelope = (reply: string) =>
 		sseStream([JSON.stringify({ reply, introduce: [], send_files: [] })]);
 
-	// Tests that a failed attempt that showed the student nothing is retried silently.
-	it("retries silently when the failed attempt showed the student nothing", async () => {
+	// Tests that a failed attempt with no usable text is retried silently.
+	it("retries silently when the failed attempt produced no usable text", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		const calls = stubReplyAttempts([
@@ -533,18 +520,15 @@ describe("turn stream lifecycle", () => {
 			envelope("Second try."),
 		]);
 
-		const { text } = await send(t, state.run_id, "A", "hi");
+		await send(t, state.run_id, "A", "hi");
 
-		expect(text).toBe("Second try.");
 		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(2);
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
-		);
+		const history = await visibleMessages(t, state.run_id, "A");
 		expect(history.map((m) => m.content)).toEqual(["hi", "Second try."]);
 	});
 
-	// Tests that a failure is not retried once text has reached the student.
-	it("fails instead of retrying once text has reached the student", async () => {
+	// Tests that a failed attempt with partial text is retried too, since the student never sees partial text.
+	it("retries when the failed attempt produced partial text", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
 		const calls = stubReplyAttempts([
@@ -552,51 +536,37 @@ describe("turn stream lifecycle", () => {
 			envelope("Never used."),
 		]);
 
-		const { text } = await send(t, state.run_id, "A", "hi");
+		await send(t, state.run_id, "A", "hi");
 
-		expect(text).toBe("Hello the");
-		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(1);
-		await expectTurnFailedCleanly(t, state.run_id);
-		expect(
-			await t.run((ctx) => getPersonaHistory(ctx, state.run_id, "A")),
-		).toEqual([]);
-	});
-
-	// Tests that the previous turn's stream is deleted when the next one starts.
-	it("deletes the previous turn's stream when the next one starts", async () => {
-		const t = newTestConvex();
-		const { state } = await startRunWithCandidates(t);
-		stub({ replyText: "First." });
-		await send(t, state.run_id, "A", "one");
-		const first = await t.run((ctx) =>
-			getTurnStream(ctx, state.run_id, "A", false),
-		);
-
-		stub({ replyText: "Second." });
-		await send(t, state.run_id, "A", "two");
-
-		await expect(
-			t.query(components.persistentTextStreaming.lib.getStreamText, {
-				streamId: first!.streamId,
-			}),
-		).rejects.toThrow("Stream not found");
+		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(2);
+		const history = await visibleMessages(t, state.run_id, "A");
+		expect(history.map((m) => m.content)).toEqual(["hi", "Never used."]);
 	});
 });
 
 describe("the concurrency guard is the real serialization point", () => {
-	// Tests that a second turn on the same persona is rejected, over HTTP, and writes nothing.
-	it("rejects a second turn on the same persona while one is in flight and writes nothing for it", async () => {
+	// Tests that a second message to the same persona is rejected while a reply is in flight, and writes nothing.
+	it("rejects a second message while a reply is in flight and writes nothing for it", async () => {
 		const t = newTestConvex();
 		const { state } = await startRunWithCandidates(t);
-		stub({ replyText: "first" });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(() => new Promise(() => {})),
+		);
 
-		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first message"));
-		const second = await send(t, state.run_id, "A", "second message");
-
-		expect(second.status).toBe(400);
-		expect(JSON.parse(second.text)).toMatchObject({
-			code: STUDENT_ERROR.REPLY_IN_PROGRESS,
+		await t.mutation(api.api.turn.sendMessage, {
+			runId: state.run_id,
+			personaId: "A",
+			message: "first message",
 		});
+
+		await expect(
+			t.mutation(api.api.turn.sendMessage, {
+				runId: state.run_id,
+				personaId: "A",
+				message: "second message",
+			}),
+		).rejects.toThrow(/already being generated/);
 		const rows = await t.run((ctx) => ctx.db.query("runMessages").collect());
 		expect(rows.map((r) => r.content)).not.toContain("second message");
 	});
@@ -613,10 +583,14 @@ describe("the concurrency guard is the real serialization point", () => {
 		);
 		stub({ replyText: "reply" });
 
-		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "to A"));
+		await t.mutation(api.api.turn.sendMessage, {
+			runId: state.run_id,
+			personaId: "A",
+			message: "to A",
+		});
 		await send(t, state.run_id, "B", "to B");
 
-		const b = await t.run((ctx) => getPersonaHistory(ctx, state.run_id, "B"));
+		const b = await visibleMessages(t, state.run_id, "B");
 		expect(b.map((m) => m.content)).toEqual(["to B", "reply"]);
 	});
 
@@ -651,63 +625,81 @@ describe("the concurrency guard is the real serialization point", () => {
 	});
 });
 
-describe("a stuck turn is reclaimed once it's stale", () => {
-	async function leaveTurnOpen(t: T) {
+describe("a stuck reply is failed by expiry", () => {
+	// Tests that a second message is still rejected while the reply is pending.
+	it("still rejects a second message while a reply is pending", async () => {
+		const t = newTestConvex();
 		const state = await startRun(t);
-		stub({ replyText: "first" });
-		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "first message"));
-		const turn = await t.run((ctx) =>
-			ctx.db
-				.query("turnStreams")
-				.withIndex("by_run_persona", (q) =>
-					q.eq("runId", state.run_id).eq("personaKey", "A"),
-				)
-				.first(),
-		);
-		return { state, turnId: turn!._id };
-	}
-
-	// Tests that a second turn is still rejected while the open turn is fresh.
-	it("still rejects a second turn while the turn is fresh", async () => {
-		const t = newTestConvex();
-		const { state } = await leaveTurnOpen(t);
+		await insertPendingReply(t, state.run_id, "A", "first message");
 
 		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
+			t.mutation(api.api.turn.sendMessage, {
+				runId: state.run_id,
+				personaId: "A",
+				message: "second message",
+			}),
 		).rejects.toThrow(/already being generated/);
 	});
 
-	// Tests that a turn open for just under the staleness threshold is still rejected.
-	it("still rejects a turn open for just under the staleness threshold", async () => {
+	// Tests that failing a pending reply removes the student message and frees the persona for a new message.
+	it("fails a pending reply, removes its message and accepts a new message", async () => {
 		const t = newTestConvex();
-		const { state, turnId } = await leaveTurnOpen(t);
-		await t.run((ctx) =>
-			ctx.db.patch(turnId, {
-				startedAt: Date.now() - STREAMING_SLOT_STALE_MS + 1_000,
-			}),
-		);
+		const state = await startRun(t);
+		const replyId = await insertPendingReply(t, state.run_id, "A", "first");
 
-		await expect(
-			t.run((ctx) => startTurn(ctx, state.run_id, "A", "second message")),
-		).rejects.toThrow(/already being generated/);
-	});
+		await t.mutation(internal.api.turn.failTurn, { replyId });
 
-	// Tests that a turn open past the staleness threshold is reclaimed instead of rejected.
-	it("reclaims a turn open past the staleness threshold, instead of rejecting", async () => {
-		const t = newTestConvex();
-		const { state, turnId } = await leaveTurnOpen(t);
-		await t.run((ctx) =>
-			ctx.db.patch(turnId, {
-				startedAt: Date.now() - STREAMING_SLOT_STALE_MS - 1,
-			}),
-		);
-
+		expect((await lastReply(t, state.run_id, "A"))?.status).toBe("failed");
+		expect(await visibleMessages(t, state.run_id, "A")).toEqual([]);
 		stub({ replyText: "second" });
 		await send(t, state.run_id, "A", "second message");
+		expect(
+			(await visibleMessages(t, state.run_id, "A")).map((m) => m.content),
+		).toEqual(["second message", "second"]);
+	});
 
-		const history = await t.run((ctx) =>
-			getPersonaHistory(ctx, state.run_id, "A"),
+	// Tests that a reply finishing after it was failed changes nothing.
+	it("ignores a reply that finishes after the turn was failed", async () => {
+		const t = newTestConvex();
+		const state = await startRun(t);
+		const replyId = await insertPendingReply(t, state.run_id, "A", "first");
+		await t.mutation(internal.api.turn.failTurn, { replyId });
+
+		await t.run((ctx) =>
+			applyDecisions(
+				ctx,
+				replyId,
+				"too late",
+				[{ referredPersonaId: "B" }],
+				[],
+			),
 		);
-		expect(history.map((m) => m.content)).toEqual(["second message", "second"]);
+
+		const row = await t.run((ctx) => ctx.db.get("runMessages", replyId));
+		expect(row).toMatchObject({ status: "failed", content: "" });
+		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
+		expect(Object.keys(run.unlockedAt)).toEqual([]);
+	});
+
+	// Tests that a reply that never finishes is failed on its own, so the composer cannot stay locked.
+	it("fails a reply that never finishes once the expiry passes", async () => {
+		vi.useFakeTimers();
+		const t = newTestConvex();
+		const state = await startRun(t);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(() => new Promise(() => {})),
+		);
+
+		const { replyId } = await t.mutation(api.api.turn.sendMessage, {
+			runId: state.run_id,
+			personaId: "A",
+			message: "hi",
+		});
+		vi.advanceTimersByTime(TURN_EXPIRY_MS + 1);
+		await settleReply(t, replyId);
+
+		expect((await lastReply(t, state.run_id, "A"))?.status).toBe("failed");
+		expect(await visibleMessages(t, state.run_id, "A")).toEqual([]);
 	});
 });

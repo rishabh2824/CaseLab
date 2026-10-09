@@ -597,9 +597,9 @@ describe("persona graph persistence", () => {
 	});
 });
 
-describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
-	// Tests that two personas sharing a storage id are deduped to a single files row.
-	it("dedupes two personas sharing a storage id to a single files row", async () => {
+describe("file links (via buildStructure/createCase)", () => {
+	// Tests that two personas sharing a storage id are linked to the case once.
+	it("links two personas sharing a storage id to the case once", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const storageId = await t.run((ctx) =>
@@ -633,15 +633,15 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 
 		const rows = await t.run((ctx) =>
 			ctx.db
-				.query("files")
+				.query("caseFiles")
 				.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
 				.collect(),
 		);
 		expect(rows).toHaveLength(1);
 	});
 
-	// Tests that the existing files row is reused when the same storage id reappears on update.
-	it("reuses the existing files row when the same storage id resurfaces on update", async () => {
+	// Tests that the same storage id reappearing on update is still linked once.
+	it("keeps a single link when the same storage id resurfaces on update", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const storageId = await t.run((ctx) =>
@@ -680,7 +680,7 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 
 		const rows = await t.run((ctx) =>
 			ctx.db
-				.query("files")
+				.query("caseFiles")
 				.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
 				.collect(),
 		);
@@ -688,7 +688,7 @@ describe("file dedup (resolveFileRefs, via buildStructure/createCase)", () => {
 	});
 });
 
-describe("resolveFileRefs against a storage id with no backing object", () => {
+describe("a storage id with no backing object", () => {
 	// Tests that a photo reference to a nonexistent storage id is dropped while the rest of the case saves.
 	it("drops a photo ref whose storage id doesn't exist, saving the rest of the case fine", async () => {
 		const t = newTestConvex();
@@ -724,7 +724,7 @@ describe("resolveFileRefs against a storage id with no backing object", () => {
 		expect(structure.personas[0]?.profile_photo).toBeNull();
 		const rows = await t.run((ctx) =>
 			ctx.db
-				.query("files")
+				.query("caseFiles")
 				.withIndex("by_storage_id", (q) => q.eq("storageId", ghostStorageId))
 				.collect(),
 		);
@@ -745,8 +745,8 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		};
 	}
 
-	// Tests that deleting a case removes its unshared files, the files row via the scheduled cleanup.
-	it("deletes a case's unshared file (caseFiles row synchronously, files row via the scheduled cleanup)", async () => {
+	// Tests that deleting a case removes its unshared files, the link synchronously and the upload via the scheduled cleanup.
+	it("deletes a case's unshared file (link synchronously, upload via the scheduled cleanup)", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const { storageId, photo } = await makePhoto(t);
@@ -778,14 +778,9 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				.collect(),
 		);
 		expect(afterCaseFiles).toHaveLength(0);
-
-		const rows = await t.run((ctx) =>
-			ctx.db
-				.query("files")
-				.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
-				.collect(),
-		);
-		expect(rows).toHaveLength(0);
+		expect(
+			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
+		).toBeNull();
 	});
 
 	// Tests that deleting a case keeps a file that another case still references.
@@ -821,11 +816,14 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 
 		const rows = await t.run((ctx) =>
 			ctx.db
-				.query("files")
+				.query("caseFiles")
 				.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
 				.collect(),
 		);
 		expect(rows).toHaveLength(1);
+		expect(
+			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
+		).not.toBeNull();
 	});
 
 	// Tests that a file dropped by an update is cleaned up unless another persona in the same case still uses it.
@@ -864,11 +862,14 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		await t.finishAllScheduledFunctions(() => {});
 		let rows = await t.run((ctx) =>
 			ctx.db
-				.query("files")
+				.query("caseFiles")
 				.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
 				.collect(),
 		);
 		expect(rows).toHaveLength(1);
+		expect(
+			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
+		).not.toBeNull();
 
 		await t.run((ctx) =>
 			updateCase(
@@ -887,10 +888,13 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		await t.finishAllScheduledFunctions(() => {});
 		rows = await t.run((ctx) =>
 			ctx.db
-				.query("files")
+				.query("caseFiles")
 				.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
 				.collect(),
 		);
 		expect(rows).toHaveLength(0);
+		expect(
+			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
+		).toBeNull();
 	});
 });

@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { adminMutation } from "../lib/adminFunctions";
+import { storageHasReferences } from "../services/files";
 
 const MAX_UPLOAD_BATCH = 200;
 
@@ -22,7 +23,7 @@ export const generateUploadUrls = adminMutation({
 	},
 });
 
-// Deletes uploaded blobs that no files row has claimed.
+// Deletes uploaded blobs that no case has claimed.
 export const discardUploads = adminMutation({
 	args: { storageIds: v.array(v.id("_storage")) },
 	handler: async (ctx, args) => {
@@ -32,11 +33,8 @@ export const discardUploads = adminMutation({
 			);
 		}
 		for (const storageId of args.storageIds) {
-			const claimed = await ctx.db
-				.query("files")
-				.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
-				.first();
-			if (!claimed) await ctx.storage.delete(storageId);
+			if (!(await storageHasReferences(ctx, storageId)))
+				await ctx.storage.delete(storageId);
 		}
 	},
 });

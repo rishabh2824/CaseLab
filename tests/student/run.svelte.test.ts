@@ -18,20 +18,6 @@ import {
 
 const mockClientMutation = vi.fn();
 const mockClientQuery = vi.fn();
-const mockTurnFetch = vi.fn();
-
-// Builds a /turn-stream response that accepted the message and streams the given body.
-function acceptedTurn(body: BodyInit | null = null, streamId = "s1"): Response {
-	return new Response(body ?? new ReadableStream(), {
-		headers: { "X-Stream-Id": streamId },
-	});
-}
-
-// Builds a /turn-stream response rejecting the message with a student error.
-function rejectedTurn(code: string, message: string): Response {
-	return new Response(JSON.stringify({ code, message }), { status: 400 });
-}
-
 type FakeQueryEntry = { data?: unknown; error?: Error };
 const fakeQueryData = new Map<string, FakeQueryEntry>();
 let fakeQueryVersion = $state(0);
@@ -89,29 +75,17 @@ vi.mock("convex-svelte", () => ({
 
 const GET_SIMULATION_STATE = "api/simulations:get";
 const GET_PERSONA_HISTORY = "api/simulations:getPersonaHistory";
-const GET_TURN_STREAM = "api/turn:getTurnStream";
 
-// Sets the fake turn stream query result for the active persona.
-function setTurn(
-	turn: Partial<{
-		streamId: string;
-		status: string;
-		settled: boolean;
-		text: string;
-	}>,
-	withText = true,
+// Sets the fake chat history, and the state of the latest reply, for a persona.
+function setHistory(
+	personaId: string,
+	messages: ReturnType<typeof message>[] = [],
+	reply: { id: string; status: "pending" | "done" | "failed" } | null = null,
 ): void {
 	setFakeQuery(
-		GET_TURN_STREAM,
-		{ runId: "run-1", personaId: "mary", withText },
-		{
-			data: {
-				streamId: "s1",
-				settled: false,
-				text: "",
-				...turn,
-			},
-		},
+		GET_PERSONA_HISTORY,
+		{ runId: "run-1", personaId },
+		{ data: { messages, reply } },
 	);
 }
 
@@ -162,14 +136,11 @@ beforeEach(() => {
 	mockClientQuery.mockReset();
 	mockUseQuery.mockClear();
 	resetFakeQueries();
-	mockTurnFetch.mockReset();
-	mockTurnFetch.mockImplementation(() => new Promise(() => {}));
-	vi.stubGlobal("fetch", mockTurnFetch);
+	mockClientMutation.mockResolvedValue({ replyId: "r1" });
 });
 
 afterEach(() => {
 	for (const run of liveRuns.splice(0)) run.destroy();
-	vi.unstubAllGlobals();
 });
 
 describe("init", () => {
@@ -360,7 +331,7 @@ describe("sendMessage guards", () => {
 		run.activeContactId = null;
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockTurnFetch).not.toHaveBeenCalled();
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
 	// Tests that sendMessage returns false and sends nothing for an empty or whitespace-only message.
@@ -371,7 +342,18 @@ describe("sendMessage guards", () => {
 
 		expect(run.sendMessage("")).toBe(false);
 		expect(run.sendMessage("   \n\t ")).toBe(false);
-		expect(mockTurnFetch).not.toHaveBeenCalled();
+		expect(mockClientMutation).not.toHaveBeenCalled();
+	});
+
+	// Tests that sendMessage returns false and sends nothing when there is no run in the session.
+	it("returns false and sends nothing when there is no run", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		session.clearRun();
+
+		expect(run.sendMessage("hello")).toBe(false);
+		expect(mockClientMutation).not.toHaveBeenCalled();
 	});
 
 	// Tests that a reply in flight for one contact does not block messaging another contact.
@@ -380,133 +362,92 @@ describe("sendMessage guards", () => {
 		await primeRun(run, session, {
 			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
 		});
+		setHistory("mary", [], { id: "r1", status: "pending" });
 		run.activeContactId = "mary";
-		run.sendMessage("first");
-		expect(run.isSending).toBe(true);
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
 		run.activeContactId = "bob";
 		expect(run.isSending).toBe(false);
 		expect(run.sendMessage("second")).toBe(true);
-		expect(mockTurnFetch).toHaveBeenCalledTimes(2);
+		expect(mockClientMutation).toHaveBeenCalledTimes(1);
 	});
 
-	// Tests that an accepted message returns true and posts it to /turn-stream.
-	it("returns true and posts the message to /turn-stream when it is accepted", async () => {
+	// Tests that an accepted message returns true and is sent through the sendMessage mutation.
+	it("returns true and sends the message through the sendMessage mutation", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 
 		expect(run.sendMessage("hello")).toBe(true);
-		expect(mockTurnFetch).toHaveBeenCalledWith(
-			expect.stringMatching(/\.convex\.site\/turn-stream$/),
-			{
-				method: "POST",
-				body: JSON.stringify({
-					runId: "run-1",
-					personaId: "mary",
-					message: "hello",
-				}),
-			},
-		);
+
+		const [ref, args] = mockClientMutation.mock.calls[0] as [
+			Parameters<typeof getFunctionName>[0],
+			unknown,
+		];
+		expect(getFunctionName(ref)).toBe("api/turn:sendMessage");
+		expect(args).toEqual({
+			runId: "run-1",
+			personaId: "mary",
+			message: "hello",
+		});
 	});
 });
 
 describe("sendMessage lifecycle", () => {
-	// Tests that isSending stays true until the sent turn settles, regardless of how many messages it adds.
-	it("isSending stays true until the sent turn settles, however many messages that adds to the history", async () => {
+	// Tests that isSending follows the server: true while the reply is pending, false once it is done.
+	it("isSending follows the server-side reply status", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: [message("user", "prior q"), message("assistant", "prior a")] },
-		);
-		setTurn({ streamId: "old", status: "done", settled: true });
+		setHistory("mary", [message("user", "prior q"), message("assistant", "a")]);
 		run.activeContactId = "mary";
 		await vi.waitFor(() => expect(run.activeMessages).toHaveLength(2));
+		expect(run.isSending).toBe(false);
 
 		run.sendMessage("New question");
+		setHistory(
+			"mary",
+			[
+				message("user", "prior q"),
+				message("assistant", "a"),
+				message("user", "New question"),
+			],
+			{ id: "r1", status: "pending" },
+		);
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
+		expect(run.activeMessages).toHaveLength(3);
 
-		await Promise.resolve();
-		expect(run.isSending).toBe(true);
-
-		setTurn({ streamId: "new", status: "streaming", text: "The rep" });
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-1", personaId: "mary" },
-			{
-				data: [
-					message("user", "prior q"),
-					message("assistant", "prior a"),
-					message("user", "New question"),
-				],
-			},
+		setHistory(
+			"mary",
+			[
+				message("user", "prior q"),
+				message("assistant", "a"),
+				message("user", "New question"),
+				message("assistant", "the reply"),
+			],
+			{ id: "r1", status: "done" },
 		);
-		await Promise.resolve();
-		expect(run.isSending).toBe(true);
-
-		setTurn({ streamId: "new", status: "done", settled: true });
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-1", personaId: "mary" },
-			{
-				data: [
-					message("user", "prior q"),
-					message("assistant", "prior a"),
-					message("user", "New question"),
-					message("assistant", "the reply"),
-				],
-			},
-		);
-
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 		expect(run.activeMessages).toHaveLength(4);
 	});
 
-	// Tests that the sent message shows until the turn settles, and disappears if the server rejects it.
-	it("shows the sent message until the turn settles, and drops it if the server rejects it", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-
-		run.sendMessage("  What vendor do we use?  ");
-		expect(run.pendingMessage).toBe("What vendor do we use?");
-
-		setTurn({ streamId: "new", status: "done", settled: true });
-		await vi.waitFor(() => expect(run.pendingMessage).toBeNull());
-
-		mockTurnFetch.mockResolvedValue(
-			rejectedTurn(
-				STUDENT_ERROR.CONVERSATION_ENDED,
-				"This conversation has ended.",
-			),
-		);
-		run.sendMessage("one more");
-		expect(run.pendingMessage).toBe("one more");
-		await vi.waitFor(() => expect(run.pendingMessage).toBeNull());
-	});
-
-	// Tests that a boundary reply clears isSending even though it adds only one message.
-	it("clears isSending after a boundary reply, though it adds only one message to the history", async () => {
+	// Tests that a boundary reply, which replaces the flagged message, unlocks the composer without a toast.
+	it("unlocks after a boundary reply that replaces the flagged message, without a toast", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: [] },
-		);
+		setHistory("mary", []);
 		run.activeContactId = "mary";
 
 		run.sendMessage("asdf asdf asdf");
+		setHistory("mary", [], { id: "r1", status: "pending" });
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		setTurn({ status: "streaming" });
-		setTurn({ status: "done", settled: true });
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: [message("assistant", "I am not able to follow that.")] },
+		setHistory(
+			"mary",
+			[message("assistant", "I am not able to follow that.")],
+			{
+				id: "r1",
+				status: "done",
+			},
 		);
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
@@ -514,13 +455,14 @@ describe("sendMessage lifecycle", () => {
 		expect(run.sendMessage("a real question")).toBe(true);
 	});
 
-	// Tests that a rejected message clears isSending immediately and shows the server's message.
-	it("a rejected message (e.g. rate limited, conversation ended) clears isSending immediately and shows a toast", async () => {
+	// Tests that a rejected message shows the server message and leaves the composer unlocked.
+	it("a rejected message (e.g. conversation ended) shows the server message and stays unlocked", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockTurnFetch.mockResolvedValue(
-			rejectedTurn(
+		mockClientMutation.mockRejectedValue(
+			clientStudentError(
+				"api/turn:sendMessage",
 				STUDENT_ERROR.CONVERSATION_ENDED,
 				"This conversation has ended.",
 			),
@@ -528,183 +470,165 @@ describe("sendMessage lifecycle", () => {
 
 		run.sendMessage("hello");
 
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(toast).toHaveBeenCalledWith("This conversation has ended.", {
-			duration: 4000,
-		});
+		await vi.waitFor(() =>
+			expect(toast).toHaveBeenCalledWith("This conversation has ended.", {
+				duration: 4000,
+			}),
+		);
+		expect(run.isSending).toBe(false);
+	});
+
+	// Tests that sending to a run that has expired ends the simulation instead of showing a toast.
+	it("sends the student home when the run has expired by the time they send", async () => {
+		const { run, session, goto, toast } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		mockClientMutation.mockRejectedValue(
+			clientStudentError(
+				"api/turn:sendMessage",
+				STUDENT_ERROR.RUN_EXPIRED,
+				"Run expired.",
+			),
+		);
+
+		run.sendMessage("hello");
+
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
+		expect(session.runId).toBe("");
+		expect(toast).not.toHaveBeenCalled();
 	});
 
 	// Tests that a real server error or a network failure shows a generic toast.
 	it.each([
-		[
-			"a server error",
-			() => Promise.resolve(new Response("Server Error", { status: 500 })),
-		],
-		[
-			"a network failure",
-			() => Promise.reject(new TypeError("Failed to fetch")),
-		],
-	])("shows a generic toast after %s", async (_name, answer) => {
+		["a server error", () => clientServerError("api/turn:sendMessage")],
+		["a network failure", () => new TypeError("Failed to fetch")],
+	])("shows a generic toast after %s", async (_name, makeError) => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockTurnFetch.mockImplementation(answer);
+		mockClientMutation.mockRejectedValue(makeError());
 
 		run.sendMessage("hello");
 
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(toast).toHaveBeenCalledWith("Message failed. Please try again.", {
-			duration: 4000,
-		});
-	});
-
-	// Tests that streamingPreview shows an undriven turn's persisted text and clears once it settles.
-	it("streamingPreview shows an undriven turn's persisted text, and clears once the turn settles", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-
-		expect(run.streamingPreview).toBeNull();
-
-		setTurn({ status: "streaming", text: "Partial re" });
-		await vi.waitFor(() => expect(run.streamingPreview).toBe("Partial re"));
-
-		setTurn({ status: "streaming", text: "Partial re", settled: true });
-		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
-	});
-
-	// Tests that the reply shows as it streams back over /turn-stream.
-	it("shows the reply as it streams back over /turn-stream", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-		const body = new TransformStream<Uint8Array, Uint8Array>();
-		const writer = body.writable.getWriter();
-		mockTurnFetch.mockResolvedValue(acceptedTurn(body.readable));
-
-		run.sendMessage("hello");
-		setTurn({ status: "streaming" }, false);
-		const encoder = new TextEncoder();
-		await writer.write(encoder.encode("Hel"));
-		await vi.waitFor(() => expect(run.streamingPreview).toBe("Hel"));
-		await writer.write(encoder.encode("lo."));
-		await vi.waitFor(() => expect(run.streamingPreview).toBe("Hello."));
-
-		setTurn({ status: "done", settled: true }, false);
-		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
-		await writer.close();
-	});
-
-	// Tests that a failed stream clears isSending and toasts instead of leaving it stuck.
-	it("a failed turn (stream status 'error') clears isSending and toasts, instead of leaving it stuck forever", async () => {
-		const { run, session, toast } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-
-		run.sendMessage("hello");
-		await vi.waitFor(() => expect(run.isSending).toBe(true));
-
-		setTurn({ status: "error" });
-
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(run.streamingPreview).toBeNull();
-		expect(toast).toHaveBeenCalledWith(
-			"Something went wrong generating a reply. Please resend your message.",
-			{ duration: 4000 },
+		await vi.waitFor(() =>
+			expect(toast).toHaveBeenCalledWith("Message failed. Please try again.", {
+				duration: 4000,
+			}),
 		);
-	});
-
-	// Tests that the previous turn's error is not mistaken for the new send failing.
-	it("does not mistake the previous turn's error for the new send failing", async () => {
-		const { run, session, toast } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-		setTurn({ streamId: "old", status: "error" });
-		await vi.waitFor(() => expect(run.streamingPreview).toBeNull());
-
-		run.sendMessage("hello again");
-		await vi.waitFor(() => expect(mockTurnFetch).toHaveBeenCalled());
-		await Promise.resolve();
-
-		expect(run.isSending).toBe(true);
-		expect(toast).not.toHaveBeenCalled();
+		expect(run.isSending).toBe(false);
 	});
 });
 
-describe("stuck-turn recovery", () => {
-	// Tests that a turn the server marks timed out unlocks the composer and toasts.
-	it("a timed-out turn clears isSending and toasts", async () => {
+describe("failed and stuck replies", () => {
+	const FAILED_TOAST =
+		"Something went wrong generating a reply. Please resend your message.";
+
+	// Tests that a reply the server marks failed unlocks the composer and shows the toast once.
+	it("a failed reply unlocks the composer and toasts once", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
+		setHistory("mary", []);
 		run.activeContactId = "mary";
 
 		run.sendMessage("hello");
+		setHistory("mary", [message("user", "hello")], {
+			id: "r1",
+			status: "pending",
+		});
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		setTurn({ status: "timeout" });
+		setHistory("mary", [], { id: "r1", status: "failed" });
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(run.streamingPreview).toBeNull();
-		expect(toast).toHaveBeenCalledWith(
-			"Something went wrong generating a reply. Please resend your message.",
-			{ duration: 4000 },
-		);
+		expect(toast).toHaveBeenCalledWith(FAILED_TOAST, { duration: 4000 });
+		setHistory("mary", [], { id: "r1", status: "failed" });
+		await Promise.resolve();
+		expect(toast).toHaveBeenCalledTimes(1);
 	});
 
-	// Tests that a turn still pending or streaming keeps the composer locked, and only the server's verdict unlocks it.
-	it("stays locked while the turn is pending or streaming", async () => {
+	// Tests that a reply that finishes normally does not toast.
+	it("a finished reply does not toast", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
+		setHistory("mary", []);
 		run.activeContactId = "mary";
 
 		run.sendMessage("hello");
+		setHistory("mary", [message("user", "hello")], {
+			id: "r1",
+			status: "pending",
+		});
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
+		setHistory("mary", [message("user", "hello"), message("assistant", "hi")], {
+			id: "r1",
+			status: "done",
+		});
 
-		setTurn({ streamId: "new", status: "pending" });
-		await Promise.resolve();
-		expect(run.isSending).toBe(true);
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(toast).not.toHaveBeenCalled();
+	});
 
-		setTurn({ streamId: "new", status: "streaming", text: "Par" });
+	// Tests that an older failed reply is not mistaken for the new send failing.
+	it("does not mistake an older failed reply for the new send failing", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		setHistory("mary", [], { id: "old", status: "failed" });
+		run.activeContactId = "mary";
+
+		run.sendMessage("hello again");
+		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
 		await Promise.resolve();
-		expect(run.isSending).toBe(true);
+
+		expect(toast).not.toHaveBeenCalled();
+	});
+
+	// Tests that the composer stays locked while the server says the reply is pending, with no toast.
+	it("stays locked while the reply is pending", async () => {
+		const { run, session, toast } = await freshRun();
+		await primeRun(run, session);
+		setHistory("mary", [message("user", "hello")], {
+			id: "r1",
+			status: "pending",
+		});
+		run.activeContactId = "mary";
+
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
 		expect(toast).not.toHaveBeenCalled();
 	});
 
 	// Tests that after a failure the student can immediately resend.
-	it("lets the student resend right after a failed turn", async () => {
+	it("lets the student resend right after a failed reply", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
+		setHistory("mary", []);
 		run.activeContactId = "mary";
 
 		run.sendMessage("hello");
+		setHistory("mary", [message("user", "hello")], {
+			id: "r1",
+			status: "pending",
+		});
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
-		setTurn({ streamId: "new", status: "timeout" });
+		setHistory("mary", [], { id: "r1", status: "failed" });
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 
 		expect(run.sendMessage("hello again")).toBe(true);
-		expect(mockTurnFetch).toHaveBeenCalledTimes(2);
-		expect(run.isSending).toBe(true);
+		expect(mockClientMutation).toHaveBeenCalledTimes(2);
 	});
 
-	// Tests that a failure on another persona neither unlocks nor locks the composer for the persona that was messaged.
-	it("ignores a failed turn on a persona other than the one being messaged", async () => {
+	// Tests that a failure on another persona neither unlocks nor toasts for the persona being viewed.
+	it("ignores a failed reply on a persona other than the one being viewed", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session, {
 			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
 		});
+		setHistory("mary", [], { id: "r1", status: "pending" });
 		run.activeContactId = "mary";
-
 		run.sendMessage("hello");
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
 		run.selectContact("bob");
-		setFakeQuery(
-			GET_TURN_STREAM,
-			{ runId: "run-1", personaId: "bob", withText: true },
-			{
-				data: { streamId: "b1", status: "error", settled: false, text: "" },
-			},
-		);
+		setHistory("bob", [], { id: "b1", status: "failed" });
 		await Promise.resolve();
 
 		expect(run.isSending).toBe(false);
@@ -713,35 +637,40 @@ describe("stuck-turn recovery", () => {
 		expect(run.isSending).toBe(true);
 	});
 
-	// Tests that a turn that failed while the student was on another persona is recovered on return.
-	it("recovers a turn that timed out while the student was viewing someone else", async () => {
+	// Tests that a reply that failed while the student was viewing someone else is reported on return.
+	it("reports a reply that failed while the student was viewing someone else", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session, {
 			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
 		});
+		setHistory("mary", []);
 		run.activeContactId = "mary";
-
 		run.sendMessage("hello");
+		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
+		setHistory("mary", [message("user", "hello")], {
+			id: "r1",
+			status: "pending",
+		});
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 		run.selectContact("bob");
-		setTurn({ streamId: "m2", status: "timeout" });
 
+		setHistory("mary", [], { id: "r1", status: "failed" });
 		run.selectContact("mary");
 
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(toast).toHaveBeenCalledWith(
-			"Something went wrong generating a reply. Please resend your message.",
-			{ duration: 4000 },
+		await vi.waitFor(() =>
+			expect(toast).toHaveBeenCalledWith(FAILED_TOAST, { duration: 4000 }),
 		);
+		expect(run.isSending).toBe(false);
 	});
 
-	// Tests that a reply already in progress on the server is reported and does not leave the composer locked.
-	it("unlocks and explains when the server says a reply is already in progress", async () => {
+	// Tests that a reply already in progress on the server is reported and does not lock the composer.
+	it("explains when the server says a reply is already in progress", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockTurnFetch.mockResolvedValue(
-			rejectedTurn(
+		mockClientMutation.mockRejectedValue(
+			clientStudentError(
+				"api/turn:sendMessage",
 				STUDENT_ERROR.REPLY_IN_PROGRESS,
 				"Please wait for the current reply to finish.",
 			),
@@ -749,22 +678,13 @@ describe("stuck-turn recovery", () => {
 
 		run.sendMessage("hello");
 
-		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(toast).toHaveBeenCalledWith(
-			"Please wait for the current reply to finish.",
-			{ duration: 4000 },
+		await vi.waitFor(() =>
+			expect(toast).toHaveBeenCalledWith(
+				"Please wait for the current reply to finish.",
+				{ duration: 4000 },
+			),
 		);
-	});
-
-	// Tests that a reload during a stuck turn does not leave the fresh composer locked.
-	it("starts a reloaded run with an unlocked composer", async () => {
-		const { run, session } = await freshRun();
-		await primeRun(run, session);
-		run.activeContactId = "mary";
-		setTurn({ streamId: "stuck", status: "pending" });
-
 		expect(run.isSending).toBe(false);
-		expect(run.sendMessage("hello")).toBe(true);
 	});
 });
 
@@ -797,11 +717,7 @@ describe("notification diffing (#diffAndNotify, observed via the live query)", (
 			duration: 4000,
 		});
 
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: [message("user", "hi")] },
-		);
+		setHistory("mary", [message("user", "hi")]);
 		await vi.waitFor(() => expect(run.activeMessages).toHaveLength(1));
 		expect(toast).toHaveBeenCalledTimes(2);
 	});
@@ -897,11 +813,7 @@ describe("a run that expires while a message is in flight", () => {
 	it("sends the student home instead of starting a replacement run", async () => {
 		const { run, session, goto } = await freshRun();
 		await primeRun(run, session);
-		setFakeQuery(
-			GET_PERSONA_HISTORY,
-			{ runId: "run-1", personaId: "mary" },
-			{ data: [] },
-		);
+		setHistory("mary", [], { id: "r1", status: "pending" });
 
 		expect(run.sendMessage("are you there?")).toBe(true);
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
@@ -921,7 +833,7 @@ describe("a run that expires while a message is in flight", () => {
 
 		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
 		expect(session.runId).toBe("");
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(mockClientMutation).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -992,8 +904,7 @@ describe("hostile and degenerate client-side send guards", () => {
 
 		expect(run.sendMessage(typed)).toBe(true);
 
-		const [, init] = mockTurnFetch.mock.calls[0] as [string, RequestInit];
-		expect(JSON.parse(init.body as string)).toEqual({
+		expect(mockClientMutation.mock.calls[0]?.[1]).toEqual({
 			runId: "run-1",
 			personaId: "mary",
 			message: typed.trim(),

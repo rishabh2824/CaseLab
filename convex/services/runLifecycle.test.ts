@@ -2,11 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { CaseStructure } from "../models/cases";
-import { newTestConvex, sendTurn } from "../test.setup";
+import { insertPendingReply, newTestConvex, sendTurn } from "../test.setup";
 import { caseStructure, personaPayload } from "../testFactories";
 import { deleteCase, updateCase } from "./cases";
 import { startSimulation } from "./simulations";
-import { startTurn } from "./turn";
 
 type T = ReturnType<typeof newTestConvex>;
 
@@ -87,8 +86,8 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		).resolves.toBeNull();
 	});
 
-	// Tests that destroying a run leaves no orphaned messages or turn streams.
-	it("leaves no orphaned messages or turn streams behind", async () => {
+	// Tests that destroying a run leaves no orphaned messages, including a pending reply.
+	it("leaves no orphaned messages behind", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
@@ -98,18 +97,18 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 				personaKey: "A",
 				role: "user",
 				content: "hello",
+				status: "done",
 			});
 		});
-		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi"));
+		await insertPendingReply(t, state.run_id, "A", "hi");
 
 		await t.mutation(internal.api.simulations.destroy, { runId: state.run_id });
 
 		const leftovers = await t.run(async (ctx) => ({
 			run: await ctx.db.get(state.run_id),
 			messages: await ctx.db.query("runMessages").collect(),
-			turns: await ctx.db.query("turnStreams").collect(),
 		}));
-		expect(leftovers).toEqual({ run: null, messages: [], turns: [] });
+		expect(leftovers).toEqual({ run: null, messages: [] });
 	});
 
 	// Tests that startSimulation schedules a destroy that really deletes the run when it fires.
@@ -142,18 +141,18 @@ describe("reads against a run that has gone away", () => {
 				runId: state.run_id,
 				personaId: "A",
 			}),
-		).resolves.toEqual([]);
+		).resolves.toEqual({ messages: [], reply: null });
 		await expect(
-			t.query(api.api.turn.getTurnStream, {
+			t.mutation(api.api.turn.sendMessage, {
 				runId: state.run_id,
 				personaId: "A",
-				withText: true,
+				message: "hi",
 			}),
-		).resolves.toBeNull();
+		).rejects.toThrow(/Run not found/);
 	});
 
-	// Tests that the authoritative reads refuse an expired run without deleting it.
-	it("the authoritative reads refuse an expired run without silently deleting it", async () => {
+	// Tests that reads do not look at the clock, while sending a message still refuses an expired run.
+	it("reads an expired run until it is destroyed, while sending to it is refused", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
@@ -163,14 +162,13 @@ describe("reads against a run that has gone away", () => {
 
 		await expect(
 			t.query(api.api.simulations.get, { runId: state.run_id }),
-		).rejects.toThrow("Run expired.");
+		).resolves.toMatchObject({ run_id: state.run_id });
 		await expect(
 			t.query(api.api.simulations.exportRun, { runId: state.run_id }),
-		).rejects.toThrow("Run expired.");
-		expect(await sendTurn(t, state.run_id, "A", "hi")).toMatchObject({
-			status: 400,
-			text: expect.stringContaining("Run expired."),
-		});
+		).resolves.toMatchObject({ personas: expect.any(Array) });
+		await expect(sendTurn(t, state.run_id, "A", "hi")).rejects.toThrow(
+			"Run expired.",
+		);
 		expect(await t.run((ctx) => ctx.db.get(state.run_id))).not.toBeNull();
 	});
 

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { components } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { STUDENT_ERROR } from "../lib/studentErrors";
 import type { CaseStructure } from "../models/cases";
-import { newTestConvex, studentRejection } from "../test.setup";
+import {
+	insertPendingReply,
+	newTestConvex,
+	studentRejection,
+} from "../test.setup";
 import { caseStructure, personaPayload, referralEdge } from "../testFactories";
 import {
 	deleteRunCascade,
@@ -11,7 +14,6 @@ import {
 	getSimulationState,
 	startSimulation,
 } from "./simulations";
-import { startTurn } from "./turn";
 
 // Inserts a case owned by a new admin, with optional overrides, and returns its id.
 async function seedCase(
@@ -106,7 +108,8 @@ describe("startSimulation", () => {
 			}),
 		});
 
-		const state = await t.run((ctx) => startSimulation(ctx, "acme"));
+		const started = await t.run((ctx) => startSimulation(ctx, "acme"));
+		const state = await t.run((ctx) => getSimulationState(ctx, started.run_id));
 
 		expect(state.case).toEqual({
 			id: state.case.id,
@@ -137,7 +140,8 @@ describe("startSimulation", () => {
 			}),
 		});
 
-		const state = await t.run((ctx) => startSimulation(ctx, "secret"));
+		const started = await t.run((ctx) => startSimulation(ctx, "secret"));
+		const state = await t.run((ctx) => getSimulationState(ctx, started.run_id));
 		const serialized = JSON.stringify(state.contacts);
 		expect(serialized).not.toContain(secretFact);
 		expect(serialized).not.toContain("Blunt, impatient.");
@@ -167,7 +171,8 @@ describe("startSimulation", () => {
 			}),
 		});
 
-		const state = await t.run((ctx) => startSimulation(ctx, "photo"));
+		const started = await t.run((ctx) => startSimulation(ctx, "photo"));
+		const state = await t.run((ctx) => getSimulationState(ctx, started.run_id));
 		expect(state.contacts[0]!.profile_photo?.url).toEqual(expect.any(String));
 	});
 
@@ -193,7 +198,10 @@ describe("startSimulation", () => {
 			}),
 		});
 
-		const state = await t.run((ctx) => startSimulation(ctx, "deleted-storage"));
+		const started = await t.run((ctx) =>
+			startSimulation(ctx, "deleted-storage"),
+		);
+		const state = await t.run((ctx) => getSimulationState(ctx, started.run_id));
 		expect(state.contacts[0]!.profile_photo?.url).toBeNull();
 	});
 
@@ -246,23 +254,23 @@ describe("getSimulationState", () => {
 		});
 	});
 
-	// Tests that reading an expired run throws without deleting it.
-	it("throws for an expired run without deleting it -- cleanup is the scheduled job's responsibility, not a read's", async () => {
+	// Tests that a read does not look at the clock: ending a run is the scheduled destroy's job, and its deletion is what tells the client.
+	it("still reads a run past its expiry until the scheduled destroy deletes it", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		await t.run((ctx) =>
 			ctx.db.patch(state.run_id, { expiresAt: Date.now() - 1_000 }),
 		);
 
+		await expect(
+			t.run((ctx) => getSimulationState(ctx, state.run_id)),
+		).resolves.toMatchObject({ run_id: state.run_id });
+		await t.run((ctx) => deleteRunCascade(ctx, state.run_id));
 		expect(
 			await studentRejection(
 				t.run((ctx) => getSimulationState(ctx, state.run_id)),
 			),
-		).toEqual({
-			code: STUDENT_ERROR.RUN_EXPIRED,
-			message: "Run expired.",
-		});
-		expect(await t.run((ctx) => ctx.db.get(state.run_id))).not.toBeNull();
+		).toMatchObject({ code: STUDENT_ERROR.RUN_NOT_FOUND });
 	});
 
 	// Tests that an unlocked referred persona is included, available from its unlock minute.
@@ -317,6 +325,7 @@ describe("exportSimulation", () => {
 				personaKey: "C",
 				role: "user",
 				content: "hi Carl",
+				status: "done",
 			}),
 		);
 		await t.run((ctx) =>
@@ -325,6 +334,7 @@ describe("exportSimulation", () => {
 				personaKey: "C",
 				role: "assistant",
 				content: "Hello, I'm Carl.",
+				status: "done",
 			}),
 		);
 
@@ -338,23 +348,42 @@ describe("exportSimulation", () => {
 	});
 });
 
-describe("deleteRunCascade", () => {
-	// Tests that destroying a run also deletes its messages and turn streams.
-	it("deletes the run's messages and turn streams along with the run itself", async () => {
+describe("exportSimulation with unfinished replies", () => {
+	// Tests that a message whose reply is pending, and a failed reply, are left out of the export.
+	it("leaves out a message with a pending reply and hides failed replies", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
-		await t.run((ctx) =>
-			ctx.db.insert("runMessages", {
-				runId: state.run_id,
-				personaKey: "A",
-				role: "user",
-				content: "hi",
-			}),
-		);
-		await t.run((ctx) => startTurn(ctx, state.run_id, "A", "hi"));
-		const { streamId } = (await t.run((ctx) =>
-			ctx.db.query("turnStreams").first(),
-		))!;
+		await t.run(async (ctx) => {
+			for (const [role, content] of [
+				["user", "first"],
+				["assistant", "first reply"],
+			] as const) {
+				await ctx.db.insert("runMessages", {
+					runId: state.run_id,
+					personaKey: "A",
+					role,
+					content,
+					status: "done",
+				});
+			}
+		});
+		await insertPendingReply(t, state.run_id, "A", "still waiting");
+
+		const exported = await t.run((ctx) => exportSimulation(ctx, state.run_id));
+
+		expect(exported.personas[0]!.messages.map((m) => m.content)).toEqual([
+			"first",
+			"first reply",
+		]);
+	});
+});
+
+describe("deleteRunCascade", () => {
+	// Tests that destroying a run also deletes its messages, including a pending reply.
+	it("deletes the run's messages, pending reply included, along with the run itself", async () => {
+		const t = newTestConvex();
+		const state = await startRun(t, caseStructure());
+		await insertPendingReply(t, state.run_id, "A", "hi");
 
 		await t.run((ctx) => deleteRunCascade(ctx, state.run_id));
 
@@ -365,18 +394,6 @@ describe("deleteRunCascade", () => {
 				.withIndex("by_run_persona", (q) => q.eq("runId", state.run_id))
 				.collect(),
 		);
-		const turns = await t.run((ctx) =>
-			ctx.db
-				.query("turnStreams")
-				.withIndex("by_run_persona", (q) => q.eq("runId", state.run_id))
-				.collect(),
-		);
 		expect(messages).toHaveLength(0);
-		expect(turns).toHaveLength(0);
-		await expect(
-			t.query(components.persistentTextStreaming.lib.getStreamText, {
-				streamId,
-			}),
-		).rejects.toThrow("Stream not found");
 	});
 });

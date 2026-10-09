@@ -1,7 +1,6 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
 import { session } from "#lib/session.svelte.js";
-import type { StartedRun } from "#lib/student/run.svelte.js";
 import { startSimulationRef } from "#lib/student/run.svelte.js";
 import { goto } from "$app/navigation";
 import { studentErrorData } from "../../convex/lib/studentErrors.js";
@@ -16,7 +15,7 @@ async function submit(code: string): Promise<void> {
 	try {
 		const fresh = (await getConvexClient().mutation(startSimulationRef, {
 			accessCode: code,
-		})) as StartedRun;
+		})) as { run_id: string };
 		session.startRun({
 			runId: fresh.run_id,
 			startTime: Date.now(),

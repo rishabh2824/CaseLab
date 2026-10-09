@@ -383,7 +383,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 	}
 
 	// Tests that the student-facing functions work without any identity.
-	it("start/get/getPersonaHistory/exportRun/getTurnStream all work with no identity", async () => {
+	it("start/get/getPersonaHistory/exportRun/sendMessage all work with no identity", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t);
 		expect(state.run_id).toBeDefined();
@@ -396,17 +396,17 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 				runId: state.run_id,
 				personaId: "A",
 			}),
-		).resolves.toEqual([]);
+		).resolves.toEqual({ messages: [], reply: null });
 		await expect(
 			t.query(api.api.simulations.exportRun, { runId: state.run_id }),
 		).resolves.toMatchObject({ case: { case_name: "Owned Case" } });
 		await expect(
-			t.query(api.api.turn.getTurnStream, {
+			t.mutation(api.api.turn.sendMessage, {
 				runId: state.run_id,
-				personaId: "A",
-				withText: true,
+				personaId: "no-such-persona",
+				message: "hi",
 			}),
-		).resolves.toBeNull();
+		).rejects.toThrow(/Persona not found/);
 	});
 
 	// Tests that one run's id can never read another run's transcript, contacts or export.
@@ -421,6 +421,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 				personaKey: "A",
 				role: "user",
 				content: "run A private message",
+				status: "done",
 			}),
 		);
 
@@ -428,7 +429,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 			runId: b.run_id,
 			personaId: "A",
 		});
-		expect(bHistory).toEqual([]);
+		expect(bHistory.messages).toEqual([]);
 
 		const bExport = await t.query(api.api.simulations.exportRun, {
 			runId: b.run_id,
@@ -449,7 +450,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 				.map(([, name]) => name!)
 				.sort();
 
-		expect(publicExports(turnSource)).toEqual(["getTurnStream"]);
+		expect(publicExports(turnSource)).toEqual(["sendMessage"]);
 		expect(publicExports(simulationsSource)).toEqual([
 			"exportRun",
 			"get",
