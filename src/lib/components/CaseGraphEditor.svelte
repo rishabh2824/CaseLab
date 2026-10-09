@@ -1,11 +1,8 @@
 <script lang="ts">
-import {
-	getPersonaFieldErrors,
-	getPersonaLabel,
-	hasFieldErrors,
-} from "#lib/case/draft.js";
+import { getPersonaLabel, hasFieldErrors } from "#lib/case/draft.js";
 import type { CaseGraph } from "#lib/case/graph.svelte.js";
 import type { Persona } from "#lib/types.js";
+import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
 import PersonaFields from "./PersonaFields.svelte";
 
 type Props = {

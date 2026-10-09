@@ -1,8 +1,8 @@
+import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
 import type { Persona, ReferralEdge } from "../types.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
-	getPersonaFieldErrors,
 	hasFieldErrors,
 	personasById,
 	reachableFrom,

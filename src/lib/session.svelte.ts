@@ -1,5 +1,3 @@
-import { browser } from "$app/env";
-
 const STORAGE_KEY = "caseLabSession";
 
 export interface PersistedSession {
@@ -29,9 +27,8 @@ function normalizePersisted(value: unknown): PersistedSession {
 	};
 }
 
-// Reads the session from sessionStorage, falling back to defaults on the server or bad data.
+// Reads the session from sessionStorage, falling back to defaults on missing or bad data.
 function readPersisted(): PersistedSession {
-	if (!browser) return defaults;
 	try {
 		const raw = sessionStorage.getItem(STORAGE_KEY);
 		if (!raw) return defaults;
@@ -50,7 +47,6 @@ class SessionStore {
 
 	// Writes the current session to sessionStorage.
 	#persist() {
-		if (!browser) return;
 		const persisted: PersistedSession = {
 			runId: this.runId,
 			startTime: this.startTime,

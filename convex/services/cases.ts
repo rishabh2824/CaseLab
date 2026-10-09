@@ -1,7 +1,8 @@
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { ACCESS_CODE_FORMAT, RUN_LIFETIME_MINUTES } from "../lib/constants";
+import { splitCyclicEdges } from "../lib/caseGraph";
+import { getCaseInfoErrors, getPersonaFieldErrors } from "../lib/caseRules";
 import type {
 	CaseStructure,
 	FileRefPayload,
@@ -162,22 +163,9 @@ export function validateGraph(
 	}
 
 	for (const persona of personas) {
-		if (!persona.name?.trim()) {
-			throw new ConvexError(`Persona ${persona.id} is missing a name.`);
-		}
-		if (!persona.role?.trim()) {
-			throw new ConvexError(`Persona ${persona.id} is missing a role.`);
-		}
-		if (
-			persona.availabilityMinutes !== null &&
-			persona.availabilityMinutes !== undefined &&
-			(!Number.isInteger(persona.availabilityMinutes) ||
-				persona.availabilityMinutes < 1)
-		) {
-			throw new ConvexError(
-				`Persona ${persona.id}'s availability must be a whole number of minutes, at least 1.`,
-			);
-		}
+		const firstError = Object.values(getPersonaFieldErrors(persona))[0];
+		if (firstError)
+			throw new ConvexError(`Persona ${persona.id}: ${firstError}`);
 	}
 
 	const validIds = seen;
@@ -205,46 +193,11 @@ export function validateGraph(
 		seenReferrals.add(referralKey);
 	}
 
-	const adjacency = new Map<string, string[]>();
-	for (const referral of referrals) {
-		const targets = adjacency.get(referral.fromId) ?? [];
-		targets.push(referral.toId);
-		adjacency.set(referral.fromId, targets);
-	}
-
-	const UNVISITED = 0;
-	const IN_PROGRESS = 1;
-	const DONE = 2;
-	const state = new Map<string, number>(
-		personaIds.map((id) => [id, UNVISITED]),
-	);
-
-	const stack: { node: string; edge: number }[] = [];
-	for (const personaId of personaIds) {
-		if (state.get(personaId) !== UNVISITED) continue;
-		state.set(personaId, IN_PROGRESS);
-		stack.push({ node: personaId, edge: 0 });
-
-		while (stack.length > 0) {
-			const frame = stack[stack.length - 1]!;
-			const neighbors = adjacency.get(frame.node) ?? [];
-			if (frame.edge >= neighbors.length) {
-				state.set(frame.node, DONE);
-				stack.pop();
-				continue;
-			}
-			const neighbor = neighbors[frame.edge]!;
-			frame.edge += 1;
-			if (state.get(neighbor) === IN_PROGRESS) {
-				throw new ConvexError(
-					`Referral cycle detected involving persona id: ${neighbor}`,
-				);
-			}
-			if (state.get(neighbor) === UNVISITED) {
-				state.set(neighbor, IN_PROGRESS);
-				stack.push({ node: neighbor, edge: 0 });
-			}
-		}
+	const { dropped } = splitCyclicEdges(personaIds, referrals);
+	if (dropped.length > 0) {
+		throw new ConvexError(
+			`Referral cycle detected involving persona id: ${dropped[0]!.toId}`,
+		);
 	}
 }
 
@@ -332,39 +285,13 @@ export type CasePayload = {
 	collaboratorAdminIds: Id<"admins">[];
 };
 
-// Trims a required text field, throwing if it is blank.
-function validateRequiredText(value: string, label: string): string {
-	const trimmed = value.trim();
-	if (!trimmed) throw new ConvexError(`${label} is required.`);
-	return trimmed;
-}
-
-// Checks a simulation duration is a whole number of minutes within the run lifetime, if set.
-function validateDuration(duration: number | undefined): number | undefined {
-	if (duration === undefined) return undefined;
-	if (
-		!Number.isInteger(duration) ||
-		duration < 1 ||
-		duration > RUN_LIFETIME_MINUTES
-	) {
-		throw new ConvexError(
-			`Simulation duration must be a whole number of minutes between 1 and ${RUN_LIFETIME_MINUTES}.`,
-		);
-	}
-	return duration;
-}
-
-// Trims and validates an access code's format and uniqueness, allowing the case being edited to keep its own.
-async function validateAccessCode(
+// Trims an access code and checks no other case uses it, allowing the case being edited to keep its own.
+async function ensureAccessCodeFree(
 	ctx: QueryCtx | MutationCtx,
 	accessCode: string,
 	excludeCaseId?: Id<"cases">,
 ): Promise<string> {
 	const normalized = accessCode.trim();
-	if (!normalized) throw new ConvexError("Access code is required.");
-	if (!ACCESS_CODE_FORMAT.test(normalized)) {
-		throw new ConvexError("Access code must contain only lowercase letters.");
-	}
 	const existing = await ctx.db
 		.query("cases")
 		.withIndex("by_access_code", (q) => q.eq("accessCode", normalized))
@@ -416,15 +343,25 @@ async function resolveCasePayload(
 	collaboratorIds: Id<"admins">[];
 	storageIds: Set<Id<"_storage">>;
 }> {
-	const name = validateRequiredText(payload.name, "Case name");
-	const brief = validateRequiredText(payload.brief, "Initial brief");
+	const firstError = Object.values(
+		getCaseInfoErrors({
+			caseName: payload.name,
+			initialBrief: payload.brief,
+			accessCode: payload.accessCode,
+			simulationDurationMinutes: payload.duration ?? null,
+		}),
+	)[0];
+	if (firstError) throw new ConvexError(firstError);
+
+	const name = payload.name.trim();
+	const brief = payload.brief.trim();
 	const commonInformation = payload.commonInformation.trim();
-	const accessCode = await validateAccessCode(
+	const accessCode = await ensureAccessCodeFree(
 		ctx,
 		payload.accessCode,
 		excludeCaseId,
 	);
-	const duration = validateDuration(payload.duration);
+	const duration = payload.duration;
 	const collaboratorIds = await resolveCollaboratorIds(
 		ctx,
 		payload.collaboratorAdminIds,

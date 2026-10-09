@@ -1,4 +1,6 @@
+import { splitCyclicEdges } from "../../../convex/lib/caseGraph.js";
 import type { Persona, ReferralEdge } from "../types.js";
+import { reachableFrom } from "./draft.js";
 
 export class CaseImportError extends Error {}
 
@@ -125,72 +127,21 @@ type FlatGraph = {
 	roots: string[];
 };
 
-// Walks the graph and keeps every edge that doesn't close a cycle, warning about the ones it drops.
-function acceptNonCyclicEdges(
-	personaOrder: string[],
-	edgesFrom: Map<string, RawEdge[]>,
-	warnings: string[],
-): RawEdge[] {
-	const UNVISITED = 0;
-	const IN_PROGRESS = 1;
-	const DONE = 2;
-	const state = new Map<string, number>(
-		personaOrder.map((id) => [id, UNVISITED]),
-	);
-	const acceptedEdges: RawEdge[] = [];
-
-	const stack: { node: string; edge: number }[] = [];
-	for (const startId of personaOrder) {
-		if (state.get(startId) !== UNVISITED) continue;
-		state.set(startId, IN_PROGRESS);
-		stack.push({ node: startId, edge: 0 });
-
-		while (stack.length > 0) {
-			const frame = stack[stack.length - 1]!;
-			const outgoing = edgesFrom.get(frame.node) ?? [];
-			if (frame.edge >= outgoing.length) {
-				state.set(frame.node, DONE);
-				stack.pop();
-				continue;
-			}
-			const edge = outgoing[frame.edge]!;
-			frame.edge += 1;
-			if (state.get(edge.toId) === IN_PROGRESS) {
-				warnings.push(
-					`Cycle detected involving ${edge.toId} — that referral was dropped.`,
-				);
-				continue;
-			}
-			acceptedEdges.push(edge);
-			if (state.get(edge.toId) === UNVISITED) {
-				state.set(edge.toId, IN_PROGRESS);
-				stack.push({ node: edge.toId, edge: 0 });
-			}
-		}
-	}
-	return acceptedEdges;
-}
-
 // Drops cyclic edges and personas unreachable from a root, returning the cleaned graph with warnings.
 function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
 	const { personaOrder, personaById, roots, edges } = graph;
-	const edgesFrom = Map.groupBy(edges, (edge) => edge.fromId);
 
-	const acceptedEdges = acceptNonCyclicEdges(personaOrder, edgesFrom, warnings);
-
-	const edgesFromAccepted = Map.groupBy(acceptedEdges, (edge) => edge.fromId);
-	const reachable = new Set<string>(roots);
-	const queue = [...roots];
-	while (queue.length > 0) {
-		const id = queue.shift() as string;
-		for (const edge of edgesFromAccepted.get(id) ?? []) {
-			if (!reachable.has(edge.toId)) {
-				reachable.add(edge.toId);
-				queue.push(edge.toId);
-			}
-		}
+	const { accepted: acceptedEdges, dropped } = splitCyclicEdges(
+		personaOrder,
+		edges,
+	);
+	for (const edge of dropped) {
+		warnings.push(
+			`Cycle detected involving ${edge.toId} — that referral was dropped.`,
+		);
 	}
 
+	const reachable = reachableFrom(roots, acceptedEdges);
 	for (const id of personaOrder) {
 		if (!reachable.has(id)) {
 			const name = personaById.get(id)?.name;

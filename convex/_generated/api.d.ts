@@ -13,6 +13,8 @@ import type * as auth from "../auth.js";
 import type * as cases from "../cases.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
+import type * as lib_caseGraph from "../lib/caseGraph.js";
+import type * as lib_caseRules from "../lib/caseRules.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_llm from "../lib/llm.js";
 import type * as lib_prompt from "../lib/prompt.js";
@@ -45,6 +47,8 @@ declare const fullApi: ApiFromModules<{
   cases: typeof cases;
   files: typeof files;
   http: typeof http;
+  "lib/caseGraph": typeof lib_caseGraph;
+  "lib/caseRules": typeof lib_caseRules;
   "lib/constants": typeof lib_constants;
   "lib/llm": typeof lib_llm;
   "lib/prompt": typeof lib_prompt;

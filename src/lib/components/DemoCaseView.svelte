@@ -2,7 +2,6 @@
 import { useQuery } from "convex-svelte";
 import {
 	getPersonaLabel,
-	parseCaseStructure,
 	referredWithParents,
 	rootPersonas as rootPersonasOf,
 } from "#lib/case/draft.js";
@@ -19,10 +18,9 @@ let { caseId }: Props = $props();
 
 const caseQuery = useQuery(api.cases.getDemo, () => ({ caseId }));
 
-const parsedStructure = $derived(parseCaseStructure(caseQuery.data?.structure));
-const personas = $derived(parsedStructure.personas);
-const referrals = $derived(parsedStructure.referrals);
-const roots = $derived(parsedStructure.roots);
+const personas = $derived(caseQuery.data?.structure.personas ?? []);
+const referrals = $derived(caseQuery.data?.structure.referrals ?? []);
+const roots = $derived(caseQuery.data?.structure.roots ?? []);
 const rootPersonas = $derived(rootPersonasOf(personas, roots));
 const referredPersonas = $derived(
 	referredWithParents(personas, referrals, roots),

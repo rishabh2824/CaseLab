@@ -1,16 +1,10 @@
-import { RUN_LIFETIME_MINUTES } from "../../../convex/lib/constants.js";
+import { getCaseInfoErrors } from "../../../convex/lib/caseRules.js";
 import type { CaseStructure } from "../../../convex/models/cases.js";
-import {
-	getCaseInfoErrors,
-	hasFieldErrors,
-	parseCaseStructure,
-} from "./draft.js";
+import { hasFieldErrors } from "./draft.js";
 import type { BuildHTMLFormInput } from "./exportCase.js";
 import { CaseGraph } from "./graph.svelte.js";
 import type { ImportedCaseData } from "./importCase.js";
 import type { SubmitCaseInput } from "./submitCase.js";
-
-export const MAX_SIMULATION_DURATION = RUN_LIFETIME_MINUTES;
 
 // The case fields the form loads from the server, for both editing and templating.
 export type LoadableCase = {
@@ -54,7 +48,6 @@ export class CaseDraft {
 			initialBrief: this.initialBrief,
 			accessCode: this.accessCode,
 			simulationDurationMinutes: this.simulationDurationMinutes,
-			maxSimulationDuration: MAX_SIMULATION_DURATION,
 		}),
 	);
 	hasErrors = $derived(
@@ -116,7 +109,7 @@ export class CaseDraft {
 		this.commonInformation = loaded.commonInformation ?? "";
 		this.simulationDurationMinutes = loaded.duration ?? null;
 		this.accessCode = isEditMode ? loaded.accessCode : "";
-		this.graph.load(parseCaseStructure(loaded.structure));
+		this.graph.load(loaded.structure);
 		if (isEditMode)
 			this.collaboratorAdminIds = loaded.collaboratorAdminIds ?? [];
 		this.revealErrors();

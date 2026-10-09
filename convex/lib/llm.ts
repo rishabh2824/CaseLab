@@ -1,6 +1,6 @@
 const LLM_BASE_URL = "https://openrouter.ai/api/v1";
 const LLM_MODEL = "anthropic/claude-sonnet-5.5";
-const LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-4.5";
+const LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-5.5";
 
 export const LLM_ATTEMPT_TIMEOUT_MS = 10_000;
 const CLASSIFIER_TIMEOUT_MS = 6_000;
@@ -12,6 +12,11 @@ function requireLlmKey(): string {
 	if (!key) throw new Error("Missing required environment variable: LLM_KEY");
 	return key;
 }
+
+export type TranscriptMessage = {
+	role: "user" | "assistant";
+	content: string;
+};
 
 export type ChatMessage = {
 	role: "system" | "user" | "assistant";
@@ -240,12 +245,11 @@ export async function* personaReplyStream(
 
 export const RECENT_HISTORY_LIMIT = 10;
 
-// Formats the recent conversation as 'role: content' lines.
-function formatTranscript(conversation: ChatMessage[]): string {
-	const lines = conversation
-		.slice(-RECENT_HISTORY_LIMIT)
-		.filter((message) => message.role !== "system")
-		.map((message) => `${message.role}: ${message.content}`);
+// Formats the conversation, already limited to the recent turns, as 'role: content' lines.
+function formatTranscript(conversation: TranscriptMessage[]): string {
+	const lines = conversation.map(
+		(message) => `${message.role}: ${message.content}`,
+	);
 	return lines.length > 0 ? lines.join("\n") : "No conversation yet.";
 }
 
@@ -254,7 +258,7 @@ export type HarassmentLabel = "normal" | "nonsense";
 // Classifies the latest student message as normal or nonsense, defaulting to normal if the call fails.
 export async function classifyHarassment(
 	userMessage: string,
-	conversation: ChatMessage[],
+	conversation: TranscriptMessage[],
 ): Promise<HarassmentLabel> {
 	const transcript = formatTranscript(conversation);
 	const systemPrompt =

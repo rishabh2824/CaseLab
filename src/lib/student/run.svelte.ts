@@ -1,45 +1,26 @@
-import { makeFunctionReference } from "convex/server";
 import { getConvexClient, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
+import { api } from "../../../convex/_generated/api.js";
+import type { Id } from "../../../convex/_generated/dataModel.js";
 import { getErrorMessage } from "../errors.js";
 import { session } from "../session.svelte.js";
 import type { ChatMessage, Contact, SharedFile } from "../types.js";
-import { personaAvailability } from "./availability.js";
 
-export const startSimulationRef =
-	makeFunctionReference<"mutation">("simulations:start");
-export const exportRunRef = makeFunctionReference<"query">(
-	"simulations:exportRun",
-);
-const getSimulationStateRef = makeFunctionReference<"query">("simulations:get");
-const getPersonaHistoryRef = makeFunctionReference<"query">(
-	"simulations:getPersonaHistory",
-);
-const sendMessageRef = makeFunctionReference<"mutation">("turn:sendMessage");
+export const startSimulationRef = api.simulations.start;
+export const exportRunRef = api.simulations.exportRun;
 
 import {
 	STUDENT_ERROR,
 	studentErrorData,
 } from "../../../convex/lib/studentErrors.js";
-import type {
-	ExportSimulationOut,
-	RunStateOut,
-} from "../../../convex/services/simulations.js";
+import { personaAvailability } from "../../../convex/lib/turnState.js";
+import type { RunStateOut } from "../../../convex/services/simulations.js";
 
 export type StartedRun = Omit<RunStateOut, "runId" | "case"> & {
 	runId: string;
 	case: Omit<RunStateOut["case"], "id"> & { id: string };
 };
-export type ExportRunOut = Omit<ExportSimulationOut, "case"> & {
-	case: Omit<ExportSimulationOut["case"], "id"> & { id: string };
-};
-
-type PersonaHistory = {
-	messages: ChatMessage[];
-	reply: { id: string; status: "pending" | "done" | "failed" } | null;
-};
-
 export type DisplayContact = Contact & {
 	available: boolean;
 	availableIn: number | null;
@@ -98,15 +79,18 @@ export class RunStore {
 	// The reply started by the last send, until the server reports it done or failed.
 	#awaitedReplyId = $state<string | null>(null);
 
-	#runStateQuery = useQuery(getSimulationStateRef, () =>
-		session.runId ? { runId: session.runId } : "skip",
+	#runStateQuery = useQuery(api.simulations.get, () =>
+		session.runId ? { runId: session.runId as Id<"runs"> } : "skip",
 	);
-	#historyQuery = useQuery(getPersonaHistoryRef, () =>
+	#historyQuery = useQuery(api.simulations.getPersonaHistory, () =>
 		session.runId && this.activeContactId
-			? { runId: session.runId, personaId: this.activeContactId }
+			? {
+					runId: session.runId as Id<"runs">,
+					personaId: this.activeContactId,
+				}
 			: "skip",
 	);
-	#history = $derived(this.#historyQuery.data as PersonaHistory | undefined);
+	#history = $derived(this.#historyQuery.data);
 	// Whether the active contact has a reply in flight; other contacts stay free to message.
 	isSending = $derived(this.#history?.reply?.status === "pending");
 
@@ -315,22 +299,25 @@ export class RunStore {
 		const message = rawMessage.trim();
 		const personaId = this.activeContactId;
 		if (!message || !personaId || !session.runId) return false;
-		this.#runSend(session.runId, personaId, message);
+		this.#runSend(session.runId as Id<"runs">, personaId, message);
 		return true;
 	}
 
 	// Saves the message and starts its reply on the server, toasting if it is rejected.
 	async #runSend(
-		runId: string,
+		runId: Id<"runs">,
 		personaId: string,
 		message: string,
 	): Promise<void> {
 		try {
-			const { replyId } = (await getConvexClient().mutation(sendMessageRef, {
-				runId,
-				personaId,
-				message,
-			})) as { replyId: string };
+			const { replyId } = await getConvexClient().mutation(
+				api.turn.sendMessage,
+				{
+					runId,
+					personaId,
+					message,
+				},
+			);
 			this.#awaitedReplyId = replyId;
 		} catch (err) {
 			const error = studentErrorData(err);

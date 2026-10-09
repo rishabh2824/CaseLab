@@ -9,7 +9,6 @@ import { setViewerContext } from "#lib/adminViewer.js";
 import { authClient } from "#lib/auth-client.js";
 import AdminTopBar from "#lib/components/AdminTopBar.svelte";
 import { getErrorMessage } from "#lib/errors.js";
-import { browser } from "$app/env";
 import { goto } from "$app/navigation";
 import { api } from "../../../../convex/_generated/api.js";
 
@@ -23,8 +22,7 @@ const viewer = useQuery(api.admins.viewer, {});
 setViewerContext(viewer);
 
 const OTT_EXCHANGE_GRACE_MS = 4000;
-const hasOttParam =
-	browser && new URLSearchParams(window.location.search).has("ott");
+const hasOttParam = new URLSearchParams(window.location.search).has("ott");
 let awaitingOttExchange = $state(hasOttParam);
 if (hasOttParam) {
 	setTimeout(() => {
@@ -32,9 +30,7 @@ if (hasOttParam) {
 	}, OTT_EXCHANGE_GRACE_MS);
 }
 
-const authErrorParam = browser
-	? new URLSearchParams(window.location.search).get("error")
-	: null;
+const authErrorParam = new URLSearchParams(window.location.search).get("error");
 
 let signInError = $state("");
 

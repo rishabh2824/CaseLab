@@ -101,14 +101,14 @@ describe("validateGraph (pure)", () => {
 	it("rejects a persona with a blank name", () => {
 		expect(() =>
 			validateGraph([personaPayload("A", { name: "  " })], [], ["A"]),
-		).toThrow(/missing a name/);
+		).toThrow(/Persona A: Name is required/);
 	});
 
 	// Tests that a persona with a blank role is rejected.
 	it("rejects a persona with a blank role", () => {
 		expect(() =>
 			validateGraph([personaPayload("A", { role: "" })], [], ["A"]),
-		).toThrow(/missing a role/);
+		).toThrow(/Persona A: Role is required/);
 	});
 
 	// Tests that zero, negative and fractional persona availability values are rejected.
@@ -121,7 +121,7 @@ describe("validateGraph (pure)", () => {
 					[],
 					["A"],
 				),
-			).toThrow(/availability/);
+			).toThrow(/Persona A: Must be a whole number of minutes/);
 		},
 	);
 

@@ -1,11 +1,9 @@
 <script lang="ts">
 import { Popover } from "bits-ui";
-import {
-	type CaseDraft,
-	MAX_SIMULATION_DURATION,
-} from "#lib/case/caseDraft.svelte.js";
+import type { CaseDraft } from "#lib/case/caseDraft.svelte.js";
 import { isSelectableCollaborator, parseIntOrNull } from "#lib/case/draft.js";
 import type { AdminRow } from "#lib/types.js";
+import { RUN_LIFETIME_MINUTES } from "../../../convex/lib/constants.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
 
 type Props = {
@@ -74,7 +72,7 @@ const errors = $derived(draft.showErrors ? draft.errors : {});
 				id="simulation-duration"
 				type="number"
 				min="1"
-				max={MAX_SIMULATION_DURATION}
+				max={RUN_LIFETIME_MINUTES}
 				step="1"
 				placeholder="Leave empty for unlimited"
 				value={draft.simulationDurationMinutes ?? ''}

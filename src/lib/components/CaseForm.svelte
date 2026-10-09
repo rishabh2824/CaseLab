@@ -55,7 +55,6 @@ async function loadCase(id: string): Promise<void> {
 	const loadedCase = await getConvexClient().query(api.cases.getForEdit, {
 		caseId: id as Id<"cases">,
 	});
-	if (sourceCaseId !== id) return;
 	draft.load(loadedCase, { isEditMode });
 	if (isEditMode) ownerAdminId = loadedCase.ownerAdminId ?? null;
 }
@@ -67,7 +66,6 @@ $effect(() => {
 	loadErrorMessage = "";
 	loadCase(id)
 		.catch((err: unknown) => {
-			if (sourceCaseId !== id) return;
 			loadErrorMessage = getErrorMessage(
 				err,
 				isEditMode
@@ -76,7 +74,6 @@ $effect(() => {
 			);
 		})
 		.finally(() => {
-			if (sourceCaseId !== id) return;
 			isLoadingSource = false;
 		});
 });

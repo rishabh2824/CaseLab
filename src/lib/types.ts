@@ -30,10 +30,6 @@ export type Persona = Omit<PersonaPayload, "profilePhoto" | "files"> & {
 	files: DraftFileEntry[];
 };
 
-export type PersonaFieldErrors = Partial<
-	Record<"name" | "role" | "availability", string>
->;
-
 export type AdminRow = {
 	_id: Id<"admins">;
 	email: string;

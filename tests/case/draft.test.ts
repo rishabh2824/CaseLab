@@ -1,13 +1,10 @@
-import type { GenericId } from "convex/values";
 import { describe, expect, it } from "vitest";
+import { getPersonaFieldErrors } from "../../convex/lib/caseRules.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
-	getPersonaFieldErrors,
 	getPersonaLabel,
 	hasFieldErrors,
-	normalizePersona,
-	normalizeReferral,
 	reachableFrom,
 	referralsFrom,
 	referralsTo,
@@ -40,74 +37,6 @@ describe("createEmptyReferral", () => {
 			conditions: "",
 		});
 		expect(createEmptyReferral({ fromId: "p1" }).fromId).toBe("p1");
-	});
-});
-
-describe("normalizePersona", () => {
-	// Tests that normalizePersona passes a full API-shaped persona through unchanged.
-	it("normalizes a PersonaPayload-shaped object from the API cleanly", () => {
-		const apiPersona = {
-			id: "p1",
-			name: "Mary",
-			role: "CFO",
-			profilePhoto: null,
-			knownFacts: "Knows the budget.",
-			personalityTraits: "Direct.",
-			availabilityMinutes: 30,
-			files: [
-				{
-					file: {
-						storageId: "storage-key" as GenericId<"_storage">,
-						fileName: "a.pdf",
-					},
-					shareConditions: "When asked about the budget.",
-					perceivedContents: "Last quarter budget.",
-				},
-			],
-		};
-		expect(normalizePersona(apiPersona)).toEqual(apiPersona);
-	});
-
-	// Tests that normalizePersona turns null/undefined into distinct, valid empty personas.
-	it("produces a valid empty persona for null or undefined", () => {
-		const fromNull = normalizePersona(null);
-		const fromUndefined = normalizePersona(undefined);
-		expect(fromNull.name).toBe("");
-		expect(fromNull.files).toEqual([]);
-		expect(fromUndefined.name).toBe("");
-		expect(fromUndefined.files).toEqual([]);
-		expect(fromNull.id).not.toBe(fromUndefined.id);
-	});
-
-	// Tests that normalizePersona defaults files to an empty array when the key is missing.
-	it("defaults files to [] when the source persona has no files key", () => {
-		const persona = normalizePersona({ id: "p1", name: "Mary" });
-		expect(persona.files).toEqual([]);
-	});
-});
-
-describe("normalizeReferral", () => {
-	// Tests that normalizeReferral fills in defaults for the fields a partial referral lacks.
-	it("normalizes a partial referral, defaulting missing fields", () => {
-		expect(normalizeReferral({ fromId: "p1", toId: "p2" })).toEqual({
-			fromId: "p1",
-			toId: "p2",
-			conditions: "",
-		});
-	});
-
-	// Tests that normalizeReferral returns a blank referral for null/undefined.
-	it("produces a blank referral for null or undefined", () => {
-		expect(normalizeReferral(null)).toEqual({
-			fromId: "",
-			toId: "",
-			conditions: "",
-		});
-		expect(normalizeReferral(undefined)).toEqual({
-			fromId: "",
-			toId: "",
-			conditions: "",
-		});
 	});
 });
 

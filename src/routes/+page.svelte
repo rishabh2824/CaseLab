@@ -13,9 +13,9 @@ let isSubmitting = $state(false);
 async function submit(code: string): Promise<void> {
 	isSubmitting = true;
 	try {
-		const fresh = (await getConvexClient().mutation(startSimulationRef, {
+		const fresh = await getConvexClient().mutation(startSimulationRef, {
 			accessCode: code,
-		})) as { runId: string };
+		});
 		session.startRun({
 			runId: fresh.runId,
 			startTime: Date.now(),

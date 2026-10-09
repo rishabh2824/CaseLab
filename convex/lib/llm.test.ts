@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChatMessage } from "./llm";
+import type { TranscriptMessage } from "./llm";
 import { classifyHarassment, personaReplyStream } from "./llm";
 
 // Builds a non-streaming chat-completions Response carrying the given content.
@@ -97,19 +97,17 @@ describe("classifyHarassment (fail-open contract)", () => {
 		expect(body.messages[1].content).toContain("No conversation yet.");
 	});
 
-	// Tests that conversation turns are formatted as 'role: content' lines and system turns are skipped.
-	it("formats conversation turns as 'role: content' lines and skips system turns", async () => {
+	// Tests that conversation turns are formatted as 'role: content' lines.
+	it("formats conversation turns as 'role: content' lines", async () => {
 		const fetchMock = vi.fn().mockResolvedValue(jsonResponse("NORMAL"));
 		vi.stubGlobal("fetch", fetchMock);
-		const conversation: ChatMessage[] = [
-			{ role: "system", content: "sys" },
+		const conversation: TranscriptMessage[] = [
 			{ role: "user", content: "hi" },
 			{ role: "assistant", content: "hello" },
 		];
 		await classifyHarassment("hi", conversation);
 		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
 		expect(body.messages[1].content).toContain("user: hi\nassistant: hello");
-		expect(body.messages[1].content).not.toContain("sys");
 	});
 });
 

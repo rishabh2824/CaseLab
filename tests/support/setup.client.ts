@@ -13,13 +13,6 @@ vi.mock("$app/navigation", () => ({
 	afterNavigate: vi.fn(),
 }));
 
-vi.mock("$app/env", () => ({
-	browser: true,
-	building: false,
-	dev: true,
-	version: "test",
-}));
-
 vi.mock("svelte-sonner", () => {
 	const toast = Object.assign(vi.fn(), {
 		success: vi.fn(),
