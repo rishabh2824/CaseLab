@@ -94,7 +94,7 @@ async function handleExportPdf(): Promise<void> {
 				<span class="hidden h-9 w-px bg-line sm:block" aria-hidden="true"></span>
 				<div>
 					<h1 class="font-display text-base font-semibold tracking-tight text-ink">Wisconsin Case Lab</h1>
-					<p class="text-xs text-stone-soft">{run.caseData?.case_name ?? 'Loading case…'}</p>
+					<p class="text-xs text-stone-soft">{run.caseData?.caseName ?? 'Loading case…'}</p>
 				</div>
 			</div>
 			<button
@@ -143,9 +143,9 @@ async function handleExportPdf(): Promise<void> {
 								? 'border-brand bg-white shadow-soft'
 								: 'border-line bg-white/70 hover:border-stone-soft hover:bg-white'}"
 						>
-							{#if contact.profile_photo?.url}
+							{#if contact.profilePhoto?.url}
 								<img
-									src={contact.profile_photo.url}
+									src={contact.profilePhoto.url}
 									alt="{contact.name} profile"
 									class="h-9 w-9 rounded-full object-cover"
 								/>
@@ -165,20 +165,20 @@ async function handleExportPdf(): Promise<void> {
 								<p class="text-[11px] font-medium {contact.available ? 'text-success' : 'text-stone-soft'}">
 									{contact.available
 										? 'Available'
-										: contact.available_in
-											? `Available in ${contact.available_in} min`
+										: contact.availableIn
+											? `Available in ${contact.availableIn} min`
 											: 'Unavailable'}
 								</p>
-								{#if typeof contact.availability_duration === 'number'}
-									<p class="text-[11px] text-stone-soft">Available for {contact.availability_duration} min</p>
+								{#if typeof contact.availabilityDuration === 'number'}
+									<p class="text-[11px] text-stone-soft">Available for {contact.availabilityDuration} min</p>
 								{/if}
-								{#if typeof contact.expires_in === 'number' && contact.expires_in > 0}
-									<p class="text-[11px] text-stone-soft">Expires in {contact.expires_in} min</p>
+								{#if typeof contact.expiresIn === 'number' && contact.expiresIn > 0}
+									<p class="text-[11px] text-stone-soft">Expires in {contact.expiresIn} min</p>
 								{/if}
-								{#if contact.chat_ended}
+								{#if contact.chatEnded}
 									<p class="text-[11px] text-brand">Conversation ended</p>
 								{/if}
-								{#if contact.is_referred}
+								{#if contact.isReferred}
 									<p class="text-[11px] text-stone-soft">Referred contact</p>
 								{/if}
 							</div>
@@ -193,7 +193,7 @@ async function handleExportPdf(): Promise<void> {
 					{#if run.sharedFiles.length === 0}
 						<p class="text-xs text-stone-soft">No shared files yet.</p>
 					{:else}
-						{#each run.sharedFiles as file (file.file_id)}
+						{#each run.sharedFiles as file (file.fileId)}
 							<div>
 								<a
 									class="text-sm font-semibold text-ink underline decoration-ink/30 underline-offset-2 transition hover:decoration-ink"
@@ -201,7 +201,7 @@ async function handleExportPdf(): Promise<void> {
 									target="_blank"
 									rel="noreferrer"
 								>
-									{file.file_name}
+									{file.fileName}
 								</a>
 							</div>
 						{/each}
@@ -218,7 +218,7 @@ async function handleExportPdf(): Promise<void> {
 					</p>
 					<p class="text-sm text-stone">{run.activeContact?.role ?? ''}</p>
 				</div>
-				{#if run.activeContact?.chat_ended}
+				{#if run.activeContact?.chatEnded}
 					<span class="inline-flex items-center gap-2 rounded-full bg-brand-tint px-3 py-1 text-xs font-medium text-brand">
 						<span class="h-2 w-2 rounded-full bg-brand"></span>
 						Conversation ended
@@ -233,7 +233,7 @@ async function handleExportPdf(): Promise<void> {
 				{/if}
 			</div>
 
-			{#if run.activeContact?.chat_ended}
+			{#if run.activeContact?.chatEnded}
 				<div class="mt-4 rounded-xl border border-brand/20 bg-brand-tint px-4 py-3 text-sm text-brand">
 					This persona has ended the conversation for this chat.
 				</div>
@@ -266,7 +266,7 @@ async function handleExportPdf(): Promise<void> {
 						bind:this={chatInputEl}
 						placeholder={run.timeExpired
 							? "Time's up — messaging is disabled."
-							: run.activeContact?.chat_ended
+							: run.activeContact?.chatEnded
 								? 'This conversation has ended.'
 								: 'Type your message...'}
 						disabled={!run.activePersonaAvailable || run.isSending}

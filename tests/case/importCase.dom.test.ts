@@ -208,7 +208,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		const { data, warnings } = parseHTMLForm(serialize(doc));
 		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual([
-			{ from_id: byName(a.name), to_id: byName(b.name), conditions: "" },
+			{ fromId: byName(a.name), toId: byName(b.name), conditions: "" },
 		]);
 		expect(warnings.some((w) => w.includes("wasn't found"))).toBe(true);
 	});
@@ -231,7 +231,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		const { data, warnings } = parseHTMLForm(serialize(doc));
 		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual([
-			{ from_id: byName(a.name), to_id: byName(b.name), conditions: "first" },
+			{ fromId: byName(a.name), toId: byName(b.name), conditions: "first" },
 		]);
 		expect(warnings.some((w) => w.includes("duplicate referral"))).toBe(true);
 	});
@@ -261,7 +261,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		const { data, warnings } = parseHTMLForm(serialize(doc));
 		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual([
-			{ from_id: byName(a.name), to_id: byName(b.name), conditions: "" },
+			{ fromId: byName(a.name), toId: byName(b.name), conditions: "" },
 		]);
 		expect(warnings.some((w) => w.includes("refers to itself"))).toBe(true);
 	});
@@ -287,7 +287,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		expect(data.personas.map((p) => p.name)).toEqual([p1.name, p2.name]);
 		const byName = idsByName(data.personas);
 		expect(data.referrals).toEqual([
-			{ from_id: byName(p1.name), to_id: byName(p2.name), conditions: "" },
+			{ fromId: byName(p1.name), toId: byName(p2.name), conditions: "" },
 		]);
 		expect(warnings.some((w) => w.includes("Cycle detected"))).toBe(true);
 		expect(warnings.some((w) => w.includes(p3.id))).toBe(true);
@@ -334,13 +334,13 @@ describe("parseHTMLForm — persona graph validation", () => {
 		expect(data.referrals).toEqual(
 			expect.arrayContaining([
 				{
-					from_id: byName(parentA.name),
-					to_id: byName(shared.name),
+					fromId: byName(parentA.name),
+					toId: byName(shared.name),
 					conditions: "",
 				},
 				{
-					from_id: byName(parentB.name),
-					to_id: byName(shared.name),
+					fromId: byName(parentB.name),
+					toId: byName(shared.name),
 					conditions: "",
 				},
 			]),
@@ -351,11 +351,11 @@ describe("parseHTMLForm — persona graph validation", () => {
 
 describe("parseHTMLForm — file sharing", () => {
 	// Tests that each file's share conditions and perceived contents are read back, with the file left null.
-	it("round-trips each file's share_conditions and perceived_contents, with file left null", () => {
+	it("round-trips each file's shareConditions and perceivedContents, with file left null", () => {
 		const persona = makePersona({
 			files: [
-				{ share_conditions: "Ask first.", perceived_contents: "A memo." },
-				{ share_conditions: "Only if pressed.", perceived_contents: "Photos." },
+				{ shareConditions: "Ask first.", perceivedContents: "A memo." },
+				{ shareConditions: "Only if pressed.", perceivedContents: "Photos." },
 			],
 		});
 		const html = buildHTMLForm({
@@ -368,13 +368,13 @@ describe("parseHTMLForm — file sharing", () => {
 		expect(data.personas[0]?.files).toEqual([
 			{
 				file: null,
-				share_conditions: "Ask first.",
-				perceived_contents: "A memo.",
+				shareConditions: "Ask first.",
+				perceivedContents: "A memo.",
 			},
 			{
 				file: null,
-				share_conditions: "Only if pressed.",
-				perceived_contents: "Photos.",
+				shareConditions: "Only if pressed.",
+				perceivedContents: "Photos.",
 			},
 		]);
 	});

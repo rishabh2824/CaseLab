@@ -35,11 +35,11 @@ describe("createEmptyReferral", () => {
 	// Tests that createEmptyReferral returns a blank referral and honors overrides.
 	it("returns a blank referral with overrides applied", () => {
 		expect(createEmptyReferral()).toEqual({
-			from_id: "",
-			to_id: "",
+			fromId: "",
+			toId: "",
 			conditions: "",
 		});
-		expect(createEmptyReferral({ from_id: "p1" }).from_id).toBe("p1");
+		expect(createEmptyReferral({ fromId: "p1" }).fromId).toBe("p1");
 	});
 });
 
@@ -50,18 +50,18 @@ describe("normalizePersona", () => {
 			id: "p1",
 			name: "Mary",
 			role: "CFO",
-			profile_photo: null,
-			known_facts: "Knows the budget.",
-			personality_traits: "Direct.",
-			availability_minutes: 30,
+			profilePhoto: null,
+			knownFacts: "Knows the budget.",
+			personalityTraits: "Direct.",
+			availabilityMinutes: 30,
 			files: [
 				{
 					file: {
-						storage_id: "storage-key" as GenericId<"_storage">,
-						file_name: "a.pdf",
+						storageId: "storage-key" as GenericId<"_storage">,
+						fileName: "a.pdf",
 					},
-					share_conditions: "When asked about the budget.",
-					perceived_contents: "Last quarter budget.",
+					shareConditions: "When asked about the budget.",
+					perceivedContents: "Last quarter budget.",
 				},
 			],
 		};
@@ -89,9 +89,9 @@ describe("normalizePersona", () => {
 describe("normalizeReferral", () => {
 	// Tests that normalizeReferral fills in defaults for the fields a partial referral lacks.
 	it("normalizes a partial referral, defaulting missing fields", () => {
-		expect(normalizeReferral({ from_id: "p1", to_id: "p2" })).toEqual({
-			from_id: "p1",
-			to_id: "p2",
+		expect(normalizeReferral({ fromId: "p1", toId: "p2" })).toEqual({
+			fromId: "p1",
+			toId: "p2",
 			conditions: "",
 		});
 	});
@@ -99,13 +99,13 @@ describe("normalizeReferral", () => {
 	// Tests that normalizeReferral returns a blank referral for null/undefined.
 	it("produces a blank referral for null or undefined", () => {
 		expect(normalizeReferral(null)).toEqual({
-			from_id: "",
-			to_id: "",
+			fromId: "",
+			toId: "",
 			conditions: "",
 		});
 		expect(normalizeReferral(undefined)).toEqual({
-			from_id: "",
-			to_id: "",
+			fromId: "",
+			toId: "",
 			conditions: "",
 		});
 	});
@@ -153,42 +153,42 @@ describe("getPersonaFieldErrors / hasFieldErrors", () => {
 		expect(hasFieldErrors(errors)).toBe(false);
 	});
 
-	// Tests that availability_minutes of 0 is rejected.
-	it("treats availability_minutes of 0 as an error", () => {
+	// Tests that availabilityMinutes of 0 is rejected.
+	it("treats availabilityMinutes of 0 as an error", () => {
 		const persona = createEmptyPersona({
 			name: "Mary",
 			role: "CFO",
-			availability_minutes: 0,
+			availabilityMinutes: 0,
 		});
 		expect(getPersonaFieldErrors(persona).availability).toBeTruthy();
 	});
 
-	// Tests that a negative availability_minutes is rejected.
-	it("treats a negative availability_minutes as an error", () => {
+	// Tests that a negative availabilityMinutes is rejected.
+	it("treats a negative availabilityMinutes as an error", () => {
 		const persona = createEmptyPersona({
 			name: "Mary",
 			role: "CFO",
-			availability_minutes: -5,
+			availabilityMinutes: -5,
 		});
 		expect(getPersonaFieldErrors(persona).availability).toBeTruthy();
 	});
 
-	// Tests that a null availability_minutes (unlimited) is accepted.
-	it("treats null availability_minutes as valid (unlimited)", () => {
+	// Tests that a null availabilityMinutes (unlimited) is accepted.
+	it("treats null availabilityMinutes as valid (unlimited)", () => {
 		const persona = createEmptyPersona({
 			name: "Mary",
 			role: "CFO",
-			availability_minutes: null,
+			availabilityMinutes: null,
 		});
 		expect(getPersonaFieldErrors(persona).availability).toBeUndefined();
 	});
 
-	// Tests that 1 is the smallest availability_minutes that validates.
-	it("treats exactly 1 as the minimum valid availability_minutes", () => {
+	// Tests that 1 is the smallest availabilityMinutes that validates.
+	it("treats exactly 1 as the minimum valid availabilityMinutes", () => {
 		const persona = createEmptyPersona({
 			name: "Mary",
 			role: "CFO",
-			availability_minutes: 1,
+			availabilityMinutes: 1,
 		});
 		expect(getPersonaFieldErrors(persona).availability).toBeUndefined();
 	});

@@ -16,10 +16,10 @@ export function personaPayload(
 		id,
 		name: `Persona ${id}`,
 		role: "Role",
-		profile_photo: null,
-		known_facts: "",
-		personality_traits: "",
-		availability_minutes: null,
+		profilePhoto: null,
+		knownFacts: "",
+		personalityTraits: "",
+		availabilityMinutes: null,
 		files: [],
 		...overrides,
 	};
@@ -41,32 +41,32 @@ export function uniqueAccessCode(): string {
 
 // Builds a referral edge payload.
 export function referralEdge(
-	from_id: string,
-	to_id: string,
+	fromId: string,
+	toId: string,
 	conditions = "",
 ): ReferralEdgePayload {
-	return { from_id, to_id, conditions };
+	return { fromId, toId, conditions };
 }
 
 // Builds a persona file entry with default file details and optional overrides.
 export function fileEntry(
 	overrides: Partial<{
-		storage_id: Id<"_storage">;
-		file_name: string;
-		content_type: string;
-		share_conditions: string;
-		perceived_contents: string;
+		storageId: Id<"_storage">;
+		fileName: string;
+		contentType: string;
+		shareConditions: string;
+		perceivedContents: string;
 	}> = {},
 ): FileEntryPayload {
 	const {
-		storage_id = "kg2test00000000000000000" as Id<"_storage">,
-		file_name = "doc.pdf",
-		content_type = "application/pdf",
-		share_conditions = "the user asks about the budget",
-		perceived_contents = "last quarter's budget",
+		storageId = "kg2test00000000000000000" as Id<"_storage">,
+		fileName = "doc.pdf",
+		contentType = "application/pdf",
+		shareConditions = "the user asks about the budget",
+		perceivedContents = "last quarter's budget",
 	} = overrides;
-	const file: FileRefPayload = { storage_id, file_name, content_type };
-	return { file, share_conditions, perceived_contents };
+	const file: FileRefPayload = { storageId, fileName, contentType };
+	return { file, shareConditions, perceivedContents };
 }
 
 // Builds a case structure, defaulting to a single root persona.

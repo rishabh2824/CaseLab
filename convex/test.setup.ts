@@ -70,14 +70,14 @@ export async function insertPendingReply(
 	return await t.run(async (ctx) => {
 		const userMessageId = await ctx.db.insert("runMessages", {
 			runId,
-			personaKey: personaId,
+			personaId: personaId,
 			role: "user",
 			content: message,
 			status: "done",
 		});
 		return await ctx.db.insert("runMessages", {
 			runId,
-			personaKey: personaId,
+			personaId: personaId,
 			role: "assistant",
 			content: "",
 			status: "pending",
@@ -225,7 +225,7 @@ export function makeLlmFetch(options: LlmStub = {}): {
 			return new Response(options.replyBody, { status: 200 });
 		}
 		const chunks = options.replyChunks ?? [
-			JSON.stringify({ reply: replyText, introduce, send_files: sendFiles }),
+			JSON.stringify({ reply: replyText, introduce, sendFiles: sendFiles }),
 		];
 		return new Response(sseStream(chunks), { status: 200 });
 	}

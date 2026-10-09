@@ -32,8 +32,8 @@ import type {
 	RunStateOut,
 } from "../../../convex/services/simulations.js";
 
-export type StartedRun = Omit<RunStateOut, "run_id" | "case"> & {
-	run_id: string;
+export type StartedRun = Omit<RunStateOut, "runId" | "case"> & {
+	runId: string;
 	case: Omit<RunStateOut["case"], "id"> & { id: string };
 };
 export type ExportRunOut = Omit<ExportSimulationOut, "case"> & {
@@ -47,8 +47,8 @@ type PersonaHistory = {
 
 export type DisplayContact = Contact & {
 	available: boolean;
-	available_in: number | null;
-	expires_in: number | null;
+	availableIn: number | null;
+	expiresIn: number | null;
 };
 
 // Shows a short toast with the message.
@@ -125,19 +125,19 @@ export class RunStore {
 	contacts = $derived<DisplayContact[]>(
 		(this.raw?.contacts ?? []).map((contact) => {
 			const availability = personaAvailability(
-				contact.availability_duration,
-				contact.available_at,
+				contact.availabilityDuration,
+				contact.availableAt,
 				this.elapsedMinutes,
 			);
 			return {
 				...contact,
 				available: availability.available,
-				available_in: availability.availableIn,
-				expires_in: availability.expiresIn,
+				availableIn: availability.availableIn,
+				expiresIn: availability.expiresIn,
 			};
 		}),
 	);
-	sharedFiles = $derived<SharedFile[]>(this.raw?.shared_files ?? []);
+	sharedFiles = $derived<SharedFile[]>(this.raw?.sharedFiles ?? []);
 	activeMessages = $derived<ChatMessage[]>(this.#history?.messages ?? []);
 	activeContact = $derived(
 		this.contacts.find((c) => c.id === this.activeContactId) ??
@@ -151,12 +151,12 @@ export class RunStore {
 		Boolean(
 			!this.timeExpired &&
 				this.selectedContact?.available &&
-				!this.selectedContact?.chat_ended,
+				!this.selectedContact?.chatEnded,
 		),
 	);
 	totalDurationSeconds = $derived(
-		typeof this.caseData?.simulation_duration === "number"
-			? this.caseData.simulation_duration * 60
+		typeof this.caseData?.simulationDuration === "number"
+			? this.caseData.simulationDuration * 60
 			: null,
 	);
 
@@ -218,19 +218,19 @@ export class RunStore {
 	// Toasts about contacts and files that appeared since the last update, skipping the initial load.
 	#diffAndNotify(): void {
 		const rows: Contact[] = this.raw?.contacts ?? [];
-		const files: SharedFile[] = this.raw?.shared_files ?? [];
+		const files: SharedFile[] = this.raw?.sharedFiles ?? [];
 		if (this.#seenInitialized) {
 			for (const c of rows) {
 				if (!this.#seenContacts.has(c.id))
 					notify(`New contact unlocked: ${c.name} (${c.role})`);
 			}
 			for (const f of files) {
-				if (!this.#seenFiles.has(f.file_id))
-					notify(`File shared: ${f.file_name}`);
+				if (!this.#seenFiles.has(f.fileId))
+					notify(`File shared: ${f.fileName}`);
 			}
 		}
 		this.#seenContacts = new Set(rows.map((c) => c.id));
-		this.#seenFiles = new Set(files.map((f) => f.file_id));
+		this.#seenFiles = new Set(files.map((f) => f.fileId));
 		this.#seenInitialized = true;
 	}
 

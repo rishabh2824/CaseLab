@@ -15,9 +15,9 @@ async function submit(code: string): Promise<void> {
 	try {
 		const fresh = (await getConvexClient().mutation(startSimulationRef, {
 			accessCode: code,
-		})) as { run_id: string };
+		})) as { runId: string };
 		session.startRun({
-			runId: fresh.run_id,
+			runId: fresh.runId,
 			startTime: Date.now(),
 		});
 		error = "";

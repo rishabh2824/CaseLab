@@ -32,7 +32,7 @@ function scaffoldGraph(): Graph {
 	const referred = createEmptyPersona();
 	return {
 		personas: [root, referred],
-		referrals: [{ from_id: root.id, to_id: referred.id, conditions: "" }],
+		referrals: [{ fromId: root.id, toId: referred.id, conditions: "" }],
 		roots: [root.id],
 	};
 }
@@ -71,8 +71,8 @@ function fields({
 // Renders one file entry row in the exported form.
 function fileRowMarkup(
 	file: {
-		share_conditions?: string | null;
-		perceived_contents?: string | null;
+		shareConditions?: string | null;
+		perceivedContents?: string | null;
 	},
 	index: number,
 ): string {
@@ -85,13 +85,13 @@ function fileRowMarkup(
 			field: "share_conditions",
 			label:
 				"Describe the conditions under which the persona will share the file",
-			value: file.share_conditions ?? "",
+			value: file.shareConditions ?? "",
 			rows: 2,
 		})}
     ${fields({
 			field: "perceived_contents",
 			label: "What does the persona think is in this file?",
-			value: file.perceived_contents ?? "",
+			value: file.perceivedContents ?? "",
 			rows: 2,
 		})}
   </div>`;
@@ -144,20 +144,20 @@ function personaCardMarkup(
 			field: "availability_minutes",
 			label: "Available for (minutes)",
 			hint: availabilityHint,
-			value: persona.availability_minutes,
+			value: persona.availabilityMinutes,
 		})}
     ${fields({
 			field: "known_facts",
 			label: "Persona Related Information",
 			hint: "Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.",
-			value: persona.known_facts,
+			value: persona.knownFacts,
 			rows: 5,
 		})}
     ${fields({
 			field: "personality_traits",
 			label: "Personality Traits",
 			hint: "Tone, temperament, communication style, quirks.",
-			value: persona.personality_traits,
+			value: persona.personalityTraits,
 			rows: 3,
 		})}
     ${filesBlockMarkup(persona)}
@@ -181,9 +181,9 @@ function referralRowMarkup(
 ): string {
 	return `<div class="referral-row" data-referral="true">
     <div class="referral-selects">
-      <select class="input select-persona" data-role="from">${personaOptions(personas, referral.from_id)}</select>
+      <select class="input select-persona" data-role="from">${personaOptions(personas, referral.fromId)}</select>
       <span class="referral-arrow">&rarr;</span>
-      <select class="input select-persona" data-role="to">${personaOptions(personas, referral.to_id)}</select>
+      <select class="input select-persona" data-role="to">${personaOptions(personas, referral.toId)}</select>
       <button type="button" class="btn-text btn-remove" data-action="remove-referral">Remove</button>
     </div>
     ${fields({
@@ -390,7 +390,7 @@ export function buildHTMLForm({
             </template>
 
             <template id="file-template">
-                ${fileRowMarkup({ share_conditions: "", perceived_contents: "" }, 0)}
+                ${fileRowMarkup({ shareConditions: "", perceivedContents: "" }, 0)}
             </template>
 
             <script>
@@ -424,8 +424,8 @@ export function buildHTMLForm({
   function currentReferralEdges() {
     return Array.prototype.map.call(document.querySelectorAll('.referral-row'), function (row) {
       return {
-        from_id: row.querySelector('select[data-role="from"]').value,
-        to_id: row.querySelector('select[data-role="to"]').value,
+        fromId: row.querySelector('select[data-role="from"]').value,
+        toId: row.querySelector('select[data-role="to"]').value,
       };
     });
   }

@@ -91,9 +91,9 @@ function setHistory(
 
 const caseData = {
 	id: "case-1",
-	case_name: "Sterling Industries",
+	caseName: "Sterling Industries",
 	brief: "Reduce office supply costs.",
-	simulation_duration: null as number | null,
+	simulationDuration: null as number | null,
 };
 
 const liveRuns: RunStore[] = [];
@@ -122,7 +122,7 @@ async function primeRun(
 		{
 			data: makeRunState({
 				case: caseData,
-				contacts: [makeContact({ id: "mary", chat_ended: false })],
+				contacts: [makeContact({ id: "mary", chatEnded: false })],
 				...overrides,
 			}),
 		},
@@ -174,7 +174,7 @@ describe("which persona is selected", () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session, {
 			contacts: [
-				makeContact({ id: "later", available_at: 999 }),
+				makeContact({ id: "later", availableAt: 999 }),
 				makeContact({ id: "mary" }),
 			],
 		});
@@ -316,7 +316,7 @@ describe("session resume / live-query errors", () => {
 		setFakeQuery(
 			GET_SIMULATION_STATE,
 			{ runId: "run-1" },
-			{ data: makeRunState({ run_id: "run-1" }) },
+			{ data: makeRunState({ runId: "run-1" }) },
 		);
 
 		await vi.waitFor(() => expect(run.loadError).toBe(""));
@@ -692,19 +692,19 @@ describe("notification diffing (#diffAndNotify, observed via the live query)", (
 	// Tests that toasts fire only for new contacts and files after the initial roster, and never for repeats.
 	it("fires no toasts for the initial roster, exactly one for a later new contact and a later new file, and none for a repeat", async () => {
 		const { run, session, toast } = await freshRun();
-		await primeRun(run, session, { shared_files: [] });
+		await primeRun(run, session, { sharedFiles: [] });
 		await vi.waitFor(() => expect(toast).not.toHaveBeenCalled());
 
 		const bob = makeContact({ id: "bob", name: "Bob", role: "Analyst" });
-		const newFile = makeSharedFile({ file_id: "9", file_name: "new.pdf" });
+		const newFile = makeSharedFile({ fileId: "9", fileName: "new.pdf" });
 		setFakeQuery(
 			GET_SIMULATION_STATE,
 			{ runId: "run-1" },
 			{
 				data: makeRunState({
 					case: caseData,
-					contacts: [makeContact({ id: "mary", chat_ended: false }), bob],
-					shared_files: [newFile],
+					contacts: [makeContact({ id: "mary", chatEnded: false }), bob],
+					sharedFiles: [newFile],
 				}),
 			},
 		);
@@ -844,7 +844,7 @@ describe("run-level time expiry", () => {
 		try {
 			const { run, session, goto } = await freshRun();
 			await primeRun(run, session, {
-				case: { ...caseData, simulation_duration: 1 },
+				case: { ...caseData, simulationDuration: 1 },
 			});
 
 			expect(run.timeExpired).toBe(false);
@@ -867,7 +867,7 @@ describe("run-level time expiry", () => {
 		try {
 			const { run, session, goto } = await freshRun();
 			await primeRun(run, session, {
-				case: { ...caseData, simulation_duration: 1 },
+				case: { ...caseData, simulationDuration: 1 },
 			});
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(run.timeExpired).toBe(true);

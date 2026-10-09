@@ -42,7 +42,7 @@ describe("landing page access-code form", () => {
 
 	// Tests that the code is trimmed and lower-cased before it is sent.
 	it("sends the trimmed, lower-cased code to the start mutation", async () => {
-		mockMutation.mockResolvedValue({ run_id: "run-1" });
+		mockMutation.mockResolvedValue({ runId: "run-1" });
 		render(Landing);
 		await submitCode("  Sterling-42 ");
 		await waitFor(() => expect(mockMutation).toHaveBeenCalledOnce());
@@ -53,7 +53,7 @@ describe("landing page access-code form", () => {
 
 	// Tests that a started run is stored in the session and the student goes to the simulation.
 	it("stores the run and goes to /student on success", async () => {
-		mockMutation.mockResolvedValue({ run_id: "run-7" });
+		mockMutation.mockResolvedValue({ runId: "run-7" });
 		render(Landing);
 		await submitCode("sterling");
 		await waitFor(() => expect(goto).toHaveBeenCalledWith("/student"));
@@ -124,7 +124,7 @@ describe("landing page access-code form", () => {
 
 	// Tests that pressing Enter in the box submits the form like the button does.
 	it("submits when Enter is pressed in the input", async () => {
-		mockMutation.mockResolvedValue({ run_id: "run-2" });
+		mockMutation.mockResolvedValue({ runId: "run-2" });
 		render(Landing);
 		const user = userEvent.setup();
 		await user.type(screen.getByLabelText("Access code"), "sterling{Enter}");
@@ -135,7 +135,7 @@ describe("landing page access-code form", () => {
 	it("clears an earlier error after a successful retry", async () => {
 		mockMutation
 			.mockRejectedValueOnce(clientServerError("api/simulations:start"))
-			.mockResolvedValueOnce({ run_id: "run-3" });
+			.mockResolvedValueOnce({ runId: "run-3" });
 		render(Landing);
 		const user = userEvent.setup();
 		await user.type(screen.getByLabelText("Access code"), "sterling");

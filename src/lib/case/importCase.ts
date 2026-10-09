@@ -61,22 +61,22 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 			card.querySelectorAll(".files-block .file-row"),
 		).map((row) => ({
 			file: null,
-			share_conditions: fieldValue(row, "share_conditions").trim(),
-			perceived_contents: fieldValue(row, "perceived_contents").trim(),
+			shareConditions: fieldValue(row, "share_conditions").trim(),
+			perceivedContents: fieldValue(row, "perceived_contents").trim(),
 		}));
 		personaOrder.push(id);
 		personaById.set(id, {
 			id,
 			name: fieldValue(card, "name").trim(),
 			role: fieldValue(card, "role").trim(),
-			known_facts: fieldValue(card, "known_facts").trim(),
-			personality_traits: fieldValue(card, "personality_traits").trim(),
-			availability_minutes: parseNumberField(
+			knownFacts: fieldValue(card, "known_facts").trim(),
+			personalityTraits: fieldValue(card, "personality_traits").trim(),
+			availabilityMinutes: parseNumberField(
 				fieldValue(card, "availability_minutes"),
 				`${id} availability`,
 				warnings,
 			),
-			profile_photo: null,
+			profilePhoto: null,
 			files,
 		});
 		if (card.getAttribute("data-persona-root") === "true") roots.push(id);
@@ -207,8 +207,8 @@ function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
 		referrals: acceptedEdges
 			.filter((edge) => reachable.has(edge.fromId) && reachable.has(edge.toId))
 			.map((edge) => ({
-				from_id: edge.fromId,
-				to_id: edge.toId,
+				fromId: edge.fromId,
+				toId: edge.toId,
 				conditions: edge.conditions,
 			})),
 		roots: roots.filter((id) => reachable.has(id)),
@@ -227,8 +227,8 @@ function mintFreshPersonaIds(graph: FlatGraph): FlatGraph {
 		})),
 		referrals: graph.referrals.map((referral) => ({
 			...referral,
-			from_id: idMap.get(referral.from_id) as string,
-			to_id: idMap.get(referral.to_id) as string,
+			fromId: idMap.get(referral.fromId) as string,
+			toId: idMap.get(referral.toId) as string,
 		})),
 		roots: graph.roots.map((id) => idMap.get(id) as string),
 	};

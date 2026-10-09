@@ -109,19 +109,19 @@ describe("startSimulation", () => {
 		});
 
 		const started = await t.run((ctx) => startSimulation(ctx, "acme"));
-		const state = await t.run((ctx) => getSimulationState(ctx, started.run_id));
+		const state = await t.run((ctx) => getSimulationState(ctx, started.runId));
 
 		expect(state.case).toEqual({
 			id: state.case.id,
-			case_name: "Acme Case",
+			caseName: "Acme Case",
 			brief: "Do the thing.",
-			simulation_duration: 30,
+			simulationDuration: 30,
 		});
 		expect(state.contacts).toHaveLength(2);
 		expect(new Set(state.contacts.map((c) => c.id))).toEqual(
 			new Set(["A", "B"]),
 		);
-		expect(state.shared_files).toEqual([]);
+		expect(state.sharedFiles).toEqual([]);
 	});
 
 	// Tests that a persona's secret fields never leak into a contact.
@@ -133,20 +133,20 @@ describe("startSimulation", () => {
 			structure: caseStructure({
 				personas: [
 					personaPayload("A", {
-						known_facts: secretFact,
-						personality_traits: "Blunt, impatient.",
+						knownFacts: secretFact,
+						personalityTraits: "Blunt, impatient.",
 					}),
 				],
 			}),
 		});
 
 		const started = await t.run((ctx) => startSimulation(ctx, "secret"));
-		const state = await t.run((ctx) => getSimulationState(ctx, started.run_id));
+		const state = await t.run((ctx) => getSimulationState(ctx, started.runId));
 		const serialized = JSON.stringify(state.contacts);
 		expect(serialized).not.toContain(secretFact);
 		expect(serialized).not.toContain("Blunt, impatient.");
-		expect(state.contacts[0]).not.toHaveProperty("known_facts");
-		expect(state.contacts[0]).not.toHaveProperty("personality_traits");
+		expect(state.contacts[0]).not.toHaveProperty("knownFacts");
+		expect(state.contacts[0]).not.toHaveProperty("personalityTraits");
 		expect(state.contacts[0]).not.toHaveProperty("files");
 	});
 
@@ -161,10 +161,10 @@ describe("startSimulation", () => {
 			structure: caseStructure({
 				personas: [
 					personaPayload("A", {
-						profile_photo: {
-							storage_id: storageId,
-							file_name: "alice.png",
-							content_type: "image/png",
+						profilePhoto: {
+							storageId: storageId,
+							fileName: "alice.png",
+							contentType: "image/png",
 						},
 					}),
 				],
@@ -172,8 +172,8 @@ describe("startSimulation", () => {
 		});
 
 		const started = await t.run((ctx) => startSimulation(ctx, "photo"));
-		const state = await t.run((ctx) => getSimulationState(ctx, started.run_id));
-		expect(state.contacts[0]!.profile_photo?.url).toEqual(expect.any(String));
+		const state = await t.run((ctx) => getSimulationState(ctx, started.runId));
+		expect(state.contacts[0]!.profilePhoto?.url).toEqual(expect.any(String));
 	});
 
 	// Tests that a photo whose storage object no longer exists gets a null url.
@@ -188,10 +188,10 @@ describe("startSimulation", () => {
 			structure: caseStructure({
 				personas: [
 					personaPayload("A", {
-						profile_photo: {
-							storage_id: storageId,
-							file_name: "alice.png",
-							content_type: "image/png",
+						profilePhoto: {
+							storageId: storageId,
+							fileName: "alice.png",
+							contentType: "image/png",
 						},
 					}),
 				],
@@ -201,8 +201,8 @@ describe("startSimulation", () => {
 		const started = await t.run((ctx) =>
 			startSimulation(ctx, "deleted-storage"),
 		);
-		const state = await t.run((ctx) => getSimulationState(ctx, started.run_id));
-		expect(state.contacts[0]!.profile_photo?.url).toBeNull();
+		const state = await t.run((ctx) => getSimulationState(ctx, started.runId));
+		expect(state.contacts[0]!.profilePhoto?.url).toBeNull();
 	});
 
 	// Tests that expiresAt equals the case duration plus the grace period.
@@ -212,7 +212,7 @@ describe("startSimulation", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		const before = Date.now();
 		const state = await t.run((ctx) => startSimulation(ctx, "timed"));
-		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
+		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 		expect(run.expiresAt - run._creationTime).toBeCloseTo(60 * 60_000, 1);
 		expect(run._creationTime).toBeGreaterThanOrEqual(before);
 	});
@@ -223,7 +223,7 @@ describe("startSimulation", () => {
 		vi.useFakeTimers({ toFake: ["Date"] });
 		await seedCase(t, { accessCode: "long", duration: 100_000 });
 		const state = await t.run((ctx) => startSimulation(ctx, "long"));
-		const run = (await t.run((ctx) => ctx.db.get(state.run_id)))!;
+		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 		expect(run.expiresAt - run._creationTime).toBeCloseTo(120 * 60_000, 1);
 	});
 });
@@ -259,16 +259,16 @@ describe("getSimulationState", () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		await t.run((ctx) =>
-			ctx.db.patch(state.run_id, { expiresAt: Date.now() - 1_000 }),
+			ctx.db.patch(state.runId, { expiresAt: Date.now() - 1_000 }),
 		);
 
 		await expect(
-			t.run((ctx) => getSimulationState(ctx, state.run_id)),
-		).resolves.toMatchObject({ run_id: state.run_id });
-		await t.run((ctx) => deleteRunCascade(ctx, state.run_id));
+			t.run((ctx) => getSimulationState(ctx, state.runId)),
+		).resolves.toMatchObject({ runId: state.runId });
+		await t.run((ctx) => deleteRunCascade(ctx, state.runId));
 		expect(
 			await studentRejection(
-				t.run((ctx) => getSimulationState(ctx, state.run_id)),
+				t.run((ctx) => getSimulationState(ctx, state.runId)),
 			),
 		).toMatchObject({ code: STUDENT_ERROR.RUN_NOT_FOUND });
 	});
@@ -283,16 +283,16 @@ describe("getSimulationState", () => {
 		});
 		const state = await startRun(t, structure);
 		await t.run((ctx) =>
-			ctx.db.patch(state.run_id, {
+			ctx.db.patch(state.runId, {
 				unlockedAt: { B: 7 },
 			}),
 		);
 
-		const live = await t.run((ctx) => getSimulationState(ctx, state.run_id));
+		const live = await t.run((ctx) => getSimulationState(ctx, state.runId));
 		const b = live.contacts.find((c) => c.id === "B");
 		expect(b).toBeDefined();
-		expect(b?.available_at).toBe(7);
-		expect(b?.is_referred).toBe(true);
+		expect(b?.availableAt).toBe(7);
+		expect(b?.isReferred).toBe(true);
 	});
 });
 
@@ -315,14 +315,14 @@ describe("exportSimulation", () => {
 		});
 		const state = await startRun(t, structure);
 		await t.run((ctx) =>
-			ctx.db.patch(state.run_id, {
+			ctx.db.patch(state.runId, {
 				unlockedAt: { D: 1, C: 5 },
 			}),
 		);
 		await t.run((ctx) =>
 			ctx.db.insert("runMessages", {
-				runId: state.run_id,
-				personaKey: "C",
+				runId: state.runId,
+				personaId: "C",
 				role: "user",
 				content: "hi Carl",
 				status: "done",
@@ -330,15 +330,15 @@ describe("exportSimulation", () => {
 		);
 		await t.run((ctx) =>
 			ctx.db.insert("runMessages", {
-				runId: state.run_id,
-				personaKey: "C",
+				runId: state.runId,
+				personaId: "C",
 				role: "assistant",
 				content: "Hello, I'm Carl.",
 				status: "done",
 			}),
 		);
 
-		const exported = await t.run((ctx) => exportSimulation(ctx, state.run_id));
+		const exported = await t.run((ctx) => exportSimulation(ctx, state.runId));
 
 		expect(exported.personas.map((p) => p.id)).toEqual(["A", "B", "D", "C"]);
 		const carl = exported.personas.find((p) => p.id === "C")!;
@@ -359,17 +359,17 @@ describe("exportSimulation with unfinished replies", () => {
 				["assistant", "first reply"],
 			] as const) {
 				await ctx.db.insert("runMessages", {
-					runId: state.run_id,
-					personaKey: "A",
+					runId: state.runId,
+					personaId: "A",
 					role,
 					content,
 					status: "done",
 				});
 			}
 		});
-		await insertPendingReply(t, state.run_id, "A", "still waiting");
+		await insertPendingReply(t, state.runId, "A", "still waiting");
 
-		const exported = await t.run((ctx) => exportSimulation(ctx, state.run_id));
+		const exported = await t.run((ctx) => exportSimulation(ctx, state.runId));
 
 		expect(exported.personas[0]!.messages.map((m) => m.content)).toEqual([
 			"first",
@@ -383,15 +383,15 @@ describe("deleteRunCascade", () => {
 	it("deletes the run's messages, pending reply included, along with the run itself", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
-		await insertPendingReply(t, state.run_id, "A", "hi");
+		await insertPendingReply(t, state.runId, "A", "hi");
 
-		await t.run((ctx) => deleteRunCascade(ctx, state.run_id));
+		await t.run((ctx) => deleteRunCascade(ctx, state.runId));
 
-		expect(await t.run((ctx) => ctx.db.get(state.run_id))).toBeNull();
+		expect(await t.run((ctx) => ctx.db.get(state.runId))).toBeNull();
 		const messages = await t.run((ctx) =>
 			ctx.db
 				.query("runMessages")
-				.withIndex("by_run_persona", (q) => q.eq("runId", state.run_id))
+				.withIndex("by_run_persona", (q) => q.eq("runId", state.runId))
 				.collect(),
 		);
 		expect(messages).toHaveLength(0);

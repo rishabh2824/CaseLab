@@ -3,32 +3,32 @@ import { type Infer, v } from "convex/values";
 export const fileRefValidator = v.union(
 	v.null(),
 	v.object({
-		storage_id: v.id("_storage"),
-		file_name: v.string(),
-		content_type: v.optional(v.string()),
+		storageId: v.id("_storage"),
+		fileName: v.string(),
+		contentType: v.optional(v.string()),
 	}),
 );
 
 export const fileEntryValidator = v.object({
 	file: fileRefValidator,
-	share_conditions: v.string(),
-	perceived_contents: v.string(),
+	shareConditions: v.string(),
+	perceivedContents: v.string(),
 });
 
 export const personaPayloadValidator = v.object({
 	id: v.string(),
 	name: v.string(),
 	role: v.string(),
-	profile_photo: fileRefValidator,
-	known_facts: v.string(),
-	personality_traits: v.string(),
-	availability_minutes: v.union(v.number(), v.null()),
+	profilePhoto: fileRefValidator,
+	knownFacts: v.string(),
+	personalityTraits: v.string(),
+	availabilityMinutes: v.union(v.number(), v.null()),
 	files: v.array(fileEntryValidator),
 });
 
 export const referralEdgeValidator = v.object({
-	from_id: v.string(),
-	to_id: v.string(),
+	fromId: v.string(),
+	toId: v.string(),
 	conditions: v.string(),
 });
 

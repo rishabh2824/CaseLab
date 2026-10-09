@@ -62,7 +62,7 @@ describe("validateGraph (pure)", () => {
 				[referralEdge("A", "does-not-exist")],
 				["A"],
 			),
-		).toThrow(/Unknown referral to_id/);
+		).toThrow(/Unknown referral toId/);
 	});
 
 	// Tests that a root pointing at a nonexistent persona is rejected.
@@ -79,8 +79,8 @@ describe("validateGraph (pure)", () => {
 		).toThrow(/Duplicate persona/);
 	});
 
-	// Tests that a duplicate (from_id, to_id) referral pair is rejected.
-	it("rejects a duplicate (from_id, to_id) referral pair", () => {
+	// Tests that a duplicate (fromId, toId) referral pair is rejected.
+	it("rejects a duplicate (fromId, toId) referral pair", () => {
 		expect(() =>
 			validateGraph(
 				[personaPayload("A"), personaPayload("B")],
@@ -114,10 +114,10 @@ describe("validateGraph (pure)", () => {
 	// Tests that zero, negative and fractional persona availability values are rejected.
 	it.each([0, -5, 2.5])(
 		"rejects a persona availability of %s minutes",
-		(availability_minutes) => {
+		(availabilityMinutes) => {
 			expect(() =>
 				validateGraph(
-					[personaPayload("A", { availability_minutes })],
+					[personaPayload("A", { availabilityMinutes })],
 					[],
 					["A"],
 				),
@@ -129,7 +129,7 @@ describe("validateGraph (pure)", () => {
 	it("accepts a persona with no availability set at all", () => {
 		expect(() =>
 			validateGraph(
-				[personaPayload("A", { availability_minutes: null })],
+				[personaPayload("A", { availabilityMinutes: null })],
 				[],
 				["A"],
 			),
@@ -555,11 +555,11 @@ describe("persona graph persistence", () => {
 		);
 		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
 		const structure = c.structure as {
-			referrals: { from_id: string; to_id: string }[];
+			referrals: { fromId: string; toId: string }[];
 			roots: string[];
 		};
 		expect(
-			new Set(structure.referrals.map((r) => `${r.from_id}->${r.to_id}`)),
+			new Set(structure.referrals.map((r) => `${r.fromId}->${r.toId}`)),
 		).toEqual(new Set(["A->C", "B->C"]));
 		expect(new Set(structure.roots)).toEqual(new Set(["A", "B"]));
 	});
@@ -611,17 +611,17 @@ describe("file links (via buildStructure/createCase)", () => {
 				payload({
 					personas: [
 						personaPayload("A", {
-							profile_photo: {
-								storage_id: storageId,
-								file_name: "shared.pdf",
-								content_type: "application/pdf",
+							profilePhoto: {
+								storageId: storageId,
+								fileName: "shared.pdf",
+								contentType: "application/pdf",
 							},
 						}),
 						personaPayload("B", {
-							profile_photo: {
-								storage_id: storageId,
-								file_name: "shared.pdf",
-								content_type: "application/pdf",
+							profilePhoto: {
+								storageId: storageId,
+								fileName: "shared.pdf",
+								contentType: "application/pdf",
 							},
 						}),
 					],
@@ -648,15 +648,15 @@ describe("file links (via buildStructure/createCase)", () => {
 			ctx.storage.store(new Blob(["shared"])),
 		);
 		const photo = {
-			storage_id: storageId,
-			file_name: "shared.pdf",
-			content_type: "application/pdf",
+			storageId: storageId,
+			fileName: "shared.pdf",
+			contentType: "application/pdf",
 		};
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
 				payload({
-					personas: [personaPayload("A", { profile_photo: photo })],
+					personas: [personaPayload("A", { profilePhoto: photo })],
 					roots: ["A"],
 				}),
 				owner,
@@ -669,8 +669,8 @@ describe("file links (via buildStructure/createCase)", () => {
 				caseId,
 				payload({
 					personas: [
-						personaPayload("A", { profile_photo: photo }),
-						personaPayload("B", { profile_photo: photo }),
+						personaPayload("A", { profilePhoto: photo }),
+						personaPayload("B", { profilePhoto: photo }),
 					],
 					roots: ["A", "B"],
 				}),
@@ -704,10 +704,10 @@ describe("a storage id with no backing object", () => {
 				payload({
 					personas: [
 						personaPayload("A", {
-							profile_photo: {
-								storage_id: ghostStorageId,
-								file_name: "gone.pdf",
-								content_type: "application/pdf",
+							profilePhoto: {
+								storageId: ghostStorageId,
+								fileName: "gone.pdf",
+								contentType: "application/pdf",
 							},
 						}),
 					],
@@ -719,9 +719,9 @@ describe("a storage id with no backing object", () => {
 
 		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
 		const structure = c.structure as {
-			personas: { profile_photo: unknown }[];
+			personas: { profilePhoto: unknown }[];
 		};
-		expect(structure.personas[0]?.profile_photo).toBeNull();
+		expect(structure.personas[0]?.profilePhoto).toBeNull();
 		const rows = await t.run((ctx) =>
 			ctx.db
 				.query("caseFiles")
@@ -738,9 +738,9 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		return {
 			storageId,
 			photo: {
-				storage_id: storageId,
-				file_name: "lifecycle.pdf",
-				content_type: "application/pdf",
+				storageId: storageId,
+				fileName: "lifecycle.pdf",
+				contentType: "application/pdf",
 			},
 		};
 	}
@@ -754,7 +754,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 			createCase(
 				ctx,
 				payload({
-					personas: [personaPayload("A", { profile_photo: photo })],
+					personas: [personaPayload("A", { profilePhoto: photo })],
 					roots: ["A"],
 				}),
 				owner,
@@ -793,7 +793,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				ctx,
 				payload({
 					name: "First",
-					personas: [personaPayload("A", { profile_photo: photo })],
+					personas: [personaPayload("A", { profilePhoto: photo })],
 					roots: ["A"],
 				}),
 				owner,
@@ -804,7 +804,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				ctx,
 				payload({
 					name: "Second",
-					personas: [personaPayload("A", { profile_photo: photo })],
+					personas: [personaPayload("A", { profilePhoto: photo })],
 					roots: ["A"],
 				}),
 				owner,
@@ -836,8 +836,8 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				ctx,
 				payload({
 					personas: [
-						personaPayload("A", { profile_photo: photo }),
-						personaPayload("B", { profile_photo: photo }),
+						personaPayload("A", { profilePhoto: photo }),
+						personaPayload("B", { profilePhoto: photo }),
 					],
 					roots: ["A", "B"],
 				}),
@@ -851,8 +851,8 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				caseId,
 				payload({
 					personas: [
-						personaPayload("A", { profile_photo: null }),
-						personaPayload("B", { profile_photo: photo }),
+						personaPayload("A", { profilePhoto: null }),
+						personaPayload("B", { profilePhoto: photo }),
 					],
 					roots: ["A", "B"],
 				}),
@@ -877,8 +877,8 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				caseId,
 				payload({
 					personas: [
-						personaPayload("A", { profile_photo: null }),
-						personaPayload("B", { profile_photo: null }),
+						personaPayload("A", { profilePhoto: null }),
+						personaPayload("B", { profilePhoto: null }),
 					],
 					roots: ["A", "B"],
 				}),

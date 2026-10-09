@@ -80,9 +80,9 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
 
-		await t.mutation(internal.api.simulations.destroy, { runId: state.run_id });
+		await t.mutation(internal.api.simulations.destroy, { runId: state.runId });
 		await expect(
-			t.mutation(internal.api.simulations.destroy, { runId: state.run_id }),
+			t.mutation(internal.api.simulations.destroy, { runId: state.runId }),
 		).resolves.toBeNull();
 	});
 
@@ -93,19 +93,19 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
 		await t.run(async (ctx) => {
 			await ctx.db.insert("runMessages", {
-				runId: state.run_id,
-				personaKey: "A",
+				runId: state.runId,
+				personaId: "A",
 				role: "user",
 				content: "hello",
 				status: "done",
 			});
 		});
-		await insertPendingReply(t, state.run_id, "A", "hi");
+		await insertPendingReply(t, state.runId, "A", "hi");
 
-		await t.mutation(internal.api.simulations.destroy, { runId: state.run_id });
+		await t.mutation(internal.api.simulations.destroy, { runId: state.runId });
 
 		const leftovers = await t.run(async (ctx) => ({
-			run: await ctx.db.get(state.run_id),
+			run: await ctx.db.get(state.runId),
 			messages: await ctx.db.query("runMessages").collect(),
 		}));
 		expect(leftovers).toEqual({ run: null, messages: [] });
@@ -121,7 +121,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-			expect(await t.run((ctx) => ctx.db.get(state.run_id))).toBeNull();
+			expect(await t.run((ctx) => ctx.db.get(state.runId))).toBeNull();
 		} finally {
 			vi.useRealTimers();
 		}
@@ -134,17 +134,17 @@ describe("reads against a run that has gone away", () => {
 		const t = newTestConvex();
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
-		await t.mutation(internal.api.simulations.destroy, { runId: state.run_id });
+		await t.mutation(internal.api.simulations.destroy, { runId: state.runId });
 
 		await expect(
 			t.query(api.api.simulations.getPersonaHistory, {
-				runId: state.run_id,
+				runId: state.runId,
 				personaId: "A",
 			}),
 		).resolves.toEqual({ messages: [], reply: null });
 		await expect(
 			t.mutation(api.api.turn.sendMessage, {
-				runId: state.run_id,
+				runId: state.runId,
 				personaId: "A",
 				message: "hi",
 			}),
@@ -157,19 +157,19 @@ describe("reads against a run that has gone away", () => {
 		await seedCase(t);
 		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
 		await t.run((ctx) =>
-			ctx.db.patch(state.run_id, { expiresAt: Date.now() - 1 }),
+			ctx.db.patch(state.runId, { expiresAt: Date.now() - 1 }),
 		);
 
 		await expect(
-			t.query(api.api.simulations.get, { runId: state.run_id }),
-		).resolves.toMatchObject({ run_id: state.run_id });
+			t.query(api.api.simulations.get, { runId: state.runId }),
+		).resolves.toMatchObject({ runId: state.runId });
 		await expect(
-			t.query(api.api.simulations.exportRun, { runId: state.run_id }),
+			t.query(api.api.simulations.exportRun, { runId: state.runId }),
 		).resolves.toMatchObject({ personas: expect.any(Array) });
-		await expect(sendTurn(t, state.run_id, "A", "hi")).rejects.toThrow(
+		await expect(sendTurn(t, state.runId, "A", "hi")).rejects.toThrow(
 			"Run expired.",
 		);
-		expect(await t.run((ctx) => ctx.db.get(state.run_id))).not.toBeNull();
+		expect(await t.run((ctx) => ctx.db.get(state.runId))).not.toBeNull();
 	});
 
 	// Tests that a run whose case was removed reports a case error instead of crashing.
@@ -180,7 +180,7 @@ describe("reads against a run that has gone away", () => {
 		await t.run((ctx) => ctx.db.delete(caseId));
 
 		await expect(
-			t.query(api.api.simulations.get, { runId: state.run_id }),
+			t.query(api.api.simulations.get, { runId: state.runId }),
 		).rejects.toThrow("Case not found.");
 	});
 });

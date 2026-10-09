@@ -8,7 +8,7 @@ export async function existingStorageIds(
 	ctx: QueryCtx,
 	refs: FileRefPayload[],
 ): Promise<Set<Id<"_storage">>> {
-	const ids = new Set(refs.flatMap((ref) => (ref ? [ref.storage_id] : [])));
+	const ids = new Set(refs.flatMap((ref) => (ref ? [ref.storageId] : [])));
 	const found = await Promise.all(
 		[...ids].map(async (id) =>
 			(await ctx.db.system.get("_storage", id)) ? id : null,

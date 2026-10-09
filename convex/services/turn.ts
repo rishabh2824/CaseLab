@@ -27,10 +27,10 @@ import {
 	NONSENSE_THRESHOLD,
 	personaAvailability,
 } from "../lib/turnState";
+import type { PersonaPayload } from "../models/cases";
 import {
 	flattenPersonas,
 	graphReferrals,
-	type PersonaDetail,
 	type PersonaGraph,
 } from "./simulationReads";
 import { loadLiveRun, loadRun } from "./simulations";
@@ -55,7 +55,7 @@ async function lastRow(
 	return await ctx.db
 		.query("runMessages")
 		.withIndex("by_run_persona", (q) =>
-			q.eq("runId", runId).eq("personaKey", personaId),
+			q.eq("runId", runId).eq("personaId", personaId),
 		)
 		.order("desc")
 		.first();
@@ -106,7 +106,7 @@ export async function sendMessage(
 			: null;
 	if (availableAt === null) throw personaUnavailable();
 	if (
-		!personaAvailability(persona.availabilityDuration, availableAt, elapsed)
+		!personaAvailability(persona.availabilityMinutes, availableAt, elapsed)
 			.available
 	) {
 		throw personaUnavailable();
@@ -122,14 +122,14 @@ export async function sendMessage(
 
 	const userMessageId = await ctx.db.insert("runMessages", {
 		runId,
-		personaKey: personaId,
+		personaId: personaId,
 		role: "user",
 		content: message,
 		status: "done",
 	});
 	const replyId = await ctx.db.insert("runMessages", {
 		runId,
-		personaKey: personaId,
+		personaId: personaId,
 		role: "assistant",
 		content: "",
 		status: "pending",
@@ -159,7 +159,7 @@ type DecisionMessage = { role: "user" | "assistant"; content: string };
 export type TurnContext = {
 	caseBrief: string;
 	commonInformation: string;
-	persona: PersonaDetail;
+	persona: PersonaPayload;
 	pendingReferrals: PendingReferral[];
 	pendingFiles: PendingFile[];
 	decisionHistory: DecisionMessage[];
@@ -179,21 +179,21 @@ async function buildTurnContext(
 	run: Doc<"runs">,
 	c: Doc<"cases">,
 	graph: PersonaGraph,
-	persona: PersonaDetail,
+	persona: PersonaPayload,
 	beforeCreationTime: number,
 ): Promise<TurnContext> {
 	const pendingReferrals: PendingReferral[] = graphReferrals(graph, persona.id)
 		.filter(
 			(referral) =>
-				!Object.hasOwn(run.unlockedAt, referral.referredPersonaId) &&
-				!graph.roots.includes(referral.referredPersonaId) &&
-				referral.conditionTrigger.trim(),
+				!Object.hasOwn(run.unlockedAt, referral.toId) &&
+				!graph.roots.includes(referral.toId) &&
+				referral.conditions.trim(),
 		)
 		.map((referral) => {
-			const referred = graph.personas.get(referral.referredPersonaId);
+			const referred = graph.personas.get(referral.toId);
 			return {
-				referredPersonaId: referral.referredPersonaId,
-				conditionTrigger: referral.conditionTrigger,
+				referredPersonaId: referral.toId,
+				conditionTrigger: referral.conditions,
 				referredName: referred?.name ?? "",
 				referredRole: referred?.role ?? "",
 			};
@@ -203,16 +203,16 @@ async function buildTurnContext(
 		const file = entry.file;
 		if (
 			!file ||
-			!entry.share_conditions.trim() ||
-			run.sharedFiles.includes(file.storage_id)
+			!entry.shareConditions.trim() ||
+			run.sharedFiles.includes(file.storageId)
 		)
 			return [];
 		return [
 			{
-				storageId: file.storage_id,
-				fileName: file.file_name || "file",
-				shareConditions: entry.share_conditions,
-				perceivedContents: entry.perceived_contents,
+				storageId: file.storageId,
+				fileName: file.fileName || "file",
+				shareConditions: entry.shareConditions,
+				perceivedContents: entry.perceivedContents,
 			},
 		];
 	});
@@ -222,7 +222,7 @@ async function buildTurnContext(
 		.withIndex("by_run_persona", (q) =>
 			q
 				.eq("runId", run._id)
-				.eq("personaKey", persona.id)
+				.eq("personaId", persona.id)
 				.lt("_creationTime", beforeCreationTime),
 		)
 		.filter((q) => q.eq(q.field("status"), "done"))
@@ -255,7 +255,7 @@ export async function loadTurn(
 
 	const { run, c } = await loadRun(ctx, reply.runId);
 	const graph = flattenPersonas(c.structure);
-	const persona = graph.personas.get(reply.personaKey);
+	const persona = graph.personas.get(reply.personaId);
 	if (!persona) return null;
 	const context = await buildTurnContext(
 		ctx,
@@ -310,14 +310,14 @@ export async function applyBoundary(
 	const run = await ctx.db.get("runs", reply.runId);
 	if (!run) return null;
 
-	const previous = getChatState(run.personaChatState, reply.personaKey);
+	const previous = getChatState(run.personaChatState, reply.personaId);
 	const warningCount = previous.warningCount + 1;
 	const ended = warningCount >= NONSENSE_THRESHOLD;
 	const endReason = ended ? label : previous.endReason;
 	await ctx.db.patch("runs", run._id, {
 		personaChatState: {
 			...run.personaChatState,
-			[reply.personaKey]: {
+			[reply.personaId]: {
 				warningCount,
 				ended,
 				endReason: endReason ?? undefined,
@@ -464,7 +464,7 @@ async function generateReply(
 		.filter((r): r is PendingReferral => r !== undefined)
 		.map((r) => ({ referredPersonaId: r.referredPersonaId }));
 
-	const sharedFiles = [...new Set(coerceHandles(parsed?.send_files))]
+	const sharedFiles = [...new Set(coerceHandles(parsed?.sendFiles))]
 		.map((handle) => fileByHandle.get(handle))
 		.filter((f): f is PendingFile => f !== undefined)
 		.map((f) => ({ storageId: f.storageId }));

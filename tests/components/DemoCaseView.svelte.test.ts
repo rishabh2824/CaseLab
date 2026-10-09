@@ -25,18 +25,18 @@ function makeDemoCase() {
 					id: "a",
 					name: "Alice",
 					role: "CFO",
-					known_facts: "Knows the budget.",
-					personality_traits: "Blunt",
-					availability_minutes: 15,
+					knownFacts: "Knows the budget.",
+					personalityTraits: "Blunt",
+					availabilityMinutes: 15,
 					files: [
 						{
 							file: {
-								storage_id: "st1" as Id<"_storage">,
-								file_name: "budget.pdf",
-								content_type: "application/pdf",
+								storageId: "st1" as Id<"_storage">,
+								fileName: "budget.pdf",
+								contentType: "application/pdf",
 							},
-							share_conditions: "Asked for the budget",
-							perceived_contents: "Q3 numbers",
+							shareConditions: "Asked for the budget",
+							perceivedContents: "Q3 numbers",
 						},
 					],
 				}),
@@ -44,8 +44,8 @@ function makeDemoCase() {
 				makePersonaPayload({ id: "c", name: "  ", role: "Intern" }),
 			],
 			referrals: [
-				{ from_id: "a", to_id: "b", conditions: "Alice trusts the user" },
-				{ from_id: "b", to_id: "c", conditions: "" },
+				{ fromId: "a", toId: "b", conditions: "Alice trusts the user" },
+				{ fromId: "b", toId: "c", conditions: "" },
 			],
 		},
 	};

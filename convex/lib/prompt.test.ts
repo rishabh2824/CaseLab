@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { PersonaDetail } from "../services/simulationReads";
+import type { PersonaPayload } from "../models/cases";
+import { personaPayload } from "../testFactories";
 import {
 	systemPrompt as buildSystemPrompt,
 	cleanReply,
@@ -13,21 +14,17 @@ function systemPrompt(...args: Parameters<typeof buildSystemPrompt>): string {
 	return `${stable}\n\n${dynamic}`;
 }
 
-// Builds a persona detail with defaults and optional overrides.
-function personaDetail(overrides: Partial<PersonaDetail> = {}): PersonaDetail {
-	return {
-		id: "A",
+// Builds a persona with defaults and optional overrides.
+function personaDetail(
+	overrides: Partial<PersonaPayload> = {},
+): PersonaPayload {
+	return personaPayload("A", {
 		name: "Mary",
 		role: "CFO",
-		profilePhoto: null,
-		profilePhotoUrl: null,
-		availabilityDuration: null,
 		knownFacts: "Karen handles all complaint escalations.",
 		personalityTraits: "Direct, impatient",
-		files: [],
-		isReferred: false,
 		...overrides,
-	};
+	});
 }
 
 const BRIEF = "Reduce office supply costs.";
@@ -303,11 +300,11 @@ describe("systemPrompt", () => {
 describe("parseReply", () => {
 	// Tests that parseReply parses a clean JSON object.
 	it("parses a clean JSON object", () => {
-		const raw = '{"reply": "Hi there.", "introduce": ["R1"], "send_files": []}';
+		const raw = '{"reply": "Hi there.", "introduce": ["R1"], "sendFiles": []}';
 		expect(parseReply(raw)).toEqual({
 			reply: "Hi there.",
 			introduce: ["R1"],
-			send_files: [],
+			sendFiles: [],
 		});
 	});
 

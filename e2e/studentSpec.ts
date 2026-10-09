@@ -169,7 +169,7 @@ test("an expired run sends the student home instead of starting a new run", asyn
 		mutations: {
 			"api/simulations:start": () => {
 				startCalls++;
-				return runState({ run_id: "testrun123" });
+				return runState({ runId: "testrun123" });
 			},
 		},
 	});
@@ -260,8 +260,8 @@ test("a shared file appears in the file list and fires a toast", async ({
 	page,
 }) => {
 	const file = makeSharedFile({
-		file_id: "f1",
-		file_name: "vendor-contract.pdf",
+		fileId: "f1",
+		fileName: "vendor-contract.pdf",
 		url: "https://example.com/f1",
 	});
 	await mockApi(page, {
@@ -277,7 +277,7 @@ test("a shared file appears in the file list and fires a toast", async ({
 		},
 		turn: turnHandler({
 			reply: "Here's the vendor contract.",
-			nextRunState: runState({ shared_files: [file] }),
+			nextRunState: runState({ sharedFiles: [file] }),
 		}),
 	});
 
@@ -317,9 +317,7 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 		turn: turnHandler({
 			reply: "I'm done talking to you.",
 			nextRunState: runState({
-				contacts: [
-					contact({ chat_ended: true, chat_end_reason: "harassment" }),
-				],
+				contacts: [contact({ chatEnded: true, chatEndReason: "harassment" })],
 			}),
 		}),
 	});
@@ -351,7 +349,7 @@ test("an unavailable contact cannot be selected or messaged", async ({
 				id: "bob",
 				name: "Bob",
 				role: "Vendor Rep",
-				available_at: 9999,
+				availableAt: 9999,
 			}),
 		],
 	});
@@ -461,7 +459,7 @@ test("exporting the PDF requests the export payload and triggers a download", as
 				name: "api/simulations:exportRun",
 				args: { runId: "testrun123" },
 				data: {
-					case: { id: "case1", case_name: "Sterling Industries" },
+					case: { id: "case1", caseName: "Sterling Industries" },
 					personas: [
 						{
 							id: "mary",

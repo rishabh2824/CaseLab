@@ -177,7 +177,7 @@ export const contact = (overrides: Parameters<typeof makeContact>[0] = {}) =>
 // Builds a mock run state with a default run id and one contact.
 export const runState = (overrides: Parameters<typeof makeRunState>[0] = {}) =>
 	makeRunState({
-		run_id: "testrun123",
+		runId: "testrun123",
 		contacts: [contact()],
 		...overrides,
 	});
@@ -235,10 +235,10 @@ export const personaEntry = (
 	id: "mary",
 	name: "Mary",
 	role: "Chief Financial Officer",
-	profile_photo: null,
-	known_facts: "The vendor is Acme.",
-	personality_traits: "Direct.",
-	availability_minutes: null,
+	profilePhoto: null,
+	knownFacts: "The vendor is Acme.",
+	personalityTraits: "Direct.",
+	availabilityMinutes: null,
 	files: [],
 	...overrides,
 });
@@ -247,8 +247,8 @@ export const personaEntry = (
 export const referralEntry = (
 	overrides: Partial<ReferralEdge> = {},
 ): ReferralEdge => ({
-	from_id: "",
-	to_id: "",
+	fromId: "",
+	toId: "",
 	conditions: "",
 	...overrides,
 });

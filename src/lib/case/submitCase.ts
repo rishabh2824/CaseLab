@@ -35,9 +35,9 @@ async function putToConvexStorage(
 	};
 
 	return {
-		storage_id: storageId,
-		file_name: file.name,
-		content_type: file.type || undefined,
+		storageId: storageId,
+		fileName: file.name,
+		contentType: file.type || undefined,
 	};
 }
 
@@ -45,8 +45,7 @@ async function putToConvexStorage(
 function collectPendingUploads(personas: Persona[]): File[] {
 	const files: File[] = [];
 	for (const persona of personas) {
-		if (persona.profile_photo instanceof File)
-			files.push(persona.profile_photo);
+		if (persona.profilePhoto instanceof File) files.push(persona.profilePhoto);
 		for (const entry of persona.files) {
 			if (entry.file instanceof File) files.push(entry.file);
 		}
@@ -90,16 +89,16 @@ function buildPersonaPayload(
 	persona: Persona,
 	uploaded: Map<File, UploadedFileRef>,
 ): PersonaPayload {
-	const profile_photo =
-		persona.profile_photo instanceof File
-			? (uploaded.get(persona.profile_photo) ?? null)
-			: persona.profile_photo;
+	const profilePhoto =
+		persona.profilePhoto instanceof File
+			? (uploaded.get(persona.profilePhoto) ?? null)
+			: persona.profilePhoto;
 	const files = persona.files.map((entry) => {
 		if (!(entry.file instanceof File))
 			return { ...entry, file: entry.file ?? null };
 		return { ...entry, file: uploaded.get(entry.file) ?? null };
 	});
-	return { ...persona, profile_photo, files };
+	return { ...persona, profilePhoto, files };
 }
 
 // Deletes freshly uploaded files from storage, ignoring any errors.
@@ -107,7 +106,7 @@ async function discardNewUploads(
 	uploaded: Map<File, UploadedFileRef>,
 ): Promise<void> {
 	if (uploaded.size === 0) return;
-	const storageIds = [...uploaded.values()].map((ref) => ref.storage_id);
+	const storageIds = [...uploaded.values()].map((ref) => ref.storageId);
 	try {
 		await getConvexClient().mutation(api.api.uploads.discardUploads, {
 			storageIds,

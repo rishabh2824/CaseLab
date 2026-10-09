@@ -222,7 +222,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 			structure: caseStructure({
 				personas: [
 					personaPayload("A", {
-						known_facts: "The buyer will pay up to $4.2M.",
+						knownFacts: "The buyer will pay up to $4.2M.",
 					}),
 				],
 			}),
@@ -386,23 +386,23 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 	it("start/get/getPersonaHistory/exportRun/sendMessage all work with no identity", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t);
-		expect(state.run_id).toBeDefined();
+		expect(state.runId).toBeDefined();
 
 		await expect(
-			t.query(api.api.simulations.get, { runId: state.run_id }),
-		).resolves.toMatchObject({ run_id: state.run_id });
+			t.query(api.api.simulations.get, { runId: state.runId }),
+		).resolves.toMatchObject({ runId: state.runId });
 		await expect(
 			t.query(api.api.simulations.getPersonaHistory, {
-				runId: state.run_id,
+				runId: state.runId,
 				personaId: "A",
 			}),
 		).resolves.toEqual({ messages: [], reply: null });
 		await expect(
-			t.query(api.api.simulations.exportRun, { runId: state.run_id }),
-		).resolves.toMatchObject({ case: { case_name: "Owned Case" } });
+			t.query(api.api.simulations.exportRun, { runId: state.runId }),
+		).resolves.toMatchObject({ case: { caseName: "Owned Case" } });
 		await expect(
 			t.mutation(api.api.turn.sendMessage, {
-				runId: state.run_id,
+				runId: state.runId,
 				personaId: "no-such-persona",
 				message: "hi",
 			}),
@@ -417,8 +417,8 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 
 		await t.run((ctx) =>
 			ctx.db.insert("runMessages", {
-				runId: a.run_id,
-				personaKey: "A",
+				runId: a.runId,
+				personaId: "A",
 				role: "user",
 				content: "run A private message",
 				status: "done",
@@ -426,13 +426,13 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		);
 
 		const bHistory = await t.query(api.api.simulations.getPersonaHistory, {
-			runId: b.run_id,
+			runId: b.runId,
 			personaId: "A",
 		});
 		expect(bHistory.messages).toEqual([]);
 
 		const bExport = await t.query(api.api.simulations.exportRun, {
-			runId: b.run_id,
+			runId: b.runId,
 		});
 		expect(JSON.stringify(bExport)).not.toContain("run A private message");
 	});

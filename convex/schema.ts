@@ -56,7 +56,7 @@ export default defineSchema({
 
 	runMessages: defineTable({
 		runId: v.id("runs"),
-		personaKey: v.string(),
+		personaId: v.string(),
 		role: v.union(v.literal("user"), v.literal("assistant")),
 		content: v.string(),
 		// User rows are always done. An assistant row starts pending and ends done or failed.
@@ -67,5 +67,5 @@ export default defineSchema({
 		),
 		// Only set on assistant rows: the student message the reply answers.
 		userMessageId: v.optional(v.id("runMessages")),
-	}).index("by_run_persona", ["runId", "personaKey"]),
+	}).index("by_run_persona", ["runId", "personaId"]),
 });

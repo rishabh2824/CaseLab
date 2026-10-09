@@ -10,16 +10,16 @@ import {
 } from "./simulationReads";
 
 describe("flattenPersonas", () => {
-	// Tests that persona secrets are carried through and availability_minutes becomes availabilityDuration.
-	it("carries persona secrets through and renames availability_minutes to availabilityDuration", () => {
+	// Tests that persona secrets are carried through unchanged.
+	it("carries persona secrets through unchanged", () => {
 		const structure = caseStructure({
 			personas: [
 				personaPayload("A", {
 					name: "Mary",
 					role: "CFO",
-					known_facts: "secret facts",
-					personality_traits: "calm",
-					availability_minutes: 30,
+					knownFacts: "secret facts",
+					personalityTraits: "calm",
+					availabilityMinutes: 30,
 				}),
 			],
 		});
@@ -27,19 +27,7 @@ describe("flattenPersonas", () => {
 		const mary = graph.personas.get("A")!;
 		expect(mary.knownFacts).toBe("secret facts");
 		expect(mary.personalityTraits).toBe("calm");
-		expect(mary.availabilityDuration).toBe(30);
-		expect(mary.isReferred).toBe(false);
-	});
-
-	// Tests that a persona is marked referred only when it is not a root.
-	it("marks a persona as referred only when it isn't a root", () => {
-		const structure = caseStructure({
-			personas: [personaPayload("A"), personaPayload("B")],
-			referrals: [referralEdge("A", "B")],
-			roots: ["A"],
-		});
-		const graph = flattenPersonas(structure);
-		expect(graph.personas.get("B")!.isReferred).toBe(true);
+		expect(mary.availabilityMinutes).toBe(30);
 	});
 
 	// Tests that root rows are sorted by name.
@@ -67,9 +55,9 @@ describe("flattenPersonas", () => {
 		const graph = flattenPersonas(structure);
 		expect(graph.referrals).toHaveLength(1);
 		expect(graph.referrals[0]).toEqual({
-			parentPersonaId: "A",
-			referredPersonaId: "B",
-			conditionTrigger: "",
+			fromId: "A",
+			toId: "B",
+			conditions: "",
 		});
 	});
 
@@ -82,9 +70,7 @@ describe("flattenPersonas", () => {
 		});
 		const graph = flattenPersonas(structure);
 		const targets = new Set(
-			graph.referrals.map(
-				(e) => `${e.parentPersonaId}->${e.referredPersonaId}`,
-			),
+			graph.referrals.map((e) => `${e.fromId}->${e.toId}`),
 		);
 		expect(targets).toEqual(new Set(["A->C", "B->C"]));
 		expect(graph.personas.size).toBe(3);
@@ -110,10 +96,10 @@ function buildGraph(): PersonaGraph {
 			personaPayload("A"),
 			personaPayload("B"),
 			personaPayload("C", {
-				profile_photo: {
-					storage_id: "kg2test00000000000000001" as Id<"_storage">,
-					file_name: "c.png",
-					content_type: "image/png",
+				profilePhoto: {
+					storageId: "kg2test00000000000000001" as Id<"_storage">,
+					fileName: "c.png",
+					contentType: "image/png",
 				},
 			}),
 			personaPayload("D"),
@@ -129,17 +115,11 @@ function buildGraph(): PersonaGraph {
 }
 
 describe("graphReferrals", () => {
-	// Tests that edges are filtered by parent and return raw, unhydrated personas.
-	it("filters edges by parent, returning raw (unhydrated) personas", () => {
+	// Tests that edges are filtered by the persona that authored them.
+	it("filters edges by the persona that authored them", () => {
 		const graph = buildGraph();
-		const referredIds = new Set(
-			graphReferrals(graph, "A").map((e) => e.referredPersonaId),
-		);
+		const referredIds = new Set(graphReferrals(graph, "A").map((e) => e.toId));
 		expect(referredIds).toEqual(new Set(["C", "D"]));
-
-		const c = graph.personas.get("C")!;
-		expect(c.profilePhotoUrl).toBeNull();
-		expect(c.profilePhoto?.storage_id).toBe("kg2test00000000000000001");
 	});
 });
 
@@ -151,10 +131,12 @@ describe("graphPersonas", () => {
 		expect(personas.map((p) => p.id).sort()).toEqual(["C", "D"]);
 	});
 
-	// Tests that raw, unhydrated personas are returned.
-	it("returns raw, unhydrated personas", () => {
+	// Tests that the stored persona is returned as is.
+	it("returns the stored persona as is", () => {
 		const graph = buildGraph();
-		expect(graphPersonas(graph, ["C"])[0]!.profilePhotoUrl).toBeNull();
+		expect(graphPersonas(graph, ["C"])[0]!.profilePhoto?.storageId).toBe(
+			"kg2test00000000000000001",
+		);
 	});
 });
 

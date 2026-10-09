@@ -77,8 +77,8 @@ export class CaseGraph {
 	} {
 		const persona = createEmptyPersona();
 		const referral = createEmptyReferral({
-			from_id: fromPersonaId,
-			to_id: persona.id,
+			fromId: fromPersonaId,
+			toId: persona.id,
 		});
 		this.personas = [...this.personas, persona];
 		this.referrals = [...this.referrals, referral];
@@ -90,7 +90,7 @@ export class CaseGraph {
 		const targets = new Set(targetIds);
 		this.referrals = this.referrals.filter(
 			(referral) =>
-				!(referral.from_id === personaId && targets.has(referral.to_id)),
+				!(referral.fromId === personaId && targets.has(referral.toId)),
 		);
 		const stillReachable = reachableFrom(this.roots, this.referrals);
 		const toRemove = new Set(
@@ -109,7 +109,7 @@ export class CaseGraph {
 		);
 		this.referrals = this.referrals.filter(
 			(referral) =>
-				!toRemove.has(referral.from_id) && !toRemove.has(referral.to_id),
+				!toRemove.has(referral.fromId) && !toRemove.has(referral.toId),
 		);
 	}
 }

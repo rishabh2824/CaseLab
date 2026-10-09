@@ -1,24 +1,94 @@
+import type { Doc } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
+import type { CaseStructure, FileRefPayload } from "./models/cases";
+import type { LegacyCaseStructure } from "./models/legacyCases";
 
-// TEMPORARY one-time backfill: flags every existing case as not a demo and gives personas
-// without an availability an explicit null. Delete once it has run on every deployment.
+type LegacyFileRef = LegacyCaseStructure["personas"][number]["profile_photo"];
+
+// Converts a snake_case file reference to the camelCase shape.
+function camelRef(ref: LegacyFileRef): FileRefPayload {
+	return ref
+		? {
+				storageId: ref.storage_id,
+				fileName: ref.file_name,
+				contentType: ref.content_type,
+			}
+		: null;
+}
+
+// Returns the camelCase form of a case structure stored in either shape, and whether it had to change.
+export function toCamelStructure(
+	structure: CaseStructure | LegacyCaseStructure,
+): {
+	structure: CaseStructure;
+	changed: boolean;
+} {
+	const first = structure.personas[0];
+	if (!first || !("profile_photo" in first))
+		return { structure: structure as CaseStructure, changed: false };
+	const legacy = structure as LegacyCaseStructure;
+	return {
+		changed: true,
+		structure: {
+			personas: legacy.personas.map((p) => ({
+				id: p.id,
+				name: p.name,
+				role: p.role,
+				profilePhoto: camelRef(p.profile_photo),
+				knownFacts: p.known_facts,
+				personalityTraits: p.personality_traits,
+				availabilityMinutes: p.availability_minutes ?? null,
+				files: p.files.map((entry) => ({
+					file: camelRef(entry.file),
+					shareConditions: entry.share_conditions,
+					perceivedContents: entry.perceived_contents,
+				})),
+			})),
+			referrals: legacy.referrals.map((r) => ({
+				fromId: r.from_id,
+				toId: r.to_id,
+				conditions: r.conditions,
+			})),
+			roots: legacy.roots,
+		},
+	};
+}
+
+// TEMPORARY one-time backfill: flags every existing case as not a demo. Delete once it has run on every deployment.
 export const backfillCases = internalMutation({
 	args: {},
 	handler: async (ctx) => {
 		const cases = await ctx.db.query("cases").collect();
 		for (const c of cases) {
-			await ctx.db.patch("cases", c._id, {
-				isDemo: c.isDemo ?? false,
-				structure: {
-					...c.structure,
-					personas: c.structure.personas.map((persona) => ({
-						...persona,
-						availability_minutes: persona.availability_minutes ?? null,
-					})),
-				},
-			});
+			if (c.isDemo === undefined)
+				await ctx.db.patch("cases", c._id, { isDemo: false });
 		}
 		return cases.length;
+	},
+});
+
+// TEMPORARY one-time backfill for the camelCase rename: rewrites every case structure from snake_case
+// keys to camelCase (skipping cases already converted) and moves runMessages.personaKey to personaId.
+// Run it while no student is in a run, between widening and narrowing the schema.
+export const backfillCamelCase = internalMutation({
+	args: {},
+	handler: async (ctx) => {
+		let converted = 0;
+		for (const c of await ctx.db.query("cases").collect()) {
+			const { structure, changed } = toCamelStructure(c.structure);
+			if (!changed) continue;
+			await ctx.db.patch("cases", c._id, { structure });
+			converted++;
+		}
+		for (const row of await ctx.db.query("runMessages").collect()) {
+			const personaKey = (row as unknown as { personaKey?: string }).personaKey;
+			if (personaKey === undefined) continue;
+			await ctx.db.patch("runMessages", row._id, {
+				personaId: personaKey,
+				personaKey: undefined,
+			} as Partial<Doc<"runMessages">>);
+		}
+		return converted;
 	},
 });
 
@@ -50,12 +120,12 @@ export const backfillCaseFiles = internalMutation({
 		const cases = await ctx.db.query("cases").collect();
 		for (const c of cases) {
 			const storageIds = new Set(
-				c.structure.personas
-					.flatMap((persona) => [
-						persona.profile_photo,
+				toCamelStructure(c.structure)
+					.structure.personas.flatMap((persona) => [
+						persona.profilePhoto,
 						...persona.files.map((entry) => entry.file),
 					])
-					.flatMap((ref) => (ref ? [ref.storage_id] : [])),
+					.flatMap((ref) => (ref ? [ref.storageId] : [])),
 			);
 			for (const storageId of storageIds)
 				await ctx.db.insert("caseFiles", { caseId: c._id, storageId });

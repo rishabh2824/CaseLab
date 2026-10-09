@@ -130,7 +130,7 @@ describe("buildHTMLForm", () => {
 
 		// Tests that a dangerous known-facts value round-trips as text without injecting a script.
 		it("round-trips a dangerous known-facts value as text, injecting no extra <script>", () => {
-			const persona = makePersona({ known_facts: dangerous });
+			const persona = makePersona({ knownFacts: dangerous });
 			const doc = parseForm(
 				buildHTMLForm({
 					caseName: "Case",

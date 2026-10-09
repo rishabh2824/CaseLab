@@ -95,13 +95,13 @@ export const PERSONA_REPLY_SCHEMA = {
 			items: { type: "string" },
 			description: "Contact handles introduced in this reply.",
 		},
-		send_files: {
+		sendFiles: {
 			type: "array",
 			items: { type: "string" },
 			description: "File handles sent with this reply.",
 		},
 	},
-	required: ["reply", "introduce", "send_files"],
+	required: ["reply", "introduce", "sendFiles"],
 	additionalProperties: false,
 };
 

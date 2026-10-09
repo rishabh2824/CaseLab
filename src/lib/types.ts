@@ -25,8 +25,8 @@ export type DraftFileEntry = Omit<FileEntryPayload, "file"> & {
 	file?: File | FileRefPayload | null;
 };
 
-export type Persona = Omit<PersonaPayload, "profile_photo" | "files"> & {
-	profile_photo: File | FileRefPayload | null;
+export type Persona = Omit<PersonaPayload, "profilePhoto" | "files"> & {
+	profilePhoto: File | FileRefPayload | null;
 	files: DraftFileEntry[];
 };
 

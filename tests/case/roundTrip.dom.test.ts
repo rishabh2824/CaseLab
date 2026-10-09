@@ -30,8 +30,8 @@ const filesArb = fc.oneof(
 	fc
 		.array(
 			fc.record({
-				share_conditions: textArb,
-				perceived_contents: textArb,
+				shareConditions: textArb,
+				perceivedContents: textArb,
 			}),
 			{ minLength: 1, maxLength: 5 },
 		)
@@ -41,9 +41,9 @@ const filesArb = fc.oneof(
 const personaFieldsArb = fc.record({
 	name: textArb,
 	role: textArb,
-	known_facts: textArb,
-	personality_traits: textArb,
-	availability_minutes: availabilityArb,
+	knownFacts: textArb,
+	personalityTraits: textArb,
+	availabilityMinutes: availabilityArb,
 	files: filesArb,
 });
 
@@ -53,9 +53,7 @@ type GeneratedCase = {
 	simulationDurationMinutes: number | null;
 	initialBrief: string;
 	commonInformation: string;
-	personas: Array<
-		Persona & { known_facts: string; personality_traits: string }
-	>;
+	personas: Array<Persona & { knownFacts: string; personalityTraits: string }>;
 	referrals: ReferralEdge[];
 	roots: string[];
 };
@@ -107,15 +105,15 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 					extraRootFlags,
 				]) => {
 					const personas: Array<
-						Persona & { known_facts: string; personality_traits: string }
+						Persona & { knownFacts: string; personalityTraits: string }
 					> = personaFields.map((fields, i) => ({
 						id: ids[i] as string,
 						name: fields.name,
 						role: fields.role,
-						profile_photo: null,
-						known_facts: fields.known_facts,
-						personality_traits: fields.personality_traits,
-						availability_minutes: fields.availability_minutes,
+						profilePhoto: null,
+						knownFacts: fields.knownFacts,
+						personalityTraits: fields.personalityTraits,
+						availabilityMinutes: fields.availabilityMinutes,
 						files: fields.files,
 					}));
 
@@ -126,8 +124,8 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 						if (seen.has(key)) return;
 						seen.add(key);
 						referrals.push({
-							from_id: ids[from] as string,
-							to_id: ids[to] as string,
+							fromId: ids[from] as string,
+							toId: ids[to] as string,
 							conditions: conditionTexts[conditionIdx] as string,
 						});
 					};
@@ -159,7 +157,7 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 
 // Builds a comparable key for a referral from its ends and trimmed conditions.
 const edgeKey = (e: ReferralEdge) =>
-	`${e.from_id}->${e.to_id}::${(e.conditions ?? "").trim()}`;
+	`${e.fromId}->${e.toId}::${(e.conditions ?? "").trim()}`;
 
 describe("buildHTMLForm / parseHTMLForm round trip", () => {
 	// Tests that exporting then importing a case reproduces the same personas, referrals and roots without warnings.
@@ -193,18 +191,18 @@ describe("buildHTMLForm / parseHTMLForm round trip", () => {
 				)) {
 					expect(imported.name).toBe(original.name.trim());
 					expect(imported.role).toBe(original.role.trim());
-					expect(imported.known_facts).toBe(original.known_facts.trim());
-					expect(imported.personality_traits).toBe(
-						original.personality_traits.trim(),
+					expect(imported.knownFacts).toBe(original.knownFacts.trim());
+					expect(imported.personalityTraits).toBe(
+						original.personalityTraits.trim(),
 					);
-					expect(imported.availability_minutes).toBe(
-						original.availability_minutes,
+					expect(imported.availabilityMinutes).toBe(
+						original.availabilityMinutes,
 					);
 					expect(imported.files).toEqual(
 						original.files.map((file) => ({
 							file: null,
-							share_conditions: (file.share_conditions ?? "").trim(),
-							perceived_contents: (file.perceived_contents ?? "").trim(),
+							shareConditions: (file.shareConditions ?? "").trim(),
+							perceivedContents: (file.perceivedContents ?? "").trim(),
 						})),
 					);
 				}
@@ -213,8 +211,8 @@ describe("buildHTMLForm / parseHTMLForm round trip", () => {
 				const originalEdgeKeys = generated.referrals
 					.map((edge) =>
 						edgeKey({
-							from_id: idMap.get(edge.from_id) as string,
-							to_id: idMap.get(edge.to_id) as string,
+							fromId: idMap.get(edge.fromId) as string,
+							toId: idMap.get(edge.toId) as string,
 							conditions: edge.conditions,
 						}),
 					)

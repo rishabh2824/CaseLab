@@ -23,7 +23,7 @@ function deltaLine(text: string | null): string {
 const REPLY_JSON = JSON.stringify({
 	reply: "Hi",
 	introduce: [],
-	send_files: [],
+	sendFiles: [],
 });
 
 const REPLY_JSON_CHUNKS = [

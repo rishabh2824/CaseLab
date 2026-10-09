@@ -135,7 +135,7 @@ describe("submitCase — profile photo upload", () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const persona = makePersona({
 			id: "p1",
-			profile_photo: new File(["binary"], "mary.png", { type: "image/png" }),
+			profilePhoto: new File(["binary"], "mary.png", { type: "image/png" }),
 		});
 
 		await submitCase(baseInput({ personas: [persona] }));
@@ -143,10 +143,10 @@ describe("submitCase — profile photo upload", () => {
 		expect(uploadCountRequests).toEqual([1]);
 		expect(createRequests).toHaveLength(1);
 		const personas = createRequests[0]?.personas as PersonaPayload[];
-		expect(personas[0]?.profile_photo).toEqual({
-			storage_id: "storage-1",
-			file_name: "mary.png",
-			content_type: "image/png",
+		expect(personas[0]?.profilePhoto).toEqual({
+			storageId: "storage-1",
+			fileName: "mary.png",
+			contentType: "image/png",
 		});
 	});
 
@@ -154,18 +154,18 @@ describe("submitCase — profile photo upload", () => {
 	it("passes an existing FileRef profile photo through without uploading it again", async () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const existingPhoto: FileRefPayload = {
-			storage_id: "storage-existing" as GenericId<"_storage">,
-			file_name: "old.png",
-			content_type: "image/png",
+			storageId: "storage-existing" as GenericId<"_storage">,
+			fileName: "old.png",
+			contentType: "image/png",
 		};
-		const persona = makePersona({ profile_photo: existingPhoto });
+		const persona = makePersona({ profilePhoto: existingPhoto });
 
 		await submitCase(baseInput({ personas: [persona] }));
 
 		expect(uploadCountRequests).toEqual([]);
 		expect(createRequests).toHaveLength(1);
 		const personas = createRequests[0]?.personas as PersonaPayload[];
-		expect(personas[0]?.profile_photo).toEqual(existingPhoto);
+		expect(personas[0]?.profilePhoto).toEqual(existingPhoto);
 	});
 });
 
@@ -177,8 +177,8 @@ describe("submitCase — file attachments", () => {
 			files: [
 				{
 					file: new File(["data"], "budget.pdf", { type: "application/pdf" }),
-					share_conditions: "always",
-					perceived_contents: "budget",
+					shareConditions: "always",
+					perceivedContents: "budget",
 				},
 			],
 		});
@@ -190,21 +190,19 @@ describe("submitCase — file attachments", () => {
 		const personas = createRequests[0]?.personas as PersonaPayload[];
 		const sentFile = personas[0]?.files?.[0];
 		expect(sentFile?.file).toEqual({
-			storage_id: "storage-1",
-			file_name: "budget.pdf",
-			content_type: "application/pdf",
+			storageId: "storage-1",
+			fileName: "budget.pdf",
+			contentType: "application/pdf",
 		});
-		expect(sentFile?.share_conditions).toBe("always");
-		expect(sentFile?.perceived_contents).toBe("budget");
+		expect(sentFile?.shareConditions).toBe("always");
+		expect(sentFile?.perceivedContents).toBe("budget");
 	});
 
 	// Tests that an attachment with a null file is kept as-is without an upload.
 	it("preserves a file:null attachment entry as-is, uploading nothing for it", async () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const persona = makePersona({
-			files: [
-				{ file: null, share_conditions: "never", perceived_contents: "" },
-			],
+			files: [{ file: null, shareConditions: "never", perceivedContents: "" }],
 		});
 
 		await submitCase(baseInput({ personas: [persona] }));
@@ -221,7 +219,7 @@ describe("submitCase — content type handling", () => {
 	it("sends application/octet-stream on the upload POST for a file with no MIME type", async () => {
 		const { postRequests } = stubMutations();
 		const persona = makePersona({
-			profile_photo: new File(["data"], "note"),
+			profilePhoto: new File(["data"], "note"),
 		});
 
 		await submitCase(baseInput({ personas: [persona] }));
@@ -237,17 +235,17 @@ describe("submitCase — multiple personas and attachments", () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const persona1 = makePersona({
 			id: "p1",
-			profile_photo: new File(["a"], "p1-photo.png", { type: "image/png" }),
+			profilePhoto: new File(["a"], "p1-photo.png", { type: "image/png" }),
 			files: [
 				{
 					file: new File(["b"], "p1-file1.pdf", { type: "application/pdf" }),
-					share_conditions: "",
-					perceived_contents: "",
+					shareConditions: "",
+					perceivedContents: "",
 				},
 				{
 					file: new File(["c"], "p1-file2.pdf", { type: "application/pdf" }),
-					share_conditions: "",
-					perceived_contents: "",
+					shareConditions: "",
+					perceivedContents: "",
 				},
 			],
 		});
@@ -256,8 +254,8 @@ describe("submitCase — multiple personas and attachments", () => {
 			files: [
 				{
 					file: new File(["d"], "p2-file1.pdf", { type: "application/pdf" }),
-					share_conditions: "",
-					perceived_contents: "",
+					shareConditions: "",
+					perceivedContents: "",
 				},
 			],
 		});
@@ -271,17 +269,17 @@ describe("submitCase — multiple personas and attachments", () => {
 		const sentP1 = sentPersonas.find((p) => p.id === "p1");
 		const sentP2 = sentPersonas.find((p) => p.id === "p2");
 
-		expect(sentP1?.profile_photo?.file_name).toBe("p1-photo.png");
-		expect((sentP1?.files ?? []).map((f) => f.file?.file_name).sort()).toEqual([
+		expect(sentP1?.profilePhoto?.fileName).toBe("p1-photo.png");
+		expect((sentP1?.files ?? []).map((f) => f.file?.fileName).sort()).toEqual([
 			"p1-file1.pdf",
 			"p1-file2.pdf",
 		]);
-		expect(sentP2?.files?.[0]?.file?.file_name).toBe("p2-file1.pdf");
+		expect(sentP2?.files?.[0]?.file?.fileName).toBe("p2-file1.pdf");
 
 		const allIds = [
-			sentP1?.profile_photo?.storage_id,
-			...(sentP1?.files ?? []).map((f) => f.file?.storage_id),
-			...(sentP2?.files ?? []).map((f) => f.file?.storage_id),
+			sentP1?.profilePhoto?.storageId,
+			...(sentP1?.files ?? []).map((f) => f.file?.storageId),
+			...(sentP2?.files ?? []).map((f) => f.file?.storageId),
 		];
 		expect(new Set(allIds).size).toBe(allIds.length);
 	});
@@ -292,7 +290,7 @@ describe("submitCase — upload failures", () => {
 	it("rejects with 'Failed to upload file.' and never creates the case when the storage POST fails", async () => {
 		const { createRequests } = stubMutations({ postStatus: 500 });
 		const persona = makePersona({
-			profile_photo: new File(["a"], "photo.png", { type: "image/png" }),
+			profilePhoto: new File(["a"], "photo.png", { type: "image/png" }),
 		});
 
 		await expect(
@@ -305,7 +303,7 @@ describe("submitCase — upload failures", () => {
 	it("propagates a failed generateUploadUrls call, never creating the case", async () => {
 		mockMutation.mockRejectedValue(new Error("Upload URL request failed."));
 		const persona = makePersona({
-			profile_photo: new File(["a"], "photo.png", { type: "image/png" }),
+			profilePhoto: new File(["a"], "photo.png", { type: "image/png" }),
 		});
 
 		const err = await submitCase(baseInput({ personas: [persona] })).catch(
@@ -324,7 +322,7 @@ describe("submitCase — upload failures", () => {
 			),
 		});
 		const persona = makePersona({
-			profile_photo: new File(["a"], "photo.png", { type: "image/png" }),
+			profilePhoto: new File(["a"], "photo.png", { type: "image/png" }),
 		});
 
 		await expect(
@@ -358,11 +356,11 @@ describe("submitCase — upload failures", () => {
 		);
 		const persona1 = makePersona({
 			id: "p1",
-			profile_photo: new File(["a"], "p1-photo.png", { type: "image/png" }),
+			profilePhoto: new File(["a"], "p1-photo.png", { type: "image/png" }),
 		});
 		const persona2 = makePersona({
 			id: "p2",
-			profile_photo: new File(["b"], "p2-photo.png", { type: "image/png" }),
+			profilePhoto: new File(["b"], "p2-photo.png", { type: "image/png" }),
 		});
 
 		await expect(
@@ -385,9 +383,7 @@ describe("submitCase — payload shaping", () => {
 				initialBrief: "  Reduce office supply costs.  ",
 				commonInformation: "  Background context.  ",
 				accessCode: "  abc  ",
-				referrals: [
-					{ from_id: "p1", to_id: "p2", conditions: "  when asked  " },
-				],
+				referrals: [{ fromId: "p1", toId: "p2", conditions: "  when asked  " }],
 				roots: ["p1"],
 				collaboratorAdminIds: ["admin2", "admin5"],
 			}),
@@ -401,7 +397,7 @@ describe("submitCase — payload shaping", () => {
 		expect(body.commonInformation).toBe("Background context.");
 		expect(body.accessCode).toBe("abc");
 		expect(body.referrals).toEqual([
-			{ from_id: "p1", to_id: "p2", conditions: "  when asked  " },
+			{ fromId: "p1", toId: "p2", conditions: "  when asked  " },
 		]);
 		expect(body.roots).toEqual(["p1"]);
 		expect(body.collaboratorAdminIds).toEqual(["admin2", "admin5"]);

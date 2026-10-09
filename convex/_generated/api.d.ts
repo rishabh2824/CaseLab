@@ -24,6 +24,7 @@ import type * as lib_studentErrors from "../lib/studentErrors.js";
 import type * as lib_turnState from "../lib/turnState.js";
 import type * as migrations from "../migrations.js";
 import type * as models_cases from "../models/cases.js";
+import type * as models_legacyCases from "../models/legacyCases.js";
 import type * as services_admins from "../services/admins.js";
 import type * as services_cases from "../services/cases.js";
 import type * as services_files from "../services/files.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   "lib/turnState": typeof lib_turnState;
   migrations: typeof migrations;
   "models/cases": typeof models_cases;
+  "models/legacyCases": typeof models_legacyCases;
   "services/admins": typeof services_admins;
   "services/cases": typeof services_cases;
   "services/files": typeof services_files;

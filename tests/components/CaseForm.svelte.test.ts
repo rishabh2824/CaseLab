@@ -522,7 +522,7 @@ describe("CaseForm", () => {
 				id: "root1",
 				name: "Original Root",
 				role: "Lead",
-				availability_minutes: 45,
+				availabilityMinutes: 45,
 			});
 			const referred = makePersona({
 				id: "ref1",

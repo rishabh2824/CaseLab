@@ -26,7 +26,7 @@ type TextAreaEvent = Event & {
 
 // Stores the chosen profile photo on the persona and resets the file input.
 function handlePhotoChange(event: InputEvent_): void {
-	persona.profile_photo = event.currentTarget.files?.[0] ?? null;
+	persona.profilePhoto = event.currentTarget.files?.[0] ?? null;
 	event.currentTarget.value = "";
 }
 
@@ -34,8 +34,8 @@ function handlePhotoChange(event: InputEvent_): void {
 function addFile(): void {
 	persona.files.push({
 		file: null,
-		share_conditions: "",
-		perceived_contents: "",
+		shareConditions: "",
+		perceivedContents: "",
 	});
 }
 
@@ -61,7 +61,7 @@ function addReferral(): void {
 
 // Removes a referral from this persona, along with anything that becomes unreachable.
 function removeReferral(referral: ReferralEdge): void {
-	graph.removeReferralsFrom(persona.id, [referral.to_id]);
+	graph.removeReferralsFrom(persona.id, [referral.toId]);
 }
 
 // Updates a referral's unlock conditions from the textarea.
@@ -109,10 +109,10 @@ function handleReferralConditionsChange(
 			onchange={handlePhotoChange}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft file:mr-3 file:rounded-md file:border-0 file:bg-cream file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
 		/>
-		{#if persona.profile_photo instanceof File}
-			<p class="text-xs text-stone-soft">Selected: {persona.profile_photo.name}</p>
-		{:else if persona.profile_photo}
-			<p class="text-xs text-stone-soft">Existing photo: {persona.profile_photo.file_name}</p>
+		{#if persona.profilePhoto instanceof File}
+			<p class="text-xs text-stone-soft">Selected: {persona.profilePhoto.name}</p>
+		{:else if persona.profilePhoto}
+			<p class="text-xs text-stone-soft">Existing photo: {persona.profilePhoto.fileName}</p>
 		{/if}
 	</div>
 
@@ -122,7 +122,7 @@ function handleReferralConditionsChange(
 			id="{uid}-known-facts"
 			rows="3"
 			placeholder="Describe the persona's background, facts, and any other relevant information"
-			bind:value={persona.known_facts}
+			bind:value={persona.knownFacts}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		></textarea>
 	</div>
@@ -133,7 +133,7 @@ function handleReferralConditionsChange(
 			id="{uid}-personality"
 			rows="3"
 			placeholder="Describe personality traits"
-			bind:value={persona.personality_traits}
+			bind:value={persona.personalityTraits}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		></textarea>
 	</div>
@@ -146,9 +146,9 @@ function handleReferralConditionsChange(
 			min="1"
 			step="1"
 			placeholder="Leave blank for unlimited"
-			value={persona.availability_minutes ?? ''}
+			value={persona.availabilityMinutes ?? ''}
 			oninput={(event) => {
-				persona.availability_minutes = parseIntOrNull(event.currentTarget.value)
+				persona.availabilityMinutes = parseIntOrNull(event.currentTarget.value)
 			}}
 			class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 		/>
@@ -192,7 +192,7 @@ function handleReferralConditionsChange(
 							{#if fileEntry.file instanceof File}
 								<p class="text-xs text-stone-soft">Selected: {fileEntry.file.name}</p>
 							{:else if fileEntry.file}
-								<p class="text-xs text-stone-soft">Existing file: {fileEntry.file.file_name}</p>
+								<p class="text-xs text-stone-soft">Existing file: {fileEntry.file.fileName}</p>
 							{/if}
 						</div>
 						<div class="flex flex-col gap-1.5">
@@ -203,7 +203,7 @@ function handleReferralConditionsChange(
 								id="{uid}-file-{fileIndex}-conditions"
 								rows="2"
 								placeholder="Describe the conditions"
-								bind:value={fileEntry.share_conditions}
+								bind:value={fileEntry.shareConditions}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							></textarea>
 						</div>
@@ -213,7 +213,7 @@ function handleReferralConditionsChange(
 								id="{uid}-file-{fileIndex}-perceived"
 								rows="2"
 								placeholder="Describe perceived contents"
-								bind:value={fileEntry.perceived_contents}
+								bind:value={fileEntry.perceivedContents}
 								class="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 							></textarea>
 						</div>
@@ -236,8 +236,8 @@ function handleReferralConditionsChange(
 
 	{#if ownReferrals.length > 0}
 		<div class="flex flex-col gap-3">
-			{#each ownReferrals as referral (referral.to_id)}
-				{@const referredPersona = graph.byId.get(referral.to_id) as Persona}
+			{#each ownReferrals as referral (referral.toId)}
+				{@const referredPersona = graph.byId.get(referral.toId) as Persona}
 				<details class="rounded-xl border border-line-soft bg-cream/40">
 					<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-2.5 text-sm font-semibold text-ink">
 						<span>{getPersonaLabel(referredPersona, 'Referred Persona')}</span>
@@ -251,9 +251,9 @@ function handleReferralConditionsChange(
 					</summary>
 					<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
 						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-referral-{referral.to_id}-name" class="text-xs font-medium text-stone-soft">Name</label>
+							<label for="{uid}-referral-{referral.toId}-name" class="text-xs font-medium text-stone-soft">Name</label>
 							<input
-								id="{uid}-referral-{referral.to_id}-name"
+								id="{uid}-referral-{referral.toId}-name"
 								type="text"
 								placeholder="Enter name"
 								bind:value={referredPersona.name}
@@ -261,9 +261,9 @@ function handleReferralConditionsChange(
 							/>
 						</div>
 						<div class="flex flex-col gap-1.5">
-							<label for="{uid}-referral-{referral.to_id}-conditions" class="text-xs font-medium text-stone-soft">Describe the referral conditions</label>
+							<label for="{uid}-referral-{referral.toId}-conditions" class="text-xs font-medium text-stone-soft">Describe the referral conditions</label>
 							<textarea
-								id="{uid}-referral-{referral.to_id}-conditions"
+								id="{uid}-referral-{referral.toId}-conditions"
 								rows="2"
 								placeholder="Describe the referral conditions"
 								value={referral.conditions}

@@ -8,11 +8,11 @@ import {
 	type ChatStateOut,
 	getChatState,
 } from "../lib/turnState";
+import type { PersonaPayload } from "../models/cases";
 import {
 	flattenPersonas,
 	graphPersonas,
 	graphRootPersonas,
-	type PersonaDetail,
 	referredContactIds,
 } from "./simulationReads";
 
@@ -43,22 +43,10 @@ async function fileUrl(
 	return await ctx.storage.getUrl(storageId);
 }
 
-// Adds the profile photo URL to a persona when it has a photo.
-async function hydratePersona(
-	ctx: QueryCtx | MutationCtx,
-	persona: PersonaDetail,
-): Promise<PersonaDetail> {
-	if (!persona.profilePhoto) return persona;
-	return {
-		...persona,
-		profilePhotoUrl: await fileUrl(ctx, persona.profilePhoto.storage_id),
-	};
-}
-
 export type PersonaPhotoOut = {
-	storage_id: Id<"_storage">;
-	file_name: string;
-	content_type: string | null;
+	storageId: Id<"_storage">;
+	fileName: string;
+	contentType: string | null;
 	url: string | null;
 };
 
@@ -66,18 +54,20 @@ export type ContactOut = {
 	id: string;
 	name: string;
 	role: string;
-	profile_photo: PersonaPhotoOut | null;
-	availability_duration: number | null;
-	available_at: number;
-	is_referred: boolean;
-	chat_ended: boolean;
-	chat_end_reason: string | null;
-	warning_count: number;
+	profilePhoto: PersonaPhotoOut | null;
+	availabilityDuration: number | null;
+	availableAt: number;
+	isReferred: boolean;
+	chatEnded: boolean;
+	chatEndReason: string | null;
+	warningCount: number;
 };
 
 // Builds the student-facing contact for a persona, without exposing its secret fields.
 function toContactOut(
-	persona: PersonaDetail,
+	persona: PersonaPayload,
+	photoUrl: string | null,
+	isReferred: boolean,
 	availableAtMinutes: number,
 	chatState: ChatStateOut,
 ): ContactOut {
@@ -85,50 +75,62 @@ function toContactOut(
 		id: persona.id,
 		name: persona.name,
 		role: persona.role,
-		profile_photo: persona.profilePhoto
+		profilePhoto: persona.profilePhoto
 			? {
-					storage_id: persona.profilePhoto.storage_id,
-					file_name: persona.profilePhoto.file_name,
-					content_type: persona.profilePhoto.content_type ?? null,
-					url: persona.profilePhotoUrl,
+					storageId: persona.profilePhoto.storageId,
+					fileName: persona.profilePhoto.fileName,
+					contentType: persona.profilePhoto.contentType ?? null,
+					url: photoUrl,
 				}
 			: null,
-		availability_duration: persona.availabilityDuration,
-		available_at: availableAtMinutes,
-		is_referred: persona.isReferred,
-		chat_ended: chatState.ended,
-		chat_end_reason: chatState.endReason,
-		warning_count: chatState.warningCount,
+		availabilityDuration: persona.availabilityMinutes,
+		availableAt: availableAtMinutes,
+		isReferred,
+		chatEnded: chatState.ended,
+		chatEndReason: chatState.endReason,
+		warningCount: chatState.warningCount,
 	};
 }
 
 // Builds the contact list from root personas followed by unlocked referred personas.
-function buildContacts(
+async function buildContacts(
+	ctx: QueryCtx | MutationCtx,
 	personaChatState: ChatStateMap,
 	unlockedAt: Record<string, number>,
-	rootPersonas: PersonaDetail[],
-	referredPersonas: PersonaDetail[] = [],
-): ContactOut[] {
+	rootPersonas: PersonaPayload[],
+	referredPersonas: PersonaPayload[],
+): Promise<ContactOut[]> {
 	const entries = [
-		...rootPersonas.map((persona) => ({ persona, availableAt: 0 })),
+		...rootPersonas.map((persona) => ({
+			persona,
+			availableAt: 0,
+			isReferred: false,
+		})),
 		...referredPersonas.map((persona) => ({
 			persona,
 			availableAt: unlockedAt[persona.id] ?? 0,
+			isReferred: true,
 		})),
 	];
-	return entries.map(({ persona, availableAt }) =>
-		toContactOut(
-			persona,
-			availableAt,
-			getChatState(personaChatState, persona.id),
+	return await Promise.all(
+		entries.map(async ({ persona, availableAt, isReferred }) =>
+			toContactOut(
+				persona,
+				persona.profilePhoto
+					? await fileUrl(ctx, persona.profilePhoto.storageId)
+					: null,
+				isReferred,
+				availableAt,
+				getChatState(personaChatState, persona.id),
+			),
 		),
 	);
 }
 
 export type SharedFileOut = {
-	file_id: string;
-	file_name: string;
-	content_type: string | null;
+	fileId: string;
+	fileName: string;
+	contentType: string | null;
 	url: string | null;
 };
 
@@ -141,9 +143,9 @@ async function toSharedFileOut(
 	const stored = await ctx.db.system.get("_storage", storageId);
 	if (!stored) return null;
 	return {
-		file_id: storageId,
-		file_name: fileName ?? "file",
-		content_type: stored.contentType ?? null,
+		fileId: storageId,
+		fileName: fileName ?? "file",
+		contentType: stored.contentType ?? null,
 		url: await fileUrl(ctx, storageId),
 	};
 }
@@ -163,7 +165,7 @@ async function queryPersonaRows(
 	return await ctx.db
 		.query("runMessages")
 		.withIndex("by_run_persona", (q) =>
-			q.eq("runId", runId).eq("personaKey", personaId),
+			q.eq("runId", runId).eq("personaId", personaId),
 		)
 		.collect();
 }
@@ -176,22 +178,22 @@ function toChatMessages(rows: Doc<"runMessages">[]): ChatMessageOut[] {
 }
 
 export type RunStateOut = {
-	run_id: Id<"runs">;
+	runId: Id<"runs">;
 	case: {
 		id: Id<"cases">;
-		case_name: string;
+		caseName: string;
 		brief: string;
-		simulation_duration: number | null;
+		simulationDuration: number | null;
 	};
 	contacts: ContactOut[];
-	shared_files: SharedFileOut[];
+	sharedFiles: SharedFileOut[];
 };
 
 // Starts a run for an access code and schedules its destruction. The run state is read with getSimulationState.
 export async function startSimulation(
 	ctx: MutationCtx,
 	accessCodeRaw: string,
-): Promise<{ run_id: Id<"runs"> }> {
+): Promise<{ runId: Id<"runs"> }> {
 	const accessCode = normalizeAccessCode(accessCodeRaw);
 	if (!accessCode)
 		throw studentError(
@@ -228,7 +230,7 @@ export async function startSimulation(
 		runId,
 	});
 
-	return { run_id: runId };
+	return { runId: runId };
 }
 
 // Loads a run and its case, throwing student errors if the run or its case is missing. Reads no clock, so it is safe in queries: the scheduled destroy is what ends a run.
@@ -261,26 +263,21 @@ export async function getSimulationState(
 ): Promise<RunStateOut> {
 	const { run, c } = await loadRun(ctx, runId);
 	const graph = flattenPersonas(c.structure);
-	const rootPersonas = await Promise.all(
-		graphRootPersonas(graph).map((persona) => hydratePersona(ctx, persona)),
-	);
-	const referredPersonas = await Promise.all(
+	const contacts = await buildContacts(
+		ctx,
+		run.personaChatState,
+		run.unlockedAt,
+		graphRootPersonas(graph),
 		graphPersonas(
 			graph,
 			referredContactIds(graph, Object.keys(run.unlockedAt)),
-		).map((persona) => hydratePersona(ctx, persona)),
-	);
-	const contacts = buildContacts(
-		run.personaChatState,
-		run.unlockedAt,
-		rootPersonas,
-		referredPersonas,
+		),
 	);
 	const fileNames = new Map(
 		c.structure.personas.flatMap((persona) =>
 			persona.files.flatMap((entry) =>
 				entry.file
-					? [[entry.file.storage_id, entry.file.file_name] as const]
+					? [[entry.file.storageId, entry.file.fileName] as const]
 					: [],
 			),
 		),
@@ -294,15 +291,15 @@ export async function getSimulationState(
 	).filter((file): file is SharedFileOut => file !== null);
 
 	return {
-		run_id: runId,
+		runId: runId,
 		case: {
 			id: c._id,
-			case_name: c.name,
+			caseName: c.name,
 			brief: c.brief,
-			simulation_duration: c.duration ?? null,
+			simulationDuration: c.duration ?? null,
 		},
 		contacts,
-		shared_files: sharedFiles,
+		sharedFiles: sharedFiles,
 	};
 }
 
@@ -328,7 +325,7 @@ export type ExportPersonaOut = {
 	messages: ChatMessageOut[];
 };
 export type ExportSimulationOut = {
-	case: { id: Id<"cases">; case_name: string };
+	case: { id: Id<"cases">; caseName: string };
 	personas: ExportPersonaOut[];
 };
 
@@ -365,7 +362,7 @@ export async function exportSimulation(
 		}),
 	);
 
-	return { case: { id: c._id, case_name: c.name }, personas };
+	return { case: { id: c._id, caseName: c.name }, personas };
 }
 
 // Deletes a run together with its messages; safe to call on a missing run.

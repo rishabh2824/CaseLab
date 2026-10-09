@@ -1,4 +1,4 @@
-import type { PersonaDetail } from "../services/simulationReads";
+import type { PersonaPayload } from "../models/cases";
 
 export type CandidateReferral = {
 	handle: string;
@@ -24,7 +24,7 @@ export type SystemPromptParts = { stable: string; dynamic: string };
 export function systemPrompt(
 	caseBrief: string,
 	commonInformation: string | null,
-	persona: PersonaDetail,
+	persona: PersonaPayload,
 	candidateReferrals: CandidateReferral[],
 	candidateFiles: CandidateFile[],
 ): SystemPromptParts {
@@ -62,11 +62,11 @@ export function systemPrompt(
 			? "You may send a file below this turn, but ONLY if you judge, from the conversation " +
 				"so far, that its sharing condition is clearly satisfied — same standard as " +
 				`referrals above. Candidates: ${fileOptions}. If (and only if) you send one in your ` +
-				'reply, list its handle in "send_files". If you describe a file\'s contents, ' +
+				'reply, list its handle in "sendFiles". If you describe a file\'s contents, ' +
 				"describe only what you believe it contains, as given above — never invent " +
 				"details beyond that."
 			: "You have no file to send this turn. Do not claim to send, attach, or offer " +
-				'any file; keep "send_files" empty.';
+				'any file; keep "sendFiles" empty.';
 
 	let knownFacts = persona.knownFacts ?? "None";
 	if (candidateReferrals.length > 0 && knownFacts !== "None") {
@@ -112,7 +112,7 @@ export function replyInstructions(): string {
 		"no speaker-name prefix and no surrounding quotes;\n" +
 		'  "introduce": a JSON array of the contact handles (e.g. "R1") you are ' +
 		"introducing in this reply, or [] if none;\n" +
-		'  "send_files": a JSON array of the file handles (e.g. "F1") you are sending ' +
+		'  "sendFiles": a JSON array of the file handles (e.g. "F1") you are sending ' +
 		"with this reply, or [] if none.\n" +
 		"Only use handles explicitly listed as available to you this turn. Your reply " +
 		"text and these arrays MUST agree: if you introduce a contact or send a file in " +

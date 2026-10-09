@@ -8,8 +8,8 @@ import {
 } from "./turnState";
 
 describe("personaAvailability", () => {
-	// Tests that a persona is reported as not yet available before its available_at time.
-	it("reports not yet available when elapsed is before available_at", () => {
+	// Tests that a persona is reported as not yet available before its availableAt time.
+	it("reports not yet available when elapsed is before availableAt", () => {
 		expect(personaAvailability(null, 10, 5)).toEqual({
 			available: false,
 			availableIn: 5,
@@ -62,8 +62,8 @@ describe("personaAvailability", () => {
 		});
 	});
 
-	// Tests that a zero-duration persona is available at the instant of its available_at time.
-	it("is available for the instant elapsed === available_at with a zero duration", () => {
+	// Tests that a zero-duration persona is available at the instant of its availableAt time.
+	it("is available for the instant elapsed === availableAt with a zero duration", () => {
 		expect(personaAvailability(0, 10, 10)).toEqual({
 			available: true,
 			availableIn: 0,
@@ -72,7 +72,7 @@ describe("personaAvailability", () => {
 	});
 
 	// Tests that availability times are never negative and available implies availableIn is 0, for arbitrary inputs.
-	it("invariants: available_in/expires_in are never negative, and available implies availableIn===0", () => {
+	it("invariants: availableIn/expiresIn are never negative, and available implies availableIn===0", () => {
 		fc.assert(
 			fc.property(
 				fc.integer({ min: 0, max: 500 }),

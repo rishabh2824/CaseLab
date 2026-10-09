@@ -169,10 +169,10 @@ export function validateGraph(
 			throw new ConvexError(`Persona ${persona.id} is missing a role.`);
 		}
 		if (
-			persona.availability_minutes !== null &&
-			persona.availability_minutes !== undefined &&
-			(!Number.isInteger(persona.availability_minutes) ||
-				persona.availability_minutes < 1)
+			persona.availabilityMinutes !== null &&
+			persona.availabilityMinutes !== undefined &&
+			(!Number.isInteger(persona.availabilityMinutes) ||
+				persona.availabilityMinutes < 1)
 		) {
 			throw new ConvexError(
 				`Persona ${persona.id}'s availability must be a whole number of minutes, at least 1.`,
@@ -192,14 +192,14 @@ export function validateGraph(
 	}
 	const seenReferrals = new Set<string>();
 	for (const referral of referrals) {
-		if (!validIds.has(referral.from_id))
-			throw new ConvexError(`Unknown referral from_id: ${referral.from_id}`);
-		if (!validIds.has(referral.to_id))
-			throw new ConvexError(`Unknown referral to_id: ${referral.to_id}`);
-		const referralKey = JSON.stringify([referral.from_id, referral.to_id]);
+		if (!validIds.has(referral.fromId))
+			throw new ConvexError(`Unknown referral fromId: ${referral.fromId}`);
+		if (!validIds.has(referral.toId))
+			throw new ConvexError(`Unknown referral toId: ${referral.toId}`);
+		const referralKey = JSON.stringify([referral.fromId, referral.toId]);
 		if (seenReferrals.has(referralKey)) {
 			throw new ConvexError(
-				`Duplicate referral: ${referral.from_id} -> ${referral.to_id}`,
+				`Duplicate referral: ${referral.fromId} -> ${referral.toId}`,
 			);
 		}
 		seenReferrals.add(referralKey);
@@ -207,9 +207,9 @@ export function validateGraph(
 
 	const adjacency = new Map<string, string[]>();
 	for (const referral of referrals) {
-		const targets = adjacency.get(referral.from_id) ?? [];
-		targets.push(referral.to_id);
-		adjacency.set(referral.from_id, targets);
+		const targets = adjacency.get(referral.fromId) ?? [];
+		targets.push(referral.toId);
+		adjacency.set(referral.fromId, targets);
 	}
 
 	const UNVISITED = 0;
@@ -260,21 +260,21 @@ export async function buildStructure(
 	const present = await existingStorageIds(
 		ctx,
 		personas.flatMap((persona) => [
-			persona.profile_photo,
+			persona.profilePhoto,
 			...persona.files.map((entry) => entry.file),
 		]),
 	);
 	const kept = (ref: FileRefPayload): FileRefPayload =>
-		ref && present.has(ref.storage_id) ? ref : null;
+		ref && present.has(ref.storageId) ? ref : null;
 
 	const outPersonas = personas.map((persona) => ({
 		id: persona.id,
 		name: persona.name.trim(),
 		role: persona.role.trim(),
-		profile_photo: kept(persona.profile_photo),
-		known_facts: persona.known_facts,
-		personality_traits: persona.personality_traits,
-		availability_minutes: persona.availability_minutes,
+		profilePhoto: kept(persona.profilePhoto),
+		knownFacts: persona.knownFacts,
+		personalityTraits: persona.personalityTraits,
+		availabilityMinutes: persona.availabilityMinutes,
 		files: persona.files.flatMap((entry) => {
 			const file = kept(entry.file);
 			return file ? [{ ...entry, file }] : [];
@@ -284,9 +284,9 @@ export async function buildStructure(
 	const storageIds = new Set(
 		outPersonas.flatMap((persona) =>
 			[
-				persona.profile_photo,
+				persona.profilePhoto,
 				...persona.files.map((entry) => entry.file),
-			].flatMap((ref) => (ref ? [ref.storage_id] : [])),
+			].flatMap((ref) => (ref ? [ref.storageId] : [])),
 		),
 	);
 	return {

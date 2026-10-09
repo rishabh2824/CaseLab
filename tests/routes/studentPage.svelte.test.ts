@@ -19,15 +19,13 @@ class FakeRun {
 	activeContactId = $state<string | null>("mary");
 	notes = $state("");
 	caseData = $state<{
-		case_name: string;
+		caseName: string;
 		brief: string;
-	} | null>({ case_name: "Sterling Industries", brief: "Reduce costs." });
+	} | null>({ caseName: "Sterling Industries", brief: "Reduce costs." });
 	totalDurationSeconds = $state<number | null>(null);
 	activeMessages = $state<ChatMessage[]>([]);
 	contacts = $state<ReturnType<typeof makeDisplayContact>[]>([]);
-	sharedFiles = $state<{ file_id: string; file_name: string; url: string }[]>(
-		[],
-	);
+	sharedFiles = $state<{ fileId: string; fileName: string; url: string }[]>([]);
 	activePersonaAvailable = $state(true);
 
 	get activeContact() {
@@ -53,15 +51,15 @@ let run: FakeRun;
 function makeDisplayContact(
 	overrides: Partial<ReturnType<typeof makeContact>> & {
 		available?: boolean;
-		available_in?: number | null;
-		expires_in?: number | null;
+		availableIn?: number | null;
+		expiresIn?: number | null;
 	} = {},
 ) {
 	return {
 		...makeContact(),
 		available: true,
-		available_in: null,
-		expires_in: null,
+		availableIn: null,
+		expiresIn: null,
 		...overrides,
 	};
 }
@@ -86,7 +84,7 @@ beforeEach(() => {
 			name: "Bob Ray",
 			role: "Analyst",
 			available: false,
-			available_in: 5,
+			availableIn: 5,
 		}),
 	];
 	mockQuery.mockReset();
@@ -152,10 +150,10 @@ describe("contacts and files", () => {
 		run.contacts = [
 			makeDisplayContact({
 				id: "mary",
-				availability_duration: 20,
-				expires_in: 4,
-				chat_ended: true,
-				is_referred: true,
+				availabilityDuration: 20,
+				expiresIn: 4,
+				chatEnded: true,
+				isReferred: true,
 			}),
 		];
 		render(StudentPage);
@@ -176,8 +174,8 @@ describe("contacts and files", () => {
 		run.contacts = [makeDisplayContact({ id: "mary" })];
 		run.sharedFiles = [
 			{
-				file_id: "f1",
-				file_name: "budget.pdf",
+				fileId: "f1",
+				fileName: "budget.pdf",
 				url: "https://x.test/budget.pdf",
 			},
 		];
@@ -220,7 +218,7 @@ describe("chat pane", () => {
 
 	// Tests that an ended conversation is explained and the composer is locked.
 	it("explains an ended conversation and disables the composer", () => {
-		run.contacts = [makeDisplayContact({ id: "mary", chat_ended: true })];
+		run.contacts = [makeDisplayContact({ id: "mary", chatEnded: true })];
 		run.activePersonaAvailable = false;
 		render(StudentPage);
 		expect(

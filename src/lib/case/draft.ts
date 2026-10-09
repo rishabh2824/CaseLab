@@ -16,10 +16,10 @@ export const createEmptyPersona = (
 	id: crypto.randomUUID(),
 	name: "",
 	role: "",
-	profile_photo: null,
-	known_facts: "",
-	personality_traits: "",
-	availability_minutes: null,
+	profilePhoto: null,
+	knownFacts: "",
+	personalityTraits: "",
+	availabilityMinutes: null,
 	files: [],
 	...overrides,
 });
@@ -28,8 +28,8 @@ export const createEmptyPersona = (
 export const createEmptyReferral = (
 	overrides: Partial<ReferralEdge> = {},
 ): ReferralEdge => ({
-	from_id: "",
-	to_id: "",
+	fromId: "",
+	toId: "",
 	conditions: "",
 	...overrides,
 });
@@ -89,8 +89,8 @@ export const getPersonaFieldErrors = (persona: Persona): PersonaFieldErrors => {
 	if (!persona.name?.trim()) errors.name = "Name is required.";
 	if (!persona.role?.trim()) errors.role = "Role is required.";
 	if (
-		typeof persona.availability_minutes === "number" &&
-		persona.availability_minutes < 1
+		typeof persona.availabilityMinutes === "number" &&
+		persona.availabilityMinutes < 1
 	) {
 		errors.availability = "Must be at least 1 minute.";
 	}
@@ -156,14 +156,14 @@ export const referralsFrom = (
 	referrals: ReferralEdge[],
 	personaId: string,
 ): ReferralEdge[] =>
-	referrals.filter((referral) => referral.from_id === personaId);
+	referrals.filter((referral) => referral.fromId === personaId);
 
 // Returns the referrals that point at the given persona.
 export const referralsTo = (
 	referrals: ReferralEdge[],
 	personaId: string,
 ): ReferralEdge[] =>
-	referrals.filter((referral) => referral.to_id === personaId);
+	referrals.filter((referral) => referral.toId === personaId);
 
 // Indexes personas by id.
 export const personasById = (personas: Persona[]): Map<string, Persona> =>
@@ -194,10 +194,7 @@ export const referredWithParents = (
 			label: getPersonaLabel(persona, `Referred Persona ${index + 1}`),
 			parentLabel: referralsTo(referrals, persona.id)
 				.map((referral) =>
-					getPersonaLabel(
-						byId.get(referral.from_id) ?? { name: "" },
-						"Unknown",
-					),
+					getPersonaLabel(byId.get(referral.fromId) ?? { name: "" }, "Unknown"),
 				)
 				.join(", "),
 		}));
@@ -213,9 +210,9 @@ export const reachableFrom = (
 	while (queue.length > 0) {
 		const currentId = queue.shift() as string;
 		for (const referral of referrals) {
-			if (referral.from_id === currentId && !reachable.has(referral.to_id)) {
-				reachable.add(referral.to_id);
-				queue.push(referral.to_id);
+			if (referral.fromId === currentId && !reachable.has(referral.toId)) {
+				reachable.add(referral.toId);
+				queue.push(referral.toId);
 			}
 		}
 	}
