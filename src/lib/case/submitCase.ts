@@ -59,9 +59,6 @@ async function uploadAll(
 ): Promise<Map<File, UploadedFileRef>> {
 	const pending = collectPendingUploads(personas);
 	const uploadUrls = await generateUploadUrls(pending.length);
-	if (uploadUrls.length !== pending.length) {
-		throw new Error("Missing upload URL for an upload.");
-	}
 	const settled = await Promise.allSettled(
 		pending.map((file, i) => putToConvexStorage(file, uploadUrls[i] as string)),
 	);
@@ -150,9 +147,7 @@ export async function submitCase({
 		commonInformation: commonInformation.trim(),
 		duration: simulationDurationMinutes ?? undefined,
 		accessCode: accessCode.trim(),
-		personas: personasPayload,
-		referrals,
-		roots,
+		structure: { personas: personasPayload, referrals, roots },
 		collaboratorAdminIds: collaboratorAdminIds as Id<"admins">[],
 	};
 

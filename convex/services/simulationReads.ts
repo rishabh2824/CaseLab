@@ -10,14 +10,12 @@ export type PersonaGraph = {
 	roots: string[];
 };
 
-// Turns a case structure into a graph of personas, referral edges and name-sorted roots.
+// Turns a case structure into a graph of personas, referral edges and name-sorted roots. The structure is already validated on write.
 export function flattenPersonas(structure: CaseStructure): PersonaGraph {
 	const personas = new Map(structure.personas.map((p) => [p.id, p]));
-	const roots = [...new Set(structure.roots)]
-		.filter((id) => personas.has(id))
-		.sort((a, b) =>
-			(personas.get(a)?.name ?? "").localeCompare(personas.get(b)?.name ?? ""),
-		);
+	const roots = [...structure.roots].sort((a, b) =>
+		(personas.get(a)?.name ?? "").localeCompare(personas.get(b)?.name ?? ""),
+	);
 	return { personas, referrals: structure.referrals, roots };
 }
 

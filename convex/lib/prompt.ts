@@ -23,7 +23,7 @@ export type SystemPromptParts = { stable: string; dynamic: string };
 // Builds the stable and per-turn system prompt for a persona, with referral and file candidates.
 export function systemPrompt(
 	caseBrief: string,
-	commonInformation: string | null,
+	commonInformation: string,
 	persona: PersonaPayload,
 	candidateReferrals: CandidateReferral[],
 	candidateFiles: CandidateFile[],
@@ -68,8 +68,8 @@ export function systemPrompt(
 			: "You have no file to send this turn. Do not claim to send, attach, or offer " +
 				'any file; keep "sendFiles" empty.';
 
-	let knownFacts = persona.knownFacts ?? "None";
-	if (candidateReferrals.length > 0 && knownFacts !== "None") {
+	let knownFacts = persona.knownFacts;
+	if (candidateReferrals.length > 0) {
 		for (const c of candidateReferrals) {
 			if (!c.name.trim()) continue;
 			knownFacts = knownFacts.replace(
@@ -86,10 +86,10 @@ export function systemPrompt(
 		"You are a persona in a case simulation. Stay in character.\n" +
 		"Respond naturally and conversationally in 1-3 concise sentences.\n" +
 		`Case summary: ${caseBrief}\n` +
-		`Common information: ${commonInformation ?? "None"}\n` +
+		`Common information: ${commonInformation}\n` +
 		`Persona name: ${persona.name}\n` +
 		`Role/title: ${persona.role}\n` +
-		`Personality traits: ${persona.personalityTraits ?? "None"}\n` +
+		`Personality traits: ${persona.personalityTraits}\n` +
 		"Never fabricate details outside your known facts. If asked about unknown facts, say you do not know.\n";
 
 	const turn =

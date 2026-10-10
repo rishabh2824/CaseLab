@@ -1,6 +1,6 @@
 <script lang="ts">
 import { getConvexClient, useQuery } from "convex-svelte";
-import { onDestroy, onMount, untrack } from "svelte";
+import { onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import { getViewerContext } from "#lib/adminViewer.js";
 import { CaseDraft } from "#lib/case/caseDraft.svelte.js";
@@ -8,13 +8,12 @@ import { buildHTMLForm, downloadForm } from "#lib/case/exportCase.js";
 import { CaseImportError, parseHTMLForm } from "#lib/case/importCase.js";
 import { submitCase } from "#lib/case/submitCase.js";
 import { getErrorMessage } from "#lib/errors.js";
-import { type SaveResult, unsavedGuard } from "#lib/unsavedGuard.svelte.js";
 import { beforeNavigate, goto } from "$app/navigation";
 import { api } from "../../../convex/_generated/api.js";
 import type { Id } from "../../../convex/_generated/dataModel.js";
 import CaseGraphEditor from "./CaseGraphEditor.svelte";
 import CaseInfoFields from "./CaseInfoFields.svelte";
-import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
+import ConfirmDialog from "./ConfirmDialog.svelte";
 
 type Props = {
 	mode: "create" | "edit";
@@ -45,7 +44,6 @@ let submitError = $state("");
 let submitSuccess = $state("");
 let suppressInlineSuccess = $state(false);
 let isSubmitting = $state(false);
-let importWarnings = $state<string[]>([]);
 let pendingImportFile = $state<File | null>(null);
 let fileInputEl = $state<HTMLInputElement | null>(null);
 let lastSavedCaseId: string | null = null;
@@ -118,12 +116,8 @@ async function confirmImport(): Promise<void> {
 
 // Parses an exported HTML form into the form fields, or shows a toast if the file is unusable.
 async function performImport(file: File): Promise<void> {
-	importWarnings = [];
 	try {
-		const text = await file.text();
-		const { data, warnings } = parseHTMLForm(text);
-		draft.applyImport(data);
-		importWarnings = warnings;
+		draft.applyImport(parseHTMLForm(await file.text()));
 	} catch (err) {
 		toast(
 			err instanceof CaseImportError
@@ -132,6 +126,8 @@ async function performImport(file: File): Promise<void> {
 		);
 	}
 }
+
+type SaveResult = { ok: true } | { ok: false; error: string };
 
 let inFlightSave: Promise<SaveResult> | null = null;
 
@@ -194,36 +190,62 @@ async function handleSubmit(event: SubmitEvent): Promise<void> {
 	}
 }
 
+// A navigation held behind the unsaved-changes dialog, and the dialog's own state.
+let pendingLeave = $state<(() => void) | null>(null);
+let isLeaveSaving = $state(false);
+let leaveError = $state("");
+let allowLeave = false;
+
 beforeNavigate((navigation) => {
-	if (!unsavedGuard.isDirty) return;
+	if (allowLeave || !draft.isDirty) return;
 	const targetUrl = navigation.to?.url;
 	if (!targetUrl) return;
 	navigation.cancel();
-	const resume =
+	leaveError = "";
+	pendingLeave =
 		navigation.type === "popstate" && navigation.delta !== undefined
 			? () => history.go(navigation.delta)
 			: () => goto(targetUrl);
-	unsavedGuard.requestNavigation(resume);
 });
 
+// Dismisses the unsaved-changes dialog and stays on the page.
+function stayOnPage(): void {
+	pendingLeave = null;
+	leaveError = "";
+}
+
+// Continues the held navigation, without further prompts.
+function leave(): void {
+	const resume = pendingLeave;
+	allowLeave = true;
+	stayOnPage();
+	resume?.();
+}
+
+// Saves the form, then continues the held navigation if the save worked.
+async function saveAndLeave(): Promise<void> {
+	isLeaveSaving = true;
+	leaveError = "";
+	try {
+		const result = await performSave();
+		if (result.ok) leave();
+		else leaveError = result.error;
+	} finally {
+		isLeaveSaving = false;
+	}
+}
+
 onMount(() => {
-	unsavedGuard.register(() => draft.isDirty, performSave);
 	function handleBeforeUnload(event: BeforeUnloadEvent): void {
-		if (!unsavedGuard.isDirty) return;
+		if (allowLeave || !draft.isDirty) return;
 		event.preventDefault();
 		event.returnValue = "";
 	}
 	window.addEventListener("beforeunload", handleBeforeUnload);
 	return () => window.removeEventListener("beforeunload", handleBeforeUnload);
 });
-
-onDestroy(() => {
-	unsavedGuard.unregister();
-});
 </script>
 
-<div class="relative min-h-screen bg-parchment">
-	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<div class="mx-auto max-w-4xl px-6 py-10">
 		<div class="rounded-2xl border border-line bg-white p-8 shadow-soft">
 			<form novalidate onsubmit={handleSubmit} class="flex flex-col gap-6">
@@ -270,29 +292,6 @@ onDestroy(() => {
 					</p>
 				{/if}
 
-				{#if importWarnings.length > 0}
-					<div class="rounded-xl border border-line bg-cream/60 px-4 py-3 text-sm text-ink-soft">
-						<div class="flex items-start justify-between gap-3">
-							<p class="font-semibold text-ink">
-								Imported with {importWarnings.length} issue{importWarnings.length === 1 ? '' : 's'} to review
-							</p>
-							<button
-								type="button"
-								onclick={() => (importWarnings = [])}
-								class="text-xs font-semibold text-stone-soft"
-								aria-label="Dismiss"
-							>
-								&times;
-							</button>
-						</div>
-						<ul class="mt-2 flex flex-col gap-1">
-							{#each importWarnings as warning (warning)}
-								<li class="text-xs">{warning}</li>
-							{/each}
-						</ul>
-					</div>
-				{/if}
-
 				<CaseInfoFields
 					{draft}
 					{allAdmins}
@@ -328,12 +327,26 @@ onDestroy(() => {
 			</form>
 		</div>
 	</div>
-</div>
-<DestructiveConfirmDialog
-	bind:open={() => pendingImportFile !== null, (isOpen) => { if (!isOpen) pendingImportFile = null }}
+<ConfirmDialog
+	open={pendingImportFile !== null}
+	onClose={() => (pendingImportFile = null)}
 	title="Replace everything in this form?"
 	description="Import will replace everything currently in this form. This cannot be undone."
 	confirmLabel="Import"
 	pendingLabel="Importing…"
 	onConfirm={confirmImport}
+/>
+
+<ConfirmDialog
+	open={pendingLeave !== null}
+	onClose={stayOnPage}
+	title="You have unsaved changes"
+	description="This case has edits that haven't been saved yet. Save them before leaving, or discard them and continue."
+	errorMessage={leaveError}
+	confirmLabel="Save changes"
+	pendingLabel="Saving…"
+	confirming={isLeaveSaving}
+	onConfirm={saveAndLeave}
+	secondaryLabel="Discard changes"
+	onSecondary={leave}
 />

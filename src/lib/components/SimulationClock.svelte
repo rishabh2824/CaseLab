@@ -1,12 +1,10 @@
 <script lang="ts">
 type Props = {
-	startTime: number | null;
+	elapsedSeconds: number;
 	totalDurationSeconds: number | null;
 };
 
-let { startTime, totalDurationSeconds }: Props = $props();
-
-let elapsedSeconds = $state(0);
+let { elapsedSeconds, totalDurationSeconds }: Props = $props();
 
 // Formats a number of seconds as MM:SS.
 function formatTime(totalSeconds: number): string {
@@ -14,16 +12,6 @@ function formatTime(totalSeconds: number): string {
 	const seconds = totalSeconds % 60;
 	return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
-
-$effect(() => {
-	const start = startTime ?? Date.now();
-	const tick = () => {
-		elapsedSeconds = Math.max(0, Math.floor((Date.now() - start) / 1000));
-	};
-	tick();
-	const intervalId = window.setInterval(tick, 1000);
-	return () => window.clearInterval(intervalId);
-});
 
 const progressPercent = $derived(
 	typeof totalDurationSeconds === "number"

@@ -12,27 +12,12 @@ const defaults: PersistedSession = Object.freeze({
 	activePersonaId: "",
 });
 
-// Validates a stored session blob field by field, defaulting anything missing or malformed.
-function normalizePersisted(value: unknown): PersistedSession {
-	if (typeof value !== "object" || value === null) return defaults;
-	const v = value as Record<string, unknown>;
-	return {
-		runId: typeof v.runId === "string" ? v.runId : defaults.runId,
-		startTime:
-			typeof v.startTime === "number" ? v.startTime : defaults.startTime,
-		activePersonaId:
-			typeof v.activePersonaId === "string"
-				? v.activePersonaId
-				: defaults.activePersonaId,
-	};
-}
-
-// Reads the session from sessionStorage, falling back to defaults on missing or bad data.
+// Reads the session this tab wrote to sessionStorage, falling back to defaults if it's missing or unparseable.
 function readPersisted(): PersistedSession {
 	try {
 		const raw = sessionStorage.getItem(STORAGE_KEY);
 		if (!raw) return defaults;
-		return normalizePersisted(JSON.parse(raw) as unknown);
+		return (JSON.parse(raw) as PersistedSession | null) ?? defaults;
 	} catch {
 		return defaults;
 	}

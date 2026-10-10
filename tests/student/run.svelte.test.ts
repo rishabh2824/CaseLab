@@ -96,11 +96,15 @@ const caseData = {
 	simulationDuration: null as number | null,
 };
 
-const liveRuns: RunStore[] = [];
-// Creates a RunStore and returns it with the session and the mocked goto and toast.
+const disposers: (() => void)[] = [];
+// Creates a RunStore inside an effect root, as a component would, and returns it with the session and the mocked goto and toast.
 function freshRun() {
-	const run = new RunStore();
-	liveRuns.push(run);
+	let run!: RunStore;
+	disposers.push(
+		$effect.root(() => {
+			run = new RunStore();
+		}),
+	);
 	return {
 		run,
 		session,
@@ -140,7 +144,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-	for (const run of liveRuns.splice(0)) run.destroy();
+	for (const dispose of disposers.splice(0)) dispose();
 });
 
 describe("init", () => {
@@ -838,6 +842,22 @@ describe("a run that expires while a message is in flight", () => {
 });
 
 describe("run-level time expiry", () => {
+	// Tests that disposing the store's effect root, as unmounting its component does, stops the clock.
+	it("stops its clock when its owner is disposed", async () => {
+		vi.useFakeTimers();
+		try {
+			const { run, session } = await freshRun();
+			await primeRun(run, session);
+			expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+			for (const dispose of disposers.splice(0)) dispose();
+
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	// Tests that run-level time expiry disables messaging in place rather than navigating away.
 	it("disables messaging in place instead of navigating away", async () => {
 		vi.useFakeTimers();

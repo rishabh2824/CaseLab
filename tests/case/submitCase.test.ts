@@ -5,9 +5,19 @@ import {
 	type SubmitCaseInput,
 	submitCase,
 } from "../../src/lib/case/submitCase.js";
-import type { FileRefPayload, PersonaPayload } from "../../src/lib/types.js";
+import type {
+	FileRefPayload,
+	PersonaPayload,
+	ReferralEdge,
+} from "../../src/lib/types.js";
 import { makePersona } from "../support/fixtures.js";
 import { server } from "../support/msw.js";
+
+type SentStructure = {
+	personas: PersonaPayload[];
+	referrals: ReferralEdge[];
+	roots: string[];
+};
 
 const mockMutation = vi.fn();
 
@@ -142,7 +152,7 @@ describe("submitCase — profile photo upload", () => {
 
 		expect(uploadCountRequests).toEqual([1]);
 		expect(createRequests).toHaveLength(1);
-		const personas = createRequests[0]?.personas as PersonaPayload[];
+		const personas = (createRequests[0]!.structure as SentStructure).personas;
 		expect(personas[0]?.profilePhoto).toEqual({
 			storageId: "storage-1",
 			fileName: "mary.png",
@@ -164,7 +174,7 @@ describe("submitCase — profile photo upload", () => {
 
 		expect(uploadCountRequests).toEqual([]);
 		expect(createRequests).toHaveLength(1);
-		const personas = createRequests[0]?.personas as PersonaPayload[];
+		const personas = (createRequests[0]!.structure as SentStructure).personas;
 		expect(personas[0]?.profilePhoto).toEqual(existingPhoto);
 	});
 });
@@ -187,7 +197,7 @@ describe("submitCase — file attachments", () => {
 
 		expect(uploadCountRequests).toEqual([1]);
 		expect(createRequests).toHaveLength(1);
-		const personas = createRequests[0]?.personas as PersonaPayload[];
+		const personas = (createRequests[0]!.structure as SentStructure).personas;
 		const sentFile = personas[0]?.files?.[0];
 		expect(sentFile?.file).toEqual({
 			storageId: "storage-1",
@@ -209,7 +219,7 @@ describe("submitCase — file attachments", () => {
 
 		expect(uploadCountRequests).toEqual([]);
 		expect(createRequests).toHaveLength(1);
-		const personas = createRequests[0]?.personas as PersonaPayload[];
+		const personas = (createRequests[0]!.structure as SentStructure).personas;
 		expect(personas[0]?.files?.[0]?.file).toBeNull();
 	});
 });
@@ -264,8 +274,8 @@ describe("submitCase — multiple personas and attachments", () => {
 
 		expect(uploadCountRequests).toEqual([4]);
 		expect(createRequests).toHaveLength(1);
-		const sentPersonas = (createRequests[0]?.personas ??
-			[]) as PersonaPayload[];
+		const sentPersonas = (createRequests[0]!.structure as SentStructure)
+			.personas;
 		const sentP1 = sentPersonas.find((p) => p.id === "p1");
 		const sentP2 = sentPersonas.find((p) => p.id === "p2");
 
@@ -396,10 +406,10 @@ describe("submitCase — payload shaping", () => {
 		expect(body.brief).toBe("Reduce office supply costs.");
 		expect(body.commonInformation).toBe("Background context.");
 		expect(body.accessCode).toBe("abc");
-		expect(body.referrals).toEqual([
+		expect((body.structure as SentStructure).referrals).toEqual([
 			{ fromId: "p1", toId: "p2", conditions: "  when asked  " },
 		]);
-		expect(body.roots).toEqual(["p1"]);
+		expect((body.structure as SentStructure).roots).toEqual(["p1"]);
 		expect(body.collaboratorAdminIds).toEqual(["admin2", "admin5"]);
 	});
 });

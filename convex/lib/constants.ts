@@ -1,6 +1,9 @@
-// Constants shared by the Convex backend and the browser. Kept free of Convex imports so the client bundle doesn't pull in the schema.
+// Constants shared by the Convex backend and the browser. Only type imports from Convex, so the client bundle doesn't pull in the schema.
 
-export type AdminRole = "super" | "admin";
+import type { Infer } from "convex/values";
+import type { adminRole } from "../schema";
+
+export type AdminRole = Infer<typeof adminRole>;
 
 export const RUN_LIFETIME_MINUTES = 120;
 

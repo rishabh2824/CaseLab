@@ -79,12 +79,12 @@ async function signOutNotAuthorized(): Promise<void> {
 
 {#if authErrorParam === "unauthorized"}
 	<div class="flex h-screen flex-col items-center justify-center gap-3">
-		<p class="text-sm font-medium text-brand">Your account is not authorized.</p>
+		<p role="alert" class="text-sm font-medium text-brand">Your account is not authorized.</p>
 		<a href="/" class="text-sm underline">Back to the landing page</a>
 	</div>
 {:else if signInError}
 	<div class="flex h-screen flex-col items-center justify-center gap-3">
-		<p class="text-sm font-medium text-brand">{signInError}</p>
+		<p role="alert" class="text-sm font-medium text-brand">{signInError}</p>
 		<button type="button" onclick={retrySignIn} class="text-sm underline">
 			Try again
 		</button>
@@ -92,7 +92,7 @@ async function signOutNotAuthorized(): Promise<void> {
 {:else if auth.isAuthenticated && !auth.isLoading && !viewer.isLoading}
 	{#if viewer.error}
 		<div class="flex h-screen flex-col items-center justify-center gap-3">
-			<p class="text-sm font-medium text-brand">
+			<p role="alert" class="text-sm font-medium text-brand">
 				{getErrorMessage(viewer.error, "Something went wrong loading your admin account.")}
 			</p>
 			<button type="button" onclick={() => location.reload()} class="text-sm underline">
@@ -101,13 +101,16 @@ async function signOutNotAuthorized(): Promise<void> {
 		</div>
 	{:else if !viewer.data}
 		<div class="flex h-screen flex-col items-center justify-center gap-3">
-			<p class="text-sm font-medium text-brand">Not authorized.</p>
+			<p role="alert" class="text-sm font-medium text-brand">Not authorized.</p>
 			<button type="button" onclick={signOutNotAuthorized} class="text-sm underline">
 				Sign out
 			</button>
 		</div>
 	{:else}
-		<AdminTopBar />
-		{@render children()}
+		<div class="relative min-h-screen overflow-hidden bg-parchment">
+			<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
+			<AdminTopBar />
+			{@render children()}
+		</div>
 	{/if}
 {/if}

@@ -67,26 +67,27 @@ export const referralsTo = (
 	referrals.filter((referral) => referral.toId === personaId);
 
 // Indexes personas by id.
-export const personasById = (personas: Persona[]): Map<string, Persona> =>
-	new Map(personas.map((p) => [p.id, p]));
+export const personasById = <P extends { id: string }>(
+	personas: P[],
+): Map<string, P> => new Map(personas.map((p) => [p.id, p]));
 
 // Returns the root personas in roots order, skipping ids that don't exist.
-export const rootPersonas = (
-	personas: Persona[],
+export const rootPersonas = <P extends { id: string }>(
+	personas: P[],
 	roots: string[],
-): Persona[] => {
+): P[] => {
 	const byId = personasById(personas);
 	return roots
 		.map((id) => byId.get(id))
-		.filter((persona): persona is Persona => Boolean(persona));
+		.filter((persona): persona is P => Boolean(persona));
 };
 
 // Lists the non-root personas with a display label and the names of their referring parents.
-export const referredWithParents = (
-	personas: Persona[],
+export const referredWithParents = <P extends { id: string; name: string }>(
+	personas: P[],
 	referrals: ReferralEdge[],
 	roots: string[],
-): { persona: Persona; label: string; parentLabel: string }[] => {
+): { persona: P; label: string; parentLabel: string }[] => {
 	const byId = personasById(personas);
 	return personas
 		.filter((persona) => !roots.includes(persona.id))

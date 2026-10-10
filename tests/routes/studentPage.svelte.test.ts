@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { toast } from "svelte-sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,7 +33,6 @@ class FakeRun {
 	}
 
 	init = vi.fn();
-	destroy = vi.fn();
 	selectContact = vi.fn((id: string) => {
 		this.activeContactId = id;
 	});
@@ -94,12 +93,10 @@ beforeEach(() => {
 });
 
 describe("student page lifecycle", () => {
-	// Tests that the run store is initialised on mount and destroyed on unmount.
-	it("initialises the run on mount and destroys it on unmount", () => {
-		const { unmount } = render(StudentPage);
+	// Tests that the run store is initialised on mount.
+	it("initialises the run on mount", () => {
+		render(StudentPage);
 		expect(run.init).toHaveBeenCalledOnce();
-		unmount();
-		expect(run.destroy).toHaveBeenCalledOnce();
 	});
 
 	// Tests that the case name and brief show once loaded, with placeholders before.
@@ -273,6 +270,15 @@ describe("composer", () => {
 		expect(run.sendMessage).toHaveBeenCalledWith("line one\nline two");
 	});
 
+	// Tests that Enter pressed while an IME composition is active does not send the message.
+	it("does not send on Enter during IME composition", () => {
+		render(StudentPage);
+		const box = screen.getByLabelText("Message");
+		fireEvent.input(box, { target: { value: "ni" } });
+		fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+		expect(run.sendMessage).not.toHaveBeenCalled();
+	});
+
 	// Tests that a rejected send keeps what the student typed.
 	it("keeps the text when the store declines the message", async () => {
 		run.sendMessage.mockReturnValue(false);
@@ -365,7 +371,7 @@ describe("PDF export", () => {
 
 	// Tests that a run with no personas still exports.
 	it("exports when the run has no personas", async () => {
-		mockQuery.mockResolvedValue({});
+		mockQuery.mockResolvedValue({ personas: [] });
 		const user = userEvent.setup();
 		render(StudentPage);
 		await user.click(screen.getByRole("button", { name: "Export PDF" }));

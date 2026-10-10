@@ -17,20 +17,15 @@ function fieldValue(root: ParentNode, field: string): string {
 	return el ? el.value : "";
 }
 
-// Parses a numeric field to a rounded number, warning and returning null if it isn't a number.
-function parseNumberField(
-	text: string,
-	label: string,
-	warnings: string[],
-): number | null {
-	const trimmed = (text ?? "").trim();
+// Parses a numeric field to a rounded number, or null if blank; throws if it isn't a number.
+function parseNumberField(text: string, label: string): number | null {
+	const trimmed = text.trim();
 	if (!trimmed) return null;
 	const parsed = Number(trimmed);
 	if (!Number.isFinite(parsed)) {
-		warnings.push(
-			`Couldn't read "${label}" as a number (was "${trimmed}") — left blank for you to fill in.`,
+		throw new CaseImportError(
+			`Couldn't read "${label}" as a number (was "${trimmed}").`,
 		);
-		return null;
 	}
 	return Math.round(parsed);
 }
@@ -44,8 +39,8 @@ type RawCaseGraph = {
 	edges: RawEdge[];
 };
 
-// Reads personas, roots and referral edges from the form DOM, skipping duplicate or broken entries with warnings.
-function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
+// Reads personas, roots and referral edges from the form DOM, throwing on duplicate or broken entries.
+function readCaseGraphFromDom(doc: Document): RawCaseGraph {
 	const personaOrder: string[] = [];
 	const personaById = new Map<string, Persona>();
 	const roots: string[] = [];
@@ -54,10 +49,7 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 		const id = card.getAttribute("data-persona-id");
 		if (!id) continue;
 		if (personaById.has(id)) {
-			warnings.push(
-				`Duplicate persona id "${id}" — kept the first one and ignored the rest.`,
-			);
-			continue;
+			throw new CaseImportError(`Duplicate persona id "${id}".`);
 		}
 		const files = Array.from(
 			card.querySelectorAll(".files-block .file-row"),
@@ -76,7 +68,6 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 			availabilityMinutes: parseNumberField(
 				fieldValue(card, "availability_minutes"),
 				`${id} availability`,
-				warnings,
 			),
 			profilePhoto: null,
 			files,
@@ -98,21 +89,16 @@ function readCaseGraphFromDom(doc: Document, warnings: string[]): RawCaseGraph {
 		const conditions = fieldValue(row, "conditions").trim();
 		if (!fromId || !toId) continue;
 		if (!personaById.has(fromId) || !personaById.has(toId)) {
-			warnings.push(
-				`Skipped a referral (${fromId || "?"} → ${toId || "?"}) — one of the personas wasn't found.`,
+			throw new CaseImportError(
+				`A referral (${fromId} → ${toId}) points at a persona that isn't in the file.`,
 			);
-			continue;
 		}
 		if (fromId === toId) {
-			warnings.push(`Skipped a referral where ${fromId} refers to itself.`);
-			continue;
+			throw new CaseImportError(`Persona ${fromId} refers to itself.`);
 		}
 		const edgeKey = JSON.stringify([fromId, toId]);
 		if (seenEdges.has(edgeKey)) {
-			warnings.push(
-				`Skipped a duplicate referral (${fromId} → ${toId}) — kept the first one.`,
-			);
-			continue;
+			throw new CaseImportError(`Duplicate referral (${fromId} → ${toId}).`);
 		}
 		seenEdges.add(edgeKey);
 		edges.push({ fromId, toId, conditions });
@@ -127,43 +113,26 @@ type FlatGraph = {
 	roots: string[];
 };
 
-// Drops cyclic edges and personas unreachable from a root, returning the cleaned graph with warnings.
-function validateCaseGraph(graph: RawCaseGraph, warnings: string[]): FlatGraph {
+// Throws if the graph has a cycle or a persona unreachable from a root.
+function validateCaseGraph(graph: RawCaseGraph): void {
 	const { personaOrder, personaById, roots, edges } = graph;
 
-	const { accepted: acceptedEdges, dropped } = splitCyclicEdges(
-		personaOrder,
-		edges,
-	);
-	for (const edge of dropped) {
-		warnings.push(
-			`Cycle detected involving ${edge.toId} — that referral was dropped.`,
+	const { dropped } = splitCyclicEdges(personaOrder, edges);
+	if (dropped.length > 0) {
+		throw new CaseImportError(
+			`Cycle detected involving ${dropped[0]?.toId} — referrals can't loop back.`,
 		);
 	}
 
-	const reachable = reachableFrom(roots, acceptedEdges);
+	const reachable = reachableFrom(roots, edges);
 	for (const id of personaOrder) {
 		if (!reachable.has(id)) {
 			const name = personaById.get(id)?.name;
-			warnings.push(
-				`${id}${name ? ` (${name})` : ""} isn't connected to any root persona — removed.`,
+			throw new CaseImportError(
+				`${id}${name ? ` (${name})` : ""} isn't connected to any root persona.`,
 			);
 		}
 	}
-
-	return {
-		personas: personaOrder
-			.filter((id) => reachable.has(id))
-			.map((id) => personaById.get(id) as Persona),
-		referrals: acceptedEdges
-			.filter((edge) => reachable.has(edge.fromId) && reachable.has(edge.toId))
-			.map((edge) => ({
-				fromId: edge.fromId,
-				toId: edge.toId,
-				conditions: edge.conditions,
-			})),
-		roots: roots.filter((id) => reachable.has(id)),
-	};
 }
 
 // Gives every persona a new UUID and rewrites referrals and roots to match.
@@ -196,13 +165,8 @@ export type ImportedCaseData = {
 	roots: string[];
 };
 
-export type ParsedHTMLForm = {
-	data: ImportedCaseData;
-	warnings: string[];
-};
-
-// Parses an exported case form into case data plus warnings, throwing CaseImportError for unusable files.
-export function parseHTMLForm(htmlText: string): ParsedHTMLForm {
+// Parses an exported case form into case data, throwing CaseImportError for anything that isn't a clean export.
+export function parseHTMLForm(htmlText: string): ImportedCaseData {
 	const doc = new DOMParser().parseFromString(htmlText, "text/html");
 	if (
 		!doc.getElementById("personas-list") ||
@@ -211,43 +175,41 @@ export function parseHTMLForm(htmlText: string): ParsedHTMLForm {
 		throw new CaseImportError("This doesn't look like a Case Lab import file.");
 	}
 
-	const warnings: string[] = [];
-	const caseName = fieldValue(doc, "case_name").trim();
-	const accessCode = fieldValue(doc, "access_code").trim();
-	const initialBrief = fieldValue(doc, "initial_brief").trim();
-	const commonInformation = fieldValue(doc, "common_information").trim();
-	const simulationDurationMinutes = parseNumberField(
-		fieldValue(doc, "simulation_duration_minutes"),
-		"Simulation duration",
-		warnings,
-	);
-
-	const rawGraph = readCaseGraphFromDom(doc, warnings);
+	const rawGraph = readCaseGraphFromDom(doc);
 	if (rawGraph.personaOrder.length === 0) {
 		throw new CaseImportError(
 			"No personas found in this file — add at least one before importing.",
 		);
 	}
-	const { personas, referrals, roots } = mintFreshPersonaIds(
-		validateCaseGraph(rawGraph, warnings),
-	);
-	if (roots.length === 0) {
+	if (rawGraph.roots.length === 0) {
 		throw new CaseImportError(
 			"This file has no root personas — every persona is referred.",
 		);
 	}
+	validateCaseGraph(rawGraph);
+
+	const { personaOrder, personaById, roots, edges } = rawGraph;
+	const {
+		personas,
+		referrals,
+		roots: freshRoots,
+	} = mintFreshPersonaIds({
+		personas: personaOrder.map((id) => personaById.get(id) as Persona),
+		referrals: edges,
+		roots,
+	});
 
 	return {
-		data: {
-			caseName,
-			accessCode,
-			simulationDurationMinutes,
-			initialBrief,
-			commonInformation,
-			personas,
-			referrals,
-			roots,
-		},
-		warnings,
+		caseName: fieldValue(doc, "case_name").trim(),
+		accessCode: fieldValue(doc, "access_code").trim(),
+		simulationDurationMinutes: parseNumberField(
+			fieldValue(doc, "simulation_duration_minutes"),
+			"Simulation duration",
+		),
+		initialBrief: fieldValue(doc, "initial_brief").trim(),
+		commonInformation: fieldValue(doc, "common_information").trim(),
+		personas,
+		referrals,
+		roots: freshRoots,
 	};
 }

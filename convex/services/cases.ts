@@ -1,13 +1,14 @@
-import { ConvexError } from "convex/values";
+import { ConvexError, type ObjectType, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { splitCyclicEdges } from "../lib/caseGraph";
 import { getCaseInfoErrors, getPersonaFieldErrors } from "../lib/caseRules";
-import type {
-	CaseStructure,
-	FileRefPayload,
-	PersonaPayload,
-	ReferralEdgePayload,
+import {
+	type CaseStructure,
+	caseStructureValidator,
+	type FileRefPayload,
+	type PersonaPayload,
+	type ReferralEdgePayload,
 } from "../models/cases";
 import { existingStorageIds, syncCaseFiles } from "./files";
 
@@ -204,9 +205,7 @@ export function validateGraph(
 // Validates the graph, drops file references whose upload is gone and returns the cleaned structure plus the storage ids it uses.
 export async function buildStructure(
 	ctx: QueryCtx,
-	personas: PersonaPayload[],
-	referrals: ReferralEdgePayload[],
-	roots: string[],
+	{ personas, referrals, roots }: CaseStructure,
 ): Promise<{ structure: CaseStructure; storageIds: Set<Id<"_storage">> }> {
 	validateGraph(personas, referrals, roots);
 
@@ -273,17 +272,16 @@ async function resolveCollaboratorIds(
 	return deduped;
 }
 
-export type CasePayload = {
-	name: string;
-	brief: string;
-	commonInformation: string;
-	duration?: number;
-	accessCode: string;
-	personas: PersonaPayload[];
-	referrals: ReferralEdgePayload[];
-	roots: string[];
-	collaboratorAdminIds: Id<"admins">[];
+export const casePayloadArgs = {
+	name: v.string(),
+	brief: v.string(),
+	commonInformation: v.string(),
+	duration: v.optional(v.number()),
+	accessCode: v.string(),
+	structure: caseStructureValidator,
+	collaboratorAdminIds: v.array(v.id("admins")),
 };
+export type CasePayload = ObjectType<typeof casePayloadArgs>;
 
 // Trims an access code and checks no other case uses it, allowing the case being edited to keep its own.
 async function ensureAccessCodeFree(
@@ -369,9 +367,7 @@ async function resolveCasePayload(
 	);
 	const { structure, storageIds } = await buildStructure(
 		ctx,
-		payload.personas,
-		payload.referrals,
-		payload.roots,
+		payload.structure,
 	);
 	return {
 		fields: { name, brief, commonInformation, accessCode, duration, structure },

@@ -160,14 +160,12 @@ const edgeKey = (e: ReferralEdge) =>
 	`${e.fromId}->${e.toId}::${(e.conditions ?? "").trim()}`;
 
 describe("buildHTMLForm / parseHTMLForm round trip", () => {
-	// Tests that exporting then importing a case reproduces the same personas, referrals and roots without warnings.
-	it("reconstructs the same personas, referrals, and roots with no warnings", () => {
+	// Tests that exporting then importing a case reproduces the same personas, referrals and roots.
+	it("reconstructs the same personas, referrals, and roots", () => {
 		fc.assert(
 			fc.property(caseArb, (generated) => {
 				const html = buildHTMLForm(generated);
-				const { data, warnings } = parseHTMLForm(html);
-
-				expect(warnings).toEqual([]);
+				const data = parseHTMLForm(html);
 
 				expect(data.caseName).toBe(generated.caseName.trim());
 				expect(data.accessCode).toBe(generated.accessCode.trim());

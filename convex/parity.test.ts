@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 import { isSelectableCollaborator } from "../src/lib/case/draft.js";
 import { countWords } from "../src/lib/format.js";
 import casesSource from "./services/cases.ts?raw";
-import turnSource from "./services/turn.ts?raw";
+import turnSource from "./turn.ts?raw";
 
 describe("message word limit: convex/lib/constants.ts's MAX_MESSAGE_WORDS", () => {
 	// Tests that the server's message word limit uses MAX_MESSAGE_WORDS rather than a hard-coded literal.
 	it("validates the word count against MAX_MESSAGE_WORDS, not a hard-coded literal", () => {
-		expect(turnSource).toContain('from "../lib/constants"');
+		expect(turnSource).toContain('from "./lib/constants"');
 		expect(turnSource).toContain(".length > MAX_MESSAGE_WORDS");
 	});
 

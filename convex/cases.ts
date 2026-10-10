@@ -1,11 +1,11 @@
 import { ConvexError, v } from "convex/values";
-import { personaPayloadValidator, referralEdgeValidator } from "./models/cases";
 import {
 	adminMutation,
 	adminQuery,
 	superAdminMutation,
 } from "./services/adminFunctions";
 import {
+	casePayloadArgs,
 	createCase,
 	deleteCase as deleteCaseWithAccess,
 	listCases,
@@ -75,18 +75,6 @@ export const deleteCase = adminMutation({
 		await deleteCaseWithAccess(ctx, args.caseId, ctx.admin);
 	},
 });
-
-const casePayloadArgs = {
-	name: v.string(),
-	brief: v.string(),
-	commonInformation: v.string(),
-	duration: v.optional(v.number()),
-	accessCode: v.string(),
-	personas: v.array(personaPayloadValidator),
-	referrals: v.array(referralEdgeValidator),
-	roots: v.array(v.string()),
-	collaboratorAdminIds: v.array(v.id("admins")),
-};
 
 // Creates a case owned by the calling admin and returns its id.
 export const create = adminMutation({

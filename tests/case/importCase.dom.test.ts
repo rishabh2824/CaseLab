@@ -108,19 +108,18 @@ describe("parseHTMLForm — field extraction", () => {
 			referrals: [],
 			roots: [persona.id],
 		});
-		const { data, warnings } = parseHTMLForm(html);
+		const data = parseHTMLForm(html);
 		expect(data.caseName).toBe("Acme Corp");
 		expect(data.accessCode).toBe("ABC-123");
 		expect(data.initialBrief).toBe("Read this first.");
 		expect(data.commonInformation).toBe("Shared budget context.");
 		expect(data.simulationDurationMinutes).toBe(45);
-		expect(warnings).toEqual([]);
 	});
 });
 
 describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
-	// Tests that a non-numeric duration becomes null with a warning naming the field.
-	it("returns null plus a warning naming the field for a non-numeric value", () => {
+	// Tests that a non-numeric duration is rejected with an error naming the field.
+	it("throws CaseImportError naming the field for a non-numeric value", () => {
 		const persona = makePersona();
 		const doc = buildDoc({
 			...baseCaseFields,
@@ -129,9 +128,7 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 			roots: [persona.id],
 		});
 		setField(doc, "simulation_duration_minutes", "not-a-number");
-		const { data, warnings } = parseHTMLForm(serialize(doc));
-		expect(data.simulationDurationMinutes).toBeNull();
-		expect(warnings.some((w) => w.includes("Simulation duration"))).toBe(true);
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(/Simulation duration/);
 	});
 
 	// Tests that a decimal duration is rounded.
@@ -144,12 +141,11 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 			roots: [persona.id],
 		});
 		setField(doc, "simulation_duration_minutes", "12.6");
-		const { data } = parseHTMLForm(serialize(doc));
-		expect(data.simulationDurationMinutes).toBe(13);
+		expect(parseHTMLForm(serialize(doc)).simulationDurationMinutes).toBe(13);
 	});
 
-	// Tests that a blank duration becomes null without a warning.
-	it("returns null with no warning for a blank value", () => {
+	// Tests that a blank duration becomes null.
+	it("returns null for a blank value", () => {
 		const persona = makePersona();
 		const html = buildHTMLForm({
 			...baseCaseFields,
@@ -158,15 +154,13 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 			referrals: [],
 			roots: [persona.id],
 		});
-		const { data, warnings } = parseHTMLForm(html);
-		expect(data.simulationDurationMinutes).toBeNull();
-		expect(warnings).toEqual([]);
+		expect(parseHTMLForm(html).simulationDurationMinutes).toBeNull();
 	});
 });
 
 describe("parseHTMLForm — persona graph validation", () => {
-	// Tests that a duplicate persona id keeps the first card and warns.
-	it("keeps the first card and drops the rest on a duplicate data-persona-id, with a warning", () => {
+	// Tests that a duplicate persona id is rejected.
+	it("throws CaseImportError on a duplicate data-persona-id", () => {
 		const persona = makePersona({ name: "Original" });
 		const doc = buildDoc({
 			...baseCaseFields,
@@ -177,18 +171,15 @@ describe("parseHTMLForm — persona graph validation", () => {
 		const originalCard = doc.querySelector(
 			`[data-persona-id="${persona.id}"]`,
 		) as Element;
-		const duplicateCard = originalCard.cloneNode(true) as Element;
-		setField(duplicateCard, "name", "Duplicate");
-		doc.getElementById("personas-list")?.appendChild(duplicateCard);
+		doc
+			.getElementById("personas-list")
+			?.appendChild(originalCard.cloneNode(true));
 
-		const { data, warnings } = parseHTMLForm(serialize(doc));
-		expect(data.personas).toHaveLength(1);
-		expect(data.personas[0]?.name).toBe("Original");
-		expect(warnings.some((w) => w.includes("Duplicate persona id"))).toBe(true);
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(/Duplicate persona id/);
 	});
 
-	// Tests that a referral to a missing persona is skipped with a warning.
-	it("skips a referral pointing at a persona id that doesn't exist, with a warning", () => {
+	// Tests that a referral to a missing persona is rejected.
+	it("throws CaseImportError for a referral pointing at a persona id that doesn't exist", () => {
 		const a = makePersona();
 		const b = makePersona();
 		const doc = buildDoc({
@@ -197,24 +188,20 @@ describe("parseHTMLForm — persona graph validation", () => {
 			referrals: [makeReferral(a.id, b.id)],
 			roots: [a.id],
 		});
-		const validRow = doc.querySelector(".referral-row") as Element;
-		const danglingRow = validRow.cloneNode(true) as Element;
-		const toSelect = danglingRow.querySelector(
-			'select[data-role="to"]',
-		) as HTMLSelectElement;
-		selectGhostOption(toSelect, "ghost-id");
+		const danglingRow = (
+			doc.querySelector(".referral-row") as Element
+		).cloneNode(true) as Element;
+		selectGhostOption(
+			danglingRow.querySelector('select[data-role="to"]') as HTMLSelectElement,
+			"ghost-id",
+		);
 		doc.getElementById("referrals-list")?.appendChild(danglingRow);
 
-		const { data, warnings } = parseHTMLForm(serialize(doc));
-		const byName = idsByName(data.personas);
-		expect(data.referrals).toEqual([
-			{ fromId: byName(a.name), toId: byName(b.name), conditions: "" },
-		]);
-		expect(warnings.some((w) => w.includes("wasn't found"))).toBe(true);
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(CaseImportError);
 	});
 
-	// Tests that a duplicate referral is skipped, keeping only the first.
-	it("skips a duplicate referral (same from/to pair twice), keeping only the first", () => {
+	// Tests that a duplicate referral is rejected.
+	it("throws CaseImportError for a duplicate referral (same from/to pair twice)", () => {
 		const a = makePersona();
 		const b = makePersona();
 		const doc = buildDoc({
@@ -223,21 +210,17 @@ describe("parseHTMLForm — persona graph validation", () => {
 			referrals: [makeReferral(a.id, b.id, "first")],
 			roots: [a.id],
 		});
-		const validRow = doc.querySelector(".referral-row") as Element;
-		const duplicateRow = validRow.cloneNode(true) as Element;
+		const duplicateRow = (
+			doc.querySelector(".referral-row") as Element
+		).cloneNode(true) as Element;
 		setField(duplicateRow, "conditions", "second");
 		doc.getElementById("referrals-list")?.appendChild(duplicateRow);
 
-		const { data, warnings } = parseHTMLForm(serialize(doc));
-		const byName = idsByName(data.personas);
-		expect(data.referrals).toEqual([
-			{ fromId: byName(a.name), toId: byName(b.name), conditions: "first" },
-		]);
-		expect(warnings.some((w) => w.includes("duplicate referral"))).toBe(true);
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(/Duplicate referral/);
 	});
 
-	// Tests that a self-referral is skipped with a warning.
-	it("skips a self-referral (from === to), with a warning", () => {
+	// Tests that a self-referral is rejected.
+	it("throws CaseImportError for a self-referral (from === to)", () => {
 		const a = makePersona();
 		const b = makePersona();
 		const doc = buildDoc({
@@ -246,56 +229,37 @@ describe("parseHTMLForm — persona graph validation", () => {
 			referrals: [makeReferral(a.id, b.id)],
 			roots: [a.id],
 		});
-		const validRow = doc.querySelector(".referral-row") as Element;
-		const selfRow = validRow.cloneNode(true) as Element;
-		const fromSelect = selfRow.querySelector(
-			'select[data-role="from"]',
-		) as HTMLSelectElement;
-		const toSelect = selfRow.querySelector(
-			'select[data-role="to"]',
-		) as HTMLSelectElement;
-		selectOnly(fromSelect, a.id);
-		selectOnly(toSelect, a.id);
+		const selfRow = (doc.querySelector(".referral-row") as Element).cloneNode(
+			true,
+		) as Element;
+		selectOnly(
+			selfRow.querySelector('select[data-role="from"]') as HTMLSelectElement,
+			a.id,
+		);
+		selectOnly(
+			selfRow.querySelector('select[data-role="to"]') as HTMLSelectElement,
+			a.id,
+		);
 		doc.getElementById("referrals-list")?.appendChild(selfRow);
 
-		const { data, warnings } = parseHTMLForm(serialize(doc));
-		const byName = idsByName(data.personas);
-		expect(data.referrals).toEqual([
-			{ fromId: byName(a.name), toId: byName(b.name), conditions: "" },
-		]);
-		expect(warnings.some((w) => w.includes("refers to itself"))).toBe(true);
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(/refers to itself/);
 	});
 
-	// Tests that a cycle unreachable from any root is broken and its cluster removed.
-	it("breaks a cycle disconnected from any root, dropping the back edge and removing the whole unreachable cluster", () => {
+	// Tests that a cycle is rejected.
+	it("throws CaseImportError for a referral cycle", () => {
 		const p1 = makePersona();
 		const p2 = makePersona();
-		const p3 = makePersona();
-		const p4 = makePersona();
 		const html = buildHTMLForm({
 			...baseCaseFields,
-			personas: [p1, p2, p3, p4],
-			referrals: [
-				makeReferral(p1.id, p2.id),
-				makeReferral(p3.id, p4.id),
-				makeReferral(p4.id, p3.id),
-			],
+			personas: [p1, p2],
+			referrals: [makeReferral(p1.id, p2.id), makeReferral(p2.id, p1.id)],
 			roots: [p1.id],
 		});
-		const { data, warnings } = parseHTMLForm(html);
-
-		expect(data.personas.map((p) => p.name)).toEqual([p1.name, p2.name]);
-		const byName = idsByName(data.personas);
-		expect(data.referrals).toEqual([
-			{ fromId: byName(p1.name), toId: byName(p2.name), conditions: "" },
-		]);
-		expect(warnings.some((w) => w.includes("Cycle detected"))).toBe(true);
-		expect(warnings.some((w) => w.includes(p3.id))).toBe(true);
-		expect(warnings.some((w) => w.includes(p4.id))).toBe(true);
+		expect(() => parseHTMLForm(html)).toThrow(/Cycle detected/);
 	});
 
-	// Tests that a referred persona nothing points at is removed with a warning.
-	it("removes a persona marked referred that nothing points at, with a warning naming it", () => {
+	// Tests that a persona nothing points at is rejected.
+	it("throws CaseImportError naming a persona that isn't reachable from a root", () => {
 		const root = makePersona();
 		const orphan = makePersona({ name: "Orphan" });
 		const html = buildHTMLForm({
@@ -304,11 +268,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 			referrals: [],
 			roots: [root.id],
 		});
-		const { data, warnings } = parseHTMLForm(html);
-		expect(data.personas.map((p) => p.name)).toEqual([root.name]);
-		expect(
-			warnings.some((w) => w.includes(orphan.id) && w.includes("Orphan")),
-		).toBe(true);
+		expect(() => parseHTMLForm(html)).toThrow(/Orphan/);
 	});
 
 	// Tests that two personas referring to the same third persona are both kept.
@@ -325,7 +285,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 			],
 			roots: [parentA.id, parentB.id],
 		});
-		const { data, warnings } = parseHTMLForm(html);
+		const data = parseHTMLForm(html);
 		expect(data.personas.map((p) => p.name).sort()).toEqual(
 			[parentA.name, parentB.name, shared.name].sort(),
 		);
@@ -345,7 +305,6 @@ describe("parseHTMLForm — persona graph validation", () => {
 				},
 			]),
 		);
-		expect(warnings).toEqual([]);
 	});
 });
 
@@ -364,7 +323,7 @@ describe("parseHTMLForm — file sharing", () => {
 			referrals: [],
 			roots: [persona.id],
 		});
-		const { data } = parseHTMLForm(html);
+		const data = parseHTMLForm(html);
 		expect(data.personas[0]?.files).toEqual([
 			{
 				file: null,
@@ -388,23 +347,7 @@ describe("parseHTMLForm — file sharing", () => {
 			referrals: [],
 			roots: [persona.id],
 		});
-		const { data } = parseHTMLForm(html);
+		const data = parseHTMLForm(html);
 		expect(data.personas[0]?.files).toEqual([]);
-	});
-});
-
-describe("parseHTMLForm — clean file", () => {
-	// Tests that a well-formed export parses with no warnings.
-	it("returns no warnings for a well-formed export", () => {
-		const root = makePersona();
-		const referred = makePersona();
-		const html = buildHTMLForm({
-			...baseCaseFields,
-			personas: [root, referred],
-			referrals: [makeReferral(root.id, referred.id)],
-			roots: [root.id],
-		});
-		const { warnings } = parseHTMLForm(html);
-		expect(warnings).toEqual([]);
 	});
 });

@@ -161,9 +161,11 @@ describe("cases.create", () => {
 			brief: "Brief",
 			commonInformation: "",
 			accessCode: uniqueAccessCode(),
-			personas: [personaPayload("A")],
-			referrals: [],
-			roots: ["A"],
+			structure: {
+				personas: [personaPayload("A")],
+				referrals: [],
+				roots: ["A"],
+			},
 			collaboratorAdminIds: [],
 		});
 		const stored = await t.run((ctx) => ctx.db.get("cases", caseId));
@@ -184,9 +186,11 @@ describe("cases.update", () => {
 			brief: "Brief",
 			commonInformation: "",
 			accessCode: uniqueAccessCode(),
-			personas: [personaPayload("A")],
-			referrals: [],
-			roots: ["A"],
+			structure: {
+				personas: [personaPayload("A")],
+				referrals: [],
+				roots: ["A"],
+			},
 			collaboratorAdminIds: [],
 		});
 		const stored = await t.run((ctx) => ctx.db.get("cases", caseId));

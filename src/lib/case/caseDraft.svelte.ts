@@ -39,6 +39,8 @@ export class CaseDraft {
 	collaboratorAdminIds = $state<string[]>([]);
 	readonly graph = new CaseGraph();
 	showErrors = $state(false);
+	// Case information fields the user has typed in, keyed by their error name.
+	touched = $state<Record<string, boolean>>({});
 
 	#baseline = $state<string | null>(null);
 
@@ -87,9 +89,14 @@ export class CaseDraft {
 		this.#baseline = this.#snapshot();
 	}
 
-	// Turns on display of field validation errors.
+	// Turns on display of every field's validation errors.
 	revealErrors(): void {
 		this.showErrors = true;
+	}
+
+	// Marks one case information field as edited, so only its own error shows before a submit.
+	touch(field: string): void {
+		this.touched[field] = true;
 	}
 
 	// Whether the form already holds something worth confirming before it is replaced.

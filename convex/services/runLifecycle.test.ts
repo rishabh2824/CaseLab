@@ -5,7 +5,6 @@ import type { CaseStructure } from "../models/cases";
 import { insertPendingReply, newTestConvex, sendTurn } from "../test.setup";
 import { caseStructure, personaPayload } from "../testFactories";
 import { deleteCase, updateCase } from "./cases";
-import { startSimulation } from "./simulations";
 
 type T = ReturnType<typeof newTestConvex>;
 
@@ -47,9 +46,11 @@ function payload(overrides: Record<string, unknown> = {}) {
 		brief: "Reduce office supply costs.",
 		commonInformation: "",
 		accessCode: "sterling",
-		personas: [personaPayload("A")],
-		referrals: [],
-		roots: ["A"],
+		structure: {
+			personas: [personaPayload("A")],
+			referrals: [],
+			roots: ["A"],
+		},
 		collaboratorAdminIds: [] as Id<"admins">[],
 		...overrides,
 	};
@@ -60,7 +61,7 @@ describe("editing or deleting a case does not wait for its live runs", () => {
 	it("allows update and delete while a run is in progress", async () => {
 		const t = newTestConvex();
 		const { caseId, admin } = await seedCase(t);
-		await t.run((ctx) => startSimulation(ctx, "sterling"));
+		await t.mutation(api.simulations.start, { accessCode: "sterling" });
 
 		await expect(
 			t.run((ctx) =>
@@ -78,7 +79,9 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 	it("destroy on an already-destroyed run is a no-op, not an error", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
-		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
+		const state = await t.mutation(api.simulations.start, {
+			accessCode: "sterling",
+		});
 
 		await t.mutation(internal.simulations.destroy, { runId: state.runId });
 		await expect(
@@ -90,7 +93,9 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 	it("leaves no orphaned messages behind", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
-		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
+		const state = await t.mutation(api.simulations.start, {
+			accessCode: "sterling",
+		});
 		await t.run(async (ctx) => {
 			await ctx.db.insert("runMessages", {
 				runId: state.runId,
@@ -117,7 +122,9 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		try {
 			const t = newTestConvex();
 			await seedCase(t, { duration: 5 });
-			const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
+			const state = await t.mutation(api.simulations.start, {
+				accessCode: "sterling",
+			});
 
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 
@@ -133,7 +140,9 @@ describe("reads against a run that has gone away", () => {
 	it("the scoped student queries degrade gracefully rather than throwing on a destroyed run", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
-		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
+		const state = await t.mutation(api.simulations.start, {
+			accessCode: "sterling",
+		});
 		await t.mutation(internal.simulations.destroy, { runId: state.runId });
 
 		await expect(
@@ -155,7 +164,9 @@ describe("reads against a run that has gone away", () => {
 	it("reads an expired run until it is destroyed, while sending to it is refused", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
-		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
+		const state = await t.mutation(api.simulations.start, {
+			accessCode: "sterling",
+		});
 		await t.run((ctx) =>
 			ctx.db.patch(state.runId, { expiresAt: Date.now() - 1 }),
 		);
@@ -176,7 +187,9 @@ describe("reads against a run that has gone away", () => {
 	it("a run whose case was somehow removed reports a case error, not a crash", async () => {
 		const t = newTestConvex();
 		const { caseId } = await seedCase(t);
-		const state = await t.run((ctx) => startSimulation(ctx, "sterling"));
+		const state = await t.mutation(api.simulations.start, {
+			accessCode: "sterling",
+		});
 		await t.run((ctx) => ctx.db.delete(caseId));
 
 		await expect(

@@ -1,9 +1,6 @@
-// Counts whitespace-separated words, treating null and undefined as empty.
-export const countWords = (value: unknown) =>
-	String(value ?? "")
-		.trim()
-		.split(/\s+/)
-		.filter(Boolean).length;
+// Counts whitespace-separated words.
+export const countWords = (value: string) =>
+	value.trim().split(/\s+/).filter(Boolean).length;
 
 // Returns up to two upper-case initials from a persona's name, or 'NA' when there is none.
 export const getPersonaInitials = (name: string | undefined | null) =>

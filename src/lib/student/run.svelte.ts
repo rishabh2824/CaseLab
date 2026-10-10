@@ -15,12 +15,7 @@ import {
 	studentErrorData,
 } from "../../../convex/lib/studentErrors.js";
 import { personaAvailability } from "../../../convex/lib/turnState.js";
-import type { RunStateOut } from "../../../convex/services/simulations.js";
 
-export type StartedRun = Omit<RunStateOut, "runId" | "case"> & {
-	runId: string;
-	case: Omit<RunStateOut["case"], "id"> & { id: string };
-};
 export type DisplayContact = Contact & {
 	available: boolean;
 	availableIn: number | null;
@@ -66,16 +61,15 @@ export class RunStore {
 	loadError = $state("");
 	activeContactId = $state<string | null>(null);
 	notes = $state("");
-	timeExpired = $state(false);
 
 	#notesInitialized = false;
 	#notesSaveTimer: number | null = null;
 	#seenContacts = new Set<string>();
 	#seenFiles = new Set<string>();
 	#seenInitialized = false;
-	#expiryInterval: number | null = null;
-	#nowTick = $state(Date.now());
-	#availabilityTickInterval: number | null = null;
+	#clockInterval: number | null = null;
+	// The one clock everything time-based derives from, ticking once a second.
+	#now = $state(Date.now());
 	// The reply started by the last send, until the server reports it done or failed.
 	#awaitedReplyId = $state<string | null>(null);
 
@@ -94,13 +88,14 @@ export class RunStore {
 	// Whether the active contact has a reply in flight; other contacts stay free to message.
 	isSending = $derived(this.#history?.reply?.status === "pending");
 
-	raw = $derived<StartedRun | null>(this.#runStateQuery.data ?? null);
+	raw = $derived(this.#runStateQuery.data ?? null);
 	caseData = $derived(this.raw?.case ?? null);
-	elapsedMinutes = $derived(
+	elapsedSeconds = $derived(
 		session.startTime !== null
-			? Math.max(0, Math.floor((this.#nowTick - session.startTime) / 60_000))
+			? Math.max(0, Math.floor((this.#now - session.startTime) / 1000))
 			: 0,
 	);
+	elapsedMinutes = $derived(Math.floor(this.elapsedSeconds / 60));
 	contacts = $derived<DisplayContact[]>(
 		(this.raw?.contacts ?? []).map((contact) => {
 			const availability = personaAvailability(
@@ -126,6 +121,15 @@ export class RunStore {
 	selectedContact = $derived(
 		this.contacts.find((c) => c.id === this.activeContactId) ?? null,
 	);
+	totalDurationSeconds = $derived(
+		typeof this.caseData?.simulationDuration === "number"
+			? this.caseData.simulationDuration * 60
+			: null,
+	);
+	timeExpired = $derived(
+		this.totalDurationSeconds !== null &&
+			this.elapsedSeconds >= this.totalDurationSeconds,
+	);
 	activePersonaAvailable = $derived(
 		Boolean(
 			!this.timeExpired &&
@@ -133,13 +137,9 @@ export class RunStore {
 				!this.selectedContact?.chatEnded,
 		),
 	);
-	totalDurationSeconds = $derived(
-		typeof this.caseData?.simulationDuration === "number"
-			? this.caseData.simulationDuration * 60
-			: null,
-	);
 
-	#dispose = $effect.root(() => {
+	// The store is built while the component initialises, so these effects live and die with it.
+	constructor() {
 		$effect(() => {
 			const err = this.#runStateQuery.error;
 			if (!err) {
@@ -169,7 +169,8 @@ export class RunStore {
 					"Something went wrong generating a reply. Please resend your message.",
 				);
 		});
-	});
+		$effect(() => () => this.#stopClock());
+	}
 
 	// Goes home if there is no run to resume. Never starts a new run itself: a simulation that has
 	// ended stays ended, and a new one only begins when the student enters an access code.
@@ -190,8 +191,7 @@ export class RunStore {
 			if (first) this.activeContactId = first.id;
 		}
 		this.#diffAndNotify();
-		this.#ensureExpiryWatch();
-		this.#ensureAvailabilityTick();
+		this.#ensureClock();
 	}
 
 	// Toasts about contacts and files that appeared since the last update, skipping the initial load.
@@ -213,30 +213,13 @@ export class RunStore {
 		this.#seenInitialized = true;
 	}
 
-	// Starts the timer that flags the simulation as expired once its duration passes.
-	#ensureExpiryWatch(): void {
-		if (this.#expiryInterval) return;
-		const totalDurationSeconds = this.totalDurationSeconds;
-		if (typeof totalDurationSeconds !== "number") return;
-		const start = session.startTime ?? Date.now();
-		const checkExpiry = () => {
-			const elapsed = Math.max(0, Math.floor((Date.now() - start) / 1000));
-			if (elapsed >= totalDurationSeconds) {
-				if (this.#expiryInterval) window.clearInterval(this.#expiryInterval);
-				this.#expiryInterval = null;
-				this.timeExpired = true;
-			}
-		};
-		checkExpiry();
-		this.#expiryInterval = window.setInterval(checkExpiry, 1000);
-	}
-
-	// Starts the periodic tick that refreshes persona availability.
-	#ensureAvailabilityTick(): void {
-		if (this.#availabilityTickInterval) return;
-		this.#availabilityTickInterval = window.setInterval(() => {
-			this.#nowTick = Date.now();
-		}, 15_000);
+	// Starts the one-second clock that drives elapsed time, expiry and persona availability.
+	#ensureClock(): void {
+		if (this.#clockInterval) return;
+		this.#now = Date.now();
+		this.#clockInterval = window.setInterval(() => {
+			this.#now = Date.now();
+		}, 1000);
 	}
 
 	// Selects a contact and remembers the choice in the session.
@@ -277,21 +260,16 @@ export class RunStore {
 			window.clearTimeout(this.#notesSaveTimer);
 			this.#notesSaveTimer = null;
 		}
-		if (this.#expiryInterval) window.clearInterval(this.#expiryInterval);
-		this.#expiryInterval = null;
+		this.#stopClock();
 		if (session.runId) clearNotes(session.runId);
 		session.clearRun();
 		goto("/");
 	}
 
-	// Disposes the store's effects and clears its timers.
-	destroy(): void {
-		this.#dispose();
-		if (this.#availabilityTickInterval)
-			window.clearInterval(this.#availabilityTickInterval);
-		if (this.#expiryInterval) window.clearInterval(this.#expiryInterval);
-		this.#availabilityTickInterval = null;
-		this.#expiryInterval = null;
+	// Stops the clock interval.
+	#stopClock(): void {
+		if (this.#clockInterval) window.clearInterval(this.#clockInterval);
+		this.#clockInterval = null;
 	}
 
 	// Sends a trimmed message to the active contact, returning whether it was sent. The composer handles every other check.

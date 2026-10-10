@@ -1,4 +1,5 @@
-import type { StartedRun } from "../../src/lib/student/run.svelte.js";
+import type { FunctionReturnType } from "convex/server";
+import type { api } from "../../convex/_generated/api.js";
 import type {
 	ChatMessage,
 	Contact,
@@ -7,6 +8,13 @@ import type {
 	ReferralEdge,
 	SharedFile,
 } from "../../src/lib/types.js";
+
+type RunState = FunctionReturnType<typeof api.simulations.get>;
+// A run state with plain string ids, so tests don't have to mint branded Convex ids.
+export type StartedRun = Omit<RunState, "runId" | "case"> & {
+	runId: string;
+	case: Omit<RunState["case"], "id"> & { id: string };
+};
 
 let personaSeq = 0;
 
@@ -41,13 +49,11 @@ export function makeContact(overrides: Partial<Contact> = {}): Contact {
 		id: "mary",
 		name: "Mary",
 		role: "Chief Financial Officer",
-		profilePhoto: null,
+		profilePhotoUrl: null,
 		availabilityDuration: null,
 		availableAt: 0,
 		isReferred: false,
 		chatEnded: false,
-		chatEndReason: null,
-		warningCount: 0,
 		...overrides,
 	};
 }

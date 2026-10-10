@@ -26,3 +26,7 @@ coverage
 .env.development.local
 .env.test.local
 .env.production.local
+
+# third-party agent skills
+.agents/
+skills-lock.json

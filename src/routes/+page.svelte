@@ -92,7 +92,7 @@ function handleSubmit(event: SubmitEvent): void {
 </svelte:head>
 
 <div
-	class="landing-bg relative flex h-screen w-full flex-col items-center justify-center overflow-hidden bg-cover bg-center px-6 font-body"
+	class="bg-[url(/Bg.webp)] relative flex h-screen w-full flex-col items-center justify-center overflow-hidden bg-cover bg-center px-6 font-body"
 >
 	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 
@@ -155,7 +155,7 @@ function handleSubmit(event: SubmitEvent): void {
 					bind:value={accessCode}
 				/>
 				{#if error}
-					<p class="text-center text-sm font-medium text-brand">{error}</p>
+					<p role="alert" class="text-center text-sm font-medium text-brand">{error}</p>
 				{/if}
 				<button
 					type="submit"

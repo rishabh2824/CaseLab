@@ -39,9 +39,11 @@ function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 		brief: "Brief",
 		commonInformation: "",
 		accessCode: "authztestcode",
-		personas: [personaPayload("A")],
-		referrals: [],
-		roots: ["A"],
+		structure: {
+			personas: [personaPayload("A")],
+			referrals: [],
+			roots: ["A"],
+		},
 		collaboratorAdminIds: [] as Id<"admins">[],
 		...overrides,
 	};

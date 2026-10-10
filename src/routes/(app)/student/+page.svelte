@@ -1,6 +1,6 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
-import { onDestroy, onMount, untrack } from "svelte";
+import { onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
 import SimulationClock from "#lib/components/SimulationClock.svelte";
 import { downloadBlob } from "#lib/download.js";
@@ -14,10 +14,6 @@ const run = createRunStore();
 
 onMount(() => {
 	run.init();
-});
-
-onDestroy(() => {
-	run.destroy();
 });
 
 let inputValue = $state("");
@@ -74,7 +70,7 @@ async function handleExportPdf(): Promise<void> {
 			runId: session.runId as Id<"runs">,
 		});
 		const { buildChatPdfBlob } = await import("#lib/student/pdf.js");
-		const blob = buildChatPdfBlob(data.personas ?? [], run.notes);
+		const blob = buildChatPdfBlob(data.personas, run.notes);
 		downloadBlob(blob, "chats.pdf");
 	} catch (err) {
 		console.error(err);
@@ -126,7 +122,7 @@ async function handleExportPdf(): Promise<void> {
 		</div>
 	{/if}
 
-	<main class="mx-auto grid max-w-7xl gap-6 px-6 py-6 lg:grid-cols-[240px_minmax(0,1fr)_340px]">
+	<div class="mx-auto grid max-w-7xl gap-6 px-6 py-6 lg:grid-cols-[240px_minmax(0,1fr)_340px]">
 		<aside class="space-y-6">
 			<div>
 				<h2 class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">
@@ -143,9 +139,9 @@ async function handleExportPdf(): Promise<void> {
 								? 'border-brand bg-white shadow-soft'
 								: 'border-line bg-white/70 hover:border-stone-soft hover:bg-white'}"
 						>
-							{#if contact.profilePhoto?.url}
+							{#if contact.profilePhotoUrl}
 								<img
-									src={contact.profilePhoto.url}
+									src={contact.profilePhotoUrl}
 									alt="{contact.name} profile"
 									class="h-9 w-9 rounded-full object-cover"
 								/>
@@ -245,7 +241,7 @@ async function handleExportPdf(): Promise<void> {
 				{#if activeMessages.length === 0}
 					Chat history is empty.
 				{:else}
-					<div class="space-y-3 text-left">
+					<div class="space-y-3 text-left" role="log" aria-live="polite" aria-label="Conversation">
 						{#each activeMessages as msg, index (index)}
 							<div
 								class="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm {msg.role === 'user'
@@ -264,6 +260,7 @@ async function handleExportPdf(): Promise<void> {
 				<div class="flex-1">
 					<textarea
 						bind:this={chatInputEl}
+						aria-label="Message"
 						placeholder={run.timeExpired
 							? "Time's up — messaging is disabled."
 							: run.activeContact?.chatEnded
@@ -278,7 +275,7 @@ async function handleExportPdf(): Promise<void> {
 						rows="2"
 						bind:value={inputValue}
 						onkeydown={(event) => {
-							if (event.key === 'Enter' && !event.shiftKey) {
+							if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
 								event.preventDefault()
 								handleSend()
 							}
@@ -297,11 +294,11 @@ async function handleExportPdf(): Promise<void> {
 					run.isSending ||
 					!inputValue.trim() ||
 					overWordLimit
-						? 'cursor-not-allowed bg-muted text-muted-foreground'
+						? 'cursor-not-allowed bg-line-soft text-stone'
 						: 'bg-brand text-white hover:brightness-95'}"
 				>
 					{#if run.isSending}
-						<span class="typing-dots" aria-label="Typing"><span></span><span></span><span></span></span>
+						<span class="inline-flex items-center gap-1" role="status" aria-label="Typing"><span class="size-1.5 animate-bounce rounded-full bg-current "></span><span class="size-1.5 animate-bounce rounded-full bg-current [animation-delay:150ms]"></span><span class="size-1.5 animate-bounce rounded-full bg-current [animation-delay:300ms]"></span></span>
 					{:else}
 						Send
 					{/if}
@@ -315,11 +312,12 @@ async function handleExportPdf(): Promise<void> {
 				<p class="mt-2 text-sm leading-relaxed text-stone">{run.caseData?.brief ?? 'Loading brief...'}</p>
 			</div>
 
-			<SimulationClock startTime={session.startTime} totalDurationSeconds={run.totalDurationSeconds} />
+			<SimulationClock elapsedSeconds={run.elapsedSeconds} totalDurationSeconds={run.totalDurationSeconds} />
 
 			<div class="rounded-2xl border border-line bg-white p-4 shadow-soft">
 				<h3 class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">Your Notes</h3>
 				<textarea
+					aria-label="Your notes"
 					class="mt-3 h-40 w-full resize-none rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 					placeholder="Write your notes here..."
 					value={run.notes}
@@ -328,7 +326,7 @@ async function handleExportPdf(): Promise<void> {
 				></textarea>
 			</div>
 		</aside>
-	</main>
+	</div>
 
 	<button
 		type="button"

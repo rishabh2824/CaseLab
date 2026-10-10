@@ -6,8 +6,7 @@ const viewer = getViewerContext();
 const isSuperAdmin = $derived(viewer.data?.role === "super");
 </script>
 
-<div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
-	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
+<div class="px-6 py-10">
 	<img
 		src="/Chevron.webp"
 		alt=""

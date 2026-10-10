@@ -317,7 +317,7 @@ test("a chat-ended meta frame disables the composer for that persona", async ({
 		turn: turnHandler({
 			reply: "I'm done talking to you.",
 			nextRunState: runState({
-				contacts: [contact({ chatEnded: true, chatEndReason: "harassment" })],
+				contacts: [contact({ chatEnded: true })],
 			}),
 		}),
 	});

@@ -2,7 +2,7 @@
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { getViewerContext } from "#lib/adminViewer.js";
-import DestructiveConfirmDialog from "#lib/components/DestructiveConfirmDialog.svelte";
+import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
 import PageHeader from "#lib/components/PageHeader.svelte";
 import { getErrorMessage } from "#lib/errors.js";
 import type { AdminRole } from "#lib/types.js";
@@ -99,8 +99,7 @@ async function confirmDelete(): Promise<void> {
 </script>
 
 {#if isSuperAdmin}
-<div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
-	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
+<div class="px-6 py-10">
 	<div class="relative z-10 mx-auto max-w-4xl">
 		<PageHeader
 			eyebrow="Super Admin"
@@ -206,8 +205,9 @@ async function confirmDelete(): Promise<void> {
 </div>
 {/if}
 
-<DestructiveConfirmDialog
-	bind:open={() => pendingDelete !== null, (isOpen) => { if (!isOpen) pendingDelete = null }}
+<ConfirmDialog
+	open={pendingDelete !== null}
+	onClose={() => (pendingDelete = null)}
 	title={pendingDelete ? `Delete ${pendingDelete.email}?` : ""}
 	description="This cannot be undone. Any case they own with no collaborators is deleted; a case they own that has collaborators is reassigned to the longest-standing collaborator."
 	confirming={isDeleting}

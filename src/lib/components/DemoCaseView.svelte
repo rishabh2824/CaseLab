@@ -27,8 +27,6 @@ const referredPersonas = $derived(
 );
 </script>
 
-<div class="relative min-h-screen bg-parchment">
-	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 	<div class="mx-auto max-w-4xl px-6 py-10">
 		<a
 			href="/admin/new/demo"
@@ -129,4 +127,3 @@ const referredPersonas = $derived(
 			</p>
 		{/if}
 	</div>
-</div>

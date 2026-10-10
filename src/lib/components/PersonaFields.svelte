@@ -8,6 +8,7 @@ import type { CaseGraph } from "#lib/case/graph.svelte.js";
 import type { Persona, ReferralEdge } from "#lib/types.js";
 import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
+import RemovableSection from "./RemovableSection.svelte";
 
 type Props = {
 	persona: Persona;
@@ -75,60 +76,75 @@ function handleReferralConditionsChange(
 </script>
 <div class="flex flex-col gap-4">
 	<FormField label="Persona name" id="{uid}-name" error={errors.name}>
-		<input
-			id="{uid}-name"
-			type="text"
-			required
-			placeholder="Enter persona name"
-			bind:value={persona.name}
-			class={INPUT_CLASS}
-		/>
+		{#snippet children(field)}
+			<input
+				{...field}
+				id="{uid}-name"
+				type="text"
+				required
+				placeholder="Enter persona name"
+				bind:value={persona.name}
+				class={INPUT_CLASS}
+			/>
+		{/snippet}
 	</FormField>
 
 	<FormField label="Title/Role" id="{uid}-role" error={errors.role}>
-		<input
-			id="{uid}-role"
-			type="text"
-			required
-			placeholder="Enter title or role"
-			bind:value={persona.role}
-			class={INPUT_CLASS}
-		/>
+		{#snippet children(field)}
+			<input
+				{...field}
+				id="{uid}-role"
+				type="text"
+				required
+				placeholder="Enter title or role"
+				bind:value={persona.role}
+				class={INPUT_CLASS}
+			/>
+		{/snippet}
 	</FormField>
 
 	<FormField label="Profile photo" id="{uid}-photo">
-		<input
-			id="{uid}-photo"
-			type="file"
-			accept="image/*"
-			onchange={handlePhotoChange}
-			class="{INPUT_CLASS} file:mr-3 file:rounded-md file:border-0 file:bg-cream file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
-		/>
-		{#if persona.profilePhoto instanceof File}
-			<p class="text-xs text-stone-soft">Selected: {persona.profilePhoto.name}</p>
-		{:else if persona.profilePhoto}
-			<p class="text-xs text-stone-soft">Existing photo: {persona.profilePhoto.fileName}</p>
-		{/if}
+		{#snippet children(field)}
+			<input
+				{...field}
+				id="{uid}-photo"
+				type="file"
+				accept="image/*"
+				onchange={handlePhotoChange}
+				class="{INPUT_CLASS} file:mr-3 file:rounded-md file:border-0 file:bg-cream file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
+			/>
+			{#if persona.profilePhoto instanceof File}
+				<p class="text-xs text-stone-soft">Selected: {persona.profilePhoto.name}</p>
+			{:else if persona.profilePhoto}
+				<p class="text-xs text-stone-soft">Existing photo: {persona.profilePhoto.fileName}</p>
+			{/if}
+		{/snippet}
 	</FormField>
 
 	<FormField label="Enter Persona Related Information" id="{uid}-known-facts">
-		<textarea
-			id="{uid}-known-facts"
-			rows="3"
-			placeholder="Describe the persona's background, facts, and any other relevant information"
-			bind:value={persona.knownFacts}
-			class={INPUT_CLASS}
-		></textarea>
+		{#snippet children(field)}
+			<textarea
+				{...field}
+				id="{uid}-known-facts"
+				rows="3"
+				placeholder="Describe the persona's background, facts, and any other relevant information"
+				bind:value={persona.knownFacts}
+				class={INPUT_CLASS}
+			></textarea>
+		{/snippet}
 	</FormField>
 
 	<FormField label="Personality traits" id="{uid}-personality">
-		<textarea
-			id="{uid}-personality"
-			rows="3"
-			placeholder="Describe personality traits"
-			bind:value={persona.personalityTraits}
-			class={INPUT_CLASS}
-		></textarea>
+		{#snippet children(field)}
+			<textarea
+				{...field}
+				id="{uid}-personality"
+				rows="3"
+				placeholder="Describe personality traits"
+				bind:value={persona.personalityTraits}
+				class={INPUT_CLASS}
+			></textarea>
+		{/snippet}
 	</FormField>
 
 	<FormField
@@ -136,18 +152,21 @@ function handleReferralConditionsChange(
 		id="{uid}-availability"
 		error={errors.availability}
 	>
-		<input
-			id="{uid}-availability"
-			type="number"
-			min="1"
-			step="1"
-			placeholder="Leave blank for unlimited"
-			value={persona.availabilityMinutes ?? ''}
-			oninput={(event) => {
-				persona.availabilityMinutes = parseIntOrNull(event.currentTarget.value)
-			}}
-			class={INPUT_CLASS}
-		/>
+		{#snippet children(field)}
+			<input
+				{...field}
+				id="{uid}-availability"
+				type="number"
+				min="1"
+				step="1"
+				placeholder="Leave blank for unlimited"
+				value={persona.availabilityMinutes ?? ''}
+				oninput={(event) => {
+					persona.availabilityMinutes = parseIntOrNull(event.currentTarget.value)
+				}}
+				class={INPUT_CLASS}
+			/>
+		{/snippet}
 	</FormField>
 
 	<div class="flex items-center justify-between gap-2">
@@ -164,57 +183,54 @@ function handleReferralConditionsChange(
 	{#if persona.files.length > 0}
 		<div class="flex flex-col gap-3">
 			{#each persona.files as fileEntry, fileIndex (fileIndex)}
-				<details class="rounded-xl border border-line-soft bg-cream/40">
-					<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-2.5 text-sm font-semibold text-ink">
-						<span>File {fileIndex + 1}</span>
-						<button
-							type="button"
-							onclick={(event) => { event.preventDefault(); removeFile(fileIndex); }}
-							class="rounded-md px-2 py-1 text-xs font-semibold text-stone-soft transition hover:text-brand"
-						>
-							Remove
-						</button>
-					</summary>
-					<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
+				<RemovableSection label="File {fileIndex + 1}" onRemove={() => removeFile(fileIndex)}>
 						<FormField label="Upload file" id="{uid}-file-{fileIndex}-upload">
-							<input
-								id="{uid}-file-{fileIndex}-upload"
-								type="file"
-								onchange={(event) => handleFileChange(event, fileIndex)}
-								class="{INPUT_CLASS} file:mr-3 file:rounded-md file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
-							/>
-							{#if fileEntry.file instanceof File}
-								<p class="text-xs text-stone-soft">Selected: {fileEntry.file.name}</p>
-							{:else if fileEntry.file}
-								<p class="text-xs text-stone-soft">Existing file: {fileEntry.file.fileName}</p>
-							{/if}
+							{#snippet children(field)}
+								<input
+									{...field}
+									id="{uid}-file-{fileIndex}-upload"
+									type="file"
+									onchange={(event) => handleFileChange(event, fileIndex)}
+									class="{INPUT_CLASS} file:mr-3 file:rounded-md file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
+								/>
+								{#if fileEntry.file instanceof File}
+									<p class="text-xs text-stone-soft">Selected: {fileEntry.file.name}</p>
+								{:else if fileEntry.file}
+									<p class="text-xs text-stone-soft">Existing file: {fileEntry.file.fileName}</p>
+								{/if}
+							{/snippet}
 						</FormField>
 						<FormField
 							label="Describe the conditions under which the persona will share the file"
 							id="{uid}-file-{fileIndex}-conditions"
 						>
-							<textarea
-								id="{uid}-file-{fileIndex}-conditions"
-								rows="2"
-								placeholder="Describe the conditions"
-								bind:value={fileEntry.shareConditions}
-								class={INPUT_CLASS}
-							></textarea>
+							{#snippet children(field)}
+								<textarea
+									{...field}
+									id="{uid}-file-{fileIndex}-conditions"
+									rows="2"
+									placeholder="Describe the conditions"
+									bind:value={fileEntry.shareConditions}
+									class={INPUT_CLASS}
+								></textarea>
+							{/snippet}
 						</FormField>
 						<FormField
 							label="What does the persona think is in this file?"
 							id="{uid}-file-{fileIndex}-perceived"
 						>
-							<textarea
-								id="{uid}-file-{fileIndex}-perceived"
-								rows="2"
-								placeholder="Describe perceived contents"
-								bind:value={fileEntry.perceivedContents}
-								class={INPUT_CLASS}
-							></textarea>
+							{#snippet children(field)}
+								<textarea
+									{...field}
+									id="{uid}-file-{fileIndex}-perceived"
+									rows="2"
+									placeholder="Describe perceived contents"
+									bind:value={fileEntry.perceivedContents}
+									class={INPUT_CLASS}
+								></textarea>
+							{/snippet}
 						</FormField>
-					</div>
-				</details>
+				</RemovableSection>
 			{/each}
 		</div>
 	{/if}
@@ -234,42 +250,39 @@ function handleReferralConditionsChange(
 		<div class="flex flex-col gap-3">
 			{#each ownReferrals as referral (referral.toId)}
 				{@const referredPersona = graph.byId.get(referral.toId) as Persona}
-				<details class="rounded-xl border border-line-soft bg-cream/40">
-					<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-2.5 text-sm font-semibold text-ink">
-						<span>{getPersonaLabel(referredPersona, 'Referred Persona')}</span>
-						<button
-							type="button"
-							onclick={(event) => { event.preventDefault(); removeReferral(referral); }}
-							class="rounded-md px-2 py-1 text-xs font-semibold text-stone-soft transition hover:text-brand"
-						>
-							Remove
-						</button>
-					</summary>
-					<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
+				<RemovableSection
+					label={getPersonaLabel(referredPersona, 'Referred Persona')}
+					onRemove={() => removeReferral(referral)}
+				>
 						<FormField label="Name" id="{uid}-referral-{referral.toId}-name">
-							<input
-								id="{uid}-referral-{referral.toId}-name"
-								type="text"
-								placeholder="Enter name"
-								bind:value={referredPersona.name}
-								class={INPUT_CLASS}
-							/>
+							{#snippet children(field)}
+								<input
+									{...field}
+									id="{uid}-referral-{referral.toId}-name"
+									type="text"
+									placeholder="Enter name"
+									bind:value={referredPersona.name}
+									class={INPUT_CLASS}
+								/>
+							{/snippet}
 						</FormField>
 						<FormField
 							label="Describe the referral conditions"
 							id="{uid}-referral-{referral.toId}-conditions"
 						>
-							<textarea
-								id="{uid}-referral-{referral.toId}-conditions"
-								rows="2"
-								placeholder="Describe the referral conditions"
-								value={referral.conditions}
-								oninput={(event) => handleReferralConditionsChange(event, referral)}
-								class={INPUT_CLASS}
-							></textarea>
+							{#snippet children(field)}
+								<textarea
+									{...field}
+									id="{uid}-referral-{referral.toId}-conditions"
+									rows="2"
+									placeholder="Describe the referral conditions"
+									value={referral.conditions}
+									oninput={(event) => handleReferralConditionsChange(event, referral)}
+									class={INPUT_CLASS}
+								></textarea>
+							{/snippet}
 						</FormField>
-					</div>
-				</details>
+				</RemovableSection>
 			{/each}
 		</div>
 	{/if}

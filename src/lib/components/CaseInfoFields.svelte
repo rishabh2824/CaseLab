@@ -21,7 +21,14 @@ const selectableAdmins = $derived(
 	),
 );
 
-const errors = $derived(draft.showErrors ? draft.errors : {});
+// A field's error shows once the user has typed in it, or once errors are revealed form-wide.
+const errors = $derived(
+	Object.fromEntries(
+		Object.entries(draft.errors).filter(
+			([field]) => draft.showErrors || draft.touched[field],
+		),
+	) as typeof draft.errors,
+);
 </script>
 
 <details class="rounded-2xl border border-line bg-white" open>
@@ -30,37 +37,46 @@ const errors = $derived(draft.showErrors ? draft.errors : {});
 	</summary>
 	<div class="flex flex-col gap-4 border-t border-line-soft px-5 py-5">
 		<FormField label="Case name" id="case-name" error={errors.caseName}>
-			<input
-				id="case-name"
-				type="text"
-				required
-				placeholder="Enter case name"
-				bind:value={draft.caseName}
-				oninput={() => draft.revealErrors()}
-				class={INPUT_CLASS}
-			/>
+			{#snippet children(field)}
+				<input
+					{...field}
+					id="case-name"
+					type="text"
+					required
+					placeholder="Enter case name"
+					bind:value={draft.caseName}
+					oninput={() => draft.touch("caseName")}
+					class={INPUT_CLASS}
+				/>
+			{/snippet}
 		</FormField>
 
 		<FormField label="Initial brief" id="initial-brief" error={errors.initialBrief}>
-			<textarea
-				id="initial-brief"
-				rows="3"
-				required
-				placeholder="Summarize the initial brief"
-				bind:value={draft.initialBrief}
-				oninput={() => draft.revealErrors()}
-				class={INPUT_CLASS}
-			></textarea>
+			{#snippet children(field)}
+				<textarea
+					{...field}
+					id="initial-brief"
+					rows="3"
+					required
+					placeholder="Summarize the initial brief"
+					bind:value={draft.initialBrief}
+					oninput={() => draft.touch("initialBrief")}
+					class={INPUT_CLASS}
+				></textarea>
+			{/snippet}
 		</FormField>
 
 		<FormField label="Enter Case Background" id="common-information">
-			<textarea
-				id="common-information"
-				rows="3"
-				placeholder="Describe the common information"
-				bind:value={draft.commonInformation}
-				class={INPUT_CLASS}
-			></textarea>
+			{#snippet children(field)}
+				<textarea
+					{...field}
+					id="common-information"
+					rows="3"
+					placeholder="Describe the common information"
+					bind:value={draft.commonInformation}
+					class={INPUT_CLASS}
+				></textarea>
+			{/snippet}
 		</FormField>
 
 		<FormField
@@ -68,32 +84,38 @@ const errors = $derived(draft.showErrors ? draft.errors : {});
 			id="simulation-duration"
 			error={errors.simulationDuration}
 		>
-			<input
-				id="simulation-duration"
-				type="number"
-				min="1"
-				max={RUN_LIFETIME_MINUTES}
-				step="1"
-				placeholder="Leave empty for unlimited"
-				value={draft.simulationDurationMinutes ?? ''}
-				oninput={(event) => {
-					draft.revealErrors()
-					draft.simulationDurationMinutes = parseIntOrNull(event.currentTarget.value)
-				}}
-				class={INPUT_CLASS}
-			/>
+			{#snippet children(field)}
+				<input
+					{...field}
+					id="simulation-duration"
+					type="number"
+					min="1"
+					max={RUN_LIFETIME_MINUTES}
+					step="1"
+					placeholder="Leave empty for unlimited"
+					value={draft.simulationDurationMinutes ?? ''}
+					oninput={(event) => {
+						draft.touch("simulationDuration")
+						draft.simulationDurationMinutes = parseIntOrNull(event.currentTarget.value)
+					}}
+					class={INPUT_CLASS}
+				/>
+			{/snippet}
 		</FormField>
 
 		<FormField label="Access code" id="access-code" error={errors.accessCode}>
-			<input
-				id="access-code"
-				type="text"
-				required
-				placeholder="Enter access code"
-				bind:value={draft.accessCode}
-				oninput={() => draft.revealErrors()}
-				class={INPUT_CLASS}
-			/>
+			{#snippet children(field)}
+				<input
+					{...field}
+					id="access-code"
+					type="text"
+					required
+					placeholder="Enter access code"
+					bind:value={draft.accessCode}
+					oninput={() => draft.touch("accessCode")}
+					class={INPUT_CLASS}
+				/>
+			{/snippet}
 		</FormField>
 
 		<div class="flex flex-col gap-1.5">

@@ -204,7 +204,7 @@ test("a dirty form triggers the unsaved-changes modal when navigating via the to
 	await page.goto("/admin/cases/new");
 
 	await page.getByLabel("Case name").fill("Draft Case");
-	await page.getByRole("button", { name: "Go to admin home" }).click();
+	await page.getByRole("link", { name: "Go to admin home" }).click();
 
 	await expect(page.getByText("You have unsaved changes")).toBeVisible();
 	await page.getByRole("button", { name: "Cancel" }).click();

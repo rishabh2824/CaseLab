@@ -61,8 +61,8 @@ export function getPersonaFieldErrors(persona: {
 	availabilityMinutes: number | null;
 }): PersonaFieldErrors {
 	const errors: PersonaFieldErrors = {};
-	if (!persona.name?.trim()) errors.name = "Name is required.";
-	if (!persona.role?.trim()) errors.role = "Role is required.";
+	if (!persona.name.trim()) errors.name = "Name is required.";
+	if (!persona.role.trim()) errors.role = "Role is required.";
 	if (
 		typeof persona.availabilityMinutes === "number" &&
 		(!Number.isInteger(persona.availabilityMinutes) ||

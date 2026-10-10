@@ -1,9 +1,14 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import {
+	fireEvent,
+	render,
+	screen,
+	waitFor,
+	within,
+} from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { beforeNavigate } from "$app/navigation";
-import { VIEWER_CONTEXT_KEY } from "../../src/lib/adminViewer.js";
+import { beforeNavigate, goto } from "$app/navigation";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
 import type {
@@ -11,7 +16,6 @@ import type {
 	PersonaPayload,
 	ReferralEdge,
 } from "../../src/lib/types.js";
-import { unsavedGuard } from "../../src/lib/unsavedGuard.svelte.js";
 import {
 	makePersonaPayload as makeBasePersonaPayload,
 	makePersona,
@@ -32,17 +36,16 @@ vi.mock("convex-svelte", () => ({
 	}),
 }));
 
-// Builds the Svelte context map that provides the signed-in admin viewer.
-function viewerContext(
-	data: AdminRow | null = null,
-): Map<typeof VIEWER_CONTEXT_KEY, unknown> {
-	return new Map([
-		[
-			VIEWER_CONTEXT_KEY,
-			{ data, error: undefined, isLoading: false, isStale: false },
-		],
-	]);
-}
+let currentViewer: AdminRow | null = null;
+
+vi.mock("#lib/adminViewer.js", () => ({
+	getViewerContext: () => ({
+		data: currentViewer,
+		error: undefined,
+		isLoading: false,
+		isStale: false,
+	}),
+}));
 
 // Builds an admin row with defaults and optional overrides.
 function makeAdminRow(
@@ -141,13 +144,13 @@ function renderForm(
 	} = {},
 ) {
 	const { editCaseId = null, templateId = null, viewer = null } = props;
+	currentViewer = viewer;
 	return render(CaseForm, {
 		props: {
 			mode: editCaseId ? "edit" : "create",
 			caseId: editCaseId,
 			templateId,
 		},
-		context: viewerContext(viewer),
 	});
 }
 
@@ -193,6 +196,25 @@ describe("CaseForm", () => {
 			).toBeInTheDocument();
 			expect(mockClientMutation).not.toHaveBeenCalled();
 		});
+
+		// Tests that editing and clearing one field only reveals that field's error, and marks it invalid for assistive tech.
+		it("only shows the error of the field being edited, until the form is submitted", async () => {
+			const user = userEvent.setup();
+			renderForm();
+
+			const name = screen.getByLabelText("Case name");
+			await user.type(name, "a");
+			await user.clear(name);
+
+			expect(screen.getByText("Case name is required.")).toBeInTheDocument();
+			expect(name).toHaveAttribute("aria-invalid", "true");
+			expect(
+				screen.queryByText("Initial brief is required."),
+			).not.toBeInTheDocument();
+			expect(screen.getByLabelText("Initial brief")).not.toHaveAttribute(
+				"aria-invalid",
+			);
+		});
 	});
 
 	describe("create mode — valid submit", () => {
@@ -224,8 +246,11 @@ describe("CaseForm", () => {
 			expect(createRequests).toHaveLength(1);
 			expect(createRequests[0]?.name).toBe("Sterling Industries");
 			expect(
-				(createRequests[0]?.personas as PersonaPayload[] | undefined)?.[0]
-					?.name,
+				(
+					createRequests[0]?.structure as
+						| { personas: PersonaPayload[] }
+						| undefined
+				)?.personas[0]?.name,
 			).toBe("Mary");
 		});
 	});
@@ -330,13 +355,22 @@ describe("CaseForm", () => {
 			await user.type(screen.getByLabelText("Title/Role"), "CFO");
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
-			const secondSave = unsavedGuard.save();
+			const guard = vi.mocked(beforeNavigate).mock.calls.at(-1)?.[0];
+			if (!guard) throw new Error("expected a beforeNavigate callback");
+			guard({
+				to: { url: new URL("http://localhost/admin") },
+				cancel: vi.fn(),
+			} as never);
+			await user.click(
+				await screen.findByRole("button", { name: "Save changes" }),
+			);
 
 			resolveMutation?.({ caseId: "convex-case-1" });
-			const secondResult = await secondSave;
+			await waitFor(() =>
+				expect(goto).toHaveBeenCalledWith(new URL("http://localhost/admin")),
+			);
 
 			expect(mockClientMutation).toHaveBeenCalledTimes(1);
-			expect(secondResult).toEqual({ ok: true });
 			await waitFor(() => {
 				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
 					"Case saved successfully.",
@@ -387,72 +421,89 @@ describe("CaseForm", () => {
 		});
 	});
 
-	describe("dirty tracking", () => {
-		// Tests that the form starts clean, turns dirty on typing and is clean again after saving.
-		it("starts clean, becomes dirty on typing, and clean again after a successful save", async () => {
-			const { createRequests } = stubMutations();
-			const user = userEvent.setup();
-			renderForm();
-
-			expect(unsavedGuard.isDirty).toBe(false);
-
-			await user.type(
-				screen.getByLabelText("Case name"),
-				"Sterling Industries",
-			);
-			expect(unsavedGuard.isDirty).toBe(true);
-
-			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
-			await user.type(screen.getByLabelText("Access code"), "sterling");
-			await user.click(
-				screen.getByRole("button", { name: "+ Add root persona" }),
-			);
-			await user.type(screen.getByLabelText("Persona name"), "Mary");
-			await user.type(screen.getByLabelText("Title/Role"), "CFO");
-			await user.click(screen.getByRole("button", { name: "Submit" }));
-
-			await waitFor(() => {
-				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
-					"Case saved successfully.",
-				);
-			});
-			expect(unsavedGuard.isDirty).toBe(false);
-			expect(createRequests).toHaveLength(1);
-		});
-	});
-
 	describe("unsaved-changes navigation guard", () => {
-		// Tests that a dirty navigation is cancelled, and allowed through once the changes are discarded.
-		it("cancels a dirty navigation, but lets navigation through once discarded instead of re-blocking it", async () => {
+		const target = new URL("http://localhost/admin");
+
+		// Returns the form's beforeNavigate callback, and a helper that fires it and reports whether it cancelled.
+		function navigationGuard(): () => boolean {
+			const callback = vi.mocked(beforeNavigate).mock.calls.at(-1)?.[0];
+			if (!callback) throw new Error("expected a beforeNavigate callback");
+			return () => {
+				const cancel = vi.fn();
+				callback({ to: { url: target }, cancel } as never);
+				return cancel.mock.calls.length > 0;
+			};
+		}
+
+		// Tests that a clean form lets navigation through and a dirty one holds it behind the dialog.
+		it("lets a clean navigation through and holds a dirty one behind the dialog", async () => {
 			const user = userEvent.setup();
 			renderForm();
+			const navigate = navigationGuard();
 
-			const guardCallback = vi.mocked(beforeNavigate).mock.calls.at(-1)?.[0];
-			if (!guardCallback) throw new Error("expected a beforeNavigate callback");
+			expect(navigate()).toBe(false);
 
 			await user.type(
 				screen.getByLabelText("Case name"),
 				"Sterling Industries",
 			);
-			expect(unsavedGuard.isDirty).toBe(true);
+			expect(navigate()).toBe(true);
+			expect(
+				await screen.findByText("You have unsaved changes"),
+			).toBeInTheDocument();
+			expect(goto).not.toHaveBeenCalled();
+		});
 
-			const firstCancel = vi.fn();
-			guardCallback({
-				to: { url: new URL("http://localhost/admin") },
-				cancel: firstCancel,
-			} as never);
-			expect(firstCancel).toHaveBeenCalledTimes(1);
-			expect(unsavedGuard.showModal).toBe(true);
+		// Tests that cancelling the dialog stays on the page and keeps the guard active.
+		it("stays put when the dialog is cancelled", async () => {
+			const user = userEvent.setup();
+			renderForm();
+			const navigate = navigationGuard();
+			await user.type(screen.getByLabelText("Case name"), "Sterling");
+			navigate();
 
-			await unsavedGuard.discard();
-			expect(unsavedGuard.isDirty).toBe(false);
+			await user.click(await screen.findByRole("button", { name: "Cancel" }));
 
-			const secondCancel = vi.fn();
-			guardCallback({
-				to: { url: new URL("http://localhost/admin") },
-				cancel: secondCancel,
-			} as never);
-			expect(secondCancel).not.toHaveBeenCalled();
+			await waitFor(() =>
+				expect(
+					screen.queryByText("You have unsaved changes"),
+				).not.toBeInTheDocument(),
+			);
+			expect(goto).not.toHaveBeenCalled();
+			expect(navigate()).toBe(true);
+		});
+
+		// Tests that discarding continues the held navigation and stops re-blocking.
+		it("continues the navigation after Discard changes, without re-blocking it", async () => {
+			const user = userEvent.setup();
+			renderForm();
+			const navigate = navigationGuard();
+			await user.type(screen.getByLabelText("Case name"), "Sterling");
+			navigate();
+
+			await user.click(
+				await screen.findByRole("button", { name: "Discard changes" }),
+			);
+
+			expect(goto).toHaveBeenCalledWith(target);
+			expect(navigate()).toBe(false);
+		});
+
+		// Tests that a failed save keeps the user on the page with the error shown.
+		it("shows the error and stays when the save fails", async () => {
+			const user = userEvent.setup();
+			renderForm();
+			const navigate = navigationGuard();
+			await user.type(screen.getByLabelText("Case name"), "Sterling");
+			navigate();
+
+			await user.click(
+				await screen.findByRole("button", { name: "Save changes" }),
+			);
+
+			const dialog = await screen.findByRole("alertdialog");
+			expect(await within(dialog).findByRole("alert")).toBeInTheDocument();
+			expect(goto).not.toHaveBeenCalled();
 		});
 	});
 
@@ -516,8 +567,8 @@ describe("CaseForm", () => {
 			).not.toBeInTheDocument();
 		});
 
-		// Tests that importing a modified export populates the form and shows its warnings.
-		it("populates the form and surfaces warnings from a modified export file", async () => {
+		// Tests that importing a hand-edited export is rejected without touching the form.
+		it("rejects a hand-edited export file and leaves the form untouched", async () => {
 			const root = makePersona({
 				id: "root1",
 				name: "Original Root",
@@ -552,9 +603,11 @@ describe("CaseForm", () => {
 			await user.upload(fileInput, file);
 
 			expect(
-				await screen.findByDisplayValue("Tweaked Case"),
+				await screen.findByText(/Simulation duration/),
 			).toBeInTheDocument();
-			expect(screen.getByText(/issue.*to review/i)).toBeInTheDocument();
+			expect(
+				screen.queryByDisplayValue("Tweaked Case"),
+			).not.toBeInTheDocument();
 		});
 
 		// Tests that importing over existing content asks for confirmation and only imports once confirmed.

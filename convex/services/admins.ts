@@ -61,16 +61,14 @@ export async function createAdmin(
 	}
 	const name = args.name?.trim() || undefined;
 	const id = await ctx.db.insert("admins", { email, name, role: args.role });
-	const created = await ctx.db.get("admins", id);
-	if (!created) throw new Error("Failed to create admin.");
-	return created;
+	return (await ctx.db.get("admins", id))!;
 }
 
 // Deletes an admin, deleting or handing over the cases they own and revoking their sessions.
 export async function deleteAdminWithCascade(
 	ctx: MutationCtx,
 	adminId: Id<"admins">,
-): Promise<{ ok: true; casesDeleted: number; casesReassigned: number }> {
+): Promise<{ casesDeleted: number; casesReassigned: number }> {
 	const admin = await ctx.db.get("admins", adminId);
 	if (!admin) throw new ConvexError("Admin not found.");
 	if (admin.role === "super")
@@ -112,7 +110,7 @@ export async function deleteAdminWithCascade(
 	await ctx.db.delete(adminId);
 	await revokeAdminSessions(ctx, admin.email);
 
-	return { ok: true, casesDeleted, casesReassigned };
+	return { casesDeleted, casesReassigned };
 }
 
 // Deletes the Better Auth sessions of the user with the given email.

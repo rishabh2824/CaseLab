@@ -17,12 +17,7 @@ import {
 	personaPayload,
 	referralEdge,
 } from "../testFactories";
-import {
-	deleteRunCascade,
-	getPersonaHistory,
-	startSimulation,
-} from "./simulations";
-import { applyDecisions, TURN_EXPIRY_MS } from "./turn";
+import { TURN_EXPIRY_MS } from "../turn";
 
 type T = ReturnType<typeof newTestConvex>;
 
@@ -32,8 +27,9 @@ async function visibleMessages(
 	runId: Id<"runs">,
 	personaId: string,
 ) {
-	return (await t.run((ctx) => getPersonaHistory(ctx, runId, personaId)))
-		.messages;
+	return (
+		await t.query(api.simulations.getPersonaHistory, { runId, personaId })
+	).messages;
 }
 
 beforeEach(() => {
@@ -70,7 +66,7 @@ async function startRun(t: T, structure: CaseStructure = caseStructure()) {
 			structure,
 		}),
 	);
-	return await t.run((ctx) => startSimulation(ctx, "sterling"));
+	return await t.mutation(api.simulations.start, { accessCode: "sterling" });
 }
 
 // Asserts a failed turn left no assistant reply, a failed reply row and no visible user message.
@@ -482,7 +478,9 @@ describe("reply lifecycle", () => {
 			"fetch",
 			vi.fn(async (url: string, init: RequestInit) => {
 				if (JSON.parse(init.body as string).stream)
-					await t.run((ctx) => deleteRunCascade(ctx, state.runId));
+					await t.mutation(internal.simulations.destroy, {
+						runId: state.runId,
+					});
 				return await fetch(url, init);
 			}),
 		);
@@ -665,15 +663,12 @@ describe("a stuck reply is failed by expiry", () => {
 		const replyId = await insertPendingReply(t, state.runId, "A", "first");
 		await t.mutation(internal.turn.failTurn, { replyId });
 
-		await t.run((ctx) =>
-			applyDecisions(
-				ctx,
-				replyId,
-				"too late",
-				[{ referredPersonaId: "B" }],
-				[],
-			),
-		);
+		await t.mutation(internal.turn.applyDecisions, {
+			replyId: replyId,
+			reply: "too late",
+			unlockedReferrals: [{ referredPersonaId: "B" }],
+			sharedFiles: [],
+		});
 
 		const row = await t.run((ctx) => ctx.db.get("runMessages", replyId));
 		expect(row).toMatchObject({ status: "failed", content: "" });

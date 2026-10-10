@@ -16,12 +16,6 @@ describe("countWords", () => {
 	it("returns 0 for a whitespace-only string", () => {
 		expect(countWords("   \n\t  ")).toBe(0);
 	});
-
-	// Tests that countWords treats null and undefined as empty.
-	it('handles null and undefined via String(value ?? "")', () => {
-		expect(countWords(null)).toBe(0);
-		expect(countWords(undefined)).toBe(0);
-	});
 });
 
 describe("getPersonaInitials", () => {

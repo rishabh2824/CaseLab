@@ -150,7 +150,7 @@ describe("admin layout viewer gate", () => {
 		render(AdminLayout, { props: { children } });
 		expect(screen.getByText("admin content")).toBeInTheDocument();
 		expect(
-			screen.getByRole("button", { name: "Go to admin home" }),
+			screen.getByRole("link", { name: "Go to admin home" }),
 		).toBeInTheDocument();
 	});
 

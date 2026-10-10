@@ -4,6 +4,7 @@ import type { CaseGraph } from "#lib/case/graph.svelte.js";
 import type { Persona } from "#lib/types.js";
 import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
 import PersonaFields from "./PersonaFields.svelte";
+import RemovableSection from "./RemovableSection.svelte";
 
 type Props = {
 	graph: CaseGraph;
@@ -55,21 +56,13 @@ function removeRoot(rootId: string): void {
 		{#each graph.roots as rootId, index (rootId)}
 			{@const persona = graph.byId.get(rootId) as Persona}
 			{@const personaLabel = getPersonaLabel(persona, `Persona ${index + 1}`)}
-			<details class="rounded-xl border border-line-soft bg-cream/40" open={hasVisibleErrors(persona)}>
-				<summary class="flex cursor-pointer select-none items-center justify-between gap-2 px-4 py-3 text-sm font-semibold text-ink">
-					<span>{personaLabel}</span>
-					<button
-						type="button"
-						onclick={(event) => { event.preventDefault(); removeRoot(rootId); }}
-						class="rounded-md px-2 py-1 text-xs font-semibold text-stone-soft transition hover:text-brand"
-					>
-						Remove
-					</button>
-				</summary>
-				<div class="border-t border-line-soft px-4 py-4">
-					<PersonaFields bind:persona={() => persona, () => {}} {graph} {showFieldErrors} />
-				</div>
-			</details>
+			<RemovableSection
+				label={personaLabel}
+				open={hasVisibleErrors(persona)}
+				onRemove={() => removeRoot(rootId)}
+			>
+				<PersonaFields bind:persona={() => persona, () => {}} {graph} {showFieldErrors} />
+			</RemovableSection>
 		{/each}
 		{#each graph.referredWithParents as item (item.persona.id)}
 			<details class="rounded-xl border border-line-soft bg-cream/40">

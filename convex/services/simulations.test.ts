@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { STUDENT_ERROR } from "../lib/studentErrors";
 import type { CaseStructure } from "../models/cases";
@@ -8,12 +9,6 @@ import {
 	studentRejection,
 } from "../test.setup";
 import { caseStructure, personaPayload, referralEdge } from "../testFactories";
-import {
-	deleteRunCascade,
-	exportSimulation,
-	getSimulationState,
-	startSimulation,
-} from "./simulations";
 
 // Inserts a case owned by a new admin, with optional overrides, and returns its id.
 async function seedCase(
@@ -55,7 +50,9 @@ describe("startSimulation", () => {
 	it("rejects a blank access code before any case lookup", async () => {
 		const t = newTestConvex();
 		expect(
-			await studentRejection(t.run((ctx) => startSimulation(ctx, "   "))),
+			await studentRejection(
+				t.mutation(api.simulations.start, { accessCode: "   " }),
+			),
 		).toEqual({
 			code: STUDENT_ERROR.ACCESS_CODE_REQUIRED,
 			message: "Access code is required.",
@@ -68,26 +65,11 @@ describe("startSimulation", () => {
 		await seedCase(t, { accessCode: "sterling" });
 		expect(
 			await studentRejection(
-				t.run((ctx) => startSimulation(ctx, "not-a-real-code")),
+				t.mutation(api.simulations.start, { accessCode: "not-a-real-code" }),
 			),
 		).toEqual({
 			code: STUDENT_ERROR.INVALID_ACCESS_CODE,
 			message: "Invalid access code.",
-		});
-	});
-
-	// Tests that a case with no root personas is rejected.
-	it("rejects a case with no root personas", async () => {
-		const t = newTestConvex();
-		await seedCase(t, {
-			accessCode: "empty",
-			structure: caseStructure({ roots: [] }),
-		});
-		expect(
-			await studentRejection(t.run((ctx) => startSimulation(ctx, "empty"))),
-		).toEqual({
-			code: STUDENT_ERROR.NO_PERSONAS,
-			message: "This case has no personas configured.",
 		});
 	});
 
@@ -108,8 +90,10 @@ describe("startSimulation", () => {
 			}),
 		});
 
-		const started = await t.run((ctx) => startSimulation(ctx, "acme"));
-		const state = await t.run((ctx) => getSimulationState(ctx, started.runId));
+		const started = await t.mutation(api.simulations.start, {
+			accessCode: "acme",
+		});
+		const state = await t.query(api.simulations.get, { runId: started.runId });
 
 		expect(state.case).toEqual({
 			id: state.case.id,
@@ -140,8 +124,10 @@ describe("startSimulation", () => {
 			}),
 		});
 
-		const started = await t.run((ctx) => startSimulation(ctx, "secret"));
-		const state = await t.run((ctx) => getSimulationState(ctx, started.runId));
+		const started = await t.mutation(api.simulations.start, {
+			accessCode: "secret",
+		});
+		const state = await t.query(api.simulations.get, { runId: started.runId });
 		const serialized = JSON.stringify(state.contacts);
 		expect(serialized).not.toContain(secretFact);
 		expect(serialized).not.toContain("Blunt, impatient.");
@@ -171,9 +157,11 @@ describe("startSimulation", () => {
 			}),
 		});
 
-		const started = await t.run((ctx) => startSimulation(ctx, "photo"));
-		const state = await t.run((ctx) => getSimulationState(ctx, started.runId));
-		expect(state.contacts[0]!.profilePhoto?.url).toEqual(expect.any(String));
+		const started = await t.mutation(api.simulations.start, {
+			accessCode: "photo",
+		});
+		const state = await t.query(api.simulations.get, { runId: started.runId });
+		expect(state.contacts[0]!.profilePhotoUrl).toEqual(expect.any(String));
 	});
 
 	// Tests that a photo whose storage object no longer exists gets a null url.
@@ -198,11 +186,11 @@ describe("startSimulation", () => {
 			}),
 		});
 
-		const started = await t.run((ctx) =>
-			startSimulation(ctx, "deleted-storage"),
-		);
-		const state = await t.run((ctx) => getSimulationState(ctx, started.runId));
-		expect(state.contacts[0]!.profilePhoto?.url).toBeNull();
+		const started = await t.mutation(api.simulations.start, {
+			accessCode: "deleted-storage",
+		});
+		const state = await t.query(api.simulations.get, { runId: started.runId });
+		expect(state.contacts[0]!.profilePhotoUrl).toBeNull();
 	});
 
 	// Tests that expiresAt equals the case duration plus the grace period.
@@ -211,7 +199,9 @@ describe("startSimulation", () => {
 		await seedCase(t, { accessCode: "timed", duration: 45 });
 		vi.useFakeTimers({ toFake: ["Date"] });
 		const before = Date.now();
-		const state = await t.run((ctx) => startSimulation(ctx, "timed"));
+		const state = await t.mutation(api.simulations.start, {
+			accessCode: "timed",
+		});
 		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 		expect(run.expiresAt - run._creationTime).toBeCloseTo(60 * 60_000, 1);
 		expect(run._creationTime).toBeGreaterThanOrEqual(before);
@@ -222,7 +212,9 @@ describe("startSimulation", () => {
 		const t = newTestConvex();
 		vi.useFakeTimers({ toFake: ["Date"] });
 		await seedCase(t, { accessCode: "long", duration: 100_000 });
-		const state = await t.run((ctx) => startSimulation(ctx, "long"));
+		const state = await t.mutation(api.simulations.start, {
+			accessCode: "long",
+		});
 		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 		expect(run.expiresAt - run._creationTime).toBeCloseTo(120 * 60_000, 1);
 	});
@@ -235,25 +227,10 @@ async function startRun(
 	accessCode = "sterling",
 ) {
 	await seedCase(t, { accessCode, structure });
-	return await t.run((ctx) => startSimulation(ctx, accessCode));
+	return await t.mutation(api.simulations.start, { accessCode: accessCode });
 }
 
 describe("getSimulationState", () => {
-	// Tests that reading an unknown run throws.
-	it("throws for an unknown run", async () => {
-		const t = newTestConvex();
-		expect(
-			await studentRejection(
-				t.run((ctx) =>
-					getSimulationState(ctx, "k17unknown0000000000000" as Id<"runs">),
-				),
-			),
-		).toEqual({
-			code: STUDENT_ERROR.RUN_NOT_FOUND,
-			message: "Run not found.",
-		});
-	});
-
 	// Tests that a read does not look at the clock: ending a run is the scheduled destroy's job, and its deletion is what tells the client.
 	it("still reads a run past its expiry until the scheduled destroy deletes it", async () => {
 		const t = newTestConvex();
@@ -263,12 +240,12 @@ describe("getSimulationState", () => {
 		);
 
 		await expect(
-			t.run((ctx) => getSimulationState(ctx, state.runId)),
+			t.query(api.simulations.get, { runId: state.runId }),
 		).resolves.toMatchObject({ runId: state.runId });
-		await t.run((ctx) => deleteRunCascade(ctx, state.runId));
+		await t.mutation(internal.simulations.destroy, { runId: state.runId });
 		expect(
 			await studentRejection(
-				t.run((ctx) => getSimulationState(ctx, state.runId)),
+				t.query(api.simulations.get, { runId: state.runId }),
 			),
 		).toMatchObject({ code: STUDENT_ERROR.RUN_NOT_FOUND });
 	});
@@ -288,7 +265,7 @@ describe("getSimulationState", () => {
 			}),
 		);
 
-		const live = await t.run((ctx) => getSimulationState(ctx, state.runId));
+		const live = await t.query(api.simulations.get, { runId: state.runId });
 		const b = live.contacts.find((c) => c.id === "B");
 		expect(b).toBeDefined();
 		expect(b?.availableAt).toBe(7);
@@ -338,7 +315,9 @@ describe("exportSimulation", () => {
 			}),
 		);
 
-		const exported = await t.run((ctx) => exportSimulation(ctx, state.runId));
+		const exported = await t.query(api.simulations.exportRun, {
+			runId: state.runId,
+		});
 
 		expect(exported.personas.map((p) => p.id)).toEqual(["A", "B", "D", "C"]);
 		const carl = exported.personas.find((p) => p.id === "C")!;
@@ -369,7 +348,9 @@ describe("exportSimulation with unfinished replies", () => {
 		});
 		await insertPendingReply(t, state.runId, "A", "still waiting");
 
-		const exported = await t.run((ctx) => exportSimulation(ctx, state.runId));
+		const exported = await t.query(api.simulations.exportRun, {
+			runId: state.runId,
+		});
 
 		expect(exported.personas[0]!.messages.map((m) => m.content)).toEqual([
 			"first",
@@ -385,7 +366,7 @@ describe("deleteRunCascade", () => {
 		const state = await startRun(t, caseStructure());
 		await insertPendingReply(t, state.runId, "A", "hi");
 
-		await t.run((ctx) => deleteRunCascade(ctx, state.runId));
+		await t.mutation(internal.simulations.destroy, { runId: state.runId });
 
 		expect(await t.run((ctx) => ctx.db.get(state.runId))).toBeNull();
 		const messages = await t.run((ctx) =>

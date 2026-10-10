@@ -63,15 +63,13 @@ export const buildChatPdfBlob = (
 		const title = persona.role
 			? `${speakerName} - ${persona.role}`
 			: speakerName;
-		const messages = persona.messages ?? [];
+		const messages = persona.messages;
 		const lines =
 			messages.length === 0
 				? ["No chat history."]
 				: messages.flatMap((message) => {
 						const label = message.role === "user" ? "You" : speakerName;
-						const messageLines = `${label}: ${message.content ?? ""}`.split(
-							/\r?\n/,
-						);
+						const messageLines = `${label}: ${message.content}`.split(/\r?\n/);
 						return [...messageLines, ""];
 					});
 		writeSection(doc, title, lines);

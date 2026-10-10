@@ -92,9 +92,6 @@ pnpm run dev:web    # frontend: http://localhost:5173
 
 ## Testing
 
-CI (`.github/workflows/ci.yml`) runs all of this on every push to `main` and on
-every pull request.
-
 ```bash
 pnpm run lint          # biome
 pnpm run typecheck     # tsc over convex/

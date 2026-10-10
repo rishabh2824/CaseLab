@@ -2,8 +2,13 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import * as sonner from "svelte-sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { VIEWER_CONTEXT_KEY } from "../../src/lib/adminViewer.js";
 import TemplatePicker from "../../src/lib/components/TemplatePicker.svelte";
+
+let viewerRole: "admin" | "super" = "admin";
+
+vi.mock("#lib/adminViewer.js", () => ({
+	getViewerContext: () => ({ data: { role: viewerRole } }),
+}));
 
 const mockUseQuery = vi.fn();
 const mockDeleteCase = vi.fn();
@@ -30,10 +35,8 @@ function renderPicker(
 	mode: "template" | "edit" | "demo",
 	role: "admin" | "super" = "admin",
 ) {
-	return render(TemplatePicker, {
-		props: { mode },
-		context: new Map([[VIEWER_CONTEXT_KEY, { data: { role } }]]),
-	});
+	viewerRole = role;
+	return render(TemplatePicker, { props: { mode } });
 }
 
 // Builds a case summary with defaults and optional overrides.

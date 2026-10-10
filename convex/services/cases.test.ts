@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
+import type { CaseStructure } from "../models/cases";
 import { newTestConvex } from "../test.setup";
 import {
 	personaPayload,
@@ -17,17 +18,24 @@ import {
 } from "./cases";
 
 // Builds a valid case payload with a unique access code and optional overrides.
-function payload(overrides: Partial<CasePayload> = {}): CasePayload {
+function payload(
+	overrides: Partial<Omit<CasePayload, "structure">> &
+		Partial<CaseStructure> = {},
+): CasePayload {
+	const {
+		personas = [personaPayload("A")],
+		referrals = [],
+		roots = ["A"],
+		...rest
+	} = overrides;
 	return {
 		name: "Sterling Industries",
 		brief: "Reduce office supply costs.",
 		commonInformation: "",
 		accessCode: uniqueAccessCode(),
-		personas: [personaPayload("A")],
-		referrals: [],
-		roots: ["A"],
 		collaboratorAdminIds: [],
-		...overrides,
+		...rest,
+		structure: { personas, referrals, roots },
 	};
 }
 

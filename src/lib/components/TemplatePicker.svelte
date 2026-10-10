@@ -4,8 +4,8 @@ import { toast } from "svelte-sonner";
 import { getErrorMessage } from "#lib/errors.js";
 import type { CaseSummary } from "#lib/types.js";
 import { api } from "../../../convex/_generated/api.js";
+import ConfirmDialog from "./ConfirmDialog.svelte";
 import DemoToggle from "./DemoToggle.svelte";
-import DestructiveConfirmDialog from "./DestructiveConfirmDialog.svelte";
 import PageHeader from "./PageHeader.svelte";
 
 type Mode = "template" | "edit" | "demo";
@@ -87,8 +87,7 @@ async function confirmDelete(): Promise<void> {
 const isEditMode = $derived(mode === "edit");
 </script>
 
-<div class="relative min-h-screen overflow-hidden bg-parchment px-6 py-10">
-	<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
+<div class="px-6 py-10">
 	<div class="relative z-10 mx-auto max-w-4xl">
 		<PageHeader eyebrow={copy.eyebrow} title={copy.title} description={copy.description} />
 
@@ -141,8 +140,9 @@ const isEditMode = $derived(mode === "edit");
 	</div>
 </div>
 
-<DestructiveConfirmDialog
-	bind:open={() => pendingDelete !== null, (isOpen) => { if (!isOpen) pendingDelete = null }}
+<ConfirmDialog
+	open={pendingDelete !== null}
+	onClose={() => (pendingDelete = null)}
 	title={pendingDelete ? `Delete "${pendingDelete.name}"?` : ""}
 	description="This also frees its access code for reuse. This cannot be undone."
 	confirming={isDeleting}

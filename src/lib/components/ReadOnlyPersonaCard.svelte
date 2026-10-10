@@ -4,12 +4,12 @@ import {
 	personasById as personasByIdOf,
 	referralsFrom,
 } from "#lib/case/draft.js";
-import type { Persona, ReferralEdge } from "#lib/types.js";
+import type { PersonaPayload, ReferralEdge } from "#lib/types.js";
 import ReadOnlyField from "./ReadOnlyField.svelte";
 
 type Props = {
-	persona: Persona;
-	personas: Persona[];
+	persona: PersonaPayload;
+	personas: PersonaPayload[];
 	referrals: ReferralEdge[];
 };
 
@@ -25,7 +25,7 @@ const ownReferrals = $derived(referralsFrom(referrals, persona.id));
 		<ReadOnlyField label="Title/Role" value={persona.role} />
 	</div>
 
-	{#if !(persona.profilePhoto instanceof File) && persona.profilePhoto}
+	{#if persona.profilePhoto}
 		<ReadOnlyField label="Profile photo" value={persona.profilePhoto.fileName} />
 	{/if}
 
@@ -50,7 +50,7 @@ const ownReferrals = $derived(referralsFrom(referrals, persona.id));
 			{#each persona.files as fileEntry, fileIndex (fileIndex)}
 				<div class="rounded-xl border border-line-soft bg-white px-4 py-3">
 					<p class="text-sm font-semibold text-ink">
-						File {fileIndex + 1}{!(fileEntry.file instanceof File) && fileEntry.file
+						File {fileIndex + 1}{fileEntry.file
 							? `: ${fileEntry.file.fileName}`
 							: ''}
 					</p>
@@ -70,7 +70,7 @@ const ownReferrals = $derived(referralsFrom(referrals, persona.id));
 		<div class="flex flex-col gap-3">
 			<span class="text-xs font-medium text-stone-soft">Refers out to</span>
 			{#each ownReferrals as referral (referral.toId)}
-				{@const referredPersona = personasById.get(referral.toId) as Persona}
+				{@const referredPersona = personasById.get(referral.toId) as PersonaPayload}
 				<div class="rounded-xl border border-line-soft bg-white px-4 py-3">
 					<p class="text-sm font-semibold text-ink">
 						{getPersonaLabel(referredPersona, 'Referred Persona')}

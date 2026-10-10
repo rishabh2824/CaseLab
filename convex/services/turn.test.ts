@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { RECENT_HISTORY_LIMIT } from "../lib/llm";
 import { STUDENT_ERROR } from "../lib/studentErrors";
@@ -18,12 +18,6 @@ import {
 	personaPayload,
 	referralEdge,
 } from "../testFactories";
-import {
-	getPersonaHistory,
-	getSimulationState,
-	startSimulation,
-} from "./simulations";
-import { applyDecisions } from "./turn";
 
 type LlmStubOptions = {
 	harassment?: string | ((message: string, conversation: string) => string);
@@ -104,8 +98,9 @@ async function visibleMessages(
 	runId: Id<"runs">,
 	personaId: string,
 ) {
-	return (await t.run((ctx) => getPersonaHistory(ctx, runId, personaId)))
-		.messages;
+	return (
+		await t.query(api.simulations.getPersonaHistory, { runId, personaId })
+	).messages;
 }
 
 beforeEach(() => {
@@ -147,7 +142,7 @@ async function startRun(
 			structure,
 		}),
 	);
-	return await t.run((ctx) => startSimulation(ctx, accessCode));
+	return await t.mutation(api.simulations.start, { accessCode: accessCode });
 }
 
 describe("startTurn validation", () => {
@@ -583,7 +578,7 @@ describe("referrals", () => {
 		expect(Object.keys(run.unlockedAt)).toContain("B");
 		expect(run.unlockedAt.B).toBeDefined();
 
-		const live = await t.run((ctx) => getSimulationState(ctx, state.runId));
+		const live = await t.query(api.simulations.get, { runId: state.runId });
 		const bob = live.contacts.find((c) => c.id === "B")!;
 		expect(bob).not.toHaveProperty("knownFacts");
 		expect(bob).not.toHaveProperty("personalityTraits");
@@ -650,29 +645,23 @@ describe("referrals", () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseWithOneReferral());
 		const first = await insertPendingReply(t, state.runId, "A", "hi");
-		await t.run((ctx) =>
-			applyDecisions(
-				ctx,
-				first,
-				"Sure, meet Bob.",
-				[{ referredPersonaId: "B" }],
-				[],
-			),
-		);
+		await t.mutation(internal.turn.applyDecisions, {
+			replyId: first,
+			reply: "Sure, meet Bob.",
+			unlockedReferrals: [{ referredPersonaId: "B" }],
+			sharedFiles: [],
+		});
 		const firstUnlockedAt = (await t.run((ctx) => ctx.db.get(state.runId)))!
 			.unlockedAt.B;
 
 		advanceClock(5);
 		const second = await insertPendingReply(t, state.runId, "A", "hi again");
-		await t.run((ctx) =>
-			applyDecisions(
-				ctx,
-				second,
-				"Sure, meet Bob again.",
-				[{ referredPersonaId: "B" }],
-				[],
-			),
-		);
+		await t.mutation(internal.turn.applyDecisions, {
+			replyId: second,
+			reply: "Sure, meet Bob again.",
+			unlockedReferrals: [{ referredPersonaId: "B" }],
+			sharedFiles: [],
+		});
 
 		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
@@ -689,7 +678,7 @@ describe("referrals", () => {
 		stubLlm({ replyText: "Hi, I'm Bob." });
 		await send(t, state.runId, "B", "Hello Bob");
 
-		const live = await t.run((ctx) => getSimulationState(ctx, state.runId));
+		const live = await t.query(api.simulations.get, { runId: state.runId });
 		expect(live.contacts.find((c) => c.id === "B")?.isReferred).toBe(true);
 	});
 
@@ -818,7 +807,7 @@ describe("files", () => {
 		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 		expect(run.sharedFiles).toContain(storageId);
 
-		const live = await t.run((ctx) => getSimulationState(ctx, state.runId));
+		const live = await t.query(api.simulations.get, { runId: state.runId });
 		expect(live.sharedFiles[0]!.url).toEqual(expect.any(String));
 	});
 

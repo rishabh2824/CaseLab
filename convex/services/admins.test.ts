@@ -112,7 +112,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
-		expect(result).toEqual({ ok: true, casesDeleted: 1, casesReassigned: 0 });
+		expect(result).toEqual({ casesDeleted: 1, casesReassigned: 0 });
 		expect(await t.run((ctx) => ctx.db.get(caseId))).toBeNull();
 	});
 
@@ -134,7 +134,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
-		expect(result).toEqual({ ok: true, casesDeleted: 0, casesReassigned: 1 });
+		expect(result).toEqual({ casesDeleted: 0, casesReassigned: 1 });
 
 		const updatedCase = await t.run((ctx) => ctx.db.get(caseId));
 		expect(updatedCase?.ownerAdminId).toBe(collabId);
@@ -168,7 +168,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
-		expect(result).toEqual({ ok: true, casesDeleted: 1, casesReassigned: 0 });
+		expect(result).toEqual({ casesDeleted: 1, casesReassigned: 0 });
 		expect(await t.run((ctx) => ctx.db.get(liveCaseId))).toBeNull();
 	});
 

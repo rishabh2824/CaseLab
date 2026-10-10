@@ -3,7 +3,7 @@ import { session } from "../src/lib/session.svelte.js";
 
 const STORAGE_KEY = "caseLabSession";
 
-describe("normalizePersisted (observed through a fresh module load)", () => {
+describe("session restore (observed through a fresh module load)", () => {
 	beforeEach(() => {
 		vi.resetModules();
 	});
@@ -16,67 +16,16 @@ describe("normalizePersisted (observed through a fresh module load)", () => {
 		expect(fresh.startTime).toBeNull();
 	});
 
-	// Tests that a stored JSON null falls back to the defaults.
-	it("falls back to defaults when the stored value is JSON null", async () => {
-		sessionStorage.setItem(STORAGE_KEY, "null");
-		const { session: fresh } = await import("../src/lib/session.svelte.js");
-		expect(fresh.runId).toBe("");
-		expect(fresh.startTime).toBeNull();
-	});
-
-	// Tests that a stored JSON string falls back to the defaults.
-	it("falls back to defaults when the stored value is a JSON string", async () => {
-		sessionStorage.setItem(STORAGE_KEY, JSON.stringify("just a string"));
-		const { session: fresh } = await import("../src/lib/session.svelte.js");
-		expect(fresh.runId).toBe("");
-	});
-
-	// Tests that a stored JSON array falls back to the defaults.
-	it("falls back to defaults when the stored value is a JSON array", async () => {
-		sessionStorage.setItem(STORAGE_KEY, JSON.stringify(["run-1", "code-1"]));
-		const { session: fresh } = await import("../src/lib/session.svelte.js");
-		expect(fresh.runId).toBe("");
-	});
-
-	// Tests that valid stored fields are kept while only the invalid ones are defaulted.
-	it("keeps good fields and defaults only the bad ones in the same blob", async () => {
+	// Tests that a stored session is restored.
+	it("restores the session this tab stored", async () => {
 		sessionStorage.setItem(
 			STORAGE_KEY,
-			JSON.stringify({ runId: 42, startTime: 555 }),
+			JSON.stringify({ runId: "r", startTime: 555, activePersonaId: "bob" }),
 		);
 		const { session: fresh } = await import("../src/lib/session.svelte.js");
-		expect(fresh.runId).toBe("");
+		expect(fresh.runId).toBe("r");
 		expect(fresh.startTime).toBe(555);
-	});
-
-	// Tests that a valid remembered persona is restored and a missing or malformed one is defaulted.
-	it("restores the remembered persona, and defaults it when it's missing or malformed", async () => {
-		sessionStorage.setItem(
-			STORAGE_KEY,
-			JSON.stringify({ runId: "r", activePersonaId: "bob" }),
-		);
-		expect(
-			(await import("../src/lib/session.svelte.js")).session.activePersonaId,
-		).toBe("bob");
-
-		vi.resetModules();
-		sessionStorage.setItem(
-			STORAGE_KEY,
-			JSON.stringify({ runId: "r", activePersonaId: 7 }),
-		);
-		expect(
-			(await import("../src/lib/session.svelte.js")).session.activePersonaId,
-		).toBe("");
-	});
-
-	// Tests that unknown fields in the stored blob are ignored rather than rejecting it.
-	it("ignores unknown fields in the stored blob instead of rejecting it", async () => {
-		sessionStorage.setItem(
-			STORAGE_KEY,
-			JSON.stringify({ runId: "run-1", adminRole: "super" }),
-		);
-		const { session: fresh } = await import("../src/lib/session.svelte.js");
-		expect(fresh.runId).toBe("run-1");
+		expect(fresh.activePersonaId).toBe("bob");
 	});
 });
 
