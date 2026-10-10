@@ -218,10 +218,10 @@ describe("TemplatePicker demo toggle (edit mode)", () => {
 
 		const tooltip = screen.getByRole("tooltip");
 		expect(tooltip).toHaveTextContent(
-			"every admin can view this case read-only",
+			"Demo Case: Allows other admins to view this case as read only. Access code stays hidden.",
 		);
 		expect(screen.getByRole("switch")).toHaveAccessibleDescription(
-			/every admin can view this case read-only/,
+			/Allows other admins to view this case as read only/,
 		);
 	});
 

@@ -91,7 +91,7 @@ const isEditMode = $derived(mode === "edit");
 	<div class="relative z-10 mx-auto max-w-4xl">
 		<PageHeader eyebrow={copy.eyebrow} title={copy.title} description={copy.description} />
 
-		<div class="mt-10 space-y-4">
+		<div class="mt-10 space-y-8">
 			{#if casesQuery.isLoading}
 				<div class="rounded-2xl border border-line bg-white p-5 text-sm text-stone">
 					Loading cases...
@@ -107,9 +107,10 @@ const isEditMode = $derived(mode === "edit");
 			{:else}
 				{#each cases as caseItem (caseItem._id)}
 					<div>
+						<div class="relative">
 						<a
 							href={caseHref(caseItem)}
-							class="group block w-full rounded-2xl border border-line bg-white p-5 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-brand hover:shadow-premium"
+							class="group block w-full rounded-2xl border border-line bg-white p-5 text-left shadow-soft transition hover:-translate-y-0.5 hover:border-brand hover:shadow-premium {isEditMode ? 'pr-20' : ''}"
 						>
 							<p class="font-display text-lg font-semibold text-ink transition group-hover:text-brand">
 								{caseItem.name}
@@ -121,8 +122,13 @@ const isEditMode = $derived(mode === "edit");
 							{/if}
 						</a>
 						{#if isEditMode}
-							<div class="mt-1.5 flex items-center justify-end gap-3 px-1">
+							<div class="absolute right-4 top-4">
 								<DemoToggle caseId={caseItem._id} isDemo={caseItem.isDemo === true} />
+							</div>
+						{/if}
+						</div>
+						{#if isEditMode}
+							<div class="mt-2 flex items-center justify-end gap-3">
 								<button
 									type="button"
 									onclick={() => requestDelete(caseItem)}

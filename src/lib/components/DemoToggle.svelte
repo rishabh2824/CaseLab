@@ -1,6 +1,4 @@
 <script lang="ts">
-import ToggleLeft from "@lucide/svelte/icons/toggle-left";
-import ToggleRight from "@lucide/svelte/icons/toggle-right";
 import { useMutation } from "convex-svelte";
 import { toast } from "svelte-sonner";
 import { getViewerContext } from "#lib/adminViewer.js";
@@ -43,21 +41,19 @@ async function toggle(): Promise<void> {
 			aria-describedby="demo-tip-{caseId}"
 			onclick={toggle}
 			disabled={isSaving}
-			class="rounded-full p-0.5 transition disabled:opacity-60 {isDemo ? 'text-brand' : 'text-stone-soft hover:text-brand'}"
+			class="relative h-5 w-10 shrink-0 rounded-full transition disabled:opacity-60 {isDemo ? 'bg-brand' : 'bg-line hover:bg-stone-soft/60'}"
 		>
-			{#if isDemo}
-				<ToggleRight class="h-6 w-6" aria-hidden="true" />
-			{:else}
-				<ToggleLeft class="h-6 w-6" aria-hidden="true" />
-			{/if}
+			<span
+				aria-hidden="true"
+				class="absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform {isDemo ? 'translate-x-5' : 'translate-x-0'}"
+			></span>
 		</button>
 		<span
 			id="demo-tip-{caseId}"
 			role="tooltip"
-			class="pointer-events-none invisible absolute bottom-full right-0 z-10 mb-2 w-64 rounded-lg border border-line bg-white px-3 py-2 text-xs leading-5 text-ink-soft opacity-0 shadow-soft transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
+			class="pointer-events-none invisible absolute right-0 top-full z-10 mt-2 w-64 rounded-lg border border-line bg-white px-3 py-2 text-xs leading-5 text-ink-soft opacity-0 shadow-soft transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
 		>
-			Demo case: when on, every admin can view this case read-only under View demo cases. Its access
-			code stays hidden.
+			Demo Case: Allows other admins to view this case as read only. Access code stays hidden.
 		</span>
 	</div>
 {/if}
