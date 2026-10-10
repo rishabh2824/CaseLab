@@ -138,17 +138,28 @@ test("creating a case submits the expected payload", async ({ page }) => {
 
 	expect(createArgs?.name).toBe("Riverside Manufacturing");
 	expect(createArgs?.accessCode).toBe("riverside");
-	const personas = createArgs?.personas as Array<{ id: string; name: string }>;
-	expect(personas).toHaveLength(1);
-	expect(personas[0]?.name).toBe("Sam Rivera");
-	expect(createArgs?.roots).toEqual([personas[0]?.id]);
+	const structure = createArgs?.structure as {
+		personas: Array<{ id: string; name: string }>;
+		roots: string[];
+	};
+	expect(structure.personas).toHaveLength(1);
+	expect(structure.personas[0]?.name).toBe("Sam Rivera");
+	expect(structure.roots).toEqual([structure.personas[0]?.id]);
 });
 
-// Tests that submitting with required fields empty sends no request and shows the field errors.
+// Tests that only edited fields show errors until Submit, which sends no request and reveals the rest.
 test("submitting with required fields empty does not issue a request and reveals the field errors", async ({
 	page,
 }) => {
-	await mockApi(page, {});
+	let created = false;
+	await mockApi(page, {
+		mutations: {
+			"cases:create": () => {
+				created = true;
+				return { caseId: "new-case-id" };
+			},
+		},
+	});
 	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
 	await page.goto("/admin/cases/new");
 
@@ -157,10 +168,14 @@ test("submitting with required fields empty does not issue a request and reveals
 	await nameInput.fill("");
 
 	await expect(page.getByText("Case name is required.")).toBeVisible();
+	await expect(page.getByText("Initial brief is required.")).not.toBeVisible();
+
+	await page.getByRole("button", { name: "Submit" }).click();
 	await expect(page.getByText("Initial brief is required.")).toBeVisible();
 	await expect(page.getByText("Access code is required.")).toBeVisible();
 	await expect(page.getByText("At least 1 persona is required")).toBeVisible();
 	await expect(page.getByRole("button", { name: "Submit" })).toBeEnabled();
+	expect(created).toBe(false);
 });
 
 // Tests that editing a case populates the form and saving updates the existing case.
