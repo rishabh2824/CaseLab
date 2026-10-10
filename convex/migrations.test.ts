@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
+import {
+	caseStructure,
+	personaPayload,
+} from "../tests/support/convexFactories";
 import type { Id } from "./_generated/dataModel";
 import { toCamelStructure } from "./migrations";
 import type { LegacyCaseStructure } from "./models/legacyCases";
-import { caseStructure, personaPayload } from "./testFactories";
 
 const storageId = "kg2test00000000000000000" as Id<"_storage">;
 

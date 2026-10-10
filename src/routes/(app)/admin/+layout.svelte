@@ -71,9 +71,10 @@ function retrySignIn(): void {
 }
 
 // Signs out a non-authorized user and returns to the landing page.
+// Navigates first: signing out while this page is still mounted would let the auto-sign-in effect bounce back to Google.
 async function signOutNotAuthorized(): Promise<void> {
-	authClient.signOut().catch(() => {});
 	await goto("/");
+	authClient.signOut().catch(() => {});
 }
 </script>
 
@@ -113,4 +114,8 @@ async function signOutNotAuthorized(): Promise<void> {
 			{@render children()}
 		</div>
 	{/if}
+{:else}
+	<div class="flex h-screen items-center justify-center">
+		<p role="status" class="text-sm text-stone-soft">Loading…</p>
+	</div>
 {/if}

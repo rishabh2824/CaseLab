@@ -1,3 +1,4 @@
+import { reachableFrom } from "../../../convex/lib/caseGraph.js";
 import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
 import type { Persona, ReferralEdge } from "../types.js";
 import {
@@ -5,7 +6,6 @@ import {
 	createEmptyReferral,
 	hasFieldErrors,
 	personasById,
-	reachableFrom,
 	referredWithParents as referredWithParentsOf,
 } from "./draft.js";
 

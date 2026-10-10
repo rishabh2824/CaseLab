@@ -2,7 +2,6 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
-	type ActionCtx,
 	internalAction,
 	internalMutation,
 	internalQuery,
@@ -11,22 +10,7 @@ import {
 	type QueryCtx,
 } from "./_generated/server";
 import { MAX_MESSAGE_WORDS } from "./lib/constants";
-import {
-	classifyHarassment,
-	LLM_ATTEMPT_TIMEOUT_MS,
-	PERSONA_REPLY_RETRIES,
-	personaReplyStream,
-	RECENT_HISTORY_LIMIT,
-} from "./lib/llm";
-import {
-	type CandidateFile,
-	type CandidateReferral,
-	cleanReply,
-	coerceHandles,
-	parseReply,
-	replyInstructions,
-	systemPrompt,
-} from "./lib/prompt";
+import { LLM_ATTEMPT_TIMEOUT_MS, PERSONA_REPLY_RETRIES } from "./lib/llm";
 import { STUDENT_ERROR, studentError } from "./lib/studentErrors";
 import {
 	boundaryReply,
@@ -36,12 +20,12 @@ import {
 	NONSENSE_THRESHOLD,
 	personaAvailability,
 } from "./lib/turnState";
-import type { PersonaPayload } from "./models/cases";
+import { flattenPersonas } from "./services/simulationReads";
 import {
-	flattenPersonas,
-	graphReferrals,
-	type PersonaGraph,
-} from "./services/simulationReads";
+	buildTurnContext,
+	generateReply,
+	type ReplyJob,
+} from "./services/turnReply";
 import { loadLiveRun, loadRun } from "./simulations";
 
 // How long a reply may stay pending before it is failed. Covers the slowest LLM attempts plus a margin.
@@ -70,107 +54,6 @@ async function lastRow(
 		.first();
 }
 
-type PendingReferral = {
-	referredPersonaId: string;
-	conditionTrigger: string;
-	referredName: string;
-	referredRole: string;
-};
-type PendingFile = {
-	storageId: Id<"_storage">;
-	fileName: string;
-	shareConditions: string;
-	perceivedContents: string;
-};
-type DecisionMessage = { role: "user" | "assistant"; content: string };
-
-export type TurnContext = {
-	caseBrief: string;
-	commonInformation: string;
-	persona: PersonaPayload;
-	pendingReferrals: PendingReferral[];
-	pendingFiles: PendingFile[];
-	decisionHistory: DecisionMessage[];
-};
-
-export type ReplyJob = {
-	replyId: Id<"runMessages">;
-	runId: Id<"runs">;
-	personaId: string;
-	message: string;
-	context: TurnContext;
-};
-
-// Gathers the pending referrals and files and the history before the student message needed to generate a reply.
-async function buildTurnContext(
-	ctx: QueryCtx,
-	run: Doc<"runs">,
-	c: Doc<"cases">,
-	graph: PersonaGraph,
-	persona: PersonaPayload,
-	beforeCreationTime: number,
-): Promise<TurnContext> {
-	const pendingReferrals: PendingReferral[] = graphReferrals(graph, persona.id)
-		.filter(
-			(referral) =>
-				!Object.hasOwn(run.unlockedAt, referral.toId) &&
-				!graph.roots.includes(referral.toId) &&
-				referral.conditions.trim(),
-		)
-		.map((referral) => {
-			const referred = graph.personas.get(referral.toId);
-			return {
-				referredPersonaId: referral.toId,
-				conditionTrigger: referral.conditions,
-				referredName: referred?.name ?? "",
-				referredRole: referred?.role ?? "",
-			};
-		});
-
-	const pendingFiles: PendingFile[] = persona.files.flatMap((entry) => {
-		const file = entry.file;
-		if (
-			!file ||
-			!entry.shareConditions.trim() ||
-			run.sharedFiles.includes(file.storageId)
-		)
-			return [];
-		return [
-			{
-				storageId: file.storageId,
-				fileName: file.fileName || "file",
-				shareConditions: entry.shareConditions,
-				perceivedContents: entry.perceivedContents,
-			},
-		];
-	});
-
-	const rows = await ctx.db
-		.query("runMessages")
-		.withIndex("by_run_persona", (q) =>
-			q
-				.eq("runId", run._id)
-				.eq("personaId", persona.id)
-				.lt("_creationTime", beforeCreationTime),
-		)
-		.filter((q) => q.eq(q.field("status"), "done"))
-		.order("desc")
-		.take(RECENT_HISTORY_LIMIT);
-	rows.reverse();
-
-	return {
-		caseBrief: c.brief,
-		commonInformation: c.commonInformation,
-		persona,
-		pendingReferrals,
-		pendingFiles,
-		decisionHistory: rows.map((row) => ({
-			role: row.role,
-			content: row.content,
-		})),
-	};
-}
-
 // Returns the reply row if it is still pending, otherwise null so late callers do nothing.
 async function pendingReply(
 	ctx: MutationCtx,
@@ -178,98 +61,6 @@ async function pendingReply(
 ): Promise<Doc<"runMessages"> | null> {
 	const reply = await ctx.db.get("runMessages", replyId);
 	return reply?.status === "pending" ? reply : null;
-}
-
-// Generates the persona reply for a job and saves it, or saves a boundary reply if the message was flagged.
-async function generateReply(
-	ctx: ActionCtx,
-	{ replyId, message, context }: ReplyJob,
-): Promise<void> {
-	const harassmentPromise = classifyHarassment(
-		message,
-		context.decisionHistory,
-	);
-
-	const referralByHandle = new Map<string, PendingReferral>();
-	const candidateReferrals: CandidateReferral[] = context.pendingReferrals.map(
-		(referral, i) => {
-			const handle = `R${i + 1}`;
-			referralByHandle.set(handle, referral);
-			return {
-				handle,
-				name: referral.referredName,
-				role: referral.referredRole,
-				conditionTrigger: referral.conditionTrigger,
-			};
-		},
-	);
-
-	const fileByHandle = new Map<string, PendingFile>();
-	const candidateFiles: CandidateFile[] = context.pendingFiles.map(
-		(file, i) => {
-			const handle = `F${i + 1}`;
-			fileByHandle.set(handle, file);
-			return {
-				handle,
-				name: file.fileName,
-				perceivedContents: file.perceivedContents,
-				shareConditions: file.shareConditions,
-			};
-		},
-	);
-
-	const { stable, dynamic } = systemPrompt(
-		context.caseBrief,
-		context.commonInformation,
-		context.persona,
-		candidateReferrals,
-		candidateFiles,
-	);
-	const cacheableSystemPrompt = `${replyInstructions()}\n\n---\n\n${stable}`;
-
-	let fullText = "";
-	const replyHistory = [
-		...context.decisionHistory,
-		{ role: "user" as const, content: message },
-	];
-	for await (const delta of personaReplyStream(
-		{ cacheable: cacheableSystemPrompt, dynamic },
-		replyHistory,
-	)) {
-		if (delta.type === "reset") fullText = "";
-		else fullText += delta.text;
-	}
-
-	const label = await harassmentPromise;
-	if (label !== "normal") {
-		await ctx.runMutation(internal.turn.applyBoundary, {
-			replyId,
-			label,
-			personaName: context.persona.name,
-		});
-		return;
-	}
-
-	const parsed = parseReply(fullText);
-	const reply = cleanReply((parsed?.reply as string | undefined) ?? "");
-	if (!reply.trim()) throw new Error("The reply came back empty.");
-
-	const unlockedReferrals = [...new Set(coerceHandles(parsed?.introduce))]
-		.map((handle) => referralByHandle.get(handle))
-		.filter((r): r is PendingReferral => r !== undefined)
-		.map((r) => ({ referredPersonaId: r.referredPersonaId }));
-
-	const sharedFiles = [...new Set(coerceHandles(parsed?.sendFiles))]
-		.map((handle) => fileByHandle.get(handle))
-		.filter((f): f is PendingFile => f !== undefined)
-		.map((f) => ({ storageId: f.storageId }));
-
-	await ctx.runMutation(internal.turn.applyDecisions, {
-		replyId,
-		reply,
-		unlockedReferrals,
-		sharedFiles,
-	});
 }
 
 // Saves a student message with a pending reply and starts generating the reply.
@@ -473,20 +264,26 @@ export const applyDecisions = internalMutation({
 		const run = await ctx.db.get("runs", reply.runId);
 		if (!run) return;
 
+		// Writing the run re-runs every subscribed run-state query, so only do it when something changed.
 		const elapsed = elapsedMinutes(run._creationTime, Date.now());
 		const unlockedAt = { ...run.unlockedAt };
+		let unlockedAny = false;
 		for (const { referredPersonaId } of unlockedReferrals) {
 			if (Object.hasOwn(unlockedAt, referredPersonaId)) continue;
 			unlockedAt[referredPersonaId] = elapsed;
+			unlockedAny = true;
 		}
 
 		const sharedFileIds = new Set(run.sharedFiles);
 		for (const file of sharedFiles) sharedFileIds.add(file.storageId);
+		const sharedAny = sharedFileIds.size > run.sharedFiles.length;
 
-		await ctx.db.patch("runs", run._id, {
-			unlockedAt,
-			sharedFiles: [...sharedFileIds],
-		});
+		if (unlockedAny || sharedAny) {
+			await ctx.db.patch("runs", run._id, {
+				unlockedAt,
+				sharedFiles: [...sharedFileIds],
+			});
+		}
 		await ctx.db.patch("runMessages", replyId, {
 			content: replyText,
 			status: "done",

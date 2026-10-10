@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { personaPayload } from "../../tests/support/convexFactories";
 import type { PersonaPayload } from "../models/cases";
-import { personaPayload } from "../testFactories";
 import {
 	systemPrompt as buildSystemPrompt,
 	cleanReply,

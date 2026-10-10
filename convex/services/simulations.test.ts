@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+	caseStructure,
+	personaPayload,
+	referralEdge,
+} from "../../tests/support/convexFactories";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { STUDENT_ERROR } from "../lib/studentErrors";
@@ -8,7 +13,6 @@ import {
 	newTestConvex,
 	studentRejection,
 } from "../test.setup";
-import { caseStructure, personaPayload, referralEdge } from "../testFactories";
 
 // Inserts a case owned by a new admin, with optional overrides, and returns its id.
 async function seedCase(

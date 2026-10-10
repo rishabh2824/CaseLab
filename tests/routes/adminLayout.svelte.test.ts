@@ -136,10 +136,11 @@ describe("admin layout viewer gate", () => {
 		auth.isAuthenticated = true;
 	});
 
-	// Tests that nothing renders while the viewer query is loading.
-	it("renders nothing while the viewer is loading", () => {
+	// Tests that a loading placeholder shows, and no admin content, while the viewer query is loading.
+	it("shows a loading placeholder while the viewer is loading", () => {
 		viewer = { data: undefined, isLoading: true };
 		render(AdminLayout, { props: { children } });
+		expect(screen.getByRole("status")).toHaveTextContent("Loading");
 		expect(screen.queryByText("admin content")).toBeNull();
 		expect(screen.queryByText("Not authorized.")).toBeNull();
 	});
@@ -162,8 +163,11 @@ describe("admin layout viewer gate", () => {
 		expect(screen.getByText("Not authorized.")).toBeInTheDocument();
 		expect(screen.queryByText("admin content")).toBeNull();
 		await user.click(screen.getByRole("button", { name: "Sign out" }));
-		expect(mockSignOut).toHaveBeenCalledOnce();
-		await waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
+		await waitFor(() => expect(mockSignOut).toHaveBeenCalledOnce());
+		expect(goto).toHaveBeenCalledWith("/");
+		expect(vi.mocked(goto).mock.invocationCallOrder[0]).toBeLessThan(
+			mockSignOut.mock.invocationCallOrder[0] as number,
+		);
 	});
 
 	// Tests that a viewer query failure shows a safe message and a reload button.

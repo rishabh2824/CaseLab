@@ -69,7 +69,6 @@ vi.mock("convex-svelte", () => ({
 
 vi.mock("../../src/lib/student/run.svelte.js", () => ({
 	createRunStore: () => run,
-	exportRunRef: { name: "exportRun" },
 }));
 
 vi.mock("../../src/lib/download.js", () => ({ downloadBlob: vi.fn() }));

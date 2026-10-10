@@ -44,6 +44,18 @@ describe("SessionStore mutators", () => {
 			unknown
 		>;
 
+	// Tests that a storage failure (private mode, quota) does not break starting a run.
+	it("keeps the run in memory when sessionStorage throws", () => {
+		vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+			throw new Error("QuotaExceededError");
+		});
+
+		expect(() =>
+			session.startRun({ runId: "run-9", startTime: 1 }),
+		).not.toThrow();
+		expect(session.runId).toBe("run-9");
+	});
+
 	// Tests that startRun persists the run id and start time.
 	it("startRun persists runId and startTime", () => {
 		session.startRun({ runId: "run-1", startTime: 555 });

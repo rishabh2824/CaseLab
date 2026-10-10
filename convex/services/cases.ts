@@ -1,15 +1,9 @@
 import { ConvexError, type ObjectType, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { splitCyclicEdges } from "../lib/caseGraph";
-import { getCaseInfoErrors, getPersonaFieldErrors } from "../lib/caseRules";
-import {
-	type CaseStructure,
-	caseStructureValidator,
-	type FileRefPayload,
-	type PersonaPayload,
-	type ReferralEdgePayload,
-} from "../models/cases";
+import { getCaseInfoErrors } from "../lib/caseRules";
+import { cleanStructure, validateGraph } from "../lib/caseStructure";
+import { type CaseStructure, caseStructureValidator } from "../models/cases";
 import { existingStorageIds, syncCaseFiles } from "./files";
 
 const ACCESS_CODE_CONFLICT =
@@ -127,88 +121,13 @@ export async function deleteCase(
 	await deleteCaseUnchecked(ctx, caseId);
 }
 
-const PERSONA_ID_FORMAT = /^[A-Za-z0-9_.-]+$/;
-
-// Throws if a persona id contains characters outside letters, digits, hyphens, underscores and periods.
-function validatePersonaId(id: string): void {
-	if (!PERSONA_ID_FORMAT.test(id)) {
-		throw new ConvexError(
-			`Invalid persona id: ${JSON.stringify(id)}. A persona id must contain only letters, digits, hyphens, underscores, and periods.`,
-		);
-	}
-}
-
-// Validates personas, roots and referrals: required fields, unique ids, known references and no cycles.
-export function validateGraph(
-	personas: PersonaPayload[],
-	referrals: ReferralEdgePayload[],
-	roots: string[],
-): void {
-	if (personas.length === 0)
-		throw new ConvexError("A case needs at least one persona.");
-	if (roots.length === 0) {
-		throw new ConvexError(
-			"A case needs at least one root persona to start from.",
-		);
-	}
-
-	const personaIds = personas.map((p) => p.id);
-	for (const id of personaIds) validatePersonaId(id);
-	const seen = new Set<string>();
-	const duplicates = new Set<string>();
-	for (const id of personaIds) (seen.has(id) ? duplicates : seen).add(id);
-	if (duplicates.size > 0) {
-		throw new ConvexError(
-			`Duplicate persona id(s): ${[...duplicates].sort().join(", ")}`,
-		);
-	}
-
-	for (const persona of personas) {
-		const firstError = Object.values(getPersonaFieldErrors(persona))[0];
-		if (firstError)
-			throw new ConvexError(`Persona ${persona.id}: ${firstError}`);
-	}
-
-	const validIds = seen;
-	const seenRoots = new Set<string>();
-	for (const rootId of roots) {
-		if (!validIds.has(rootId))
-			throw new ConvexError(`Unknown root persona id: ${rootId}`);
-		if (seenRoots.has(rootId)) {
-			throw new ConvexError(`Duplicate root persona id: ${rootId}`);
-		}
-		seenRoots.add(rootId);
-	}
-	const seenReferrals = new Set<string>();
-	for (const referral of referrals) {
-		if (!validIds.has(referral.fromId))
-			throw new ConvexError(`Unknown referral fromId: ${referral.fromId}`);
-		if (!validIds.has(referral.toId))
-			throw new ConvexError(`Unknown referral toId: ${referral.toId}`);
-		const referralKey = JSON.stringify([referral.fromId, referral.toId]);
-		if (seenReferrals.has(referralKey)) {
-			throw new ConvexError(
-				`Duplicate referral: ${referral.fromId} -> ${referral.toId}`,
-			);
-		}
-		seenReferrals.add(referralKey);
-	}
-
-	const { dropped } = splitCyclicEdges(personaIds, referrals);
-	if (dropped.length > 0) {
-		throw new ConvexError(
-			`Referral cycle detected involving persona id: ${dropped[0]!.toId}`,
-		);
-	}
-}
-
 // Validates the graph, drops file references whose upload is gone and returns the cleaned structure plus the storage ids it uses.
 export async function buildStructure(
 	ctx: QueryCtx,
-	{ personas, referrals, roots }: CaseStructure,
+	structure: CaseStructure,
 ): Promise<{ structure: CaseStructure; storageIds: Set<Id<"_storage">> }> {
+	const { personas, referrals, roots } = structure;
 	validateGraph(personas, referrals, roots);
-
 	const present = await existingStorageIds(
 		ctx,
 		personas.flatMap((persona) => [
@@ -216,35 +135,7 @@ export async function buildStructure(
 			...persona.files.map((entry) => entry.file),
 		]),
 	);
-	const kept = (ref: FileRefPayload): FileRefPayload =>
-		ref && present.has(ref.storageId) ? ref : null;
-
-	const outPersonas = personas.map((persona) => ({
-		id: persona.id,
-		name: persona.name.trim(),
-		role: persona.role.trim(),
-		profilePhoto: kept(persona.profilePhoto),
-		knownFacts: persona.knownFacts,
-		personalityTraits: persona.personalityTraits,
-		availabilityMinutes: persona.availabilityMinutes,
-		files: persona.files.flatMap((entry) => {
-			const file = kept(entry.file);
-			return file ? [{ ...entry, file }] : [];
-		}),
-	}));
-
-	const storageIds = new Set(
-		outPersonas.flatMap((persona) =>
-			[
-				persona.profilePhoto,
-				...persona.files.map((entry) => entry.file),
-			].flatMap((ref) => (ref ? [ref.storageId] : [])),
-		),
-	);
-	return {
-		structure: { personas: outPersonas, referrals, roots },
-		storageIds,
-	};
+	return cleanStructure(structure, present);
 }
 
 // Dedupes collaborator ids and rejects the owner, unknown admins and super admins.

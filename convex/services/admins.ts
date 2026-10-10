@@ -64,7 +64,7 @@ export async function createAdmin(
 	return (await ctx.db.get("admins", id))!;
 }
 
-// Deletes an admin, deleting or handing over the cases they own and revoking their sessions.
+// Deletes an admin, deleting or handing over the cases they own and removing their sign-in (sessions, accounts and user).
 export async function deleteAdminWithCascade(
 	ctx: MutationCtx,
 	adminId: Id<"admins">,
@@ -108,16 +108,13 @@ export async function deleteAdminWithCascade(
 	for (const row of collaboratingElsewhere) await ctx.db.delete(row._id);
 
 	await ctx.db.delete(adminId);
-	await revokeAdminSessions(ctx, admin.email);
+	await deleteAuthUser(ctx, admin.email);
 
 	return { casesDeleted, casesReassigned };
 }
 
-// Deletes the Better Auth sessions of the user with the given email.
-async function revokeAdminSessions(
-	ctx: MutationCtx,
-	email: string,
-): Promise<void> {
+// Deletes every Better Auth session, account and the user itself for the given email, so no trace of the admin's sign-in remains.
+async function deleteAuthUser(ctx: MutationCtx, email: string): Promise<void> {
 	const users = await ctx.runQuery(components.betterAuth.adapter.findMany, {
 		model: "user",
 		where: [{ field: "email", value: normalizeEmail(email) }],
@@ -125,11 +122,20 @@ async function revokeAdminSessions(
 	});
 	const user = users.page[0];
 	if (!user) return;
-	await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
-		input: {
-			model: "session",
-			where: [{ field: "userId", value: user._id }],
-		},
-		paginationOpts: { numItems: 200, cursor: null },
+
+	for (const model of ["session", "account"] as const) {
+		let cursor: string | null = null;
+		for (;;) {
+			const result: { isDone: boolean; continueCursor: string } =
+				await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
+					input: { model, where: [{ field: "userId", value: user._id }] },
+					paginationOpts: { numItems: 200, cursor },
+				});
+			if (result.isDone) break;
+			cursor = result.continueCursor;
+		}
+	}
+	await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
+		input: { model: "user", where: [{ field: "_id", value: user._id }] },
 	});
 }

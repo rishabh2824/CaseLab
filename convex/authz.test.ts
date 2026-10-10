@@ -1,11 +1,14 @@
 /// <reference types="vite/client" />
 
 import { describe, expect, it } from "vitest";
+import {
+	caseStructure,
+	personaPayload,
+} from "../tests/support/convexFactories";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { CaseStructure } from "./models/cases";
 import { newTestConvex, withAdmin, withStranger } from "./test.setup";
-import { caseStructure, personaPayload } from "./testFactories";
 
 type T = ReturnType<typeof newTestConvex>;
 

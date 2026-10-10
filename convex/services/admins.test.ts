@@ -172,35 +172,38 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		expect(await t.run((ctx) => ctx.db.get(liveCaseId))).toBeNull();
 	});
 
-	// Tests that deleting an admin revokes their Better Auth session.
-	it("revokes the deleted admin's Better Auth session", async () => {
+	// Tests that deleting an admin removes their Better Auth user, sessions and accounts.
+	it("removes the deleted admin's Better Auth user, sessions and accounts", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
 		const { adminId: ownerId, email } = await withAdmin(t, {
 			email: "owner@test.caselab.invalid",
 		});
+		const findUser = () =>
+			t.run((ctx) =>
+				ctx.runQuery(components.betterAuth.adapter.findMany, {
+					model: "user",
+					where: [{ field: "email", value: email }],
+					paginationOpts: { numItems: 1, cursor: null },
+				}),
+			);
+		const user = (await findUser()).page[0];
+		expect(user).toBeTruthy();
 
 		await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
 
-		const users = await t.run((ctx) =>
-			ctx.runQuery(components.betterAuth.adapter.findMany, {
-				model: "user",
-				where: [{ field: "email", value: email }],
-				paginationOpts: { numItems: 1, cursor: null },
-			}),
-		);
-		const user = users.page[0];
-		expect(user).toBeTruthy();
-
-		const sessions = await t.run((ctx) =>
-			ctx.runQuery(components.betterAuth.adapter.findMany, {
-				model: "session",
-				where: [{ field: "userId", value: user._id }],
-				paginationOpts: { numItems: 10, cursor: null },
-			}),
-		);
-		expect(sessions.page).toHaveLength(0);
+		expect((await findUser()).page).toHaveLength(0);
+		for (const model of ["session", "account"] as const) {
+			const rows = await t.run((ctx) =>
+				ctx.runQuery(components.betterAuth.adapter.findMany, {
+					model,
+					where: [{ field: "userId", value: user._id }],
+					paginationOpts: { numItems: 10, cursor: null },
+				}),
+			);
+			expect(rows.page).toHaveLength(0);
+		}
 	});
 });

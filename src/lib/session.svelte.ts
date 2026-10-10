@@ -37,7 +37,11 @@ class SessionStore {
 			startTime: this.startTime,
 			activePersonaId: this.activePersonaId,
 		};
-		sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+		try {
+			sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+		} catch {
+			// Storage can be unavailable (private mode, quota); the run still works until the tab reloads.
+		}
 	}
 
 	// Begins a run in the session, defaulting the start time to now and clearing the active persona.

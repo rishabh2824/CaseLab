@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	caseStructure,
+	fileEntry,
+	personaPayload,
+	referralEdge,
+} from "../../tests/support/convexFactories";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { RECENT_HISTORY_LIMIT } from "../lib/llm";
@@ -12,12 +18,6 @@ import {
 	sendTurn as send,
 	studentRejection,
 } from "../test.setup";
-import {
-	caseStructure,
-	fileEntry,
-	personaPayload,
-	referralEdge,
-} from "../testFactories";
 
 type LlmStubOptions = {
 	harassment?: string | ((message: string, conversation: string) => string);

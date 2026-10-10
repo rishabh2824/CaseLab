@@ -1,8 +1,8 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
 import { session } from "#lib/session.svelte.js";
-import { startSimulationRef } from "#lib/student/run.svelte.js";
 import { goto } from "$app/navigation";
+import { api } from "../../convex/_generated/api.js";
 import { studentErrorData } from "../../convex/lib/studentErrors.js";
 
 let accessCode = $state("");
@@ -13,7 +13,7 @@ let isSubmitting = $state(false);
 async function submit(code: string): Promise<void> {
 	isSubmitting = true;
 	try {
-		const fresh = await getConvexClient().mutation(startSimulationRef, {
+		const fresh = await getConvexClient().mutation(api.simulations.start, {
 			accessCode: code,
 		});
 		session.startRun({
@@ -46,30 +46,7 @@ function handleSubmit(event: SubmitEvent): void {
 <svelte:head>
 	<link rel="preload" as="image" href="/Bg.webp" />
 
-	<meta
-		name="description"
-		content="Enter your access code to start an interactive business case simulation from the Wisconsin School of Business, University of Wisconsin–Madison."
-	/>
 	<link rel="canonical" href="https://wisconsincaselab.com/" />
-
-	<meta property="og:type" content="website" />
-	<meta property="og:site_name" content="Wisconsin Case Lab" />
-	<meta property="og:title" content="Wisconsin Case Lab | Wisconsin School of Business" />
-	<meta
-		property="og:description"
-		content="Enter your access code to start an interactive business case simulation from the Wisconsin School of Business, University of Wisconsin–Madison."
-	/>
-	<meta property="og:url" content="https://wisconsincaselab.com/" />
-	<meta property="og:image" content="https://wisconsincaselab.com/WSBLogo.webp" />
-	<meta property="og:image:alt" content="Wisconsin School of Business" />
-
-	<meta name="twitter:card" content="summary" />
-	<meta name="twitter:title" content="Wisconsin Case Lab | Wisconsin School of Business" />
-	<meta
-		name="twitter:description"
-		content="Enter your access code to start an interactive business case simulation from the Wisconsin School of Business, University of Wisconsin–Madison."
-	/>
-	<meta name="twitter:image" content="https://wisconsincaselab.com/WSBLogo.webp" />
 
 	{@html `<script type="application/ld+json">${JSON.stringify({
 		'@context': 'https://schema.org',

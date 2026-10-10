@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import { newTestConvex, withAdmin, withStranger } from "./test.setup";
 import {
 	caseStructure,
 	personaPayload,
 	uniqueAccessCode,
-} from "./testFactories";
+} from "../tests/support/convexFactories";
+import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import { newTestConvex, withAdmin, withStranger } from "./test.setup";
 
 type T = ReturnType<typeof newTestConvex>;
 

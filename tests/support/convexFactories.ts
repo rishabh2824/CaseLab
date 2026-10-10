@@ -1,11 +1,11 @@
-import type { Id } from "./_generated/dataModel";
+import type { Id } from "../../convex/_generated/dataModel";
 import type {
 	CaseStructure,
 	FileEntryPayload,
 	FileRefPayload,
 	PersonaPayload,
 	ReferralEdgePayload,
-} from "./models/cases";
+} from "../../convex/models/cases";
 
 // Builds a persona payload with defaults and optional overrides.
 export function personaPayload(

@@ -3,18 +3,14 @@ import { toast } from "svelte-sonner";
 import { goto } from "$app/navigation";
 import { api } from "../../../convex/_generated/api.js";
 import type { Id } from "../../../convex/_generated/dataModel.js";
-import { getErrorMessage } from "../errors.js";
-import { session } from "../session.svelte.js";
-import type { ChatMessage, Contact, SharedFile } from "../types.js";
-
-export const startSimulationRef = api.simulations.start;
-export const exportRunRef = api.simulations.exportRun;
-
 import {
 	STUDENT_ERROR,
 	studentErrorData,
 } from "../../../convex/lib/studentErrors.js";
 import { personaAvailability } from "../../../convex/lib/turnState.js";
+import { getErrorMessage } from "../errors.js";
+import { session } from "../session.svelte.js";
+import type { ChatMessage, Contact, SharedFile } from "../types.js";
 
 export type DisplayContact = Contact & {
 	available: boolean;

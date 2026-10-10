@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	caseStructure,
+	fileEntry,
+	personaPayload,
+	referralEdge,
+} from "../../tests/support/convexFactories";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { CaseStructure } from "../models/cases";
@@ -11,12 +17,6 @@ import {
 	settleReply,
 	sseStream,
 } from "../test.setup";
-import {
-	caseStructure,
-	fileEntry,
-	personaPayload,
-	referralEdge,
-} from "../testFactories";
 import { TURN_EXPIRY_MS } from "../turn";
 
 type T = ReturnType<typeof newTestConvex>;

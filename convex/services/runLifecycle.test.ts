@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+	caseStructure,
+	personaPayload,
+} from "../../tests/support/convexFactories";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { CaseStructure } from "../models/cases";
 import { insertPendingReply, newTestConvex, sendTurn } from "../test.setup";
-import { caseStructure, personaPayload } from "../testFactories";
 import { deleteCase, updateCase } from "./cases";
 
 type T = ReturnType<typeof newTestConvex>;

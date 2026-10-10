@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { Doc, Id } from "../_generated/dataModel";
-import type { CaseStructure } from "../models/cases";
-import { newTestConvex } from "../test.setup";
 import {
 	personaPayload,
 	referralEdge,
 	uniqueAccessCode,
-} from "../testFactories";
+} from "../../tests/support/convexFactories";
+import type { Doc, Id } from "../_generated/dataModel";
+import { validateGraph } from "../lib/caseStructure";
+import type { CaseStructure } from "../models/cases";
+import { newTestConvex } from "../test.setup";
 import {
 	type CasePayload,
 	createCase,
@@ -14,7 +15,6 @@ import {
 	listCases,
 	requireCaseAccess,
 	updateCase,
-	validateGraph,
 } from "./cases";
 
 // Builds a valid case payload with a unique access code and optional overrides.
@@ -40,6 +40,17 @@ function payload(
 }
 
 describe("validateGraph (pure)", () => {
+	// Tests that a persona no root can reach is rejected, matching the import rules.
+	it("rejects a persona that no root can reach", () => {
+		expect(() =>
+			validateGraph(
+				[personaPayload("A"), personaPayload("B", { name: "Orphan" })],
+				[],
+				["A"],
+			),
+		).toThrow(/Orphan.*isn't connected to any root/);
+	});
+
 	// Tests that a persona referred by two different parents is accepted.
 	it("accepts a persona referred by two different parents", () => {
 		expect(() =>

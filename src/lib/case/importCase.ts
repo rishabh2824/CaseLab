@@ -1,6 +1,5 @@
-import { splitCyclicEdges } from "../../../convex/lib/caseGraph.js";
+import { validateStructure } from "../../../convex/lib/caseGraph.js";
 import type { Persona, ReferralEdge } from "../types.js";
-import { reachableFrom } from "./draft.js";
 
 export class CaseImportError extends Error {}
 
@@ -30,27 +29,20 @@ function parseNumberField(text: string, label: string): number | null {
 	return Math.round(parsed);
 }
 
-type RawEdge = { fromId: string; toId: string; conditions: string };
-
-type RawCaseGraph = {
-	personaOrder: string[];
-	personaById: Map<string, Persona>;
+type CaseGraph = {
+	personas: Persona[];
+	referrals: ReferralEdge[];
 	roots: string[];
-	edges: RawEdge[];
 };
 
-// Reads personas, roots and referral edges from the form DOM, throwing on duplicate or broken entries.
-function readCaseGraphFromDom(doc: Document): RawCaseGraph {
-	const personaOrder: string[] = [];
-	const personaById = new Map<string, Persona>();
+// Reads personas, roots and referral edges from the form DOM, in document order.
+function readCaseGraphFromDom(doc: Document): CaseGraph {
+	const personas: Persona[] = [];
 	const roots: string[] = [];
 
 	for (const card of doc.querySelectorAll(".persona-card[data-persona-id]")) {
 		const id = card.getAttribute("data-persona-id");
 		if (!id) continue;
-		if (personaById.has(id)) {
-			throw new CaseImportError(`Duplicate persona id "${id}".`);
-		}
 		const files = Array.from(
 			card.querySelectorAll(".files-block .file-row"),
 		).map((row) => ({
@@ -58,8 +50,7 @@ function readCaseGraphFromDom(doc: Document): RawCaseGraph {
 			shareConditions: fieldValue(row, "share_conditions").trim(),
 			perceivedContents: fieldValue(row, "perceived_contents").trim(),
 		}));
-		personaOrder.push(id);
-		personaById.set(id, {
+		personas.push({
 			id,
 			name: fieldValue(card, "name").trim(),
 			role: fieldValue(card, "role").trim(),
@@ -75,8 +66,7 @@ function readCaseGraphFromDom(doc: Document): RawCaseGraph {
 		if (card.getAttribute("data-persona-root") === "true") roots.push(id);
 	}
 
-	const edges: RawEdge[] = [];
-	const seenEdges = new Set<string>();
+	const referrals: ReferralEdge[] = [];
 	for (const row of doc.querySelectorAll(
 		'.referral-row[data-referral="true"]',
 	)) {
@@ -86,57 +76,19 @@ function readCaseGraphFromDom(doc: Document): RawCaseGraph {
 		const toId = (
 			row.querySelector('select[data-role="to"]') as HTMLSelectElement | null
 		)?.value;
-		const conditions = fieldValue(row, "conditions").trim();
 		if (!fromId || !toId) continue;
-		if (!personaById.has(fromId) || !personaById.has(toId)) {
-			throw new CaseImportError(
-				`A referral (${fromId} → ${toId}) points at a persona that isn't in the file.`,
-			);
-		}
-		if (fromId === toId) {
-			throw new CaseImportError(`Persona ${fromId} refers to itself.`);
-		}
-		const edgeKey = JSON.stringify([fromId, toId]);
-		if (seenEdges.has(edgeKey)) {
-			throw new CaseImportError(`Duplicate referral (${fromId} → ${toId}).`);
-		}
-		seenEdges.add(edgeKey);
-		edges.push({ fromId, toId, conditions });
+		referrals.push({
+			fromId,
+			toId,
+			conditions: fieldValue(row, "conditions").trim(),
+		});
 	}
 
-	return { personaOrder, personaById, roots, edges };
-}
-
-type FlatGraph = {
-	personas: Persona[];
-	referrals: ReferralEdge[];
-	roots: string[];
-};
-
-// Throws if the graph has a cycle or a persona unreachable from a root.
-function validateCaseGraph(graph: RawCaseGraph): void {
-	const { personaOrder, personaById, roots, edges } = graph;
-
-	const { dropped } = splitCyclicEdges(personaOrder, edges);
-	if (dropped.length > 0) {
-		throw new CaseImportError(
-			`Cycle detected involving ${dropped[0]?.toId} — referrals can't loop back.`,
-		);
-	}
-
-	const reachable = reachableFrom(roots, edges);
-	for (const id of personaOrder) {
-		if (!reachable.has(id)) {
-			const name = personaById.get(id)?.name;
-			throw new CaseImportError(
-				`${id}${name ? ` (${name})` : ""} isn't connected to any root persona.`,
-			);
-		}
-	}
+	return { personas, referrals, roots };
 }
 
 // Gives every persona a new UUID and rewrites referrals and roots to match.
-function mintFreshPersonaIds(graph: FlatGraph): FlatGraph {
+function mintFreshPersonaIds(graph: CaseGraph): CaseGraph {
 	const idMap = new Map(
 		graph.personas.map((persona) => [persona.id, crypto.randomUUID()]),
 	);
@@ -175,29 +127,10 @@ export function parseHTMLForm(htmlText: string): ImportedCaseData {
 		throw new CaseImportError("This doesn't look like a Case Lab import file.");
 	}
 
-	const rawGraph = readCaseGraphFromDom(doc);
-	if (rawGraph.personaOrder.length === 0) {
-		throw new CaseImportError(
-			"No personas found in this file — add at least one before importing.",
-		);
-	}
-	if (rawGraph.roots.length === 0) {
-		throw new CaseImportError(
-			"This file has no root personas — every persona is referred.",
-		);
-	}
-	validateCaseGraph(rawGraph);
-
-	const { personaOrder, personaById, roots, edges } = rawGraph;
-	const {
-		personas,
-		referrals,
-		roots: freshRoots,
-	} = mintFreshPersonaIds({
-		personas: personaOrder.map((id) => personaById.get(id) as Persona),
-		referrals: edges,
-		roots,
-	});
+	const graph = readCaseGraphFromDom(doc);
+	const problem = validateStructure(graph);
+	if (problem) throw new CaseImportError(problem);
+	const { personas, referrals, roots } = mintFreshPersonaIds(graph);
 
 	return {
 		caseName: fieldValue(doc, "case_name").trim(),
@@ -210,6 +143,6 @@ export function parseHTMLForm(htmlText: string): ImportedCaseData {
 		commonInformation: fieldValue(doc, "common_information").trim(),
 		personas,
 		referrals,
-		roots: freshRoots,
+		roots,
 	};
 }

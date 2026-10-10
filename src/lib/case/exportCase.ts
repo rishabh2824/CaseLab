@@ -1,10 +1,7 @@
+import { reachableFrom } from "../../../convex/lib/caseGraph.js";
 import { downloadBlob } from "../download.js";
 import type { Persona, ReferralEdge } from "../types.js";
-import {
-	createEmptyPersona,
-	createEmptyReferral,
-	reachableFrom,
-} from "./draft.js";
+import { createEmptyPersona, createEmptyReferral } from "./draft.js";
 
 // Escapes a value for safe use in HTML text and attributes.
 const escapeHtml = (value: unknown): string =>

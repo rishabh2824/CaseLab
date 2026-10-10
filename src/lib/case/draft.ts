@@ -101,22 +101,3 @@ export const referredWithParents = <P extends { id: string; name: string }>(
 				.join(", "),
 		}));
 };
-
-// Returns every persona id reachable from the start ids by following referrals, safely handling cycles.
-export const reachableFrom = (
-	startIds: string[],
-	referrals: ReferralEdge[],
-): Set<string> => {
-	const reachable = new Set(startIds);
-	const queue = [...startIds];
-	while (queue.length > 0) {
-		const currentId = queue.shift() as string;
-		for (const referral of referrals) {
-			if (referral.fromId === currentId && !reachable.has(referral.toId)) {
-				reachable.add(referral.toId);
-				queue.push(referral.toId);
-			}
-		}
-	}
-	return reachable;
-};

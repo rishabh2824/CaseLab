@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import {
+	caseStructure,
+	personaPayload,
+	referralEdge,
+} from "../../tests/support/convexFactories";
 import type { Id } from "../_generated/dataModel";
-import { caseStructure, personaPayload, referralEdge } from "../testFactories";
 import type { PersonaGraph } from "./simulationReads";
 import {
 	flattenPersonas,

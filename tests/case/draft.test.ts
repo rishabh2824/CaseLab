@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { reachableFrom } from "../../convex/lib/caseGraph.js";
 import { getPersonaFieldErrors } from "../../convex/lib/caseRules.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
 	getPersonaLabel,
 	hasFieldErrors,
-	reachableFrom,
 	referralsFrom,
 	referralsTo,
 } from "../../src/lib/case/draft.js";

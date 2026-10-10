@@ -220,7 +220,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 	});
 
 	// Tests that a self-referral is rejected.
-	it("throws CaseImportError for a self-referral (from === to)", () => {
+	it("throws CaseImportError for a self-referral (from === to), which is a one-node cycle", () => {
 		const a = makePersona();
 		const b = makePersona();
 		const doc = buildDoc({
@@ -242,7 +242,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 		);
 		doc.getElementById("referrals-list")?.appendChild(selfRow);
 
-		expect(() => parseHTMLForm(serialize(doc))).toThrow(/refers to itself/);
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(/cycle detected/i);
 	});
 
 	// Tests that a cycle is rejected.
@@ -255,7 +255,7 @@ describe("parseHTMLForm — persona graph validation", () => {
 			referrals: [makeReferral(p1.id, p2.id), makeReferral(p2.id, p1.id)],
 			roots: [p1.id],
 		});
-		expect(() => parseHTMLForm(html)).toThrow(/Cycle detected/);
+		expect(() => parseHTMLForm(html)).toThrow(/cycle detected/i);
 	});
 
 	// Tests that a persona nothing points at is rejected.

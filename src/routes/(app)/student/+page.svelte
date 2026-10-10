@@ -6,7 +6,8 @@ import SimulationClock from "#lib/components/SimulationClock.svelte";
 import { downloadBlob } from "#lib/download.js";
 import { countWords, getPersonaInitials } from "#lib/format.js";
 import { session } from "#lib/session.svelte.js";
-import { createRunStore, exportRunRef } from "#lib/student/run.svelte.js";
+import { createRunStore } from "#lib/student/run.svelte.js";
+import { api } from "../../../../convex/_generated/api.js";
 import type { Id } from "../../../../convex/_generated/dataModel.js";
 import { MAX_MESSAGE_WORDS } from "../../../../convex/lib/constants.js";
 
@@ -66,7 +67,7 @@ async function handleExportPdf(): Promise<void> {
 	if (!session.runId || isExporting) return;
 	isExporting = true;
 	try {
-		const data = await getConvexClient().query(exportRunRef, {
+		const data = await getConvexClient().query(api.simulations.exportRun, {
 			runId: session.runId as Id<"runs">,
 		});
 		const { buildChatPdfBlob } = await import("#lib/student/pdf.js");
