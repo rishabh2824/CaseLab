@@ -2,49 +2,36 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
 import { toast } from "svelte-sonner";
-import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { goto } from "$app/navigation";
+import { api } from "../../convex/_generated/api.js";
+import type { Id } from "../../convex/_generated/dataModel.js";
 import AdminsPage from "../../src/routes/(app)/admin/admins/+page.svelte";
 import { clientServerError } from "../support/convexClientErrors.js";
-
-type Row = {
-	_id: string;
-	email: string;
-	name?: string;
-	role: "super" | "admin";
-};
+import { convexFake } from "../support/convexFake.svelte.js";
 
 let viewer: { data?: { role: string }; isLoading: boolean };
-let listState: { data?: Row[]; isLoading: boolean; error?: Error };
-type MutationMock = Mock<(...args: unknown[]) => unknown>;
-const mutations = new Map<string, MutationMock>();
 
 vi.mock("#lib/adminViewer.js", () => ({
 	getViewerContext: () => viewer,
 }));
 
-vi.mock("convex-svelte", () => ({
-	useQuery: () => listState,
-	useMutation: (ref: never) => {
-		const name = getFunctionName(ref);
-		if (!mutations.has(name)) mutations.set(name, vi.fn());
-		return (...args: unknown[]) => mutations.get(name)?.(...args);
-	},
-}));
+const createAdmin = convexFake.mutation(api.admins.create);
+const deleteAdmin = convexFake.mutation(api.admins.deleteWithCascade);
 
-const ADMIN: Row = {
-	_id: "a1",
+const ADMIN = {
+	_id: "a1" as Id<"admins">,
+	_creationTime: 0,
 	email: "a@wisc.edu",
 	name: "Ada",
-	role: "admin",
+	role: "admin" as const,
 };
-const SUPER: Row = { _id: "s1", email: "s@wisc.edu", role: "super" };
-
-// Returns the mock for a mutation by its function name.
-function mutation(name: string) {
-	if (!mutations.has(name)) mutations.set(name, vi.fn());
-	return mutations.get(name) as MutationMock;
-}
+const SUPER = {
+	_id: "s1" as Id<"admins">,
+	_creationTime: 0,
+	email: "s@wisc.edu",
+	role: "super" as const,
+};
 
 // Clicks the confirm button in the delete dialog, which comes after the row's own Delete button.
 async function confirmDialog(user: ReturnType<typeof userEvent.setup>) {
@@ -53,9 +40,8 @@ async function confirmDialog(user: ReturnType<typeof userEvent.setup>) {
 }
 
 beforeEach(() => {
-	mutations.clear();
 	viewer = { data: { role: "super" }, isLoading: false };
-	listState = { data: [SUPER, ADMIN], isLoading: false };
+	convexFake.setQueryData(api.admins.listAll, [SUPER, ADMIN]);
 });
 
 describe("admins page access", () => {
@@ -101,20 +87,19 @@ describe("admins list", () => {
 
 	// Tests that loading, error and empty states each get their own message.
 	it("shows loading, error and empty states", () => {
-		listState = { data: undefined, isLoading: true };
+		convexFake.setQuery(api.admins.listAll, undefined, { isLoading: true });
 		const loading = render(AdminsPage);
 		expect(screen.getByText("Loading admins…")).toBeInTheDocument();
 		loading.unmount();
 
-		listState = {
-			isLoading: false,
-			error: clientServerError("admins:listAll", "Q"),
-		};
+		convexFake.setQuery(api.admins.listAll, undefined, {
+			error: clientServerError(getFunctionName(api.admins.listAll), "Q"),
+		});
 		const failed = render(AdminsPage);
 		expect(screen.getByText("Failed to load admins.")).toBeInTheDocument();
 		failed.unmount();
 
-		listState = { data: [], isLoading: false };
+		convexFake.setQueryData(api.admins.listAll, []);
 		render(AdminsPage);
 		expect(screen.getByText("No admins yet.")).toBeInTheDocument();
 	});
@@ -123,7 +108,7 @@ describe("admins list", () => {
 describe("adding an admin", () => {
 	// Tests that the form sends trimmed values, then resets and confirms.
 	it("creates the admin with trimmed values, resets the form and toasts", async () => {
-		mutation("admins:create").mockResolvedValue("new-id");
+		createAdmin.mockResolvedValue(ADMIN);
 		const user = userEvent.setup();
 		render(AdminsPage);
 		await user.type(screen.getByLabelText("Email"), "  new@wisc.edu ");
@@ -132,7 +117,7 @@ describe("adding an admin", () => {
 		await user.click(screen.getByRole("button", { name: "Add admin" }));
 
 		await waitFor(() =>
-			expect(mutation("admins:create")).toHaveBeenCalledWith({
+			expect(createAdmin).toHaveBeenCalledWith({
 				email: "new@wisc.edu",
 				name: "New Person",
 				role: "super",
@@ -148,13 +133,13 @@ describe("adding an admin", () => {
 
 	// Tests that a blank name is omitted instead of sent as an empty string.
 	it("omits a blank name", async () => {
-		mutation("admins:create").mockResolvedValue("new-id");
+		createAdmin.mockResolvedValue(ADMIN);
 		const user = userEvent.setup();
 		render(AdminsPage);
 		await user.type(screen.getByLabelText("Email"), "new@wisc.edu");
 		await user.click(screen.getByRole("button", { name: "Add admin" }));
 		await waitFor(() =>
-			expect(mutation("admins:create")).toHaveBeenCalledWith({
+			expect(createAdmin).toHaveBeenCalledWith({
 				email: "new@wisc.edu",
 				name: undefined,
 				role: "admin",
@@ -164,8 +149,8 @@ describe("adding an admin", () => {
 
 	// Tests that a server failure toasts a safe message and keeps the typed values.
 	it("toasts a safe message and keeps the input when adding fails", async () => {
-		mutation("admins:create").mockRejectedValue(
-			clientServerError("admins:create"),
+		createAdmin.mockRejectedValue(
+			clientServerError(getFunctionName(api.admins.create)),
 		);
 		const user = userEvent.setup();
 		render(AdminsPage);
@@ -190,12 +175,12 @@ describe("deleting an admin", () => {
 		await waitFor(() =>
 			expect(screen.queryByText("Delete a@wisc.edu?")).toBeNull(),
 		);
-		expect(mutation("admins:deleteWithCascade")).not.toHaveBeenCalled();
+		expect(deleteAdmin).not.toHaveBeenCalled();
 	});
 
 	// Tests that the toast summarises cases deleted and reassigned.
 	it("deletes and summarises deleted and reassigned cases", async () => {
-		mutation("admins:deleteWithCascade").mockResolvedValue({
+		deleteAdmin.mockResolvedValue({
 			casesDeleted: 1,
 			casesReassigned: 2,
 		});
@@ -209,14 +194,14 @@ describe("deleting an admin", () => {
 				{ duration: 4000 },
 			),
 		);
-		expect(mutation("admins:deleteWithCascade")).toHaveBeenCalledWith({
+		expect(deleteAdmin).toHaveBeenCalledWith({
 			adminId: "a1",
 		});
 	});
 
 	// Tests that a plain delete says only that the admin was deleted.
 	it("toasts a plain message when no cases were affected", async () => {
-		mutation("admins:deleteWithCascade").mockResolvedValue({
+		deleteAdmin.mockResolvedValue({
 			casesDeleted: 0,
 			casesReassigned: 0,
 		});
@@ -233,8 +218,8 @@ describe("deleting an admin", () => {
 
 	// Tests that a failed delete keeps the dialog open with a safe error toast.
 	it("toasts a safe message when deleting fails", async () => {
-		mutation("admins:deleteWithCascade").mockRejectedValue(
-			clientServerError("admins:deleteWithCascade"),
+		deleteAdmin.mockRejectedValue(
+			clientServerError(getFunctionName(api.admins.deleteWithCascade)),
 		);
 		const user = userEvent.setup();
 		render(AdminsPage);

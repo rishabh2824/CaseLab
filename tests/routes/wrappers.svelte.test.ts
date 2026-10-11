@@ -12,18 +12,14 @@ import EditList from "../../src/routes/(app)/admin/edit/+page.svelte";
 import Demo from "../../src/routes/(app)/admin/new/demo/+page.svelte";
 import DemoDetail from "../../src/routes/(app)/admin/new/demo/[id]/+page.svelte";
 import Template from "../../src/routes/(app)/admin/new/template/+page.svelte";
+import { convexFake } from "../support/convexFake.svelte.js";
 
-const mockSetupConvex = vi.fn();
 let pageState: { url: URL; params: Record<string, string> };
 
 vi.mock("$app/state", () => ({
 	get page() {
 		return pageState;
 	},
-}));
-
-vi.mock("convex-svelte", () => ({
-	setupConvex: (...args: unknown[]) => mockSetupConvex(...args),
 }));
 
 vi.mock("svelte-sonner", async (importOriginal) => ({
@@ -55,7 +51,6 @@ beforeEach(() => {
 		url: new URL("http://localhost/admin/cases/new"),
 		params: {},
 	};
-	mockSetupConvex.mockReset();
 });
 
 describe("admin case pages", () => {
@@ -112,8 +107,11 @@ describe("layouts", () => {
 	// Tests that the root layout connects Convex and renders the page in main.
 	it("sets up Convex and renders children inside main", () => {
 		render(RootLayout, { props: { children } });
-		expect(mockSetupConvex).toHaveBeenCalledOnce();
-		const [url, options] = mockSetupConvex.mock.calls[0] as [string, unknown];
+		expect(convexFake.setupConvex).toHaveBeenCalledOnce();
+		const [url, options] = convexFake.setupConvex.mock.calls[0] as [
+			string,
+			unknown,
+		];
 		expect(typeof url).toBe("string");
 		expect(options).toEqual({ initialAuthTokenReuse: true });
 		expect(screen.getByRole("main")).toHaveTextContent("page body");

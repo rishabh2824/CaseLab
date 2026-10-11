@@ -6,35 +6,33 @@ import {
 	within,
 } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import type { FunctionReturnType } from "convex/server";
 import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { beforeNavigate, goto } from "$app/navigation";
+import { api } from "../../convex/_generated/api.js";
+import type { Id } from "../../convex/_generated/dataModel.js";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
-import type {
-	AdminRow,
-	PersonaPayload,
-	ReferralEdge,
-} from "../../src/lib/types.js";
+import type { AdminRow, PersonaPayload } from "../../src/lib/types.js";
+import { convexFake } from "../support/convexFake.svelte.js";
 import {
 	makePersonaPayload as makeBasePersonaPayload,
 	makePersona,
 	makeReferral,
-} from "../support/fixtures.js";
+} from "../support/factories.js";
 
-const mockUseQuery = vi.fn();
-const mockClientQuery = vi.fn();
-const mockClientMutation = vi.fn();
-const mockClientAction = vi.fn();
+const getForEdit = convexFake.clientQuery(api.cases.getForEdit);
+const createCase = convexFake.mutation(api.cases.create);
+const updateCase = convexFake.mutation(api.cases.update);
 
-vi.mock("convex-svelte", () => ({
-	useQuery: (...args: unknown[]) => mockUseQuery(...args),
-	getConvexClient: () => ({
-		query: mockClientQuery,
-		mutation: mockClientMutation,
-		action: mockClientAction,
-	}),
-}));
+// Sets the admin roster the collaborator picker subscribes to.
+function setRoster(rows: AdminRow[]) {
+	convexFake.setQueryData(
+		api.admins.listAll,
+		rows.map((row) => ({ ...row, _creationTime: 0 })),
+	);
+}
 
 let currentViewer: AdminRow | null = null;
 
@@ -72,32 +70,23 @@ function makePersonaPayload(
 	});
 }
 
-type ConvexCaseDoc = {
-	_id: string;
-	name: string;
-	brief: string;
-	commonInformation?: string;
-	duration?: number;
-	accessCode?: string;
-	ownerAdminId: string;
-	structure: {
-		personas: PersonaPayload[];
-		referrals: ReferralEdge[];
-		roots: string[];
-	};
-	collaboratorAdminIds?: string[];
-};
+type ConvexCaseDoc = FunctionReturnType<typeof api.cases.getForEdit>;
 
 // Builds a case document with defaults and optional overrides.
-function makeCaseDoc(overrides: Partial<ConvexCaseDoc> = {}): ConvexCaseDoc {
+function makeCaseDoc(
+	overrides: Partial<Omit<ConvexCaseDoc, "_id" | "ownerAdminId">> & {
+		_id?: string;
+		ownerAdminId?: string;
+	} = {},
+): ConvexCaseDoc {
 	return {
-		_id: "case-7",
+		_creationTime: 0,
+		isDemo: false,
 		name: "Sterling Industries",
 		accessCode: "sterling",
 		brief: "Reduce costs.",
 		commonInformation: "Background.",
 		duration: 45,
-		ownerAdminId: "1",
 		structure: {
 			personas: [makePersonaPayload()],
 			referrals: [],
@@ -105,33 +94,31 @@ function makeCaseDoc(overrides: Partial<ConvexCaseDoc> = {}): ConvexCaseDoc {
 		},
 		collaboratorAdminIds: [],
 		...overrides,
+		_id: (overrides._id ?? "case-7") as Id<"cases">,
+		ownerAdminId: (overrides.ownerAdminId ?? "1") as Id<"admins">,
 	};
 }
 
 // Stubs the case query to return the given case for its id and throw for any other.
 function stubLoadCase(doc: ConvexCaseDoc) {
-	mockClientQuery.mockImplementation(
-		async (_ref: unknown, args: { caseId: string }) => {
-			if (args.caseId !== doc._id) throw new Error("Case not found.");
-			return doc;
-		},
-	);
+	getForEdit.mockImplementation(async ({ caseId }) => {
+		if (caseId !== doc._id) throw new Error("Case not found.");
+		return doc;
+	});
 }
 
 // Stubs the create and update mutations and records the requests made.
 function stubMutations() {
 	const createRequests: Record<string, unknown>[] = [];
 	const updateRequests: Record<string, unknown>[] = [];
-	mockClientMutation.mockImplementation(
-		async (_ref: unknown, args: Record<string, unknown>) => {
-			if ("caseId" in args) {
-				updateRequests.push(args);
-				return { caseId: args.caseId };
-			}
-			createRequests.push(args);
-			return { caseId: "convex-case-1" };
-		},
-	);
+	createCase.mockImplementation(async (args) => {
+		createRequests.push(args);
+		return { caseId: "convex-case-1" as Id<"cases"> };
+	});
+	updateCase.mockImplementation(async (args) => {
+		updateRequests.push(args);
+		return { caseId: args.caseId };
+	});
 	return { createRequests, updateRequests };
 }
 
@@ -166,15 +153,7 @@ async function fillValidCase(user: ReturnType<typeof userEvent.setup>) {
 
 describe("CaseForm", () => {
 	beforeEach(() => {
-		mockUseQuery.mockReset();
-		mockClientQuery.mockReset();
-		mockClientMutation.mockReset();
-		mockClientAction.mockReset();
-		mockUseQuery.mockReturnValue({
-			data: [],
-			isLoading: false,
-			error: undefined,
-		});
+		setRoster([]);
 	});
 
 	afterEach(() => {
@@ -204,7 +183,8 @@ describe("CaseForm", () => {
 			expect(
 				screen.getByText("At least 1 persona is required"),
 			).toBeInTheDocument();
-			expect(mockClientMutation).not.toHaveBeenCalled();
+			expect(createCase).not.toHaveBeenCalled();
+			expect(updateCase).not.toHaveBeenCalled();
 		});
 
 		// Tests that editing and clearing one field only reveals that field's error, and marks it invalid for assistive tech.
@@ -284,9 +264,7 @@ describe("CaseForm", () => {
 		it("surfaces a save failure inline", async () => {
 			const doc = makeCaseDoc();
 			stubLoadCase(doc);
-			mockClientMutation.mockRejectedValue(
-				new Error("Access code already in use."),
-			);
+			updateCase.mockRejectedValue(new Error("Access code already in use."));
 			const user = userEvent.setup();
 			renderForm({ editCaseId: doc._id });
 			await screen.findByDisplayValue("Sterling Industries");
@@ -305,15 +283,13 @@ describe("CaseForm", () => {
 		it("reloads the case from the server after a successful update", async () => {
 			const doc = makeCaseDoc();
 			let queryCalls = 0;
-			mockClientQuery.mockImplementation(
-				async (_ref: unknown, args: { caseId: string }) => {
-					queryCalls += 1;
-					if (args.caseId !== doc._id) throw new Error("Case not found.");
-					return queryCalls === 1
-						? doc
-						: { ...doc, name: "Sterling Industries (saved)" };
-				},
-			);
+			getForEdit.mockImplementation(async ({ caseId }) => {
+				queryCalls += 1;
+				if (caseId !== doc._id) throw new Error("Case not found.");
+				return queryCalls === 1
+					? doc
+					: { ...doc, name: "Sterling Industries (saved)" };
+			});
 			const { updateRequests } = stubMutations();
 			const user = userEvent.setup();
 			renderForm({ editCaseId: doc._id });
@@ -332,8 +308,10 @@ describe("CaseForm", () => {
 	describe("concurrent saves", () => {
 		// Tests that a second submit during an in-flight save reuses it instead of calling the mutation again.
 		it("reuses the in-flight save instead of issuing a second mutation call", async () => {
-			let resolveMutation: ((value: unknown) => void) | undefined;
-			mockClientMutation.mockImplementation(
+			let resolveMutation:
+				| ((value: { caseId: Id<"cases"> }) => void)
+				| undefined;
+			createCase.mockImplementation(
 				() =>
 					new Promise((resolve) => {
 						resolveMutation = resolve;
@@ -355,12 +333,12 @@ describe("CaseForm", () => {
 				await screen.findByRole("button", { name: "Save changes" }),
 			);
 
-			resolveMutation?.({ caseId: "convex-case-1" });
+			resolveMutation?.({ caseId: "convex-case-1" as Id<"cases"> });
 			await waitFor(() =>
 				expect(goto).toHaveBeenCalledWith(new URL("http://localhost/admin")),
 			);
 
-			expect(mockClientMutation).toHaveBeenCalledTimes(1);
+			expect(createCase).toHaveBeenCalledTimes(1);
 			await waitFor(() => {
 				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
 					"Case saved successfully.",
@@ -370,8 +348,10 @@ describe("CaseForm", () => {
 
 		// Tests that every field, not just Submit, is disabled while a save is in flight.
 		it("disables every field, not just Submit, while a save is in flight", async () => {
-			let resolveMutation: ((value: unknown) => void) | undefined;
-			mockClientMutation.mockImplementation(
+			let resolveMutation:
+				| ((value: { caseId: Id<"cases"> }) => void)
+				| undefined;
+			createCase.mockImplementation(
 				() =>
 					new Promise((resolve) => {
 						resolveMutation = resolve;
@@ -390,7 +370,7 @@ describe("CaseForm", () => {
 				screen.getByRole("button", { name: "Export template" }),
 			).toBeDisabled();
 
-			resolveMutation?.({ caseId: "convex-case-1" });
+			resolveMutation?.({ caseId: "convex-case-1" as Id<"cases"> });
 			await waitFor(() => {
 				expect(vi.mocked(sonner.toast)).toHaveBeenCalledWith(
 					"Case saved successfully.",
@@ -695,11 +675,7 @@ describe("CaseForm", () => {
 
 		// Tests that the collaborator picker lists the admin roster from the live subscription.
 		it("shows the admin roster from the live Convex subscription in the picker", async () => {
-			mockUseQuery.mockReturnValue({
-				data: [makeAdminRow({ _id: "9", name: "Nina" })],
-				isLoading: false,
-				error: undefined,
-			});
+			setRoster([makeAdminRow({ _id: "9", name: "Nina" })]);
 			renderForm();
 
 			await openPicker();
@@ -711,15 +687,11 @@ describe("CaseForm", () => {
 		it("excludes SUPER admins and the case's owner from the selectable list in edit mode", async () => {
 			const doc = makeCaseDoc({ ownerAdminId: "5" });
 			stubLoadCase(doc);
-			mockUseQuery.mockReturnValue({
-				data: [
-					makeAdminRow({ _id: "5", name: "Owner Olivia", role: "admin" }),
-					makeAdminRow({ _id: "6", name: "Super Sam", role: "super" }),
-					makeAdminRow({ _id: "7", name: "Rank Rita", role: "admin" }),
-				],
-				isLoading: false,
-				error: undefined,
-			});
+			setRoster([
+				makeAdminRow({ _id: "5", name: "Owner Olivia", role: "admin" }),
+				makeAdminRow({ _id: "6", name: "Super Sam", role: "super" }),
+				makeAdminRow({ _id: "7", name: "Rank Rita", role: "admin" }),
+			]);
 			renderForm({ editCaseId: doc._id });
 			await screen.findByDisplayValue("Sterling Industries");
 
@@ -732,18 +704,14 @@ describe("CaseForm", () => {
 
 		// Tests that the signed-in admin is excluded from the picker as the effective owner in create mode.
 		it("excludes the signed-in admin (admins:viewer) as the effective owner in create mode", async () => {
-			mockUseQuery.mockReturnValue({
-				data: [
-					makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
-					makeAdminRow({
-						_id: "2",
-						name: "Rank Rita",
-						email: "rita@wisc.edu",
-					}),
-				],
-				isLoading: false,
-				error: undefined,
-			});
+			setRoster([
+				makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
+				makeAdminRow({
+					_id: "2",
+					name: "Rank Rita",
+					email: "rita@wisc.edu",
+				}),
+			]);
 			renderForm({
 				viewer: makeAdminRow({ _id: "1", name: "Me", email: "me@wisc.edu" }),
 			});
@@ -757,11 +725,7 @@ describe("CaseForm", () => {
 		// Tests that toggling a collaborator updates the selected-count badge and the submit payload.
 		it("toggling a collaborator updates the selected-count badge and is included in the submit payload", async () => {
 			const { createRequests } = stubMutations();
-			mockUseQuery.mockReturnValue({
-				data: [makeAdminRow({ _id: "9", name: "Nina" })],
-				isLoading: false,
-				error: undefined,
-			});
+			setRoster([makeAdminRow({ _id: "9", name: "Nina" })]);
 			const user = userEvent.setup();
 			renderForm();
 

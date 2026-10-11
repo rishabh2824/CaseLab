@@ -1,7 +1,7 @@
 import { JSDOM } from "jsdom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm, downloadForm } from "../../src/lib/case/exportCase.js";
-import { makePersona, makeReferral } from "../support/fixtures.js";
+import { makePersona, makeReferral } from "../support/factories.js";
 
 // Parses exported form HTML into a Document.
 function parseForm(html: string): Document {

@@ -7,7 +7,7 @@ import {
 	caseStructure,
 	personaPayload,
 	uniqueAccessCode,
-} from "../tests/support/convexFactories";
+} from "../tests/support/factories";
 import { api, components } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { studentErrorData } from "./lib/studentErrors";

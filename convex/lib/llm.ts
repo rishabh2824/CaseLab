@@ -1,4 +1,4 @@
-const LLM_BASE_URL = "https://openrouter.ai/api/v1";
+const DEFAULT_LLM_BASE_URL = "https://openrouter.ai/api/v1";
 const LLM_MODEL = "anthropic/claude-sonnet-5.5";
 const LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-5.5";
 
@@ -28,7 +28,9 @@ async function chatCompletion(
 	body: Record<string, unknown>,
 	timeoutMs: number,
 ) {
-	const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
+	// Overridable so an end-to-end run can point the backend at a local stand-in for the provider.
+	const baseUrl = process.env.LLM_BASE_URL || DEFAULT_LLM_BASE_URL;
+	const response = await fetch(`${baseUrl}/chat/completions`, {
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",

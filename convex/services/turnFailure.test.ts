@@ -4,7 +4,7 @@ import {
 	fileEntry,
 	personaPayload,
 	referralEdge,
-} from "../../tests/support/convexFactories";
+} from "../../tests/support/factories";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import {

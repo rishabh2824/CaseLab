@@ -9,7 +9,7 @@ import {
 	referralsFrom,
 	referralsTo,
 } from "../../src/lib/case/draft.js";
-import { makeReferral } from "../support/fixtures.js";
+import { makeReferral } from "../support/factories.js";
 
 describe("createEmptyPersona", () => {
 	// Tests that each empty persona gets its own unique id.

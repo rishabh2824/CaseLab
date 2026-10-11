@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
+import { convexFake } from "./convexFake.svelte.js";
 import { server } from "./msw.js";
 
 vi.mock("$app/navigation", () => ({
@@ -7,6 +8,11 @@ vi.mock("$app/navigation", () => ({
 	beforeNavigate: vi.fn(),
 	afterNavigate: vi.fn(),
 }));
+
+vi.mock("convex-svelte", async () => {
+	const { convexSvelteModule } = await import("./convexFake.svelte.js");
+	return convexSvelteModule;
+});
 
 vi.mock("svelte-sonner", () => {
 	const toast = Object.assign(vi.fn(), {
@@ -20,5 +26,8 @@ vi.mock("svelte-sonner", () => {
 });
 
 beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
-afterEach(() => server.resetHandlers());
+afterEach(() => {
+	server.resetHandlers();
+	convexFake.reset();
+});
 afterAll(() => server.close());

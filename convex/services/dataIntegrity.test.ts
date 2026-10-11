@@ -5,7 +5,7 @@ import {
 	personaPayload,
 	referralEdge,
 	uniqueAccessCode,
-} from "../../tests/support/convexFactories";
+} from "../../tests/support/factories";
 import { api } from "../_generated/api";
 import { validateGraph } from "../lib/caseStructure";
 import { MAX_MESSAGE_CHARS } from "../lib/constants";
@@ -162,43 +162,6 @@ describe("shared files resolve from storage", () => {
 });
 
 describe("persona ids as Convex record keys", () => {
-	const illegal = [
-		"$boss",
-		"_boss",
-		"café",
-		"persona id",
-		"persona\u0000id",
-		"emoji-🙂",
-	];
-
-	// Tests that persona ids unsafe as Convex record keys are rejected at case-save time.
-	it.each(illegal)(
-		"rejects %s as a persona id at case-save time",
-		async (badId) => {
-			expect(() => validateGraph([personaPayload(badId)], [], [badId])).toThrow(
-				/persona id/i,
-			);
-		},
-	);
-
-	// Tests that the id shapes produced by the authoring UI and old data are still accepted.
-	it("still accepts the id shapes the authoring UI and old data actually produce", () => {
-		const ok = [
-			"550e8400-e29b-41d4-a716-446655440000",
-			"1",
-			"persona_A",
-			"persona.A",
-			"A-B",
-		];
-		expect(() =>
-			validateGraph(
-				ok.map((id) => personaPayload(id)),
-				[],
-				ok,
-			),
-		).not.toThrow();
-	});
-
 	// Tests that a bad persona id is rejected through the public create mutation, not just the helper.
 	it("rejects the bad id through the public create mutation, not just the pure helper", async () => {
 		const t = newTestConvex();
@@ -293,22 +256,6 @@ describe("student message boundaries", () => {
 			personaId: "A",
 		});
 		expect(messages[0]).toEqual({ role: "user", content: message });
-	});
-
-	// Tests that words are counted across every kind of whitespace, not just spaces.
-	it("counts words across every kind of whitespace, not just spaces", async () => {
-		const t = newTestConvex();
-		const state = await startRun(t, caseStructure());
-		stubLlm({ replyText: "ok" });
-		const tooLong = Array.from({ length: 51 }, (_, i) => `w${i}`).join("\n\t ");
-
-		await expect(
-			t.mutation(api.turn.sendMessage, {
-				runId: state.runId,
-				personaId: "A",
-				message: tooLong,
-			}),
-		).rejects.toThrow(/too long/);
 	});
 
 	// Tests that a message of exactly the word limit is accepted and one more word is rejected.

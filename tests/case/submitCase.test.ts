@@ -1,6 +1,8 @@
 import type { GenericId } from "convex/values";
 import { HttpResponse, http } from "msw";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { api } from "../../convex/_generated/api.js";
+import type { Id } from "../../convex/_generated/dataModel.js";
 import {
 	type SubmitCaseInput,
 	submitCase,
@@ -10,7 +12,8 @@ import type {
 	PersonaPayload,
 	ReferralEdge,
 } from "../../src/lib/types.js";
-import { makePersona } from "../support/fixtures.js";
+import { convexFake } from "../support/convexFake.svelte.js";
+import { makePersona } from "../support/factories.js";
 import { server } from "../support/msw.js";
 
 type SentStructure = {
@@ -19,15 +22,10 @@ type SentStructure = {
 	roots: string[];
 };
 
-const mockMutation = vi.fn();
-
-vi.mock("convex-svelte", () => ({
-	getConvexClient: () => ({ mutation: mockMutation }),
-}));
-
-beforeEach(() => {
-	mockMutation.mockReset();
-});
+const generateUploadUrls = convexFake.mutation(api.uploads.generateUploadUrls);
+const discardUploads = convexFake.mutation(api.uploads.discardUploads);
+const createCase = convexFake.mutation(api.cases.create);
+const updateCase = convexFake.mutation(api.cases.update);
 
 Object.defineProperty(globalThis, Symbol.for("undici.globalOrigin.1"), {
 	value: new URL("http://localhost"),
@@ -53,29 +51,27 @@ function stubMutations({
 	const discardRequests: unknown[][] = [];
 	let counter = 0;
 
-	mockMutation.mockImplementation(
-		async (_ref: unknown, args: Record<string, unknown>) => {
-			if ("count" in args) {
-				const count = args.count as number;
-				uploadCountRequests.push(count);
-				return Array.from({ length: count }, () => {
-					counter += 1;
-					return `${UPLOAD_ORIGIN}/upload/${counter}`;
-				});
-			}
-			if ("storageIds" in args) {
-				discardRequests.push(args.storageIds as unknown[]);
-				return null;
-			}
-			if (failSave) throw failSave;
-			if ("caseId" in args) {
-				updateRequests.push(args);
-				return { caseId: args.caseId };
-			}
-			createRequests.push(args);
-			return { caseId: "convex-case-id" };
-		},
-	);
+	generateUploadUrls.mockImplementation(async ({ count }) => {
+		uploadCountRequests.push(count);
+		return Array.from({ length: count }, () => {
+			counter += 1;
+			return `${UPLOAD_ORIGIN}/upload/${counter}`;
+		});
+	});
+	discardUploads.mockImplementation(async ({ storageIds }) => {
+		discardRequests.push(storageIds);
+		return null;
+	});
+	createCase.mockImplementation(async (args) => {
+		if (failSave) throw failSave;
+		createRequests.push(args);
+		return { caseId: "convex-case-id" as Id<"cases"> };
+	});
+	updateCase.mockImplementation(async (args) => {
+		if (failSave) throw failSave;
+		updateRequests.push(args);
+		return { caseId: args.caseId };
+	});
 
 	server.use(
 		http.post(`${UPLOAD_ORIGIN}/*`, ({ request }) => {
@@ -124,7 +120,7 @@ describe("submitCase — create vs. edit routing", () => {
 		await submitCase(baseInput());
 
 		expect(createRequests).toHaveLength(1);
-		expect(mockMutation).toHaveBeenCalledTimes(1);
+		expect(createCase).toHaveBeenCalledTimes(1);
 	});
 
 	// Tests that an existing case is saved through updateCase with its caseId.
@@ -135,7 +131,7 @@ describe("submitCase — create vs. edit routing", () => {
 
 		expect(updateRequests).toHaveLength(1);
 		expect(updateRequests[0]?.caseId).toBe("42");
-		expect(mockMutation).toHaveBeenCalledTimes(1);
+		expect(updateCase).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -311,7 +307,9 @@ describe("submitCase — upload failures", () => {
 
 	// Tests that a failed generateUploadUrls call is propagated and the case is never created.
 	it("propagates a failed generateUploadUrls call, never creating the case", async () => {
-		mockMutation.mockRejectedValue(new Error("Upload URL request failed."));
+		generateUploadUrls.mockRejectedValue(
+			new Error("Upload URL request failed."),
+		);
 		const persona = makePersona({
 			profilePhoto: new File(["a"], "photo.png", { type: "image/png" }),
 		});
@@ -411,5 +409,71 @@ describe("submitCase — payload shaping", () => {
 		]);
 		expect((body.structure as SentStructure).roots).toEqual(["p1"]);
 		expect(body.collaboratorAdminIds).toEqual(["admin2", "admin5"]);
+	});
+});
+
+describe("submitCase — full payload", () => {
+	// Pins the whole create payload once, so a change to the wire shape is a reviewed diff.
+	it("sends this payload for a case with two personas and a referral", async () => {
+		const { createRequests } = stubMutations();
+
+		await submitCase(
+			baseInput({
+				personas: [
+					makePersona({ id: "p1", name: "Mary", role: "CFO" }),
+					makePersona({ id: "p2", name: "Bob", role: "COO" }),
+				],
+				referrals: [{ fromId: "p1", toId: "p2", conditions: "asks for Bob" }],
+				roots: ["p1"],
+				collaboratorAdminIds: ["admin2"],
+			}),
+		);
+
+		expect(createRequests[0]).toMatchInlineSnapshot(`
+			{
+			  "accessCode": "abc",
+			  "brief": "Reduce office supply costs.",
+			  "collaboratorAdminIds": [
+			    "admin2",
+			  ],
+			  "commonInformation": "Background context.",
+			  "duration": 45,
+			  "name": "Sterling Industries",
+			  "structure": {
+			    "personas": [
+			      {
+			        "availabilityMinutes": null,
+			        "files": [],
+			        "id": "p1",
+			        "knownFacts": "",
+			        "name": "Mary",
+			        "personalityTraits": "",
+			        "profilePhoto": null,
+			        "role": "CFO",
+			      },
+			      {
+			        "availabilityMinutes": null,
+			        "files": [],
+			        "id": "p2",
+			        "knownFacts": "",
+			        "name": "Bob",
+			        "personalityTraits": "",
+			        "profilePhoto": null,
+			        "role": "COO",
+			      },
+			    ],
+			    "referrals": [
+			      {
+			        "conditions": "asks for Bob",
+			        "fromId": "p1",
+			        "toId": "p2",
+			      },
+			    ],
+			    "roots": [
+			      "p1",
+			    ],
+			  },
+			}
+		`);
 	});
 });

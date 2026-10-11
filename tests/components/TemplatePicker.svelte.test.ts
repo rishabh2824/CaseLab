@@ -1,8 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import type { FunctionReturnType } from "convex/server";
 import * as sonner from "svelte-sonner";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { api } from "../../convex/_generated/api.js";
+import type { Id } from "../../convex/_generated/dataModel.js";
 import TemplatePicker from "../../src/lib/components/TemplatePicker.svelte";
+import { convexFake } from "../support/convexFake.svelte.js";
 
 let viewerRole: "admin" | "super" = "admin";
 
@@ -10,25 +14,10 @@ vi.mock("#lib/adminViewer.js", () => ({
 	getViewerContext: () => ({ data: { role: viewerRole } }),
 }));
 
-const mockUseQuery = vi.fn();
-const mockDeleteCase = vi.fn();
-const mockSetDemo = vi.fn();
+const deleteCase = convexFake.mutation(api.cases.deleteCase);
+const setDemo = convexFake.mutation(api.cases.setDemo);
 
-vi.mock("convex-svelte", async () => {
-	const { getFunctionName } = await import("convex/server");
-	return {
-		useQuery: (...args: unknown[]) => mockUseQuery(...args),
-		useMutation: (ref: Parameters<typeof getFunctionName>[0]) =>
-			getFunctionName(ref) === "cases:setDemo" ? mockSetDemo : mockDeleteCase,
-	};
-});
-
-type CaseSummary = {
-	_id: string;
-	name: string;
-	accessCode?: string;
-	isDemo?: boolean;
-};
+type CaseSummary = FunctionReturnType<typeof api.cases.listAll>[number];
 
 // Renders the picker in a mode, signed in with the given admin role.
 function renderPicker(
@@ -40,30 +29,26 @@ function renderPicker(
 }
 
 // Builds a case summary with defaults and optional overrides.
-function makeCaseSummary(overrides: Partial<CaseSummary> = {}): CaseSummary {
+function makeCaseSummary(
+	overrides: Partial<Omit<CaseSummary, "_id">> & { _id?: string } = {},
+): CaseSummary {
 	return {
-		_id: "case-1",
 		name: "Sterling Industries",
 		accessCode: "sterling",
 		isDemo: false,
 		...overrides,
+		_id: (overrides._id ?? "case-1") as Id<"cases">,
 	};
 }
 
-// Stubs the case list query to return the given cases.
+// Stubs the case list queries to return the given cases.
 function stubCaseList(items: CaseSummary[]) {
-	mockUseQuery.mockReturnValue({
-		data: items,
-		isLoading: false,
-		error: undefined,
-	});
+	convexFake.setQueryData(api.cases.listAll, items);
+	convexFake.setQueryData(
+		api.cases.listDemos,
+		items.map(({ _id, name }) => ({ _id, name })),
+	);
 }
-
-beforeEach(() => {
-	mockUseQuery.mockReset();
-	mockDeleteCase.mockReset();
-	mockSetDemo.mockReset();
-});
 
 describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 	// Tests that clicking delete opens the confirm dialog with the case name and stays on the page.
@@ -101,14 +86,14 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 		expect(
 			screen.queryByText('Delete "Sterling Industries"?'),
 		).not.toBeInTheDocument();
-		expect(mockDeleteCase).not.toHaveBeenCalled();
+		expect(deleteCase).not.toHaveBeenCalled();
 		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
 	});
 
 	// Tests that confirming delete calls the mutation with the case id and closes the dialog.
 	it("Delete calls the Convex mutation with the case id and closes the dialog", async () => {
 		stubCaseList([makeCaseSummary({ _id: "case-1" })]);
-		mockDeleteCase.mockResolvedValue(undefined);
+		deleteCase.mockResolvedValue(null);
 		const user = userEvent.setup();
 		renderPicker("edit");
 		await screen.findByText("Sterling Industries");
@@ -122,13 +107,13 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 				screen.queryByText('Delete "Sterling Industries"?'),
 			).not.toBeInTheDocument(),
 		);
-		expect(mockDeleteCase).toHaveBeenCalledWith({ caseId: "case-1" });
+		expect(deleteCase).toHaveBeenCalledWith({ caseId: "case-1" });
 	});
 
 	// Tests that a failed delete keeps the dialog open and shows a toast.
 	it("keeps the dialog open and shows a toast when the delete request fails", async () => {
 		stubCaseList([makeCaseSummary()]);
-		mockDeleteCase.mockRejectedValue(new Error("Case not found."));
+		deleteCase.mockRejectedValue(new Error("Case not found."));
 		const user = userEvent.setup();
 		renderPicker("edit");
 		await screen.findByText("Sterling Industries");
@@ -148,10 +133,10 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 	it("ignores Escape while a delete is in flight, but honors it once idle", async () => {
 		stubCaseList([makeCaseSummary()]);
 		let resolveDelete: (() => void) | undefined;
-		mockDeleteCase.mockImplementation(
+		deleteCase.mockImplementation(
 			() =>
-				new Promise<void>((resolve) => {
-					resolveDelete = resolve;
+				new Promise<null>((resolve) => {
+					resolveDelete = () => resolve(null);
 				}),
 		);
 		const user = userEvent.setup();
@@ -228,14 +213,14 @@ describe("TemplatePicker demo toggle (edit mode)", () => {
 	// Tests that clicking the switch asks the server to flip the demo flag.
 	it("sends the flipped value when the switch is clicked", async () => {
 		stubCaseList([makeCaseSummary({ _id: "case-1", isDemo: false })]);
-		mockSetDemo.mockResolvedValue(undefined);
+		setDemo.mockResolvedValue(null);
 		const user = userEvent.setup();
 		renderPicker("edit", "super");
 		await screen.findByText("Sterling Industries");
 
 		await user.click(screen.getByRole("switch"));
 
-		expect(mockSetDemo).toHaveBeenCalledWith({
+		expect(setDemo).toHaveBeenCalledWith({
 			caseId: "case-1",
 			isDemo: true,
 		});
@@ -244,7 +229,7 @@ describe("TemplatePicker demo toggle (edit mode)", () => {
 	// Tests that a failed update shows a toast.
 	it("shows a toast when the update fails", async () => {
 		stubCaseList([makeCaseSummary()]);
-		mockSetDemo.mockRejectedValue(new Error("Only a super admin can do this."));
+		setDemo.mockRejectedValue(new Error("Only a super admin can do this."));
 		const user = userEvent.setup();
 		renderPicker("edit", "super");
 		await screen.findByText("Sterling Industries");
@@ -266,7 +251,7 @@ describe("TemplatePicker demo toggle (edit mode)", () => {
 describe("TemplatePicker demo mode", () => {
 	// Tests that demo mode links each case to its demo page and shows no access code, delete or switch.
 	it("links to the demo page without access codes, delete or switch", async () => {
-		stubCaseList([{ _id: "case-1", name: "Sterling Industries" }]);
+		stubCaseList([makeCaseSummary()]);
 		renderPicker("demo", "super");
 		await screen.findByText("Sterling Industries");
 

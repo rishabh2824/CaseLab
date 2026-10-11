@@ -3,7 +3,7 @@ import {
 	caseStructure,
 	personaPayload,
 	referralEdge,
-} from "../../tests/support/convexFactories";
+} from "../../tests/support/factories";
 import type { Id } from "../_generated/dataModel";
 import type { PersonaGraph } from "./simulationReads";
 import {

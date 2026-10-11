@@ -224,6 +224,23 @@ describe("generatePersonaReply", () => {
 		expect(fetchMock).toHaveBeenCalledTimes(PERSONA_REPLY_RETRIES);
 	});
 
+	// Tests that the provider URL defaults to OpenRouter and can be overridden by LLM_BASE_URL.
+	it("posts to OpenRouter by default and to LLM_BASE_URL when it is set", async () => {
+		const fetchMock = vi.fn(async (_url: string) => jsonResponse(REPLY_JSON));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await generatePersonaReply(SYSTEM_PROMPT, []);
+		expect(fetchMock.mock.calls[0]![0]).toBe(
+			"https://openrouter.ai/api/v1/chat/completions",
+		);
+
+		vi.stubEnv("LLM_BASE_URL", "http://127.0.0.1:4010/v1");
+		await generatePersonaReply(SYSTEM_PROMPT, []);
+		expect(fetchMock.mock.calls[1]![0]).toBe(
+			"http://127.0.0.1:4010/v1/chat/completions",
+		);
+	});
+
 	// Tests that a missing API key fails with a clear message.
 	it("fails clearly when the API key is missing", async () => {
 		vi.stubEnv("LLM_KEY", "");

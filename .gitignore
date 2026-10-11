@@ -15,6 +15,9 @@ node_modules/
 .svelte-kit
 build
 build-e2e
+build-e2e-live
+e2e-live/.tmp
+e2e-live/.env.local.bak
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 test-results

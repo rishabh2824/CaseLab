@@ -2,10 +2,7 @@
 
 import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
-import {
-	caseStructure,
-	personaPayload,
-} from "../tests/support/convexFactories";
+import { caseStructure, personaPayload } from "../tests/support/factories";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { CaseStructure } from "./models/cases";

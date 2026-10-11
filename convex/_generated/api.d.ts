@@ -18,6 +18,7 @@ import type * as lib_caseRules from "../lib/caseRules.js";
 import type * as lib_caseStructure from "../lib/caseStructure.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_llm from "../lib/llm.js";
+import type * as lib_messageRules from "../lib/messageRules.js";
 import type * as lib_prompt from "../lib/prompt.js";
 import type * as lib_studentErrors from "../lib/studentErrors.js";
 import type * as lib_turnState from "../lib/turnState.js";
@@ -49,6 +50,7 @@ declare const fullApi: ApiFromModules<{
   "lib/caseStructure": typeof lib_caseStructure;
   "lib/constants": typeof lib_constants;
   "lib/llm": typeof lib_llm;
+  "lib/messageRules": typeof lib_messageRules;
   "lib/prompt": typeof lib_prompt;
   "lib/studentErrors": typeof lib_studentErrors;
   "lib/turnState": typeof lib_turnState;

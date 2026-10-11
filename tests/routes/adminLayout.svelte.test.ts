@@ -1,30 +1,37 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import { getFunctionName } from "convex/server";
 import { createRawSnippet } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { goto } from "$app/navigation";
+import { api } from "../../convex/_generated/api.js";
+import type { Id } from "../../convex/_generated/dataModel.js";
 import AdminLayout from "../../src/routes/(app)/admin/+layout.svelte";
 import { clientServerError } from "../support/convexClientErrors.js";
-
-type Viewer = {
-	data?: { role: "super" | "admin" } | null;
-	isLoading: boolean;
-	error?: Error;
-};
+import { convexFake, type QueryState } from "../support/convexFake.svelte.js";
 
 const auth = { isLoading: false, isAuthenticated: false };
-let viewer: Viewer = { data: undefined, isLoading: false };
+
+// Sets what the admin viewer query returns.
+function setViewer(state: QueryState<typeof api.admins.viewer>) {
+	convexFake.setQuery(api.admins.viewer, undefined, state);
+}
+
+// Builds the viewer row for an admin of the given role.
+function viewerAs(role: "super" | "admin") {
+	return {
+		_id: "admin-1" as Id<"admins">,
+		email: "admin@wisc.edu",
+		name: undefined,
+		role,
+	};
+}
 const mockSocial = vi.fn();
 const mockSignOut = vi.fn();
 
 vi.mock("@mmailaender/convex-better-auth-svelte/svelte", () => ({
 	createSvelteAuthClient: vi.fn(),
 	useAuth: () => auth,
-}));
-
-vi.mock("convex-svelte", () => ({
-	getConvexClient: () => ({}),
-	useQuery: () => viewer,
 }));
 
 vi.mock("#lib/auth-client.js", () => ({
@@ -46,7 +53,6 @@ function setSearch(search: string) {
 beforeEach(() => {
 	auth.isLoading = false;
 	auth.isAuthenticated = false;
-	viewer = { data: undefined, isLoading: false };
 	mockSocial.mockReset().mockResolvedValue(undefined);
 	mockSignOut.mockReset().mockResolvedValue(undefined);
 	setSearch("");
@@ -80,7 +86,7 @@ describe("admin layout sign-in", () => {
 	// Tests that an already signed-in visitor is not sent through Google again.
 	it("does not sign in when already authenticated", () => {
 		auth.isAuthenticated = true;
-		viewer = { data: { role: "admin" }, isLoading: false };
+		setViewer({ data: viewerAs("admin") });
 		render(AdminLayout, { props: { children } });
 		expect(mockSocial).not.toHaveBeenCalled();
 	});
@@ -138,7 +144,7 @@ describe("admin layout viewer gate", () => {
 
 	// Tests that a loading placeholder shows, and no admin content, while the viewer query is loading.
 	it("shows a loading placeholder while the viewer is loading", () => {
-		viewer = { data: undefined, isLoading: true };
+		setViewer({ isLoading: true });
 		render(AdminLayout, { props: { children } });
 		expect(screen.getByRole("status")).toHaveTextContent("Loading");
 		expect(screen.queryByText("admin content")).toBeNull();
@@ -147,7 +153,7 @@ describe("admin layout viewer gate", () => {
 
 	// Tests that a rostered admin gets the top bar and the page.
 	it("renders the top bar and the page for an admin", () => {
-		viewer = { data: { role: "admin" }, isLoading: false };
+		setViewer({ data: viewerAs("admin") });
 		render(AdminLayout, { props: { children } });
 		expect(screen.getByText("admin content")).toBeInTheDocument();
 		expect(
@@ -157,7 +163,7 @@ describe("admin layout viewer gate", () => {
 
 	// Tests that a signed-in user missing from the roster never sees admin content.
 	it("blocks a signed-in user who is not on the roster", async () => {
-		viewer = { data: null, isLoading: false };
+		setViewer({ data: null });
 		const user = userEvent.setup();
 		render(AdminLayout, { props: { children } });
 		expect(screen.getByText("Not authorized.")).toBeInTheDocument();
@@ -172,11 +178,9 @@ describe("admin layout viewer gate", () => {
 
 	// Tests that a viewer query failure shows a safe message and a reload button.
 	it("shows a friendly error with a reload button when the viewer query fails", () => {
-		viewer = {
-			data: undefined,
-			isLoading: false,
-			error: clientServerError("admins:viewer", "Q"),
-		};
+		setViewer({
+			error: clientServerError(getFunctionName(api.admins.viewer), "Q"),
+		});
 		render(AdminLayout, { props: { children } });
 		expect(
 			screen.getByText("Something went wrong loading your admin account."),

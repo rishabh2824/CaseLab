@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import type { FunctionReturnType } from "convex/server";
 import { toast } from "svelte-sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../../convex/_generated/api.js";
 import type { Id } from "../../convex/_generated/dataModel.js";
 import { MAX_MESSAGE_WORDS } from "../../convex/lib/constants.js";
 import { downloadBlob } from "../../src/lib/download.js";
@@ -9,9 +11,18 @@ import { session } from "../../src/lib/session.svelte.js";
 import type { RunStore } from "../../src/lib/student/run.svelte.js";
 import type { ChatMessage } from "../../src/lib/types.js";
 import StudentPage from "../../src/routes/(app)/student/+page.svelte";
-import { makeContact, makeSharedFile } from "../support/fixtures.js";
+import { convexFake } from "../support/convexFake.svelte.js";
+import { makeContact, makeSharedFile } from "../support/factories.js";
 
-const mockQuery = vi.fn();
+const exportRun = convexFake.clientQuery(api.simulations.exportRun);
+
+// Builds the export result the page turns into a PDF.
+const exportOf = (
+	personas: FunctionReturnType<typeof api.simulations.exportRun>["personas"],
+) => ({
+	case: { id: "case-1" as Id<"cases">, caseName: "Sterling Industries" },
+	personas,
+});
 
 // The run-store members the student page uses; the fake below must keep providing them.
 type PageRunStore = Pick<
@@ -90,10 +101,6 @@ function makeDisplayContact(
 	};
 }
 
-vi.mock("convex-svelte", () => ({
-	getConvexClient: () => ({ query: mockQuery }),
-}));
-
 vi.mock("../../src/lib/student/run.svelte.js", () => ({
 	createRunStore: () => run,
 }));
@@ -112,7 +119,6 @@ beforeEach(() => {
 			availableIn: 5,
 		}),
 	];
-	mockQuery.mockReset();
 	vi.mocked(downloadBlob).mockReset();
 	session.startRun({ runId: "run-1" });
 	Element.prototype.scrollIntoView = vi.fn();
@@ -368,24 +374,22 @@ describe("notes and ending", () => {
 describe("PDF export", () => {
 	// Tests that the export fetches the run and downloads a PDF named chats.pdf.
 	it("builds and downloads the transcript", async () => {
-		mockQuery.mockResolvedValue({
-			personas: [
+		exportRun.mockResolvedValue(
+			exportOf([
 				{
 					id: "mary",
 					name: "Mary Chen",
 					role: "CFO",
 					messages: [{ role: "user", content: "Hi" }],
 				},
-			],
-		});
+			]),
+		);
 		run.notes = "my notes";
 		const user = userEvent.setup();
 		render(StudentPage);
 		await user.click(screen.getByRole("button", { name: "Export PDF" }));
 		await waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
-		expect(mockQuery).toHaveBeenCalledWith(expect.anything(), {
-			runId: "run-1",
-		});
+		expect(exportRun).toHaveBeenCalledWith({ runId: "run-1" });
 		const [blob, filename] = vi.mocked(downloadBlob).mock.calls[0] as [
 			Blob,
 			string,
@@ -397,7 +401,7 @@ describe("PDF export", () => {
 
 	// Tests that a run with no personas still exports.
 	it("exports when the run has no personas", async () => {
-		mockQuery.mockResolvedValue({ personas: [] });
+		exportRun.mockResolvedValue(exportOf([]));
 		const user = userEvent.setup();
 		render(StudentPage);
 		await user.click(screen.getByRole("button", { name: "Export PDF" }));
@@ -407,7 +411,7 @@ describe("PDF export", () => {
 	// Tests that a failed export toasts and leaves the button usable again.
 	it("toasts and re-enables the button when the export fails", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
-		mockQuery.mockRejectedValue(new Error("boom"));
+		exportRun.mockRejectedValue(new Error("boom"));
 		const user = userEvent.setup();
 		render(StudentPage);
 		await user.click(screen.getByRole("button", { name: "Export PDF" }));
@@ -429,16 +433,16 @@ describe("PDF export", () => {
 
 	// Tests that a second click while exporting does not start another export.
 	it("ignores a second click while an export is running", async () => {
-		let finish: (value: unknown) => void = () => {};
-		mockQuery.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+		let finish: (value: ReturnType<typeof exportOf>) => void = () => {};
+		exportRun.mockReturnValue(new Promise((resolve) => (finish = resolve)));
 		const user = userEvent.setup();
 		render(StudentPage);
 		await user.click(screen.getByRole("button", { name: "Export PDF" }));
 		expect(
 			await screen.findByRole("button", { name: "Exporting…" }),
 		).toBeDisabled();
-		finish({ personas: [] });
+		finish(exportOf([]));
 		await waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
-		expect(mockQuery).toHaveBeenCalledOnce();
+		expect(exportRun).toHaveBeenCalledOnce();
 	});
 });

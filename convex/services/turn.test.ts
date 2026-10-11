@@ -4,7 +4,7 @@ import {
 	fileEntry,
 	personaPayload,
 	referralEdge,
-} from "../../tests/support/convexFactories";
+} from "../../tests/support/factories";
 import { api, internal } from "../_generated/api";
 import { RECENT_HISTORY_LIMIT } from "../lib/llm";
 import { STUDENT_ERROR } from "../lib/studentErrors";

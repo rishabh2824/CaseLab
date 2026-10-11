@@ -1,19 +1,19 @@
 import { render, screen, within } from "@testing-library/svelte";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getFunctionName } from "convex/server";
+import { describe, expect, it } from "vitest";
+import { api } from "../../convex/_generated/api.js";
 import type { Id } from "../../convex/_generated/dataModel.js";
 import DemoCaseView from "../../src/lib/components/DemoCaseView.svelte";
 import { clientServerError } from "../support/convexClientErrors.js";
-import { makePersonaPayload } from "../support/fixtures.js";
-
-const mockUseQuery = vi.fn();
-
-vi.mock("convex-svelte", () => ({
-	useQuery: (...args: unknown[]) => mockUseQuery(...args),
-}));
+import { convexFake, type QueryState } from "../support/convexFake.svelte.js";
+import { makePersonaPayload } from "../support/factories.js";
 
 // Builds a demo case with two root personas, one referred persona and a file.
 function makeDemoCase() {
 	return {
+		_id: "case-1" as Id<"cases">,
+		_creationTime: 0,
+		isDemo: true,
 		name: "Demo Corp",
 		duration: 30,
 		brief: "Cut costs.",
@@ -52,21 +52,9 @@ function makeDemoCase() {
 }
 
 // Stubs the demo query with a data, loading or error state.
-function stubQuery(state: {
-	data?: unknown;
-	isLoading?: boolean;
-	error?: Error;
-}) {
-	mockUseQuery.mockReturnValue({
-		data: state.data,
-		isLoading: state.isLoading ?? false,
-		error: state.error,
-	});
+function stubQuery(state: QueryState<typeof api.cases.getDemo>) {
+	convexFake.setQuery(api.cases.getDemo, undefined, state);
 }
-
-beforeEach(() => {
-	mockUseQuery.mockReset();
-});
 
 describe("DemoCaseView", () => {
 	// Tests that a loading state is shown while the query runs.
@@ -78,7 +66,9 @@ describe("DemoCaseView", () => {
 
 	// Tests that a real-shaped redacted error falls back to the friendly message.
 	it("shows a friendly message when the query fails", () => {
-		stubQuery({ error: clientServerError("cases:getDemo", "Q") });
+		stubQuery({
+			error: clientServerError(getFunctionName(api.cases.getDemo), "Q"),
+		});
 		render(DemoCaseView, { props: { caseId: "case-1" } });
 		expect(
 			screen.getByText("Failed to load the demo case."),
@@ -105,10 +95,15 @@ describe("DemoCaseView", () => {
 
 	// Tests that the query is made for the case id the page was given.
 	it("queries the demo case by its id", () => {
-		stubQuery({ data: makeDemoCase() });
+		convexFake.setQuery(
+			api.cases.getDemo,
+			{ caseId: "case-1" },
+			{ data: makeDemoCase() },
+		);
 		render(DemoCaseView, { props: { caseId: "case-1" } });
-		const argsFn = mockUseQuery.mock.calls[0]?.[1] as () => unknown;
-		expect(argsFn()).toEqual({ caseId: "case-1" });
+		expect(
+			screen.getByRole("heading", { name: "Demo Corp" }),
+		).toBeInTheDocument();
 	});
 
 	// Tests that the case details are rendered read-only.

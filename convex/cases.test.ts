@@ -3,7 +3,7 @@ import {
 	caseStructure,
 	personaPayload,
 	uniqueAccessCode,
-} from "../tests/support/convexFactories";
+} from "../tests/support/factories";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { newTestConvex, withAdmin, withStranger } from "./test.setup";

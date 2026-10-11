@@ -3,7 +3,7 @@ import {
 	caseStructure,
 	personaPayload,
 	referralEdge,
-} from "../../tests/support/convexFactories";
+} from "../../tests/support/factories";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { STUDENT_ERROR } from "../lib/studentErrors";

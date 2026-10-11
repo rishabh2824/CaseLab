@@ -49,7 +49,7 @@ shows a case's access code.
 | `convex/migrations.ts` | Temporary one-off data migrations. Delete them once every deployment has run them. |
 | `src/routes/` | SvelteKit routes: the landing page, `/student`, and `/admin/...`. |
 | `src/lib/` | Components, the student run store, and the case form code (`case/`). |
-| `tests/`, `e2e/` | Frontend unit tests, and Playwright tests against a mocked backend. Backend tests sit next to the code in `convex/`. |
+| `tests/`, `e2e-live/` | Frontend unit tests, and Playwright tests against a real local Convex backend. Backend tests sit next to the code in `convex/`. |
 
 ## Setup
 
@@ -97,9 +97,15 @@ pnpm run lint          # biome
 pnpm run typecheck     # tsc over convex/
 pnpm run check         # svelte-check over src/
 pnpm test              # vitest: backend (convex-test) and frontend (node + jsdom)
-pnpm run test:e2e      # Playwright, against a fully mocked backend
+pnpm run test:e2e      # Playwright, against a real local Convex backend (see below)
 pnpm run test:all      # check, typecheck, test and test:e2e in one go
 ```
+
+### End-to-end tests
+
+`pnpm run test:e2e` starts a local Convex backend (`npx convex dev` against a local deployment), seeds it, builds the frontend against it and drives it in a real browser. Only the LLM provider is replaced: the backend is pointed at a small local server through `LLM_BASE_URL`. Admins sign in without Google by putting a seeded Better Auth session into the browser's storage.
+
+The Convex CLI rewrites `.env.local` when it selects the local deployment, so the suite backs the file up to `e2e-live/.env.local.bak` and restores it afterwards (and on the next run if it was killed). Nothing here touches your dev or production deployments. The first run downloads the Convex local backend binary.
 
 ## Deploying
 

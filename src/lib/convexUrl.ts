@@ -4,7 +4,10 @@ export function resolveConvexUrl(): string {
 	return import.meta.env.VITE_CONVEX_URL ?? PUBLIC_CONVEX_URL;
 }
 
-// Returns the Convex HTTP (.convex.site) URL derived from the deployment URL.
+// Returns the Convex HTTP (.convex.site) URL: VITE_CONVEX_SITE_URL when set (a local deployment serves it from a different port), otherwise derived from the deployment URL.
 export function resolveConvexSiteUrl(): string {
-	return resolveConvexUrl().replace(/\.convex\.cloud$/, ".convex.site");
+	return (
+		import.meta.env.VITE_CONVEX_SITE_URL ||
+		resolveConvexUrl().replace(/\.convex\.cloud$/, ".convex.site")
+	);
 }

@@ -3,6 +3,8 @@ import { flushSync, tick } from "svelte";
 import { toast } from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { goto } from "$app/navigation";
+import { api } from "../../convex/_generated/api.js";
+import type { Id } from "../../convex/_generated/dataModel.js";
 import { STUDENT_ERROR } from "../../convex/lib/studentErrors.js";
 import { session } from "../../src/lib/session.svelte.js";
 import { RunStore } from "../../src/lib/student/run.svelte.js";
@@ -10,74 +12,32 @@ import {
 	clientServerError,
 	clientStudentError,
 } from "../support/convexClientErrors.js";
+import { convexFake, type QueryState } from "../support/convexFake.svelte.js";
 import {
 	makeContact,
 	makeRunState,
 	makeSharedFile,
 	message,
-} from "../support/fixtures.js";
+} from "../support/factories.js";
 
-const mockClientMutation = vi.fn();
-const mockClientQuery = vi.fn();
-type FakeQueryEntry = { data?: unknown; error?: Error };
-const fakeQueryData = new Map<string, FakeQueryEntry>();
-let fakeQueryVersion = $state(0);
+const sendMessage = convexFake.mutation(api.turn.sendMessage);
+const GET_STATE = getFunctionName(api.simulations.get);
+const SEND_MESSAGE = getFunctionName(api.turn.sendMessage);
 
-// Builds the key for a fake query result from its name and arguments.
-function fakeQueryKey(refName: string, args: unknown): string {
-	return `${refName}::${JSON.stringify(args)}`;
-}
+type RunStateQuery = QueryState<typeof api.simulations.get>;
 
-// Sets a fake query result and notifies subscribers.
-function setFakeQuery(
-	refName: string,
-	args: unknown,
-	entry: FakeQueryEntry,
+// Sets the state query for a run. The fixture uses plain string ids, so its data is branded here.
+function setRunQuery(
+	args: { runId: string },
+	entry: { data?: ReturnType<typeof makeRunState>; error?: Error },
 ): void {
-	fakeQueryData.set(fakeQueryKey(refName, args), entry);
-	fakeQueryVersion += 1;
+	convexFake.setQuery(
+		api.simulations.get,
+		args as { runId: Id<"runs"> },
+		entry as RunStateQuery,
+	);
 }
 
-// Clears all fake query results.
-function resetFakeQueries(): void {
-	fakeQueryData.clear();
-	fakeQueryVersion += 1;
-}
-
-const mockUseQuery = vi.fn();
-mockUseQuery.mockImplementation((ref: unknown, argsOrFn: unknown) => ({
-	get data() {
-		void fakeQueryVersion;
-		const args = typeof argsOrFn === "function" ? argsOrFn() : argsOrFn;
-		if (args === "skip") return undefined;
-		// biome-ignore lint/suspicious/noExplicitAny: ref's real type is a branded object convex/server owns
-		return fakeQueryData.get(fakeQueryKey(getFunctionName(ref as any), args))
-			?.data;
-	},
-	get error() {
-		void fakeQueryVersion;
-		const args = typeof argsOrFn === "function" ? argsOrFn() : argsOrFn;
-		if (args === "skip") return undefined;
-		// biome-ignore lint/suspicious/noExplicitAny: ref's real type is a branded object convex/server owns
-		return fakeQueryData.get(fakeQueryKey(getFunctionName(ref as any), args))
-			?.error;
-	},
-	isLoading: false,
-	isStale: false,
-}));
-
-vi.mock("convex-svelte", () => ({
-	getConvexClient: () => ({
-		mutation: mockClientMutation,
-		query: mockClientQuery,
-	}),
-	useQuery: (...args: unknown[]) => mockUseQuery(...args),
-}));
-
-const GET_SIMULATION_STATE = "simulations:get";
-const GET_PERSONA_HISTORY = "simulations:getPersonaHistory";
-
-// Sets the fake chat history, and the state of the latest reply, for a persona.
 // Lets pending reactive effects run, so a "nothing happened" assertion is made after they had the chance to.
 async function settle(): Promise<void> {
 	await tick();
@@ -89,10 +49,15 @@ function setHistory(
 	messages: ReturnType<typeof message>[] = [],
 	reply: { id: string; status: "pending" | "done" | "failed" } | null = null,
 ): void {
-	setFakeQuery(
-		GET_PERSONA_HISTORY,
-		{ runId: "run-1", personaId },
-		{ data: { messages, reply } },
+	convexFake.setQuery(
+		api.simulations.getPersonaHistory,
+		{ runId: "run-1" as Id<"runs">, personaId },
+		{
+			data: {
+				messages,
+				reply: reply && { ...reply, id: reply.id as Id<"runMessages"> },
+			},
+		},
 	);
 }
 
@@ -127,8 +92,7 @@ async function primeRun(
 	overrides: Parameters<typeof makeRunState>[0] = {},
 ) {
 	session.startRun({ runId: "run-1" });
-	setFakeQuery(
-		GET_SIMULATION_STATE,
+	setRunQuery(
 		{ runId: "run-1" },
 		{
 			data: makeRunState({
@@ -143,11 +107,7 @@ async function primeRun(
 
 beforeEach(() => {
 	session.clearRun();
-	mockClientMutation.mockReset();
-	mockClientQuery.mockReset();
-	mockUseQuery.mockClear();
-	resetFakeQueries();
-	mockClientMutation.mockResolvedValue({ replyId: "r1" });
+	sendMessage.mockResolvedValue({ replyId: "r1" as Id<"runMessages"> });
 });
 
 afterEach(() => {
@@ -163,7 +123,7 @@ describe("init", () => {
 		run.init();
 
 		expect(goto).not.toHaveBeenCalled();
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
 	// A simulation that has ended stays ended: with no run to resume the student goes home,
@@ -174,7 +134,7 @@ describe("init", () => {
 		run.init();
 
 		expect(goto).toHaveBeenCalledWith("/");
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(sendMessage).not.toHaveBeenCalled();
 		expect(session.runId).toBe("");
 	});
 });
@@ -198,8 +158,7 @@ describe("which persona is selected", () => {
 		const { run, session } = await freshRun();
 		session.startRun({ runId: "run-1" });
 		session.setActivePersona("bob");
-		setFakeQuery(
-			GET_SIMULATION_STATE,
+		setRunQuery(
 			{ runId: "run-1" },
 			{
 				data: makeRunState({
@@ -217,8 +176,7 @@ describe("which persona is selected", () => {
 		const { run, session } = await freshRun();
 		session.startRun({ runId: "run-1" });
 		session.setActivePersona("gone");
-		setFakeQuery(
-			GET_SIMULATION_STATE,
+		setRunQuery(
 			{ runId: "run-1" },
 			{
 				data: makeRunState({
@@ -257,12 +215,11 @@ describe("session resume / live-query errors", () => {
 		const { session, goto } = await freshRun();
 		session.startRun({ runId: "stale-run" });
 		sessionStorage.setItem(notesKey("stale-run"), "my notes");
-		setFakeQuery(
-			GET_SIMULATION_STATE,
+		setRunQuery(
 			{ runId: "stale-run" },
 			{
 				error: clientStudentError(
-					"simulations:get",
+					GET_STATE,
 					STUDENT_ERROR.RUN_NOT_FOUND,
 					"Run not found.",
 					"Q",
@@ -273,17 +230,16 @@ describe("session resume / live-query errors", () => {
 		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
 		expect(session.runId).toBe("");
 		expect(sessionStorage.getItem(notesKey("stale-run"))).toBeNull();
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
 	// Tests that an unrelated error sets loadError instead of clearing the run.
 	it("a non-expiry error sets loadError instead of clearing the run", async () => {
 		const { run, session, goto } = await freshRun();
 		session.startRun({ runId: "run-1" });
-		setFakeQuery(
-			GET_SIMULATION_STATE,
+		setRunQuery(
 			{ runId: "run-1" },
-			{ error: clientServerError("simulations:get", "Q") },
+			{ error: clientServerError(GET_STATE, "Q") },
 		);
 
 		await vi.waitFor(() =>
@@ -297,12 +253,11 @@ describe("session resume / live-query errors", () => {
 	it("shows a deliberate student error's own message as loadError", async () => {
 		const { run, session, goto } = await freshRun();
 		session.startRun({ runId: "run-1" });
-		setFakeQuery(
-			GET_SIMULATION_STATE,
+		setRunQuery(
 			{ runId: "run-1" },
 			{
 				error: clientStudentError(
-					"simulations:get",
+					GET_STATE,
 					STUDENT_ERROR.CASE_NOT_FOUND,
 					"Case not found.",
 					"Q",
@@ -318,18 +273,13 @@ describe("session resume / live-query errors", () => {
 	it("clears loadError once the live subscription recovers", async () => {
 		const { run, session } = await freshRun();
 		session.startRun({ runId: "run-1" });
-		setFakeQuery(
-			GET_SIMULATION_STATE,
+		setRunQuery(
 			{ runId: "run-1" },
-			{ error: clientServerError("simulations:get", "Q") },
+			{ error: clientServerError(GET_STATE, "Q") },
 		);
 		await vi.waitFor(() => expect(run.loadError).not.toBe(""));
 
-		setFakeQuery(
-			GET_SIMULATION_STATE,
-			{ runId: "run-1" },
-			{ data: makeRunState({ runId: "run-1" }) },
-		);
+		setRunQuery({ runId: "run-1" }, { data: makeRunState({ runId: "run-1" }) });
 
 		await vi.waitFor(() => expect(run.loadError).toBe(""));
 	});
@@ -343,7 +293,7 @@ describe("sendMessage guards", () => {
 		run.activeContactId = null;
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
 	// Tests that sendMessage returns false and sends nothing for an empty or whitespace-only message.
@@ -354,7 +304,7 @@ describe("sendMessage guards", () => {
 
 		expect(run.sendMessage("")).toBe(false);
 		expect(run.sendMessage("   \n\t ")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
 	// Tests that sendMessage returns false and sends nothing when there is no run in the session.
@@ -365,7 +315,7 @@ describe("sendMessage guards", () => {
 		session.clearRun();
 
 		expect(run.sendMessage("hello")).toBe(false);
-		expect(mockClientMutation).not.toHaveBeenCalled();
+		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
 	// Tests that a reply in flight for one contact does not block messaging another contact.
@@ -381,7 +331,7 @@ describe("sendMessage guards", () => {
 		run.activeContactId = "bob";
 		expect(run.isSending).toBe(false);
 		expect(run.sendMessage("second")).toBe(true);
-		expect(mockClientMutation).toHaveBeenCalledTimes(1);
+		expect(sendMessage).toHaveBeenCalledTimes(1);
 	});
 
 	// Tests that an accepted message returns true and is sent through the sendMessage mutation.
@@ -392,12 +342,7 @@ describe("sendMessage guards", () => {
 
 		expect(run.sendMessage("hello")).toBe(true);
 
-		const [ref, args] = mockClientMutation.mock.calls[0] as [
-			Parameters<typeof getFunctionName>[0],
-			unknown,
-		];
-		expect(getFunctionName(ref)).toBe("turn:sendMessage");
-		expect(args).toEqual({
+		expect(sendMessage).toHaveBeenCalledWith({
 			runId: "run-1",
 			personaId: "mary",
 			message: "hello",
@@ -472,9 +417,9 @@ describe("sendMessage lifecycle", () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockRejectedValue(
+		sendMessage.mockRejectedValue(
 			clientStudentError(
-				"turn:sendMessage",
+				SEND_MESSAGE,
 				STUDENT_ERROR.CONVERSATION_ENDED,
 				"This conversation has ended.",
 			),
@@ -495,9 +440,9 @@ describe("sendMessage lifecycle", () => {
 		const { run, session, goto, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockRejectedValue(
+		sendMessage.mockRejectedValue(
 			clientStudentError(
-				"turn:sendMessage",
+				SEND_MESSAGE,
 				STUDENT_ERROR.RUN_EXPIRED,
 				"Run expired.",
 			),
@@ -512,13 +457,13 @@ describe("sendMessage lifecycle", () => {
 
 	// Tests that a real server error or a network failure shows a generic toast.
 	it.each([
-		["a server error", () => clientServerError("turn:sendMessage")],
+		["a server error", () => clientServerError(SEND_MESSAGE)],
 		["a network failure", () => new TypeError("Failed to fetch")],
 	])("shows a generic toast after %s", async (_name, makeError) => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockRejectedValue(makeError());
+		sendMessage.mockRejectedValue(makeError());
 
 		run.sendMessage("hello");
 
@@ -588,7 +533,7 @@ describe("failed and stuck replies", () => {
 		run.activeContactId = "mary";
 
 		run.sendMessage("hello again");
-		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
+		await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
 		await settle();
 
 		expect(toast).not.toHaveBeenCalled();
@@ -625,7 +570,7 @@ describe("failed and stuck replies", () => {
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 
 		expect(run.sendMessage("hello again")).toBe(true);
-		expect(mockClientMutation).toHaveBeenCalledTimes(2);
+		expect(sendMessage).toHaveBeenCalledTimes(2);
 	});
 
 	// Tests that a failure on another persona neither unlocks nor toasts for the persona being viewed.
@@ -658,7 +603,7 @@ describe("failed and stuck replies", () => {
 		setHistory("mary", []);
 		run.activeContactId = "mary";
 		run.sendMessage("hello");
-		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
+		await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
 		setHistory("mary", [message("user", "hello")], {
 			id: "r1",
 			status: "pending",
@@ -680,9 +625,9 @@ describe("failed and stuck replies", () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		run.activeContactId = "mary";
-		mockClientMutation.mockRejectedValue(
+		sendMessage.mockRejectedValue(
 			clientStudentError(
-				"turn:sendMessage",
+				SEND_MESSAGE,
 				STUDENT_ERROR.REPLY_IN_PROGRESS,
 				"Please wait for the current reply to finish.",
 			),
@@ -709,8 +654,7 @@ describe("notification diffing (#diffAndNotify, observed via the live query)", (
 
 		const bob = makeContact({ id: "bob", name: "Bob", role: "Analyst" });
 		const newFile = makeSharedFile({ fileId: "9", fileName: "new.pdf" });
-		setFakeQuery(
-			GET_SIMULATION_STATE,
+		setRunQuery(
 			{ runId: "run-1" },
 			{
 				data: makeRunState({
@@ -830,12 +774,11 @@ describe("a run that expires while a message is in flight", () => {
 		expect(run.sendMessage("are you there?")).toBe(true);
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
-		setFakeQuery(
-			GET_SIMULATION_STATE,
+		setRunQuery(
 			{ runId: "run-1" },
 			{
 				error: clientStudentError(
-					"simulations:get",
+					GET_STATE,
 					STUDENT_ERROR.RUN_NOT_FOUND,
 					"Run not found.",
 					"Q",
@@ -845,7 +788,7 @@ describe("a run that expires while a message is in flight", () => {
 
 		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
 		expect(session.runId).toBe("");
-		expect(mockClientMutation).toHaveBeenCalledTimes(1);
+		expect(sendMessage).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -901,12 +844,11 @@ describe("run-level time expiry", () => {
 			expect(run.timeExpired).toBe(true);
 			expect(goto).not.toHaveBeenCalled();
 
-			setFakeQuery(
-				GET_SIMULATION_STATE,
+			setRunQuery(
 				{ runId: "run-1" },
 				{
 					error: clientStudentError(
-						"simulations:get",
+						GET_STATE,
 						STUDENT_ERROR.RUN_NOT_FOUND,
 						"Run not found.",
 						"Q",
@@ -916,7 +858,7 @@ describe("run-level time expiry", () => {
 
 			await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
 			expect(session.runId).toBe("");
-			expect(mockClientMutation).not.toHaveBeenCalled();
+			expect(sendMessage).not.toHaveBeenCalled();
 		} finally {
 			vi.useRealTimers();
 		}
@@ -932,7 +874,7 @@ describe("hostile and degenerate client-side send guards", () => {
 
 		expect(run.sendMessage(typed)).toBe(true);
 
-		expect(mockClientMutation.mock.calls[0]?.[1]).toEqual({
+		expect(sendMessage.mock.calls[0]?.[0]).toEqual({
 			runId: "run-1",
 			personaId: "mary",
 			message: typed.trim(),

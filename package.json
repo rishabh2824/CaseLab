@@ -21,7 +21,7 @@
 		"typecheck": "tsc --noEmit -p convex/tsconfig.json",
 		"test": "vitest run",
 		"test:watch": "vitest",
-		"test:e2e": "playwright install && playwright test",
+		"test:e2e": "playwright install chromium && playwright test -c playwright.live.config.ts",
 		"test:all": "pnpm run check && pnpm run typecheck && pnpm run test && pnpm run test:e2e",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write .",

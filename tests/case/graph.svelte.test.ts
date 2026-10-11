@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CaseGraph } from "../../src/lib/case/graph.svelte.js";
-import { makePersona, makeReferral } from "../support/fixtures.js";
+import { makePersona, makeReferral } from "../support/factories.js";
 
 // Builds a graph where one persona is referred by two parents, forming a diamond.
 function diamondGraph(): CaseGraph {

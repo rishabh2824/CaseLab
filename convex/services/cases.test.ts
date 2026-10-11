@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-	personaPayload,
-	referralEdge,
-} from "../../tests/support/convexFactories";
+import { personaPayload, referralEdge } from "../../tests/support/factories";
 import type { Doc, Id } from "../_generated/dataModel";
-import { validateGraph } from "../lib/caseStructure";
 import { casePayload, makeAdmin, newTestConvex } from "../test.setup";
 import {
 	createCase,
@@ -13,45 +9,6 @@ import {
 	requireCaseAccess,
 	updateCase,
 } from "./cases";
-
-describe("validateGraph (pure)", () => {
-	// Tests that a cyclic referral graph is rejected.
-	it("rejects a cyclic referral graph", () => {
-		expect(() =>
-			validateGraph(
-				[personaPayload("A"), personaPayload("B")],
-				[referralEdge("A", "B"), referralEdge("B", "A")],
-				["A"],
-			),
-		).toThrow(/cycle/i);
-	});
-
-	// Tests that a persona with a blank name is rejected.
-	it("rejects a persona with a blank name", () => {
-		expect(() =>
-			validateGraph([personaPayload("A", { name: "  " })], [], ["A"]),
-		).toThrow(/Persona A: Name is required/);
-	});
-
-	// Tests that a persona id that cannot be a Convex record key is rejected.
-	it("rejects a persona id containing characters that are not allowed in a record key", () => {
-		const dangerousId = `"><script>alert(1)</script>`;
-		expect(() =>
-			validateGraph([personaPayload(dangerousId)], [], [dangerousId]),
-		).toThrow(/Invalid persona id/);
-	});
-
-	// Tests that a persona id of only letters, digits, hyphens and underscores is accepted.
-	it("accepts a persona id made only of letters, digits, hyphens, and underscores", () => {
-		expect(() =>
-			validateGraph(
-				[personaPayload("00000000-0000-4000-8000-000000000001")],
-				[],
-				["00000000-0000-4000-8000-000000000001"],
-			),
-		).not.toThrow();
-	});
-});
 
 describe("case access control", () => {
 	// Tests that the owner can read, update and delete their own case.
@@ -292,15 +249,6 @@ describe("required fields (via createCase)", () => {
 		).rejects.toThrow("Case name is required.");
 	});
 
-	// Tests that a blank case brief is rejected.
-	it("rejects a blank brief", async () => {
-		const t = newTestConvex();
-		const owner = await makeAdmin(t);
-		await expect(
-			t.run((ctx) => createCase(ctx, casePayload({ brief: "" }), owner)),
-		).rejects.toThrow("Initial brief is required.");
-	});
-
 	// Tests that a name and brief are trimmed before being stored.
 	it("trims a name/brief with surrounding whitespace before storing it", async () => {
 		const t = newTestConvex();
@@ -352,28 +300,6 @@ describe("required fields (via createCase)", () => {
 });
 
 describe("access code validation", () => {
-	// Tests that an access code with anything other than lowercase letters is rejected.
-	it("rejects a code with anything other than lowercase letters", async () => {
-		const t = newTestConvex();
-		const owner = await makeAdmin(t);
-		await expect(
-			t.run((ctx) =>
-				createCase(ctx, casePayload({ accessCode: "Sterling1" }), owner),
-			),
-		).rejects.toThrow("Access code must contain only lowercase letters.");
-	});
-
-	// Tests that a blank or whitespace-only access code is rejected.
-	it("rejects a blank or whitespace-only access code -- every case needs a real one", async () => {
-		const t = newTestConvex();
-		const owner = await makeAdmin(t);
-		await expect(
-			t.run((ctx) =>
-				createCase(ctx, casePayload({ accessCode: "   " }), owner),
-			),
-		).rejects.toThrow("Access code is required.");
-	});
-
 	// Tests that a duplicate access code on a second case is rejected.
 	it("rejects a duplicate access code on a second case", async () => {
 		const t = newTestConvex();

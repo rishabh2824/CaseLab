@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/svelte";
 import { afterAll, afterEach, beforeAll, vi } from "vitest";
+import { convexFake } from "./convexFake.svelte.js";
 import { server } from "./msw.js";
 
 // SvelteKit's generated dev env module reads this global, which only exists in a running app.
@@ -12,6 +13,12 @@ vi.mock("$app/navigation", () => ({
 	beforeNavigate: vi.fn(),
 	afterNavigate: vi.fn(),
 }));
+
+// Every component test talks to this one typed fake instead of its own hand-written mock.
+vi.mock("convex-svelte", async () => {
+	const { convexSvelteModule } = await import("./convexFake.svelte.js");
+	return convexSvelteModule;
+});
 
 vi.mock("svelte-sonner", () => {
 	const toast = Object.assign(vi.fn(), {
@@ -38,6 +45,7 @@ URL.revokeObjectURL = vi.fn();
 beforeAll(() => server.listen({ onUnhandledFrame: "error" }));
 afterEach(() => {
 	cleanup();
+	convexFake.reset();
 	document.body.style.pointerEvents = "";
 	server.resetHandlers();
 	sessionStorage.clear();

@@ -1,27 +1,12 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import adapter from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vitest/config";
 
-const dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const isE2E = process.env.E2E === "true";
-// The E2E mock build must not overwrite build/, the folder that gets deployed.
+// The live end-to-end build must not overwrite build/, the folder that gets deployed.
 const buildDir = process.env.BUILD_DIR ?? "build";
 
 export default defineConfig({
-	resolve: isE2E
-		? {
-				alias: {
-					"convex-svelte": path.resolve(
-						dirname,
-						"e2e/support/convexMock.svelte.ts",
-					),
-				},
-			}
-		: undefined,
 	optimizeDeps: {
 		include: [
 			"convex-svelte",

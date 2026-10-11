@@ -4,7 +4,7 @@ import {
 	CaseImportError,
 	parseHTMLForm,
 } from "../../src/lib/case/importCase.js";
-import { makePersona, makeReferral } from "../support/fixtures.js";
+import { makePersona, makeReferral } from "../support/factories.js";
 
 // Serializes a Document back into an HTML string.
 function serialize(doc: Document): string {

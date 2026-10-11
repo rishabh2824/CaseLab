@@ -3,7 +3,7 @@ import {
 	CaseDraft,
 	type LoadableCase,
 } from "../../src/lib/case/caseDraft.svelte.js";
-import { makePersonaPayload } from "../support/fixtures.js";
+import { makePersonaPayload } from "../support/factories.js";
 
 // Builds a case as the server returns it for editing, with one root persona.
 function loadable(overrides: Partial<LoadableCase> = {}): LoadableCase {
