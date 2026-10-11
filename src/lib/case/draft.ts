@@ -32,12 +32,6 @@ export const createEmptyReferral = (
 	...overrides,
 });
 
-// Returns whether an admin may be chosen as a collaborator: not a super admin and not the effective owner.
-export const isSelectableCollaborator = (
-	admin: { _id: string; role: string },
-	effectiveOwnerId: string | null,
-): boolean => admin.role !== "super" && admin._id !== effectiveOwnerId;
-
 // Returns the persona's trimmed name, or the fallback when the name is blank.
 export const getPersonaLabel = (
 	persona: { name: string },

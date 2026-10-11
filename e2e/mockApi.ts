@@ -1,4 +1,7 @@
 import type { Page } from "@playwright/test";
+import type { FunctionReturnType } from "convex/server";
+import type { api } from "../convex/_generated/api.js";
+import type { Id } from "../convex/_generated/dataModel.js";
 import type { StudentErrorCode } from "../convex/lib/studentErrors.js";
 import type { AdminRole, Persona, ReferralEdge } from "../src/lib/types.js";
 import {
@@ -138,8 +141,14 @@ export async function signInAsAdmin(
 		email = "admin@wisc.edu",
 	}: { role?: AdminRole; email?: string } = {},
 ): Promise<void> {
+	const viewer = {
+		_id: "admin1" as Id<"admins">,
+		email,
+		name: undefined,
+		role,
+	} satisfies NonNullable<FunctionReturnType<typeof api.admins.viewer>>;
 	await page.addInitScript(
-		([adminRole, adminEmail]) => {
+		([adminRole, adminEmail, viewerData]) => {
 			sessionStorage.setItem(
 				"caseLabSession",
 				JSON.stringify({
@@ -162,17 +171,33 @@ export async function signInAsAdmin(
 				{
 					name: "admins:viewer",
 					args: {},
-					data: { email: adminEmail, role: adminRole },
+					data: viewerData,
 				},
 			];
 		},
-		[role, email] as const,
+		[role, email, viewer] as const,
 	);
 }
 
 // Builds a mock contact defaulting to Mary, the CFO.
 export const contact = (overrides: Parameters<typeof makeContact>[0] = {}) =>
 	makeContact({ id: "mary", role: "Chief Financial Officer", ...overrides });
+
+// Builds the result of simulations:start, typed against the real mutation so a signature change fails type-checking.
+export const startResult = (
+	runId = "testrun123",
+): FunctionReturnType<typeof api.simulations.start> => ({
+	runId: runId as Id<"runs">,
+});
+
+// Builds the seed for the simulations:get query of the default run.
+export const runStateSeed = (
+	data: ReturnType<typeof runState> = runState(),
+): QuerySeed => ({
+	name: "simulations:get",
+	args: { runId: data.runId },
+	data,
+});
 
 // Builds a mock run state with a default run id and one contact.
 export const runState = (overrides: Parameters<typeof makeRunState>[0] = {}) =>

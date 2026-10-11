@@ -9,8 +9,9 @@ import {
 	mutation,
 	type QueryCtx,
 } from "./_generated/server";
-import { MAX_MESSAGE_WORDS } from "./lib/constants";
+import { MAX_MESSAGE_CHARS, MAX_MESSAGE_WORDS } from "./lib/constants";
 import { LLM_ATTEMPT_TIMEOUT_MS, PERSONA_REPLY_RETRIES } from "./lib/llm";
+import { countWords } from "./lib/messageRules";
 import { STUDENT_ERROR, studentError } from "./lib/studentErrors";
 import {
 	boundaryReply,
@@ -76,10 +77,16 @@ export const sendMessage = mutation({
 				STUDENT_ERROR.MESSAGE_REQUIRED,
 				"personaId and message are required.",
 			);
-		if (message.split(/\s+/).filter(Boolean).length > MAX_MESSAGE_WORDS) {
+		if (countWords(message) > MAX_MESSAGE_WORDS) {
 			throw studentError(
 				STUDENT_ERROR.MESSAGE_TOO_LONG,
 				`Message is too long (${MAX_MESSAGE_WORDS} words max). Please shorten it and try again.`,
+			);
+		}
+		if (message.length > MAX_MESSAGE_CHARS) {
+			throw studentError(
+				STUDENT_ERROR.MESSAGE_TOO_LONG,
+				`Message is too long (${MAX_MESSAGE_CHARS} characters max). Please shorten it and try again.`,
 			);
 		}
 
@@ -183,6 +190,8 @@ export const reply = internalAction({
 		try {
 			const job = await ctx.runQuery(internal.turn.turnContext, { replyId });
 			if (job) await generateReply(ctx, job);
+			// Nothing to generate (for example the persona was removed mid-reply): fail the turn now rather than leave it pending until the expiry. A no-op if it already finished.
+			else await ctx.runMutation(internal.turn.failTurn, { replyId });
 		} catch (err) {
 			console.error("Reply failed", err);
 			await ctx.runMutation(internal.turn.failTurn, { replyId });

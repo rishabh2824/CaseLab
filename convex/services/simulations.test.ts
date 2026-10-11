@@ -4,7 +4,7 @@ import {
 	personaPayload,
 	referralEdge,
 } from "../../tests/support/convexFactories";
-import { api, internal } from "../_generated/api";
+import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { STUDENT_ERROR } from "../lib/studentErrors";
 import type { CaseStructure } from "../models/cases";
@@ -235,25 +235,6 @@ async function startRun(
 }
 
 describe("getSimulationState", () => {
-	// Tests that a read does not look at the clock: ending a run is the scheduled destroy's job, and its deletion is what tells the client.
-	it("still reads a run past its expiry until the scheduled destroy deletes it", async () => {
-		const t = newTestConvex();
-		const state = await startRun(t, caseStructure());
-		await t.run((ctx) =>
-			ctx.db.patch(state.runId, { expiresAt: Date.now() - 1_000 }),
-		);
-
-		await expect(
-			t.query(api.simulations.get, { runId: state.runId }),
-		).resolves.toMatchObject({ runId: state.runId });
-		await t.mutation(internal.simulations.destroy, { runId: state.runId });
-		expect(
-			await studentRejection(
-				t.query(api.simulations.get, { runId: state.runId }),
-			),
-		).toMatchObject({ code: STUDENT_ERROR.RUN_NOT_FOUND });
-	});
-
 	// Tests that an unlocked referred persona is included, available from its unlock minute.
 	it("includes an unlocked referred persona, available from its unlock minute", async () => {
 		const t = newTestConvex();
@@ -360,25 +341,5 @@ describe("exportSimulation with unfinished replies", () => {
 			"first",
 			"first reply",
 		]);
-	});
-});
-
-describe("deleteRunCascade", () => {
-	// Tests that destroying a run also deletes its messages, including a pending reply.
-	it("deletes the run's messages, pending reply included, along with the run itself", async () => {
-		const t = newTestConvex();
-		const state = await startRun(t, caseStructure());
-		await insertPendingReply(t, state.runId, "A", "hi");
-
-		await t.mutation(internal.simulations.destroy, { runId: state.runId });
-
-		expect(await t.run((ctx) => ctx.db.get(state.runId))).toBeNull();
-		const messages = await t.run((ctx) =>
-			ctx.db
-				.query("runMessages")
-				.withIndex("by_run_persona", (q) => q.eq("runId", state.runId))
-				.collect(),
-		);
-		expect(messages).toHaveLength(0);
 	});
 });

@@ -88,67 +88,39 @@ describe("buildHTMLForm", () => {
 	describe("HTML escaping", () => {
 		const dangerous = `<script>alert("xss")</script> & Tom's "quote"`;
 
-		// Tests that a dangerous case name round-trips as text without injecting a script.
-		it("round-trips a dangerous case name as text, injecting no extra <script>", () => {
-			const doc = parseForm(
-				buildHTMLForm({
-					caseName: dangerous,
-					accessCode: "ABC",
-					simulationDurationMinutes: null,
-					initialBrief: "Brief",
-					commonInformation: "",
-				}),
-			);
-			const field = doc.querySelector(
-				'[data-field="case_name"]',
-			) as HTMLTextAreaElement;
-			expect(field.value.trim()).toBe(dangerous);
-			expect(doc.querySelectorAll("script")).toHaveLength(1);
-		});
-
-		// Tests that a dangerous persona name round-trips as text without injecting a script.
-		it("round-trips a dangerous persona name as text, injecting no extra <script>", () => {
-			const persona = makePersona({ name: dangerous });
-			const doc = parseForm(
-				buildHTMLForm({
-					caseName: "Case",
-					accessCode: "ABC",
-					simulationDurationMinutes: null,
-					initialBrief: "Brief",
-					commonInformation: "",
-					personas: [persona],
-					referrals: [],
-					roots: [persona.id],
-				}),
-			);
-			const field = doc.querySelector(
-				`[data-persona-id="${persona.id}"] [data-field="name"]`,
-			) as HTMLTextAreaElement;
-			expect(field.value.trim()).toBe(dangerous);
-			expect(doc.querySelectorAll("script")).toHaveLength(1);
-		});
-
-		// Tests that a dangerous known-facts value round-trips as text without injecting a script.
-		it("round-trips a dangerous known-facts value as text, injecting no extra <script>", () => {
-			const persona = makePersona({ knownFacts: dangerous });
-			const doc = parseForm(
-				buildHTMLForm({
-					caseName: "Case",
-					accessCode: "ABC",
-					simulationDurationMinutes: null,
-					initialBrief: "Brief",
-					commonInformation: "",
-					personas: [persona],
-					referrals: [],
-					roots: [persona.id],
-				}),
-			);
-			const field = doc.querySelector(
-				`[data-persona-id="${persona.id}"] [data-field="known_facts"]`,
-			) as HTMLTextAreaElement;
-			expect(field.value.trim()).toBe(dangerous);
-			expect(doc.querySelectorAll("script")).toHaveLength(1);
-		});
+		// Tests that a dangerous value round-trips as text without injecting a script.
+		it.each([
+			{ label: "case name", field: "case_name", persona: null },
+			{ label: "persona name", field: "name", persona: { name: dangerous } },
+			{
+				label: "known-facts value",
+				field: "known_facts",
+				persona: { knownFacts: dangerous },
+			},
+		])(
+			"round-trips a dangerous $label as text, injecting no extra <script>",
+			({ field, persona: personaOverrides }) => {
+				const persona = makePersona(personaOverrides ?? {});
+				const doc = parseForm(
+					buildHTMLForm({
+						caseName: personaOverrides ? "Case" : dangerous,
+						accessCode: "ABC",
+						simulationDurationMinutes: null,
+						initialBrief: "Brief",
+						commonInformation: "",
+						personas: [persona],
+						referrals: [],
+						roots: [persona.id],
+					}),
+				);
+				const selector = personaOverrides
+					? `[data-persona-id="${persona.id}"] [data-field="${field}"]`
+					: `[data-field="${field}"]`;
+				const element = doc.querySelector(selector) as HTMLTextAreaElement;
+				expect(element.value.trim()).toBe(dangerous);
+				expect(doc.querySelectorAll("script")).toHaveLength(1);
+			},
+		);
 
 		// Tests that a quote in a persona id cannot break out of the data-persona-id attribute.
 		it("escapes a quote in a persona id so it can't break out of the data-persona-id attribute", () => {

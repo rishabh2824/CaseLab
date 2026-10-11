@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { personaPayload } from "../../tests/support/convexFactories";
 import type { PersonaPayload } from "../models/cases";
-import {
-	systemPrompt as buildSystemPrompt,
-	cleanReply,
-	coerceHandles,
-	parseReply,
-} from "./prompt";
+import { systemPrompt as buildSystemPrompt, cleanReply } from "./prompt";
 
 // Calls the real system prompt builder and joins its stable and dynamic parts into one string.
 function systemPrompt(...args: Parameters<typeof buildSystemPrompt>): string {
@@ -292,65 +287,11 @@ describe("systemPrompt", () => {
 				],
 				[],
 			);
-			expect(prompt).toContain("[undisclosed contact]");
+			expect(prompt).toContain(
+				"Persona information: [undisclosed contact] handles all complaint escalations.",
+			);
+			expect(prompt.match(/\[undisclosed contact\]/g)).toHaveLength(1);
 		});
-	});
-});
-
-describe("parseReply", () => {
-	// Tests that parseReply parses a clean JSON object.
-	it("parses a clean JSON object", () => {
-		const raw = '{"reply": "Hi there.", "introduce": ["R1"], "sendFiles": []}';
-		expect(parseReply(raw)).toEqual({
-			reply: "Hi there.",
-			introduce: ["R1"],
-			sendFiles: [],
-		});
-	});
-
-	// Tests that parseReply returns null for empty or missing input.
-	it("returns null for empty or missing input", () => {
-		expect(parseReply("")).toBeNull();
-		expect(parseReply(undefined)).toBeNull();
-		expect(parseReply(null)).toBeNull();
-	});
-
-	// Tests that parseReply returns null for unparseable text.
-	it("returns null for unparseable text", () => {
-		expect(parseReply("not json at all")).toBeNull();
-	});
-
-	// Tests that parseReply returns null for a JSON array.
-	it("returns null for a JSON array (not an object)", () => {
-		expect(parseReply("[1, 2, 3]")).toBeNull();
-	});
-});
-
-describe("coerceHandles", () => {
-	// Tests that coerceHandles upper-cases and strips entries.
-	it("upper-cases and strips entries", () => {
-		expect(coerceHandles(["r1", " R2 "])).toEqual(["R1", "R2"]);
-	});
-
-	// Tests that coerceHandles drops whitespace-only entries.
-	it("drops whitespace-only entries", () => {
-		expect(coerceHandles(["   ", "r1"])).toEqual(["R1"]);
-	});
-
-	// Tests that coerceHandles treats a bare string as a single-item list.
-	it("treats a bare string as a single-item list", () => {
-		expect(coerceHandles("R1")).toEqual(["R1"]);
-	});
-
-	// Tests that coerceHandles returns an empty list for non-list, non-string input.
-	it("returns empty for non-list, non-string input", () => {
-		expect(coerceHandles(5)).toEqual([]);
-		expect(coerceHandles(null)).toEqual([]);
-	});
-
-	// Tests that coerceHandles skips items that are neither strings nor numbers.
-	it("skips items that are neither strings nor numbers", () => {
-		expect(coerceHandles(["R1", null, ["nested"], 2])).toEqual(["R1", "2"]);
 	});
 });
 

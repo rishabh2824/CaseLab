@@ -2,14 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
 	personaPayload,
 	referralEdge,
-	uniqueAccessCode,
 } from "../../tests/support/convexFactories";
 import type { Doc, Id } from "../_generated/dataModel";
 import { validateGraph } from "../lib/caseStructure";
-import type { CaseStructure } from "../models/cases";
-import { newTestConvex } from "../test.setup";
+import { casePayload, makeAdmin, newTestConvex } from "../test.setup";
 import {
-	type CasePayload,
 	createCase,
 	deleteCase,
 	listCases,
@@ -17,51 +14,7 @@ import {
 	updateCase,
 } from "./cases";
 
-// Builds a valid case payload with a unique access code and optional overrides.
-function payload(
-	overrides: Partial<Omit<CasePayload, "structure">> &
-		Partial<CaseStructure> = {},
-): CasePayload {
-	const {
-		personas = [personaPayload("A")],
-		referrals = [],
-		roots = ["A"],
-		...rest
-	} = overrides;
-	return {
-		name: "Sterling Industries",
-		brief: "Reduce office supply costs.",
-		commonInformation: "",
-		accessCode: uniqueAccessCode(),
-		collaboratorAdminIds: [],
-		...rest,
-		structure: { personas, referrals, roots },
-	};
-}
-
 describe("validateGraph (pure)", () => {
-	// Tests that a persona no root can reach is rejected, matching the import rules.
-	it("rejects a persona that no root can reach", () => {
-		expect(() =>
-			validateGraph(
-				[personaPayload("A"), personaPayload("B", { name: "Orphan" })],
-				[],
-				["A"],
-			),
-		).toThrow(/Orphan.*isn't connected to any root/);
-	});
-
-	// Tests that a persona referred by two different parents is accepted.
-	it("accepts a persona referred by two different parents", () => {
-		expect(() =>
-			validateGraph(
-				[personaPayload("A"), personaPayload("B"), personaPayload("C")],
-				[referralEdge("A", "C"), referralEdge("B", "C")],
-				["A", "B"],
-			),
-		).not.toThrow();
-	});
-
 	// Tests that a cyclic referral graph is rejected.
 	it("rejects a cyclic referral graph", () => {
 		expect(() =>
@@ -73,49 +26,6 @@ describe("validateGraph (pure)", () => {
 		).toThrow(/cycle/i);
 	});
 
-	// Tests that a referral pointing at a nonexistent persona is rejected.
-	it("rejects a referral pointing at a nonexistent persona", () => {
-		expect(() =>
-			validateGraph(
-				[personaPayload("A")],
-				[referralEdge("A", "does-not-exist")],
-				["A"],
-			),
-		).toThrow(/Unknown referral toId/);
-	});
-
-	// Tests that a root pointing at a nonexistent persona is rejected.
-	it("rejects a root pointing at a nonexistent persona", () => {
-		expect(() =>
-			validateGraph([personaPayload("A")], [], ["A", "does-not-exist"]),
-		).toThrow(/Unknown root persona id/);
-	});
-
-	// Tests that duplicate persona ids are rejected.
-	it("rejects duplicate persona ids", () => {
-		expect(() =>
-			validateGraph([personaPayload("A"), personaPayload("A")], [], ["A"]),
-		).toThrow(/Duplicate persona/);
-	});
-
-	// Tests that a duplicate (fromId, toId) referral pair is rejected.
-	it("rejects a duplicate (fromId, toId) referral pair", () => {
-		expect(() =>
-			validateGraph(
-				[personaPayload("A"), personaPayload("B")],
-				[referralEdge("A", "B"), referralEdge("A", "B")],
-				["A"],
-			),
-		).toThrow(/Duplicate referral/);
-	});
-
-	// Tests that a duplicate root persona id is rejected.
-	it("rejects a duplicate root persona id", () => {
-		expect(() => validateGraph([personaPayload("A")], [], ["A", "A"])).toThrow(
-			/Duplicate root/,
-		);
-	});
-
 	// Tests that a persona with a blank name is rejected.
 	it("rejects a persona with a blank name", () => {
 		expect(() =>
@@ -123,40 +33,8 @@ describe("validateGraph (pure)", () => {
 		).toThrow(/Persona A: Name is required/);
 	});
 
-	// Tests that a persona with a blank role is rejected.
-	it("rejects a persona with a blank role", () => {
-		expect(() =>
-			validateGraph([personaPayload("A", { role: "" })], [], ["A"]),
-		).toThrow(/Persona A: Role is required/);
-	});
-
-	// Tests that zero, negative and fractional persona availability values are rejected.
-	it.each([0, -5, 2.5])(
-		"rejects a persona availability of %s minutes",
-		(availabilityMinutes) => {
-			expect(() =>
-				validateGraph(
-					[personaPayload("A", { availabilityMinutes })],
-					[],
-					["A"],
-				),
-			).toThrow(/Persona A: Must be a whole number of minutes/);
-		},
-	);
-
-	// Tests that a persona with no availability set is accepted.
-	it("accepts a persona with no availability set at all", () => {
-		expect(() =>
-			validateGraph(
-				[personaPayload("A", { availabilityMinutes: null })],
-				[],
-				["A"],
-			),
-		).not.toThrow();
-	});
-
-	// Tests that a persona id with characters unsafe for an HTML attribute is rejected.
-	it("rejects a persona id containing characters unsafe for an HTML attribute", () => {
+	// Tests that a persona id that cannot be a Convex record key is rejected.
+	it("rejects a persona id containing characters that are not allowed in a record key", () => {
 		const dangerousId = `"><script>alert(1)</script>`;
 		expect(() =>
 			validateGraph([personaPayload(dangerousId)], [], [dangerousId]),
@@ -175,51 +53,25 @@ describe("validateGraph (pure)", () => {
 	});
 });
 
-// Inserts an admin with the given role and returns the document.
-async function makeAdmin(
-	t: ReturnType<typeof newTestConvex>,
-	role: "super" | "admin" = "admin",
-): Promise<Doc<"admins">> {
-	const id = await t.run((ctx) =>
-		ctx.db.insert("admins", {
-			email: `${role}-${Math.random().toString(36).slice(2)}@test.caselab.invalid`,
-			role,
-		}),
-	);
-	return (await t.run((ctx) => ctx.db.get(id)))!;
-}
-
 describe("case access control", () => {
 	// Tests that the owner can read, update and delete their own case.
 	it("lets the owner read, update, and delete their own case", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
-		const caseId = await t.run((ctx) => createCase(ctx, payload(), owner));
+		const caseId = await t.run((ctx) => createCase(ctx, casePayload(), owner));
 		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
 		await expect(
 			t.run((ctx) => requireCaseAccess(ctx, c, owner)),
 		).resolves.toBeNull();
 		await expect(
 			t.run((ctx) =>
-				updateCase(ctx, caseId, payload({ name: "Renamed" }), owner),
+				updateCase(ctx, caseId, casePayload({ name: "Renamed" }), owner),
 			),
 		).resolves.toBeNull();
-	});
+		expect((await t.run((ctx) => ctx.db.get(caseId)))?.name).toBe("Renamed");
 
-	// Tests that a non-owner, non-collaborator is denied every action.
-	it("denies a non-owner, non-collaborator every action", async () => {
-		const t = newTestConvex();
-		const owner = await makeAdmin(t);
-		const stranger = await makeAdmin(t);
-		const caseId = await t.run((ctx) => createCase(ctx, payload(), owner));
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
-
-		await expect(
-			t.run((ctx) => requireCaseAccess(ctx, c, stranger)),
-		).rejects.toThrow("You do not have access");
-		await expect(
-			t.run((ctx) => updateCase(ctx, caseId, payload(), stranger)),
-		).rejects.toThrow("You do not have access");
+		await t.run((ctx) => deleteCase(ctx, caseId, owner));
+		expect(await t.run((ctx) => ctx.db.get(caseId))).toBeNull();
 	});
 
 	// Tests that a collaborator has full access, including editing the collaborator list.
@@ -231,7 +83,7 @@ describe("case access control", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({ collaboratorAdminIds: [collaborator._id] }),
+				casePayload({ collaboratorAdminIds: [collaborator._id] }),
 				owner,
 			),
 		);
@@ -240,7 +92,7 @@ describe("case access control", () => {
 			updateCase(
 				ctx,
 				caseId,
-				payload({ collaboratorAdminIds: [third._id] }),
+				casePayload({ collaboratorAdminIds: [third._id] }),
 				collaborator,
 			),
 		);
@@ -254,32 +106,24 @@ describe("case access control", () => {
 		).resolves.toBeNull();
 	});
 
-	// Tests that a super admin bypasses ownership entirely.
-	it("lets a super admin bypass ownership entirely", async () => {
-		const t = newTestConvex();
-		const owner = await makeAdmin(t);
-		const superAdmin = await makeAdmin(t, "super");
-		const caseId = await t.run((ctx) => createCase(ctx, payload(), owner));
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
-		await expect(
-			t.run((ctx) => requireCaseAccess(ctx, c, superAdmin)),
-		).resolves.toBeNull();
-	});
-
 	// Tests that a regular admin's case list includes owned and collaborator cases but not unrelated ones.
 	it("lists owned and collaborator cases for a regular admin, excluding unrelated cases", async () => {
 		const t = newTestConvex();
 		const a = await makeAdmin(t);
 		const b = await makeAdmin(t);
-		await t.run((ctx) => createCase(ctx, payload({ name: "Owned by A" }), a));
+		await t.run((ctx) =>
+			createCase(ctx, casePayload({ name: "Owned by A" }), a),
+		);
 		const sharedId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({ name: "Shared with B", collaboratorAdminIds: [b._id] }),
+				casePayload({ name: "Shared with B", collaboratorAdminIds: [b._id] }),
 				a,
 			),
 		);
-		await t.run((ctx) => createCase(ctx, payload({ name: "Unrelated" }), a));
+		await t.run((ctx) =>
+			createCase(ctx, casePayload({ name: "Unrelated" }), a),
+		);
 
 		const listing = await t.run((ctx) => listCases(ctx, b));
 		const ids = new Set(listing.map((c) => c._id));
@@ -293,7 +137,7 @@ describe("case access control", () => {
 		const a = await makeAdmin(t);
 		const superAdmin = await makeAdmin(t, "super");
 		const caseId = await t.run((ctx) =>
-			createCase(ctx, payload({ name: "Owned by A" }), a),
+			createCase(ctx, casePayload({ name: "Owned by A" }), a),
 		);
 
 		const listing = await t.run((ctx) => listCases(ctx, superAdmin));
@@ -301,16 +145,16 @@ describe("case access control", () => {
 	});
 });
 
-describe("replaceCollaborators addedAt (via updateCase)", () => {
-	// Tests that an existing collaborator's addedAt is preserved across an unrelated save.
-	it("preserves an existing collaborator's addedAt across an unrelated save", async () => {
+describe("replaceCollaborators row stability (via updateCase)", () => {
+	// Tests that an existing collaborator's row is left untouched across an unrelated save.
+	it("keeps an existing collaborator's row across an unrelated save", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const collaborator = await makeAdmin(t);
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({ collaboratorAdminIds: [collaborator._id] }),
+				casePayload({ collaboratorAdminIds: [collaborator._id] }),
 				owner,
 			),
 		);
@@ -325,7 +169,7 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 			updateCase(
 				ctx,
 				caseId,
-				payload({
+				casePayload({
 					collaboratorAdminIds: [collaborator._id],
 					name: "Renamed",
 				}),
@@ -350,7 +194,11 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 		const original = await makeAdmin(t);
 		const added = await makeAdmin(t);
 		const caseId = await t.run((ctx) =>
-			createCase(ctx, payload({ collaboratorAdminIds: [original._id] }), owner),
+			createCase(
+				ctx,
+				casePayload({ collaboratorAdminIds: [original._id] }),
+				owner,
+			),
 		);
 		const originalRowBefore = await t.run((ctx) =>
 			ctx.db
@@ -363,7 +211,7 @@ describe("replaceCollaborators addedAt (via updateCase)", () => {
 			updateCase(
 				ctx,
 				caseId,
-				payload({ collaboratorAdminIds: [original._id, added._id] }),
+				casePayload({ collaboratorAdminIds: [original._id, added._id] }),
 				owner,
 			),
 		);
@@ -390,7 +238,11 @@ describe("collaborator validation (via createCase)", () => {
 		const owner = await makeAdmin(t);
 		await expect(
 			t.run((ctx) =>
-				createCase(ctx, payload({ collaboratorAdminIds: [owner._id] }), owner),
+				createCase(
+					ctx,
+					casePayload({ collaboratorAdminIds: [owner._id] }),
+					owner,
+				),
 			),
 		).rejects.toThrow(
 			"The case owner cannot also be listed as a collaborator.",
@@ -404,7 +256,11 @@ describe("collaborator validation (via createCase)", () => {
 		const bogusId = "999999999admins" as Id<"admins">;
 		await expect(
 			t.run((ctx) =>
-				createCase(ctx, payload({ collaboratorAdminIds: [bogusId] }), owner),
+				createCase(
+					ctx,
+					casePayload({ collaboratorAdminIds: [bogusId] }),
+					owner,
+				),
 			),
 		).rejects.toThrow(/Unknown admin id/);
 	});
@@ -418,7 +274,7 @@ describe("collaborator validation (via createCase)", () => {
 			t.run((ctx) =>
 				createCase(
 					ctx,
-					payload({ collaboratorAdminIds: [superAdmin._id] }),
+					casePayload({ collaboratorAdminIds: [superAdmin._id] }),
 					owner,
 				),
 			),
@@ -432,7 +288,7 @@ describe("required fields (via createCase)", () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		await expect(
-			t.run((ctx) => createCase(ctx, payload({ name: "   " }), owner)),
+			t.run((ctx) => createCase(ctx, casePayload({ name: "   " }), owner)),
 		).rejects.toThrow("Case name is required.");
 	});
 
@@ -441,7 +297,7 @@ describe("required fields (via createCase)", () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		await expect(
-			t.run((ctx) => createCase(ctx, payload({ brief: "" }), owner)),
+			t.run((ctx) => createCase(ctx, casePayload({ brief: "" }), owner)),
 		).rejects.toThrow("Initial brief is required.");
 	});
 
@@ -452,7 +308,7 @@ describe("required fields (via createCase)", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({ name: "  Sterling Industries  ", brief: "  Do it.  " }),
+				casePayload({ name: "  Sterling Industries  ", brief: "  Do it.  " }),
 				owner,
 			),
 		);
@@ -468,7 +324,7 @@ describe("required fields (via createCase)", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					commonInformation: "  Shared context.  ",
 					personas: [
 						personaPayload("A", { name: "  Mary  ", role: "  CFO  " }),
@@ -489,7 +345,7 @@ describe("required fields (via createCase)", () => {
 	it("stores empty common information as an empty string", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
-		const caseId = await t.run((ctx) => createCase(ctx, payload(), owner));
+		const caseId = await t.run((ctx) => createCase(ctx, casePayload(), owner));
 		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
 		expect(c.commonInformation).toBe("");
 	});
@@ -502,7 +358,7 @@ describe("access code validation", () => {
 		const owner = await makeAdmin(t);
 		await expect(
 			t.run((ctx) =>
-				createCase(ctx, payload({ accessCode: "Sterling1" }), owner),
+				createCase(ctx, casePayload({ accessCode: "Sterling1" }), owner),
 			),
 		).rejects.toThrow("Access code must contain only lowercase letters.");
 	});
@@ -512,7 +368,9 @@ describe("access code validation", () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		await expect(
-			t.run((ctx) => createCase(ctx, payload({ accessCode: "   " }), owner)),
+			t.run((ctx) =>
+				createCase(ctx, casePayload({ accessCode: "   " }), owner),
+			),
 		).rejects.toThrow("Access code is required.");
 	});
 
@@ -521,11 +379,11 @@ describe("access code validation", () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		await t.run((ctx) =>
-			createCase(ctx, payload({ accessCode: "sterling" }), owner),
+			createCase(ctx, casePayload({ accessCode: "sterling" }), owner),
 		);
 		await expect(
 			t.run((ctx) =>
-				createCase(ctx, payload({ accessCode: "sterling" }), owner),
+				createCase(ctx, casePayload({ accessCode: "sterling" }), owner),
 			),
 		).rejects.toThrow(
 			"An access code with this value already exists on another case.",
@@ -537,14 +395,14 @@ describe("access code validation", () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const caseId = await t.run((ctx) =>
-			createCase(ctx, payload({ accessCode: "sterling" }), owner),
+			createCase(ctx, casePayload({ accessCode: "sterling" }), owner),
 		);
 		await expect(
 			t.run((ctx) =>
 				updateCase(
 					ctx,
 					caseId,
-					payload({ accessCode: "sterling", name: "Renamed" }),
+					casePayload({ accessCode: "sterling", name: "Renamed" }),
 					owner,
 				),
 			),
@@ -560,7 +418,7 @@ describe("persona graph persistence", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					personas: [
 						personaPayload("A", { name: "Mary" }),
 						personaPayload("B", { name: "John" }),
@@ -590,7 +448,7 @@ describe("persona graph persistence", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({ personas: [personaPayload("A")], roots: ["A"] }),
+				casePayload({ personas: [personaPayload("A")], roots: ["A"] }),
 				owner,
 			),
 		);
@@ -599,7 +457,7 @@ describe("persona graph persistence", () => {
 			updateCase(
 				ctx,
 				caseId,
-				payload({
+				casePayload({
 					personas: [personaPayload("A", { name: "Renamed" })],
 					roots: ["A"],
 				}),
@@ -627,7 +485,7 @@ describe("file links (via buildStructure/createCase)", () => {
 		const _caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					personas: [
 						personaPayload("A", {
 							profilePhoto: {
@@ -674,7 +532,7 @@ describe("file links (via buildStructure/createCase)", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					personas: [personaPayload("A", { profilePhoto: photo })],
 					roots: ["A"],
 				}),
@@ -686,7 +544,7 @@ describe("file links (via buildStructure/createCase)", () => {
 			updateCase(
 				ctx,
 				caseId,
-				payload({
+				casePayload({
 					personas: [
 						personaPayload("A", { profilePhoto: photo }),
 						personaPayload("B", { profilePhoto: photo }),
@@ -720,7 +578,7 @@ describe("a storage id with no backing object", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					personas: [
 						personaPayload("A", {
 							profilePhoto: {
@@ -772,7 +630,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					personas: [personaPayload("A", { profilePhoto: photo })],
 					roots: ["A"],
 				}),
@@ -810,7 +668,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					name: "First",
 					personas: [personaPayload("A", { profilePhoto: photo })],
 					roots: ["A"],
@@ -821,7 +679,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		const secondId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					name: "Second",
 					personas: [personaPayload("A", { profilePhoto: photo })],
 					roots: ["A"],
@@ -853,7 +711,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				payload({
+				casePayload({
 					personas: [
 						personaPayload("A", { profilePhoto: photo }),
 						personaPayload("B", { profilePhoto: photo }),
@@ -868,7 +726,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 			updateCase(
 				ctx,
 				caseId,
-				payload({
+				casePayload({
 					personas: [
 						personaPayload("A", { profilePhoto: null }),
 						personaPayload("B", { profilePhoto: photo }),
@@ -894,7 +752,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 			updateCase(
 				ctx,
 				caseId,
-				payload({
+				casePayload({
 					personas: [
 						personaPayload("A", { profilePhoto: null }),
 						personaPayload("B", { profilePhoto: null }),

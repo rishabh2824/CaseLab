@@ -104,6 +104,26 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 		).not.toBeNull();
 	});
 
+	// Tests that discardUploads refuses a batch over the 200 limit and deletes nothing.
+	it("refuses more than 200 ids and deletes nothing", async () => {
+		const t = newTestConvex();
+		const { asUser } = await withAdmin(t);
+		const storageIds = await t.run((ctx) =>
+			Promise.all(
+				Array.from({ length: 201 }, (_, i) =>
+					ctx.storage.store(new Blob([`blob-${i}`])),
+				),
+			),
+		);
+
+		await expect(
+			asUser.mutation(api.uploads.discardUploads, { storageIds }),
+		).rejects.toThrow(/more than 200/);
+
+		const first = storageIds[0]!;
+		expect(await t.run((ctx) => ctx.storage.getUrl(first))).not.toBeNull();
+	});
+
 	// Tests that discardUploads is a no-op for an empty list.
 	it("is a no-op for an empty list", async () => {
 		const t = newTestConvex();

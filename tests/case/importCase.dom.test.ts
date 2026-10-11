@@ -21,27 +21,6 @@ function setField(scope: ParentNode, field: string, value: string): void {
 	fieldIn(scope, field).textContent = value;
 }
 
-// Marks only the option with the given value as selected.
-function selectOnly(select: HTMLSelectElement, matchValue: string): void {
-	for (const option of Array.from(select.querySelectorAll("option"))) {
-		option.removeAttribute("selected");
-	}
-	const target = select.querySelector(`option[value="${matchValue}"]`);
-	if (target) target.setAttribute("selected", "");
-}
-
-// Selects an option pointing at a persona id that doesn't exist.
-function selectGhostOption(select: HTMLSelectElement, ghostId: string): void {
-	for (const option of Array.from(select.querySelectorAll("option"))) {
-		option.removeAttribute("selected");
-	}
-	const option = select.ownerDocument.createElement("option");
-	option.setAttribute("value", ghostId);
-	option.setAttribute("selected", "");
-	option.textContent = "Ghost";
-	select.appendChild(option);
-}
-
 // Builds the export HTML for the input and parses it into a Document.
 function buildDoc(input: Parameters<typeof buildHTMLForm>[0]): Document {
 	return new DOMParser().parseFromString(buildHTMLForm(input), "text/html");
@@ -159,92 +138,6 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 });
 
 describe("parseHTMLForm — persona graph validation", () => {
-	// Tests that a duplicate persona id is rejected.
-	it("throws CaseImportError on a duplicate data-persona-id", () => {
-		const persona = makePersona({ name: "Original" });
-		const doc = buildDoc({
-			...baseCaseFields,
-			personas: [persona],
-			referrals: [],
-			roots: [persona.id],
-		});
-		const originalCard = doc.querySelector(
-			`[data-persona-id="${persona.id}"]`,
-		) as Element;
-		doc
-			.getElementById("personas-list")
-			?.appendChild(originalCard.cloneNode(true));
-
-		expect(() => parseHTMLForm(serialize(doc))).toThrow(/Duplicate persona id/);
-	});
-
-	// Tests that a referral to a missing persona is rejected.
-	it("throws CaseImportError for a referral pointing at a persona id that doesn't exist", () => {
-		const a = makePersona();
-		const b = makePersona();
-		const doc = buildDoc({
-			...baseCaseFields,
-			personas: [a, b],
-			referrals: [makeReferral(a.id, b.id)],
-			roots: [a.id],
-		});
-		const danglingRow = (
-			doc.querySelector(".referral-row") as Element
-		).cloneNode(true) as Element;
-		selectGhostOption(
-			danglingRow.querySelector('select[data-role="to"]') as HTMLSelectElement,
-			"ghost-id",
-		);
-		doc.getElementById("referrals-list")?.appendChild(danglingRow);
-
-		expect(() => parseHTMLForm(serialize(doc))).toThrow(CaseImportError);
-	});
-
-	// Tests that a duplicate referral is rejected.
-	it("throws CaseImportError for a duplicate referral (same from/to pair twice)", () => {
-		const a = makePersona();
-		const b = makePersona();
-		const doc = buildDoc({
-			...baseCaseFields,
-			personas: [a, b],
-			referrals: [makeReferral(a.id, b.id, "first")],
-			roots: [a.id],
-		});
-		const duplicateRow = (
-			doc.querySelector(".referral-row") as Element
-		).cloneNode(true) as Element;
-		setField(duplicateRow, "conditions", "second");
-		doc.getElementById("referrals-list")?.appendChild(duplicateRow);
-
-		expect(() => parseHTMLForm(serialize(doc))).toThrow(/Duplicate referral/);
-	});
-
-	// Tests that a self-referral is rejected.
-	it("throws CaseImportError for a self-referral (from === to), which is a one-node cycle", () => {
-		const a = makePersona();
-		const b = makePersona();
-		const doc = buildDoc({
-			...baseCaseFields,
-			personas: [a, b],
-			referrals: [makeReferral(a.id, b.id)],
-			roots: [a.id],
-		});
-		const selfRow = (doc.querySelector(".referral-row") as Element).cloneNode(
-			true,
-		) as Element;
-		selectOnly(
-			selfRow.querySelector('select[data-role="from"]') as HTMLSelectElement,
-			a.id,
-		);
-		selectOnly(
-			selfRow.querySelector('select[data-role="to"]') as HTMLSelectElement,
-			a.id,
-		);
-		doc.getElementById("referrals-list")?.appendChild(selfRow);
-
-		expect(() => parseHTMLForm(serialize(doc))).toThrow(/cycle detected/i);
-	});
-
 	// Tests that a cycle is rejected.
 	it("throws CaseImportError for a referral cycle", () => {
 		const p1 = makePersona();

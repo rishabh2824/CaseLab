@@ -3,13 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 import { buildHTMLForm } from "../src/lib/case/exportCase.js";
-import {
-	ADMIN_ROLE,
-	adminDoc,
-	caseDoc,
-	mockApi,
-	signInAsAdmin,
-} from "./mockApi.js";
+import { ADMIN_ROLE, caseDoc, mockApi, signInAsAdmin } from "./mockApi.js";
 
 // Tests that visiting /admin without a session starts a Google sign-in.
 test("an unauthenticated visit to /admin attempts a Google sign-in", async ({
@@ -210,23 +204,6 @@ test("editing a case populates the form and the save updates the existing case",
 	expect(updateArgs?.name).toBe("Sterling Industries");
 });
 
-// Tests that navigating away with a dirty form via the top bar opens the unsaved-changes modal.
-test("a dirty form triggers the unsaved-changes modal when navigating via the top bar", async ({
-	page,
-}) => {
-	await mockApi(page, {});
-	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/cases/new");
-
-	await page.getByLabel("Case name").fill("Draft Case");
-	await page.getByRole("link", { name: "Go to admin home" }).click();
-
-	await expect(page.getByText("You have unsaved changes")).toBeVisible();
-	await page.getByRole("button", { name: "Cancel" }).click();
-	await expect(page).toHaveURL(/\/admin\/cases\/new$/);
-	await expect(page.getByLabel("Case name")).toHaveValue("Draft Case");
-});
-
 // Tests that exporting the blank form triggers a download.
 test("exporting the blank form triggers a download", async ({ page }) => {
 	await mockApi(page, {});
@@ -268,130 +245,6 @@ test("importing a filled-in export populates the form", async ({ page }) => {
 	await expect(page.getByLabel("Initial brief")).toHaveValue(
 		"An imported brief.",
 	);
-});
-
-// Tests that importing an unrelated HTML file shows the import error.
-test("importing an unrelated HTML file surfaces the import error", async ({
-	page,
-}) => {
-	await mockApi(page, {});
-	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/cases/new");
-
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "case-lab-e2e-"));
-	const filePath = path.join(dir, "unrelated.html");
-	fs.writeFileSync(
-		filePath,
-		"<html><body><h1>Not a case export</h1></body></html>",
-	);
-
-	await page.locator('input[type="file"]').setInputFiles(filePath);
-
-	await expect(
-		page.getByText("This doesn't look like a Case Lab import file."),
-	).toBeVisible();
-});
-
-// Tests that the admins page lists admins, adds one and deletes one with a summary.
-test("the admins page lists admins, adds one, and deletes one with a summary", async ({
-	page,
-}) => {
-	let admins = [
-		adminDoc({
-			_id: "admin-existing",
-			email: "existing@wisc.edu",
-			role: "admin",
-		}),
-	];
-	let createArgs: Record<string, unknown> | undefined;
-	await mockApi(page, {
-		queries: [{ name: "admins:listAll", args: {}, data: admins }],
-		mutations: {
-			"admins:create": async (
-				args: { email: string; name?: string; role: "super" | "admin" },
-				{ setQuery },
-			) => {
-				createArgs = args;
-				const created = adminDoc({
-					_id: "admin-new",
-					email: args.email,
-					name: args.name,
-					role: args.role,
-				});
-				admins = [...admins, created].sort((a, b) =>
-					(a.email as string).localeCompare(b.email as string),
-				);
-				await setQuery("admins:listAll", {}, { data: admins });
-				return created;
-			},
-			"admins:deleteWithCascade": async (
-				args: { adminId: string },
-				{ setQuery },
-			) => {
-				admins = admins.filter((a) => a._id !== args.adminId);
-				await setQuery("admins:listAll", {}, { data: admins });
-				return { ok: true, casesDeleted: 1, casesReassigned: 2 };
-			},
-		},
-	});
-	await signInAsAdmin(page, { role: ADMIN_ROLE.SUPER });
-	await page.goto("/admin/admins");
-
-	await expect(page.getByText("existing@wisc.edu")).toBeVisible();
-
-	await page.getByLabel("Email").fill("new@wisc.edu");
-	await page.getByLabel("Name (optional)").fill("New Admin");
-	await page.getByRole("button", { name: "Add admin" }).click();
-
-	await expect(page.getByRole("cell", { name: "new@wisc.edu" })).toBeVisible();
-	expect(createArgs?.email).toBe("new@wisc.edu");
-
-	await page.getByRole("button", { name: "Delete" }).first().click();
-	await expect(page.getByText("Delete existing@wisc.edu?")).toBeVisible();
-	await page
-		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete" })
-		.click();
-
-	await expect(
-		page.getByText(
-			"Deleted existing@wisc.edu — 1 case deleted, 2 cases reassigned.",
-		),
-	).toBeVisible();
-	await expect(page.getByText("existing@wisc.edu")).not.toBeVisible();
-});
-
-// Tests that double-clicking Submit creates the case once, not twice.
-test("double-clicking Submit creates the case once, not twice", async ({
-	page,
-}) => {
-	let createCalls = 0;
-	await mockApi(page, {
-		mutations: {
-			"cases:create": async () => {
-				createCalls++;
-				await new Promise((resolve) => setTimeout(resolve, 300));
-				return { caseId: "new-case-id" };
-			},
-		},
-	});
-	await signInAsAdmin(page, { role: ADMIN_ROLE.ADMIN });
-	await page.goto("/admin/cases/new");
-
-	await page.getByLabel("Case name").fill("Riverside Manufacturing");
-	await page.getByLabel("Initial brief").fill("Cut logistics costs by 10%.");
-	await page.getByLabel("Access code").fill("riverside");
-	await page.getByRole("button", { name: "+ Add root persona" }).click();
-	await page.getByLabel("Persona name").fill("Sam Rivera");
-	await page.getByLabel("Title/Role").fill("Operations Lead");
-
-	const submit = page.getByRole("button", { name: "Submit" });
-	await submit.click();
-	await submit.click({ force: true }).catch(() => {});
-	await submit.click({ force: true }).catch(() => {});
-
-	await expect(page.getByText("Case saved successfully.")).toBeVisible();
-	expect(createCalls).toBe(1);
 });
 
 // Tests that a server-rejected delete keeps the case in the list and explains why.

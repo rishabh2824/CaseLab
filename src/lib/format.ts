@@ -1,7 +1,3 @@
-// Counts whitespace-separated words.
-export const countWords = (value: string) =>
-	value.trim().split(/\s+/).filter(Boolean).length;
-
 // Returns up to two upper-case initials from a persona's name, or 'NA' when there is none.
 export const getPersonaInitials = (name: string | undefined | null) =>
 	name
@@ -9,6 +5,6 @@ export const getPersonaInitials = (name: string | undefined | null) =>
 				.split(" ")
 				.filter(Boolean)
 				.slice(0, 2)
-				.map((part) => part[0]?.toUpperCase() ?? "")
+				.map((part) => Array.from(part)[0]?.toUpperCase() ?? "")
 				.join("")
 		: "NA";

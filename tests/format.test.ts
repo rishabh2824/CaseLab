@@ -1,22 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countWords, getPersonaInitials } from "../src/lib/format.js";
-
-describe("countWords", () => {
-	// Tests that countWords splits on tabs, newlines and runs of spaces.
-	it("counts words separated by tabs, newlines, and multiple spaces", () => {
-		expect(countWords("hello\tworld\n\nfoo   bar")).toBe(4);
-	});
-
-	// Tests that countWords returns 0 for an empty string.
-	it("returns 0 for an empty string", () => {
-		expect(countWords("")).toBe(0);
-	});
-
-	// Tests that countWords returns 0 for a whitespace-only string.
-	it("returns 0 for a whitespace-only string", () => {
-		expect(countWords("   \n\t  ")).toBe(0);
-	});
-});
+import { getPersonaInitials } from "../src/lib/format.js";
 
 describe("getPersonaInitials", () => {
 	// Tests that a single-word name yields one initial.
@@ -49,10 +32,9 @@ describe("getPersonaInitials", () => {
 		expect(getPersonaInitials("X")).toBe("X");
 	});
 
-	// Tests that a unicode/emoji name yields two initials without throwing.
-	it("handles a unicode/emoji name without throwing", () => {
-		const name = "👩‍⚕️ Doctor";
-		expect(getPersonaInitials(name)).toBe(`${name[0]?.toUpperCase()}D`);
-		expect(getPersonaInitials(name)).toHaveLength(2);
+	// Tests that an emoji initial is the whole code point, not half of a surrogate pair.
+	it("keeps an emoji initial whole instead of splitting its surrogate pair", () => {
+		expect(getPersonaInitials("👩‍⚕️ Doctor")).toBe("👩D");
+		expect(getPersonaInitials("🙂")).toBe("🙂");
 	});
 });

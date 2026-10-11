@@ -72,3 +72,9 @@ export function getPersonaFieldErrors(persona: {
 	}
 	return errors;
 }
+
+// Returns whether an admin may be chosen as a collaborator: not a super admin and not the effective owner. Shared by the picker and the server's save-time check.
+export const isSelectableCollaborator = (
+	admin: { _id: string; role: string },
+	effectiveOwnerId: string | null,
+): boolean => admin.role !== "super" && admin._id !== effectiveOwnerId;

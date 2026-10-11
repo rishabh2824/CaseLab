@@ -1,8 +1,9 @@
 <script lang="ts">
 import { Popover } from "bits-ui";
 import type { CaseDraft } from "#lib/case/caseDraft.svelte.js";
-import { isSelectableCollaborator, parseIntOrNull } from "#lib/case/draft.js";
+import { parseIntOrNull } from "#lib/case/draft.js";
 import type { AdminRow } from "#lib/types.js";
+import { isSelectableCollaborator } from "../../../convex/lib/caseRules.js";
 import { RUN_LIFETIME_MINUTES } from "../../../convex/lib/constants.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
 

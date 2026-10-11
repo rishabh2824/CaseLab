@@ -3,15 +3,13 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, QueryCtx } from "../_generated/server";
 import {
 	classifyHarassment,
-	personaReplyStream,
+	generatePersonaReply,
 	RECENT_HISTORY_LIMIT,
 } from "../lib/llm";
 import {
 	type CandidateFile,
 	type CandidateReferral,
 	cleanReply,
-	coerceHandles,
-	parseReply,
 	replyInstructions,
 	systemPrompt,
 } from "../lib/prompt";
@@ -166,18 +164,10 @@ export async function generateReply(
 	);
 	const cacheableSystemPrompt = `${replyInstructions()}\n\n---\n\n${stable}`;
 
-	let fullText = "";
-	const replyHistory = [
-		...context.decisionHistory,
-		{ role: "user" as const, content: message },
-	];
-	for await (const delta of personaReplyStream(
+	const generated = await generatePersonaReply(
 		{ cacheable: cacheableSystemPrompt, dynamic },
-		replyHistory,
-	)) {
-		if (delta.type === "reset") fullText = "";
-		else fullText += delta.text;
-	}
+		[...context.decisionHistory, { role: "user", content: message }],
+	);
 
 	const label = await harassmentPromise;
 	if (label !== "normal") {
@@ -189,16 +179,19 @@ export async function generateReply(
 		return;
 	}
 
-	const parsed = parseReply(fullText);
-	const reply = cleanReply((parsed?.reply as string | undefined) ?? "");
-	if (!reply.trim()) throw new Error("The reply came back empty.");
+	const reply = cleanReply(generated.reply);
+	if (!reply) throw new Error("The reply came back empty.");
 
-	const unlockedReferrals = [...new Set(coerceHandles(parsed?.introduce))]
+	// Handles are matched case-insensitively and each at most once.
+	const handles = (list: string[]) => [
+		...new Set(list.map((handle) => handle.trim().toUpperCase())),
+	];
+	const unlockedReferrals = handles(generated.introduce)
 		.map((handle) => referralByHandle.get(handle))
 		.filter((r): r is PendingReferral => r !== undefined)
 		.map((r) => ({ referredPersonaId: r.referredPersonaId }));
 
-	const sharedFiles = [...new Set(coerceHandles(parsed?.sendFiles))]
+	const sharedFiles = handles(generated.sendFiles)
 		.map((handle) => fileByHandle.get(handle))
 		.filter((f): f is PendingFile => f !== undefined)
 		.map((f) => ({ storageId: f.storageId }));

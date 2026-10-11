@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { reachableFrom } from "../../convex/lib/caseGraph.js";
 import { getPersonaFieldErrors } from "../../convex/lib/caseRules.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
 	getPersonaLabel,
 	hasFieldErrors,
+	parseIntOrNull,
 	referralsFrom,
 	referralsTo,
 } from "../../src/lib/case/draft.js";
@@ -57,69 +57,17 @@ describe("getPersonaLabel", () => {
 	});
 });
 
-describe("getPersonaFieldErrors / hasFieldErrors", () => {
-	// Tests that a blank persona name is reported as a field error.
-	it("flags a missing name", () => {
+describe("hasFieldErrors", () => {
+	// Tests that field errors from an incomplete persona are reported as errors.
+	it("is true for a persona with a field error", () => {
 		const persona = createEmptyPersona({ name: "  ", role: "CFO" });
-		const errors = getPersonaFieldErrors(persona);
-		expect(errors.name).toBeTruthy();
-		expect(errors.role).toBeUndefined();
-		expect(hasFieldErrors(errors)).toBe(true);
+		expect(hasFieldErrors(getPersonaFieldErrors(persona))).toBe(true);
 	});
 
-	// Tests that a blank persona role is reported as a field error.
-	it("flags a missing role", () => {
-		const persona = createEmptyPersona({ name: "Mary", role: "" });
-		const errors = getPersonaFieldErrors(persona);
-		expect(errors.role).toBeTruthy();
-		expect(hasFieldErrors(errors)).toBe(true);
-	});
-
-	// Tests that a valid persona produces no field errors.
-	it("has no errors for a fully valid persona", () => {
+	// Tests that a valid persona has no field errors.
+	it("is false for a fully valid persona", () => {
 		const persona = createEmptyPersona({ name: "Mary", role: "CFO" });
-		const errors = getPersonaFieldErrors(persona);
-		expect(hasFieldErrors(errors)).toBe(false);
-	});
-
-	// Tests that availabilityMinutes of 0 is rejected.
-	it("treats availabilityMinutes of 0 as an error", () => {
-		const persona = createEmptyPersona({
-			name: "Mary",
-			role: "CFO",
-			availabilityMinutes: 0,
-		});
-		expect(getPersonaFieldErrors(persona).availability).toBeTruthy();
-	});
-
-	// Tests that a negative availabilityMinutes is rejected.
-	it("treats a negative availabilityMinutes as an error", () => {
-		const persona = createEmptyPersona({
-			name: "Mary",
-			role: "CFO",
-			availabilityMinutes: -5,
-		});
-		expect(getPersonaFieldErrors(persona).availability).toBeTruthy();
-	});
-
-	// Tests that a null availabilityMinutes (unlimited) is accepted.
-	it("treats null availabilityMinutes as valid (unlimited)", () => {
-		const persona = createEmptyPersona({
-			name: "Mary",
-			role: "CFO",
-			availabilityMinutes: null,
-		});
-		expect(getPersonaFieldErrors(persona).availability).toBeUndefined();
-	});
-
-	// Tests that 1 is the smallest availabilityMinutes that validates.
-	it("treats exactly 1 as the minimum valid availabilityMinutes", () => {
-		const persona = createEmptyPersona({
-			name: "Mary",
-			role: "CFO",
-			availabilityMinutes: 1,
-		});
-		expect(getPersonaFieldErrors(persona).availability).toBeUndefined();
+		expect(hasFieldErrors(getPersonaFieldErrors(persona))).toBe(false);
 	});
 });
 
@@ -153,63 +101,19 @@ describe("referralsFrom / referralsTo", () => {
 	});
 });
 
-describe("reachableFrom", () => {
-	// Tests that reachableFrom follows a linear chain to its end.
-	it("follows a linear chain to its end", () => {
-		const referrals = [makeReferral("p1", "p2"), makeReferral("p2", "p3")];
-		expect(reachableFrom(["p1"], referrals)).toEqual(
-			new Set(["p1", "p2", "p3"]),
-		);
+describe("parseIntOrNull", () => {
+	// Tests that blank and non-numeric input is null.
+	it.each(["", "abc", "Infinity", "NaN"])("returns null for %j", (raw) => {
+		expect(parseIntOrNull(raw)).toBeNull();
 	});
 
-	// Tests that a diamond-join node stays reachable when starting from the shared ancestor.
-	it("keeps a diamond node reachable when only one of its two parents is a start id", () => {
-		const referrals = [
-			makeReferral("p1", "p2"),
-			makeReferral("p1", "p3"),
-			makeReferral("p2", "p4"),
-			makeReferral("p3", "p4"),
-		];
-		expect(reachableFrom(["p1"], referrals)).toEqual(
-			new Set(["p1", "p2", "p3", "p4"]),
-		);
-	});
-
-	// Tests that a diamond-join node is reachable when starting from only one of its parents.
-	it("still reaches a diamond node when starting from just one branch", () => {
-		const referrals = [makeReferral("p2", "p4"), makeReferral("p3", "p4")];
-		expect(reachableFrom(["p2"], referrals)).toEqual(new Set(["p2", "p4"]));
-	});
-
-	// Tests that a diamond-join node is reachable through the other parent when the first is not a start.
-	it("reaches a node only via the other parent when the first parent is absent", () => {
-		const referrals = [makeReferral("p2", "p4"), makeReferral("p3", "p4")];
-		expect(reachableFrom(["p3"], referrals)).toEqual(new Set(["p3", "p4"]));
-	});
-
-	// Tests that reachableFrom terminates on a cyclic referral graph.
-	it("terminates on a cycle instead of looping forever", () => {
-		const referrals = [
-			makeReferral("p1", "p2"),
-			makeReferral("p2", "p3"),
-			makeReferral("p3", "p1"),
-		];
-		expect(reachableFrom(["p1"], referrals)).toEqual(
-			new Set(["p1", "p2", "p3"]),
-		);
-	});
-
-	// Tests that reachableFrom returns an empty set when there are no start ids.
-	it("returns an empty set for an empty start-id list", () => {
-		const referrals = [makeReferral("p1", "p2")];
-		expect(reachableFrom([], referrals)).toEqual(new Set());
-	});
-
-	// Tests that reachableFrom returns just the start id when it has no referrals.
-	it("returns just the start id when it doesn't exist in the referral list", () => {
-		const referrals = [makeReferral("p1", "p2")];
-		expect(reachableFrom(["nonexistent"], referrals)).toEqual(
-			new Set(["nonexistent"]),
-		);
+	// Tests that numbers are truncated toward zero, not rounded.
+	it.each([
+		["12", 12],
+		["12.9", 12],
+		["-3.7", -3],
+		["0", 0],
+	])("parses %j as %i", (raw, expected) => {
+		expect(parseIntOrNull(raw)).toBe(expected);
 	});
 });

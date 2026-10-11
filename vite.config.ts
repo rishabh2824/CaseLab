@@ -65,7 +65,6 @@ export default defineConfig({
 				"src/lib/*.d.ts",
 				"convex/_generated/**",
 				"convex/test.setup.ts",
-				"convex/testFactories.ts",
 				"convex/convex.config.ts",
 				"convex/auth.config.ts",
 			],

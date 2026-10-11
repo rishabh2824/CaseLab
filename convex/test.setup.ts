@@ -3,10 +3,17 @@
 import betterAuthTest from "@convex-dev/better-auth/test";
 import { convexTest } from "convex-test";
 import { vi } from "vitest";
+import {
+	caseStructure,
+	personaPayload,
+	uniqueAccessCode,
+} from "../tests/support/convexFactories";
 import { api, components } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { studentErrorData } from "./lib/studentErrors";
+import type { CaseStructure } from "./models/cases";
 import schema from "./schema";
+import type { CasePayload } from "./services/cases";
 
 const modules = import.meta.glob(["./**/*.*s", "!./**/*.test.*s"]);
 
@@ -45,6 +52,17 @@ export async function sendTurn(
 	});
 	await settleReply(t, replyId);
 	return replyId;
+}
+
+// Returns a persona's visible chat messages for a run.
+export async function visibleMessages(
+	t: ReturnType<typeof newTestConvex>,
+	runId: Id<"runs">,
+	personaId: string,
+) {
+	return (
+		await t.query(api.simulations.getPersonaHistory, { runId, personaId })
+	).messages;
 }
 
 // Returns the state of the latest reply for a persona, or null if there is none.
@@ -146,6 +164,63 @@ export async function withAdmin(
 	};
 }
 
+// Inserts an admins row with the given role, without a sign-in identity, and returns the document.
+export async function makeAdmin(
+	t: ReturnType<typeof newTestConvex>,
+	role: "super" | "admin" = "admin",
+): Promise<Doc<"admins">> {
+	const id = await t.run((ctx) =>
+		ctx.db.insert("admins", {
+			email: `${role}-${Math.random().toString(36).slice(2)}@test.caselab.invalid`,
+			role,
+		}),
+	);
+	return (await t.run((ctx) => ctx.db.get(id)))!;
+}
+
+// Builds a valid case create/update payload with a unique access code and optional overrides.
+export function casePayload(
+	overrides: Partial<Omit<CasePayload, "structure">> &
+		Partial<CaseStructure> = {},
+): CasePayload {
+	const {
+		personas = [personaPayload("A")],
+		referrals = [],
+		roots = ["A"],
+		...rest
+	} = overrides;
+	return {
+		name: "Sterling Industries",
+		brief: "Reduce office supply costs.",
+		commonInformation: "",
+		accessCode: uniqueAccessCode(),
+		collaboratorAdminIds: [],
+		...rest,
+		structure: { personas, referrals, roots },
+	};
+}
+
+// Seeds a case owned by a fresh admin with the given structure and access code, and starts a run on it.
+export async function startRun(
+	t: ReturnType<typeof newTestConvex>,
+	structure: CaseStructure = caseStructure(),
+	accessCode = "sterling",
+) {
+	const ownerAdminId = (await makeAdmin(t))._id;
+	await t.run((ctx) =>
+		ctx.db.insert("cases", {
+			commonInformation: "",
+			isDemo: false,
+			name: "Case",
+			brief: "Brief",
+			accessCode,
+			ownerAdminId,
+			structure,
+		}),
+	);
+	return await t.mutation(api.simulations.start, { accessCode });
+}
+
 // Returns a signed-in test client whose email is not on the admin roster.
 export async function withStranger(
 	t: ReturnType<typeof newTestConvex>,
@@ -154,18 +229,9 @@ export async function withStranger(
 	return withGoogleIdentity(t, email);
 }
 
-// Formats a text chunk as a streamed completion SSE data line.
-export function sseDelta(text: string): string {
-	return `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`;
-}
-
-// Formats text chunks as a full SSE stream ending with [DONE].
-export function sseStream(chunks: string[]): string {
-	return `${chunks.map(sseDelta).join("")}data: [DONE]\n\n`;
-}
-
 export type LlmStub = {
-	replyChunks?: string[];
+	// The raw JSON text the model returns, instead of one built from replyText, introduce and sendFiles.
+	replyContent?: string;
 	replyText?: string;
 	introduce?: string[];
 	sendFiles?: string[];
@@ -198,7 +264,10 @@ export function makeLlmFetch(options: LlmStub = {}): {
 		init: RequestInit,
 	): Promise<Response> {
 		const body = JSON.parse(init.body as string);
-		const kind: "classify" | "reply" = body.stream ? "reply" : "classify";
+		const kind: "classify" | "reply" =
+			body.response_format?.json_schema?.name === "persona_reply"
+				? "reply"
+				: "classify";
 		if (Array.isArray(body.messages[0].content)) {
 			body.messages[0].content = body.messages[0].content
 				.map((block: { text: string }) => block.text)
@@ -212,7 +281,15 @@ export function makeLlmFetch(options: LlmStub = {}): {
 				return new Response(options.classifierBody, { status: 200 });
 			}
 			return new Response(
-				JSON.stringify({ choices: [{ message: { content: harassment } }] }),
+				JSON.stringify({
+					choices: [
+						{
+							message: {
+								content: JSON.stringify({ label: harassment.toLowerCase() }),
+							},
+						},
+					],
+				}),
 				{ status: 200 },
 			);
 		}
@@ -224,10 +301,13 @@ export function makeLlmFetch(options: LlmStub = {}): {
 		if (options.replyBody !== undefined) {
 			return new Response(options.replyBody, { status: 200 });
 		}
-		const chunks = options.replyChunks ?? [
-			JSON.stringify({ reply: replyText, introduce, sendFiles: sendFiles }),
-		];
-		return new Response(sseStream(chunks), { status: 200 });
+		const content =
+			options.replyContent ??
+			JSON.stringify({ reply: replyText, introduce, sendFiles });
+		return new Response(
+			JSON.stringify({ choices: [{ message: { content } }] }),
+			{ status: 200 },
+		);
 	}
 
 	return { calls, fetch: stubbedFetch };
@@ -243,4 +323,12 @@ export async function studentRejection(
 		return studentErrorData(err);
 	}
 	return "resolved";
+}
+
+// Stubs the global fetch with the fake LLM and returns its recorded calls.
+export function stubLlm(options: LlmStub = {}) {
+	const { calls, fetch } = makeLlmFetch(options);
+	const fetchMock = vi.fn(fetch);
+	vi.stubGlobal("fetch", fetchMock);
+	return { calls, fetchMock };
 }

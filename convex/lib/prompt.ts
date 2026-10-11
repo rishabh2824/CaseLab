@@ -125,34 +125,3 @@ export function cleanReply(text: string | null | undefined): string {
 	const reply = (text ?? "").trim();
 	return reply.replace(/^\s*\[[^\]]+\]\s*/, "").trim();
 }
-
-// Parses the model output as a JSON object, or returns null if it isn't one.
-export function parseReply(
-	raw: string | null | undefined,
-): Record<string, unknown> | null {
-	const text = (raw ?? "").trim();
-	if (!text) return null;
-	let data: unknown;
-	try {
-		data = JSON.parse(text);
-	} catch {
-		return null;
-	}
-	return data !== null && typeof data === "object" && !Array.isArray(data)
-		? (data as Record<string, unknown>)
-		: null;
-}
-
-// Normalizes model-supplied handles into a list of upper-cased, trimmed strings.
-export function coerceHandles(value: unknown): string[] {
-	const list =
-		typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
-	const handles: string[] = [];
-	for (const item of list) {
-		if (typeof item === "string" || typeof item === "number") {
-			const handle = String(item).trim().toUpperCase();
-			if (handle) handles.push(handle);
-		}
-	}
-	return handles;
-}

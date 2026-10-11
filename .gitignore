@@ -30,3 +30,6 @@ coverage
 # third-party agent skills
 .agents/
 skills-lock.json
+
+# Local prod data backups
+prod-backup*.zip

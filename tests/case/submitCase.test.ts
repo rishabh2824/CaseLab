@@ -344,8 +344,8 @@ describe("submitCase — upload failures", () => {
 		expect(discardRequests).toEqual([["storage-1"]]);
 	});
 
-	// Tests that discardUploads is called with no ids when the save fails but nothing was uploaded.
-	it("calls discardUploads with nothing when the save fails but nothing was uploaded", async () => {
+	// Tests that discardUploads is not called when the save fails but nothing was uploaded.
+	it("does not call discardUploads when the save fails but nothing was uploaded", async () => {
 		const { discardRequests } = stubMutations({
 			failSave: new Error("Case name is required."),
 		});
@@ -383,8 +383,8 @@ describe("submitCase — upload failures", () => {
 });
 
 describe("submitCase — payload shaping", () => {
-	// Tests that text fields are trimmed, referrals reduced to their wire shape, and roots/collaborators passed through.
-	it("trims top-level text fields, reduces referrals to their wire shape, and passes roots/collaborator ids through unchanged", async () => {
+	// Tests that text fields are trimmed, and referrals (conditions untrimmed), roots and collaborators are passed through.
+	it("trims top-level text fields and passes referrals (conditions untrimmed), roots and collaborator ids through unchanged", async () => {
 		const { createRequests } = stubMutations();
 
 		await submitCase(

@@ -154,6 +154,16 @@ function renderForm(
 	});
 }
 
+// Fills the create form with a valid case: case info plus one root persona.
+async function fillValidCase(user: ReturnType<typeof userEvent.setup>) {
+	await user.type(screen.getByLabelText("Case name"), "Sterling Industries");
+	await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
+	await user.type(screen.getByLabelText("Access code"), "sterling");
+	await user.click(screen.getByRole("button", { name: "+ Add root persona" }));
+	await user.type(screen.getByLabelText("Persona name"), "Mary");
+	await user.type(screen.getByLabelText("Title/Role"), "CFO");
+}
+
 describe("CaseForm", () => {
 	beforeEach(() => {
 		mockUseQuery.mockReset();
@@ -224,17 +234,7 @@ describe("CaseForm", () => {
 			const user = userEvent.setup();
 			renderForm();
 
-			await user.type(
-				screen.getByLabelText("Case name"),
-				"Sterling Industries",
-			);
-			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
-			await user.type(screen.getByLabelText("Access code"), "sterling");
-			await user.click(
-				screen.getByRole("button", { name: "+ Add root persona" }),
-			);
-			await user.type(screen.getByLabelText("Persona name"), "Mary");
-			await user.type(screen.getByLabelText("Title/Role"), "CFO");
+			await fillValidCase(user);
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 
@@ -342,17 +342,7 @@ describe("CaseForm", () => {
 			const user = userEvent.setup();
 			renderForm();
 
-			await user.type(
-				screen.getByLabelText("Case name"),
-				"Sterling Industries",
-			);
-			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
-			await user.type(screen.getByLabelText("Access code"), "sterling");
-			await user.click(
-				screen.getByRole("button", { name: "+ Add root persona" }),
-			);
-			await user.type(screen.getByLabelText("Persona name"), "Mary");
-			await user.type(screen.getByLabelText("Title/Role"), "CFO");
+			await fillValidCase(user);
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 			const guard = vi.mocked(beforeNavigate).mock.calls.at(-1)?.[0];
@@ -390,17 +380,7 @@ describe("CaseForm", () => {
 			const user = userEvent.setup();
 			renderForm();
 
-			await user.type(
-				screen.getByLabelText("Case name"),
-				"Sterling Industries",
-			);
-			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
-			await user.type(screen.getByLabelText("Access code"), "sterling");
-			await user.click(
-				screen.getByRole("button", { name: "+ Add root persona" }),
-			);
-			await user.type(screen.getByLabelText("Persona name"), "Mary");
-			await user.type(screen.getByLabelText("Title/Role"), "CFO");
+			await fillValidCase(user);
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 
@@ -785,17 +765,7 @@ describe("CaseForm", () => {
 			const user = userEvent.setup();
 			renderForm();
 
-			await user.type(
-				screen.getByLabelText("Case name"),
-				"Sterling Industries",
-			);
-			await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
-			await user.type(screen.getByLabelText("Access code"), "sterling");
-			await user.click(
-				screen.getByRole("button", { name: "+ Add root persona" }),
-			);
-			await user.type(screen.getByLabelText("Persona name"), "Mary");
-			await user.type(screen.getByLabelText("Title/Role"), "CFO");
+			await fillValidCase(user);
 
 			await openPicker();
 			const checkbox = await screen.findByLabelText("Nina");

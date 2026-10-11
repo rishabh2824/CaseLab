@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 
+import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
 import {
 	caseStructure,
@@ -50,6 +51,25 @@ function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 		collaboratorAdminIds: [] as Id<"admins">[],
 		...overrides,
 	};
+}
+
+// Runs each call and maps its name to the ConvexError message it threw, or "resolved" if it succeeded.
+async function outcomesOf(
+	calls: readonly (readonly [string, () => Promise<unknown>])[],
+): Promise<Record<string, string>> {
+	const outcomes: Record<string, string> = {};
+	for (const [name, call] of calls) {
+		try {
+			await call();
+			outcomes[name] = "resolved";
+		} catch (err) {
+			outcomes[name] =
+				err instanceof ConvexError && typeof err.data === "string"
+					? err.data
+					: `unexpected: ${String(err)}`;
+		}
+	}
+	return outcomes;
 }
 
 describe("admin-only surface rejects anonymous callers", () => {
@@ -103,14 +123,10 @@ describe("admin-only surface rejects anonymous callers", () => {
 	// Tests that every admin function rejects a caller with no identity.
 	it("rejects every admin function for a caller with no identity at all", async () => {
 		const t = newTestConvex();
-		const failures: string[] = [];
-		for (const [name, call] of await anonymousCallers(t)) {
-			try {
-				await call();
-				failures.push(name);
-			} catch {}
-		}
-		expect(failures).toEqual([]);
+		const callers = await anonymousCallers(t);
+		expect(await outcomesOf(callers)).toEqual(
+			Object.fromEntries(callers.map(([name]) => [name, "Not signed in."])),
+		);
 	});
 
 	// Tests that every admin function rejects a signed-in Google user who has no admins row.
@@ -141,16 +157,46 @@ describe("admin-only surface rejects anonymous callers", () => {
 				"cases.deleteCase",
 				() => asStranger.mutation(api.cases.deleteCase, { caseId }),
 			],
+			[
+				"cases.getForEdit",
+				() => asStranger.query(api.cases.getForEdit, { caseId }),
+			],
+			[
+				"cases.update",
+				() =>
+					asStranger.mutation(api.cases.update, {
+						caseId,
+						...casePayloadArgs(),
+					}),
+			],
 			["admins.listAll", () => asStranger.query(api.admins.listAll, {})],
+			[
+				"admins.create",
+				() =>
+					asStranger.mutation(api.admins.create, {
+						email: "x@y.z",
+						role: "admin" as const,
+					}),
+			],
+			[
+				"admins.deleteWithCascade",
+				() => asStranger.mutation(api.admins.deleteWithCascade, { adminId }),
+			],
+			[
+				"uploads.generateUploadUrls",
+				() => asStranger.mutation(api.uploads.generateUploadUrls, { count: 2 }),
+			],
+			[
+				"uploads.discardUploads",
+				() =>
+					asStranger.mutation(api.uploads.discardUploads, { storageIds: [] }),
+			],
 		];
-		const failures: string[] = [];
-		for (const [name, call] of calls) {
-			try {
-				await call();
-				failures.push(name);
-			} catch {}
-		}
-		expect(failures).toEqual([]);
+		expect(await outcomesOf(calls)).toEqual(
+			Object.fromEntries(
+				calls.map(([name]) => [name, "Your account is not authorized."]),
+			),
+		);
 	});
 
 	// Tests that viewer returns null for anonymous and non-admin callers instead of throwing or leaking.
@@ -204,45 +250,6 @@ describe("cross-admin case isolation (object ownership)", () => {
 		await expect(outsider.asUser.query(api.cases.listAll, {})).resolves.toEqual(
 			[],
 		);
-	});
-
-	// Tests that getForEdit does not expose another admin's access code and persona secrets to an unrelated admin.
-	it("REGRESSION: cases.getForEdit must not hand another admin's access code and persona secrets to an unrelated admin", async () => {
-		const t = newTestConvex();
-		const owner = await withAdmin(t, { email: "owner2@test.caselab.invalid" });
-		const outsider = await withAdmin(t, {
-			email: "outsider2@test.caselab.invalid",
-		});
-		const caseId = await seedCase(t, owner.adminId, {
-			accessCode: "topsecret",
-			structure: caseStructure({
-				personas: [
-					personaPayload("A", {
-						knownFacts: "The buyer will pay up to $4.2M.",
-					}),
-				],
-			}),
-		});
-
-		await expect(
-			outsider.asUser.query(api.cases.getForEdit, { caseId }),
-		).rejects.toThrow(/access/i);
-	});
-
-	// Tests that getDemo only serves cases flagged as demos, so it cannot read a private case of another admin.
-	it("getDemo does not expose a private case of another admin", async () => {
-		const t = newTestConvex();
-		const owner = await withAdmin(t, { email: "owner6@test.caselab.invalid" });
-		const outsider = await withAdmin(t, {
-			email: "outsider6@test.caselab.invalid",
-		});
-		const caseId = await seedCase(t, owner.adminId, {
-			accessCode: "privatecode",
-		});
-
-		await expect(
-			outsider.asUser.query(api.cases.getDemo, { caseId }),
-		).resolves.toBeNull();
 	});
 
 	// Tests that a collaborator gets access to a case while an admin who was never added is refused.

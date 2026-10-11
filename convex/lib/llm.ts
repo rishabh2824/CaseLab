@@ -23,72 +23,34 @@ export type ChatMessage = {
 	content: string;
 };
 
-// Fetches a URL with an abort timeout that stays armed until the caller releases it.
-async function fetchWithTimeout(
-	url: string,
-	init: RequestInit,
+// POSTs a non-streaming chat-completions request to the LLM provider and returns the first choice's text. Throws on a transport error, timeout, non-2xx status or empty body.
+async function chatCompletion(
+	body: Record<string, unknown>,
 	timeoutMs: number,
-): Promise<{ response: Response; release: () => void }> {
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
-	try {
-		const response = await fetch(url, { ...init, signal: controller.signal });
-		return { response, release: () => clearTimeout(timer) };
-	} catch (err) {
-		clearTimeout(timer);
-		throw err;
-	}
-}
-
-// POSTs a chat-completions request to the LLM provider with the API key attached.
-async function postChatCompletions(
-	body: unknown,
-	timeoutMs: number,
-): Promise<{ response: Response; release: () => void }> {
-	return await fetchWithTimeout(
-		`${LLM_BASE_URL}/chat/completions`,
-		{
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${requireLlmKey()}`,
-			},
-			body: JSON.stringify(body),
+) {
+	const response = await fetch(`${LLM_BASE_URL}/chat/completions`, {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			Authorization: `Bearer ${requireLlmKey()}`,
 		},
-		timeoutMs,
-	);
-}
-
-// Makes a non-streaming chat call and returns the reply text.
-async function chat(options: {
-	model: string;
-	messages: ChatMessage[];
-	maxTokens: number;
-	timeoutMs: number;
-	temperature?: number;
-}): Promise<string> {
-	const body: Record<string, unknown> = {
-		model: options.model,
-		messages: options.messages,
-		max_tokens: options.maxTokens,
-		provider: { order: ["anthropic"], allow_fallbacks: false },
+		body: JSON.stringify({
+			...body,
+			provider: { order: ["anthropic"], allow_fallbacks: false },
+		}),
+		signal: AbortSignal.timeout(timeoutMs),
+	});
+	if (!response.ok)
+		throw new Error(`LLM request failed (HTTP ${response.status}).`);
+	const data = (await response.json()) as {
+		choices?: { message?: { content?: string }; finish_reason?: string }[];
 	};
-	if (options.temperature !== undefined) body.temperature = options.temperature;
-
-	const { response, release } = await postChatCompletions(
-		body,
-		options.timeoutMs,
-	);
-	try {
-		if (!response.ok)
-			throw new Error(`LLM request failed (HTTP ${response.status}).`);
-		const data = (await response.json()) as {
-			choices?: { message?: { content?: string } }[];
-		};
-		return data.choices?.[0]?.message?.content ?? "";
-	} finally {
-		release();
-	}
+	const content = data.choices?.[0]?.message?.content;
+	if (!content)
+		throw new Error(
+			`LLM returned no content (finish_reason: ${data.choices?.[0]?.finish_reason}).`,
+		);
+	return content;
 }
 
 export const PERSONA_REPLY_SCHEMA = {
@@ -110,15 +72,17 @@ export const PERSONA_REPLY_SCHEMA = {
 	additionalProperties: false,
 };
 
-export type StreamDelta = { type: "delta"; text: string } | { type: "reset" };
+export type PersonaReply = {
+	reply: string;
+	introduce: string[];
+	sendFiles: string[];
+};
 
-class StreamRetryError extends Error {}
-
-// Streams a persona's JSON reply, retrying failed attempts and emitting a reset when a retry discards streamed text.
-export async function* personaReplyStream(
+// Generates a persona's reply as strict JSON, retrying a failed or truncated attempt.
+export async function generatePersonaReply(
 	systemPrompt: { cacheable: string; dynamic: string },
 	history: ChatMessage[],
-): AsyncGenerator<StreamDelta> {
+): Promise<PersonaReply> {
 	const body = {
 		model: LLM_MODEL,
 		messages: [
@@ -137,7 +101,6 @@ export async function* personaReplyStream(
 		],
 		max_tokens: 1000,
 		temperature: 0.4,
-		stream: true,
 		response_format: {
 			type: "json_schema",
 			json_schema: {
@@ -146,99 +109,17 @@ export async function* personaReplyStream(
 				schema: PERSONA_REPLY_SCHEMA,
 			},
 		},
-		provider: { order: ["anthropic"], allow_fallbacks: false },
 		reasoning: { effort: "low" },
 	};
 
-	for (let attempt = 1; attempt <= PERSONA_REPLY_RETRIES; attempt++) {
-		const canRetry = attempt < PERSONA_REPLY_RETRIES;
-		let response: Response;
-		let release: () => void;
+	for (let attempt = 1; ; attempt++) {
 		try {
-			({ response, release } = await postChatCompletions(
-				body,
-				LLM_ATTEMPT_TIMEOUT_MS,
-			));
+			// The schema is enforced by the provider, so a parse failure means a truncated or faulty response.
+			return JSON.parse(
+				await chatCompletion(body, LLM_ATTEMPT_TIMEOUT_MS),
+			) as PersonaReply;
 		} catch (err) {
-			if (canRetry) continue;
-			throw err;
-		}
-		if (!response.ok || !response.body) {
-			release();
-			if (canRetry) continue;
-			throw new Error(`LLM request failed (HTTP ${response.status}).`);
-		}
-
-		let yieldedAny = false;
-		let attemptText = "";
-		let finishReason: string | null = null;
-		const assertUsableAttempt = () => {
-			if (!attemptText)
-				throw new StreamRetryError(
-					`LLM stream ended with no content (finish_reason: ${finishReason}).`,
-				);
-			try {
-				JSON.parse(attemptText);
-			} catch {
-				throw new StreamRetryError(
-					`LLM stream ended with truncated or invalid JSON (finish_reason: ${finishReason}).`,
-				);
-			}
-		};
-		const reader = response.body.getReader();
-		const decoder = new TextDecoder();
-		let buffer = "";
-		try {
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) {
-					assertUsableAttempt();
-					return;
-				}
-				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split("\n");
-				buffer = lines.pop() ?? "";
-				for (const line of lines) {
-					const trimmed = line.trim();
-					if (!trimmed.startsWith("data:")) continue;
-					const payload = trimmed.slice("data:".length).trim();
-					if (payload === "[DONE]") {
-						assertUsableAttempt();
-						return;
-					}
-					let parsed: {
-						error?: unknown;
-						choices?: {
-							delta?: { content?: string };
-							finish_reason?: string | null;
-						}[];
-					};
-					try {
-						parsed = JSON.parse(payload);
-					} catch {
-						continue;
-					}
-					if (parsed.error)
-						throw new StreamRetryError(
-							`LLM stream error frame: ${JSON.stringify(parsed.error).slice(0, 300)}`,
-						);
-					finishReason = parsed.choices?.[0]?.finish_reason ?? finishReason;
-					const text = parsed.choices?.[0]?.delta?.content;
-					if (text) {
-						yieldedAny = true;
-						attemptText += text;
-						yield { type: "delta", text };
-					}
-				}
-			}
-		} catch (err) {
-			if (canRetry && (!yieldedAny || err instanceof StreamRetryError)) {
-				if (yieldedAny) yield { type: "reset" };
-				continue;
-			}
-			throw err;
-		} finally {
-			release();
+			if (attempt >= PERSONA_REPLY_RETRIES) throw err;
 		}
 	}
 }
@@ -255,6 +136,13 @@ function formatTranscript(conversation: TranscriptMessage[]): string {
 
 export type HarassmentLabel = "normal" | "nonsense";
 
+const CLASSIFIER_SCHEMA = {
+	type: "object",
+	properties: { label: { type: "string", enum: ["normal", "nonsense"] } },
+	required: ["label"],
+	additionalProperties: false,
+};
+
 // Classifies the latest student message as normal or nonsense, defaulting to normal if the call fails.
 export async function classifyHarassment(
 	userMessage: string,
@@ -263,31 +151,44 @@ export async function classifyHarassment(
 	const transcript = formatTranscript(conversation);
 	const systemPrompt =
 		"You are a strict conversation safety classifier for a case simulation. " +
-		"Classify the latest user message in context. " +
-		"Return ONLY one label from this set: NORMAL, NONSENSE.\n" +
-		"Use NONSENSE for spam, gibberish, or repeatedly incoherent case-irrelevant " +
+		"Classify the latest user message in context as normal or nonsense.\n" +
+		"Use nonsense for spam, gibberish, or repeatedly incoherent case-irrelevant " +
 		"input, AND for rude, insulting, harassing, or abusive messages, including " +
 		"explicit threats or severe abuse — anything that isn't a normal, coherent, " +
 		"case-related message.\n" +
-		"Otherwise return NORMAL.";
+		"Otherwise use normal.";
 	const userPrompt = `Recent conversation:\n${transcript}\n\nLatest user message:\n${userMessage}`;
 
-	let raw: string;
 	try {
-		raw = await chat({
-			model: LLM_CLASSIFIER_MODEL,
-			messages: [
-				{ role: "system", content: systemPrompt },
-				{ role: "user", content: userPrompt },
-			],
-			temperature: 0,
-			maxTokens: 50,
-			timeoutMs: CLASSIFIER_TIMEOUT_MS,
-		});
-	} catch {
+		const raw = await chatCompletion(
+			{
+				model: LLM_CLASSIFIER_MODEL,
+				messages: [
+					{ role: "system", content: systemPrompt },
+					{ role: "user", content: userPrompt },
+				],
+				temperature: 0,
+				max_tokens: 50,
+				response_format: {
+					type: "json_schema",
+					json_schema: {
+						name: "classification",
+						strict: true,
+						schema: CLASSIFIER_SCHEMA,
+					},
+				},
+			},
+			CLASSIFIER_TIMEOUT_MS,
+		);
+		// Anything but an explicit "nonsense" counts as normal, so a malformed answer can never flag a student.
+		return (JSON.parse(raw) as { label?: string }).label === "nonsense"
+			? "nonsense"
+			: "normal";
+	} catch (err) {
+		console.warn(
+			"Harassment classifier failed; treating the message as normal",
+			err,
+		);
 		return "normal";
 	}
-	return raw.trim().toUpperCase().startsWith("NONSENSE")
-		? "nonsense"
-		: "normal";
 }

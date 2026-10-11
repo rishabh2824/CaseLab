@@ -2,30 +2,57 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { toast } from "svelte-sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Id } from "../../convex/_generated/dataModel.js";
 import { MAX_MESSAGE_WORDS } from "../../convex/lib/constants.js";
 import { downloadBlob } from "../../src/lib/download.js";
 import { session } from "../../src/lib/session.svelte.js";
+import type { RunStore } from "../../src/lib/student/run.svelte.js";
 import type { ChatMessage } from "../../src/lib/types.js";
 import StudentPage from "../../src/routes/(app)/student/+page.svelte";
-import { makeContact } from "../support/fixtures.js";
+import { makeContact, makeSharedFile } from "../support/fixtures.js";
 
 const mockQuery = vi.fn();
 
+// The run-store members the student page uses; the fake below must keep providing them.
+type PageRunStore = Pick<
+	RunStore,
+	| "loadError"
+	| "timeExpired"
+	| "isSending"
+	| "activeContactId"
+	| "notes"
+	| "caseData"
+	| "totalDurationSeconds"
+	| "activeMessages"
+	| "contacts"
+	| "sharedFiles"
+	| "activePersonaAvailable"
+	| "activeContact"
+	| "init"
+	| "selectContact"
+	| "sendMessage"
+	| "setNotes"
+	| "flushNotes"
+	| "endSimulation"
+>;
+
 // A stand-in for the run store whose fields the page reads reactively.
-class FakeRun {
+class FakeRun implements PageRunStore {
 	loadError = $state("");
 	timeExpired = $state(false);
 	isSending = $state(false);
 	activeContactId = $state<string | null>("mary");
 	notes = $state("");
-	caseData = $state<{
-		caseName: string;
-		brief: string;
-	} | null>({ caseName: "Sterling Industries", brief: "Reduce costs." });
+	caseData = $state<RunStore["caseData"]>({
+		id: "case-1" as Id<"cases">,
+		caseName: "Sterling Industries",
+		brief: "Reduce costs.",
+		simulationDuration: null,
+	});
 	totalDurationSeconds = $state<number | null>(null);
 	activeMessages = $state<ChatMessage[]>([]);
-	contacts = $state<ReturnType<typeof makeDisplayContact>[]>([]);
-	sharedFiles = $state<{ fileId: string; fileName: string; url: string }[]>([]);
+	contacts = $state<RunStore["contacts"]>([]);
+	sharedFiles = $state<RunStore["sharedFiles"]>([]);
 	activePersonaAvailable = $state(true);
 
 	get activeContact() {
@@ -169,11 +196,11 @@ describe("contacts and files", () => {
 		run = new FakeRun();
 		run.contacts = [makeDisplayContact({ id: "mary" })];
 		run.sharedFiles = [
-			{
+			makeSharedFile({
 				fileId: "f1",
 				fileName: "budget.pdf",
 				url: "https://x.test/budget.pdf",
-			},
+			}),
 		];
 		render(StudentPage);
 		expect(screen.getByRole("link", { name: "budget.pdf" })).toHaveAttribute(

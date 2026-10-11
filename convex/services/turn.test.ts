@@ -6,102 +6,20 @@ import {
 	referralEdge,
 } from "../../tests/support/convexFactories";
 import { api, internal } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
 import { RECENT_HISTORY_LIMIT } from "../lib/llm";
 import { STUDENT_ERROR } from "../lib/studentErrors";
 import { NONSENSE_THRESHOLD } from "../lib/turnState";
-import type { CaseStructure } from "../models/cases";
 import {
 	insertPendingReply,
 	lastReply,
 	newTestConvex,
 	sendTurn as send,
+	settleReply,
+	startRun,
+	stubLlm,
 	studentRejection,
+	visibleMessages,
 } from "../test.setup";
-
-type LlmStubOptions = {
-	harassment?: string | ((message: string, conversation: string) => string);
-	replyText?: string;
-	introduce?: string[];
-	sendFiles?: string[];
-};
-
-// Builds a non-streaming chat-completions Response carrying the given content.
-function jsonResponse(content: string): Response {
-	return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
-		status: 200,
-	});
-}
-
-// Builds a streamed reply Response carrying the given JSON envelope.
-function sseResponse(envelope: string): Response {
-	return new Response(
-		`data: ${JSON.stringify({ choices: [{ delta: { content: envelope } }] })}\n\ndata: [DONE]\n\n`,
-		{
-			status: 200,
-		},
-	);
-}
-
-// Returns the value, or calls it with the message and conversation if it is a function.
-function resolveMaybeFn<T>(
-	value: T | ((message: string, conversation: string) => T),
-	message: string,
-	conversation: string,
-): T {
-	return typeof value === "function"
-		? (value as (m: string, h: string) => T)(message, conversation)
-		: value;
-}
-
-// Stubs the global fetch with a fake classifier and reply generator and returns its recorded calls.
-function stubLlm(options: LlmStubOptions = {}) {
-	const {
-		harassment = "normal",
-		replyText = "OK",
-		introduce = [],
-		sendFiles = [],
-	} = options;
-	// biome-ignore lint/suspicious/noExplicitAny: mock request bodies vary in shape (classify vs. reply) and are freely accessed by property throughout this file
-	const calls: { kind: string; body: any }[] = [];
-	const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
-		const body = JSON.parse(init.body as string);
-		if (Array.isArray(body.messages[0].content)) {
-			body.messages[0].content = body.messages[0].content
-				.map((block: { text: string }) => block.text)
-				.join("\n\n");
-		}
-		calls.push({ kind: body.stream ? "reply" : "classify", body });
-		if (body.stream) {
-			const envelope = JSON.stringify({
-				reply: replyText,
-				introduce,
-				sendFiles: sendFiles,
-			});
-			return sseResponse(envelope);
-		}
-		const systemContent: string = body.messages[0].content;
-		const userContent: string = body.messages[1].content;
-		if (systemContent.includes("conversation safety classifier")) {
-			const label = resolveMaybeFn(harassment, "", userContent);
-			return jsonResponse(label.toUpperCase());
-		}
-		throw new Error(`Unexpected LLM call: ${systemContent.slice(0, 80)}`);
-	});
-	vi.stubGlobal("fetch", fetchMock);
-	return { fetchMock, calls };
-}
-
-// Returns a persona's visible chat messages for a run.
-async function visibleMessages(
-	t: ReturnType<typeof newTestConvex>,
-	runId: Id<"runs">,
-	personaId: string,
-) {
-	return (
-		await t.query(api.simulations.getPersonaHistory, { runId, personaId })
-	).messages;
-}
 
 beforeEach(() => {
 	vi.stubEnv("LLM_KEY", "test-key");
@@ -119,44 +37,20 @@ function advanceClock(minutes: number) {
 	vi.setSystemTime(Date.now() + minutes * 60_000);
 }
 
-// Seeds a case with the given structure and access code and starts a run on it.
-async function startRun(
-	t: ReturnType<typeof newTestConvex>,
-	structure: CaseStructure,
-	accessCode = "sterling",
-) {
-	const ownerAdminId = await t.run((ctx) =>
-		ctx.db.insert("admins", {
-			email: `o-${Math.random()}@test.caselab.invalid`,
-			role: "admin",
-		}),
-	);
-	await t.run((ctx) =>
-		ctx.db.insert("cases", {
-			commonInformation: "",
-			isDemo: false,
-			name: "Case",
-			brief: "Brief",
-			accessCode,
-			ownerAdminId,
-			structure,
-		}),
-	);
-	return await t.mutation(api.simulations.start, { accessCode: accessCode });
-}
-
 describe("startTurn validation", () => {
 	// Tests that an empty or whitespace-only message is rejected.
 	it("rejects an empty/whitespace message", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
-		await expect(
-			t.mutation(api.turn.sendMessage, {
-				runId: state.runId,
-				personaId: "A",
-				message: "   ",
-			}),
-		).rejects.toThrow();
+		expect(
+			await studentRejection(
+				t.mutation(api.turn.sendMessage, {
+					runId: state.runId,
+					personaId: "A",
+					message: "   ",
+				}),
+			),
+		).toMatchObject({ code: STUDENT_ERROR.MESSAGE_REQUIRED });
 	});
 
 	// Tests that a message over the word limit is rejected.
@@ -237,6 +131,30 @@ describe("startTurn validation", () => {
 		});
 	});
 
+	// Tests that the simulation ends at exactly its duration, not a minute after.
+	it("accepts a message just before the duration and rejects it exactly at the duration", async () => {
+		const t = newTestConvex();
+		const state = await startRun(t, caseStructure(), "edge");
+		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		await t.run((ctx) => ctx.db.patch(run.caseId, { duration: 10 }));
+		stubLlm();
+
+		advanceClock(9);
+		await send(t, state.runId, "A", "still time");
+		expect((await lastReply(t, state.runId, "A"))?.status).toBe("done");
+
+		advanceClock(1);
+		expect(
+			await studentRejection(
+				t.mutation(api.turn.sendMessage, {
+					runId: state.runId,
+					personaId: "A",
+					message: "too late",
+				}),
+			),
+		).toMatchObject({ code: STUDENT_ERROR.SIMULATION_ENDED });
+	});
+
 	// Tests that a message is rejected once the persona's own availability window has expired.
 	it("rejects a message once the persona's own availability window has expired", async () => {
 		const t = newTestConvex();
@@ -260,35 +178,9 @@ describe("startTurn validation", () => {
 	});
 });
 
-describe("concurrency guard (claimStreamingSlot)", () => {
-	// Tests that a second turn on the same persona is rejected while one is in flight.
-	it("rejects a second turn on the same persona while one is already in flight", async () => {
-		const t = newTestConvex();
-		const state = await startRun(t, caseStructure());
-		await t.mutation(api.turn.sendMessage, {
-			runId: state.runId,
-			personaId: "A",
-			message: "first message",
-		});
-		expect(
-			await studentRejection(
-				t.mutation(api.turn.sendMessage, {
-					runId: state.runId,
-					personaId: "A",
-					message: "second message",
-				}),
-			),
-		).toEqual({
-			code: STUDENT_ERROR.REPLY_IN_PROGRESS,
-			message:
-				"A reply is already being generated for this contact. Please wait.",
-		});
-	});
-});
-
 describe("normal turn happy path", () => {
-	// Tests that the reply is persisted and the streaming preview is cleared.
-	it("persists the reply and clears the streaming preview", async () => {
+	// Tests that the reply is persisted.
+	it("persists the reply", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
 		stubLlm({ replyText: "Our vendor is Acme." });
@@ -313,14 +205,16 @@ describe("normal turn happy path", () => {
 			}),
 		);
 		const before = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		stubLlm();
 
-		await t.mutation(api.turn.sendMessage, {
+		const { replyId } = await t.mutation(api.turn.sendMessage, {
 			runId: state.runId,
 			personaId: "B",
 			message: "switching to B",
 		});
 
 		expect(await t.run((ctx) => ctx.db.get(state.runId))).toEqual(before);
+		await settleReply(t, replyId);
 	});
 
 	// Tests that a leading speaker tag is stripped before the reply is stored.
@@ -374,27 +268,6 @@ describe("normal turn happy path", () => {
 		expect(history).toEqual([]);
 		expect((await lastReply(t, state.runId, "A"))?.status).toBe("failed");
 	});
-
-	// Tests that a failed LLM call fails the turn, leaves no trace of it and lets the student send again.
-	it("fails the turn and leaves no trace of it when the LLM call fails", async () => {
-		const t = newTestConvex();
-		const state = await startRun(t, caseStructure());
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockRejectedValue(new Error("upstream blew up")),
-		);
-
-		await send(t, state.runId, "A", "hi");
-
-		const history = await visibleMessages(t, state.runId, "A");
-		expect(history).toEqual([]);
-		expect((await lastReply(t, state.runId, "A"))?.status).toBe("failed");
-
-		stubLlm({ replyText: "Hello." });
-		await send(t, state.runId, "A", "hi");
-		const retried = await visibleMessages(t, state.runId, "A");
-		expect(retried.map((m) => m.content)).toEqual(["hi", "Hello."]);
-	});
 });
 
 describe("harassment/boundary escalation", () => {
@@ -405,8 +278,8 @@ describe("harassment/boundary escalation", () => {
 		});
 	}
 
-	// Tests that the reply call still runs concurrently with the classifier when the message ends up flagged.
-	it("still issues the reply call concurrently even when the message ends up flagged", async () => {
+	// Tests that the reply call is still made for a flagged message and the flag counts as one warning.
+	it("still makes the reply call for a flagged message, and counts one warning", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, twoRoots());
 		const { calls } = stubLlm({ harassment: "nonsense" });

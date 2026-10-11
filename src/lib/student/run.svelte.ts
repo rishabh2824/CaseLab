@@ -142,11 +142,8 @@ export class RunStore {
 				this.loadError = "";
 				return;
 			}
-			const code = studentErrorData(err)?.code;
-			if (
-				code === STUDENT_ERROR.RUN_NOT_FOUND ||
-				code === STUDENT_ERROR.RUN_EXPIRED
-			) {
+			// Reads never look at the clock, so an expired run only shows up as not found once it is destroyed.
+			if (studentErrorData(err)?.code === STUDENT_ERROR.RUN_NOT_FOUND) {
 				this.endSimulation();
 			} else {
 				this.loadError = getErrorMessage(err, "Failed to load the simulation.");

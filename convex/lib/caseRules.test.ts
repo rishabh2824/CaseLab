@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getCaseInfoErrors, getPersonaFieldErrors } from "./caseRules";
+import {
+	getCaseInfoErrors,
+	getPersonaFieldErrors,
+	isSelectableCollaborator,
+} from "./caseRules";
 import { RUN_LIFETIME_MINUTES } from "./constants";
 
 const valid = {
@@ -34,7 +38,7 @@ describe("getCaseInfoErrors", () => {
 	});
 
 	// Tests that an access code must be lowercase letters only.
-	it.each(["Sterling", "case1", "two words", "case-one"])(
+	it.each(["Sterling", "case1", "two words", "case-one", "café", "🙂"])(
 		"rejects the access code %s",
 		(accessCode) => {
 			expect(getCaseInfoErrors({ ...valid, accessCode }).accessCode).toBe(
@@ -91,5 +95,28 @@ describe("getPersonaFieldErrors", () => {
 			getPersonaFieldErrors({ ...persona, availabilityMinutes: n })
 				.availability,
 		).toBeTruthy();
+	});
+});
+
+describe("isSelectableCollaborator", () => {
+	// Tests that a super admin is never selectable, whoever the owner is.
+	it("rejects a super admin", () => {
+		expect(isSelectableCollaborator({ _id: "a", role: "super" }, null)).toBe(
+			false,
+		);
+	});
+
+	// Tests that the effective owner is not selectable as their own collaborator.
+	it("rejects the effective owner", () => {
+		expect(isSelectableCollaborator({ _id: "a", role: "admin" }, "a")).toBe(
+			false,
+		);
+	});
+
+	// Tests that any other regular admin is selectable.
+	it("accepts another regular admin", () => {
+		expect(isSelectableCollaborator({ _id: "a", role: "admin" }, "b")).toBe(
+			true,
+		);
 	});
 });

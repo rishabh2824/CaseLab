@@ -108,11 +108,15 @@ describe("getChatState", () => {
 	// Tests that getChatState reads existing state without mutating the map.
 	it("reads existing state without mutating the map", () => {
 		const map = { A: { warningCount: 2, ended: false } };
-		expect(getChatState(map, "A")).toEqual({
+		const before = structuredClone(map);
+		const state = getChatState(map, "A");
+		expect(state).toEqual({
 			ended: false,
 			endReason: null,
 			warningCount: 2,
 		});
+		expect(map).toEqual(before);
+		expect(state).not.toBe(map.A);
 	});
 
 	// Tests that getChatState maps a missing endReason to null.

@@ -1,4 +1,5 @@
 import { getFunctionName } from "convex/server";
+import { flushSync, tick } from "svelte";
 import { toast } from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { goto } from "$app/navigation";
@@ -77,6 +78,12 @@ const GET_SIMULATION_STATE = "simulations:get";
 const GET_PERSONA_HISTORY = "simulations:getPersonaHistory";
 
 // Sets the fake chat history, and the state of the latest reply, for a persona.
+// Lets pending reactive effects run, so a "nothing happened" assertion is made after they had the chance to.
+async function settle(): Promise<void> {
+	await tick();
+	flushSync();
+}
+
 function setHistory(
 	personaId: string,
 	messages: ReturnType<typeof message>[] = [],
@@ -245,28 +252,29 @@ describe("which persona is selected", () => {
 });
 
 describe("session resume / live-query errors", () => {
-	// Tests that a run-not-found or run-expired error sends the student home without starting a new run.
-	it.each([
-		[STUDENT_ERROR.RUN_NOT_FOUND, "Run not found."],
-		[STUDENT_ERROR.RUN_EXPIRED, "Run expired."],
-	] as const)(
-		"a %s error sends the student home without starting a new run",
-		async (code, text) => {
-			const { session, goto } = await freshRun();
-			session.startRun({ runId: "stale-run" });
-			sessionStorage.setItem(notesKey("stale-run"), "my notes");
-			setFakeQuery(
-				GET_SIMULATION_STATE,
-				{ runId: "stale-run" },
-				{ error: clientStudentError("simulations:get", code, text, "Q") },
-			);
+	// Tests that a run-not-found error sends the student home without starting a new run.
+	it("a run-not-found error sends the student home without starting a new run", async () => {
+		const { session, goto } = await freshRun();
+		session.startRun({ runId: "stale-run" });
+		sessionStorage.setItem(notesKey("stale-run"), "my notes");
+		setFakeQuery(
+			GET_SIMULATION_STATE,
+			{ runId: "stale-run" },
+			{
+				error: clientStudentError(
+					"simulations:get",
+					STUDENT_ERROR.RUN_NOT_FOUND,
+					"Run not found.",
+					"Q",
+				),
+			},
+		);
 
-			await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
-			expect(session.runId).toBe("");
-			expect(sessionStorage.getItem(notesKey("stale-run"))).toBeNull();
-			expect(mockClientMutation).not.toHaveBeenCalled();
-		},
-	);
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/"));
+		expect(session.runId).toBe("");
+		expect(sessionStorage.getItem(notesKey("stale-run"))).toBeNull();
+		expect(mockClientMutation).not.toHaveBeenCalled();
+	});
 
 	// Tests that an unrelated error sets loadError instead of clearing the run.
 	it("a non-expiry error sets loadError instead of clearing the run", async () => {
@@ -546,7 +554,7 @@ describe("failed and stuck replies", () => {
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 		expect(toast).toHaveBeenCalledWith(FAILED_TOAST, { duration: 4000 });
 		setHistory("mary", [], { id: "r1", status: "failed" });
-		await Promise.resolve();
+		await settle();
 		expect(toast).toHaveBeenCalledTimes(1);
 	});
 
@@ -581,7 +589,7 @@ describe("failed and stuck replies", () => {
 
 		run.sendMessage("hello again");
 		await vi.waitFor(() => expect(mockClientMutation).toHaveBeenCalled());
-		await Promise.resolve();
+		await settle();
 
 		expect(toast).not.toHaveBeenCalled();
 	});
@@ -633,7 +641,7 @@ describe("failed and stuck replies", () => {
 
 		run.selectContact("bob");
 		setHistory("bob", [], { id: "b1", status: "failed" });
-		await Promise.resolve();
+		await settle();
 
 		expect(run.isSending).toBe(false);
 		expect(toast).not.toHaveBeenCalled();
@@ -813,7 +821,7 @@ describe("endSimulation", () => {
 });
 
 describe("a run that expires while a message is in flight", () => {
-	// Tests that a run expiring while a message is in flight sends the student home without a replacement run.
+	// Tests that a run destroyed (expired) while a message is in flight, so reads report it not found, sends the student home without a replacement run.
 	it("sends the student home instead of starting a replacement run", async () => {
 		const { run, session, goto } = await freshRun();
 		await primeRun(run, session);
@@ -828,8 +836,8 @@ describe("a run that expires while a message is in flight", () => {
 			{
 				error: clientStudentError(
 					"simulations:get",
-					STUDENT_ERROR.RUN_EXPIRED,
-					"Run expired.",
+					STUDENT_ERROR.RUN_NOT_FOUND,
+					"Run not found.",
 					"Q",
 				),
 			},

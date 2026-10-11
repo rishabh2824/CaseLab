@@ -5,6 +5,8 @@ import {
 	contact,
 	mockApi,
 	runState,
+	runStateSeed,
+	startResult,
 	studentError,
 	turnHandler,
 } from "./mockApi.js";
@@ -14,15 +16,9 @@ test("student enters an access code and messages a persona", async ({
 	page,
 }) => {
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
+		queries: [runStateSeed()],
 		mutations: {
-			"simulations:start": () => runState(),
+			"simulations:start": () => startResult(),
 		},
 		turn: turnHandler({
 			reply: "Our current vendor is Acme Supplies.",
@@ -70,71 +66,17 @@ test("an invalid access code surfaces an inline error", async ({ page }) => {
 	await expect(page).toHaveURL(/\/$/);
 });
 
-// Tests that an empty access code shows the inline error without sending a request.
-test("an empty access code shows the inline error without a request", async ({
-	page,
-}) => {
-	let mutationCalled = false;
-	await mockApi(page, {
-		mutations: {
-			"simulations:start": () => {
-				mutationCalled = true;
-				return runState();
-			},
-		},
-	});
-
-	await page.goto("/");
-	await page.getByRole("button", { name: "Open Case" }).click();
-
-	await expect(page.getByText("Invalid access code.")).toBeVisible();
-	expect(mutationCalled).toBe(false);
-});
-
-// Tests that the access code is lower-cased before being sent.
-test("the access code is lower-cased before being sent", async ({ page }) => {
-	let sentAccessCode: string | undefined;
-	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
-		mutations: {
-			"simulations:start": (args: { accessCode: string }) => {
-				sentAccessCode = args.accessCode;
-				return runState();
-			},
-		},
-	});
-
-	await page.goto("/");
-	await page.getByPlaceholder("Enter access code").fill("STERLING");
-	await page.getByRole("button", { name: "Open Case" }).click();
-
-	await expect(page).toHaveURL(/\/student$/);
-	expect(sentAccessCode).toBe("sterling");
-});
-
 // Tests that a reload mid-run resumes the persisted run instead of starting a new one.
 test("a reload mid-run resumes from the persisted runId instead of starting a new run", async ({
 	page,
 }) => {
 	let startCalls = 0;
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
+		queries: [runStateSeed()],
 		mutations: {
 			"simulations:start": () => {
 				startCalls++;
-				return runState();
+				return startResult();
 			},
 		},
 	});
@@ -150,8 +92,8 @@ test("a reload mid-run resumes from the persisted runId instead of starting a ne
 	expect(startCalls).toBe(1);
 });
 
-// Tests that an expired run sends the student home instead of starting a new run.
-test("an expired run sends the student home instead of starting a new run", async ({
+// Tests that a run the server no longer has sends the student home instead of starting a new run.
+test("a missing run sends the student home instead of starting a new run", async ({
 	page,
 }) => {
 	let startCalls = 0;
@@ -161,15 +103,15 @@ test("an expired run sends the student home instead of starting a new run", asyn
 				name: "simulations:get",
 				args: { runId: "testrun123" },
 				error: {
-					code: STUDENT_ERROR.RUN_EXPIRED,
-					message: "Run expired.",
+					code: STUDENT_ERROR.RUN_NOT_FOUND,
+					message: "Run not found.",
 				},
 			},
 		],
 		mutations: {
 			"simulations:start": () => {
 				startCalls++;
-				return runState({ runId: "testrun123" });
+				return startResult();
 			},
 		},
 	});
@@ -189,15 +131,9 @@ test("typing over the word limit blocks Send without sending a message", async (
 }) => {
 	let turnCalled = false;
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
+		queries: [runStateSeed()],
 		mutations: {
-			"simulations:start": () => runState(),
+			"simulations:start": () => startResult(),
 		},
 		turn: () => {
 			turnCalled = true;
@@ -223,15 +159,9 @@ test("a referral unlock adds the new contact and fires a toast", async ({
 }) => {
 	const bob = contact({ id: "bob", name: "Bob", role: "Vendor Rep" });
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
+		queries: [runStateSeed()],
 		mutations: {
-			"simulations:start": () => runState(),
+			"simulations:start": () => startResult(),
 		},
 		turn: turnHandler({
 			reply: "I'll connect you with Bob.",
@@ -265,15 +195,9 @@ test("a shared file appears in the file list and fires a toast", async ({
 		url: "https://example.com/f1",
 	});
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
+		queries: [runStateSeed()],
 		mutations: {
-			"simulations:start": () => runState(),
+			"simulations:start": () => startResult(),
 		},
 		turn: turnHandler({
 			reply: "Here's the vendor contract.",
@@ -299,20 +223,14 @@ test("a shared file appears in the file list and fires a toast", async ({
 	).toBeVisible();
 });
 
-// Tests that a chat-ended meta frame disables the composer for that persona.
-test("a chat-ended meta frame disables the composer for that persona", async ({
+// Tests that an ended chat disables the composer for that persona.
+test("an ended chat disables the composer for that persona", async ({
 	page,
 }) => {
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
+		queries: [runStateSeed()],
 		mutations: {
-			"simulations:start": () => runState(),
+			"simulations:start": () => startResult(),
 		},
 		turn: turnHandler({
 			reply: "I'm done talking to you.",
@@ -354,14 +272,8 @@ test("an unavailable contact cannot be selected or messaged", async ({
 		],
 	});
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: state,
-			},
-		],
-		mutations: { "simulations:start": () => state },
+		queries: [runStateSeed(state)],
+		mutations: { "simulations:start": () => startResult() },
 	});
 
 	await page.goto("/");
@@ -382,15 +294,9 @@ test("a failed reply drops the student's message and shows a toast", async ({
 	page,
 }) => {
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
+		queries: [runStateSeed()],
 		mutations: {
-			"simulations:start": () => runState(),
+			"simulations:start": () => startResult(),
 		},
 		turn: turnHandler({ reply: null }),
 	});
@@ -418,14 +324,8 @@ test("notes autosave writes to sessionStorage after a debounce, never to the bac
 	page,
 }) => {
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
-		mutations: { "simulations:start": () => runState() },
+		queries: [runStateSeed()],
+		mutations: { "simulations:start": () => startResult() },
 	});
 
 	await page.goto("/");
@@ -450,11 +350,7 @@ test("exporting the PDF requests the export payload and triggers a download", as
 }) => {
 	await mockApi(page, {
 		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
+			runStateSeed(),
 			{
 				name: "simulations:exportRun",
 				args: { runId: "testrun123" },
@@ -471,7 +367,7 @@ test("exporting the PDF requests the export payload and triggers a download", as
 				},
 			},
 		],
-		mutations: { "simulations:start": () => runState() },
+		mutations: { "simulations:start": () => startResult() },
 	});
 
 	await page.goto("/");
@@ -501,7 +397,7 @@ test("a non-expiry backend error surfaces an inline alert instead of a silently 
 				},
 			},
 		],
-		mutations: { "simulations:start": () => runState() },
+		mutations: { "simulations:start": () => startResult() },
 	});
 
 	await page.goto("/");
@@ -517,15 +413,9 @@ test("a rejected turn re-enables the composer so the student can retry", async (
 	page,
 }) => {
 	await mockApi(page, {
-		queries: [
-			{
-				name: "simulations:get",
-				args: { runId: "testrun123" },
-				data: runState(),
-			},
-		],
+		queries: [runStateSeed()],
 		mutations: {
-			"simulations:start": () => runState(),
+			"simulations:start": () => startResult(),
 		},
 		turn: () => {
 			throw studentError(

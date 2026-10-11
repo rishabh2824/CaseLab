@@ -1,7 +1,7 @@
 import { ConvexError, type ObjectType, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { getCaseInfoErrors } from "../lib/caseRules";
+import { getCaseInfoErrors, isSelectableCollaborator } from "../lib/caseRules";
 import { cleanStructure, validateGraph } from "../lib/caseStructure";
 import { type CaseStructure, caseStructureValidator } from "../models/cases";
 import { existingStorageIds, syncCaseFiles } from "./files";
@@ -157,7 +157,11 @@ async function resolveCollaboratorIds(
 	const missing = deduped.filter((_, i) => admins[i] === null);
 	if (missing.length > 0)
 		throw new ConvexError(`Unknown admin id(s): ${missing.join(", ")}`);
-	if (admins.some((admin) => admin?.role === "super")) {
+	if (
+		admins.some(
+			(admin) => admin && !isSelectableCollaborator(admin, ownerAdminId),
+		)
+	) {
 		throw new ConvexError("Super admins cannot be added as collaborators.");
 	}
 	return deduped;

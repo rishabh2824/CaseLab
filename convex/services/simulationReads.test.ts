@@ -73,11 +73,10 @@ describe("flattenPersonas", () => {
 			roots: ["A", "B"],
 		});
 		const graph = flattenPersonas(structure);
-		const targets = new Set(
-			graph.referrals.map((e) => `${e.fromId}->${e.toId}`),
+		expect(graph.referrals.map((e) => `${e.fromId}->${e.toId}`).sort()).toEqual(
+			["A->C", "B->C"],
 		);
-		expect(targets).toEqual(new Set(["A->C", "B->C"]));
-		expect(graph.personas.size).toBe(3);
+		expect([...graph.personas.keys()].sort()).toEqual(["A", "B", "C"]);
 	});
 
 	// Tests that a persona that is both a root and a referral target is stored once.
@@ -88,8 +87,9 @@ describe("flattenPersonas", () => {
 			roots: ["A", "B"],
 		});
 		const graph = flattenPersonas(structure);
-		expect(new Set(graph.roots)).toEqual(new Set(["A", "B"]));
-		expect(graph.personas.has("B")).toBe(true);
+		expect([...graph.roots].sort()).toEqual(["A", "B"]);
+		expect([...graph.personas.keys()].sort()).toEqual(["A", "B"]);
+		expect(graph.referrals).toHaveLength(1);
 	});
 });
 

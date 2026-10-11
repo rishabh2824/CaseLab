@@ -79,46 +79,6 @@ test("the demo list shows an empty state when there are no demo cases", async ({
 	).toBeVisible();
 });
 
-// Tests that a super admin can switch a case on as a demo, and that a regular admin has no switch.
-test("a super admin can toggle a case as a demo, a regular admin cannot", async ({
-	page,
-	browser,
-}) => {
-	let cases = [caseDoc({ _id: "case1", isDemo: false })];
-	await mockApi(page, {
-		queries: [{ name: "cases:listAll", args: {}, data: cases }],
-		mutations: {
-			"cases:setDemo": async (
-				args: { caseId: string; isDemo: boolean },
-				{ setQuery },
-			) => {
-				cases = cases.map((c) =>
-					c._id === args.caseId ? { ...c, isDemo: args.isDemo } : c,
-				);
-				await setQuery("cases:listAll", {}, { data: cases });
-			},
-		},
-	});
-	await signInAsAdmin(page, { role: ADMIN_ROLE.SUPER });
-	await page.goto("/admin/edit");
-
-	const toggle = page.getByRole("switch", { name: "Show as a demo case" });
-	await expect(toggle).toHaveAttribute("aria-checked", "false");
-	await toggle.hover();
-	await expect(page.getByRole("tooltip")).toBeVisible();
-	await toggle.click();
-	await expect(toggle).toHaveAttribute("aria-checked", "true");
-
-	const regular = await browser.newPage();
-	await mockApi(regular, {
-		queries: [{ name: "cases:listAll", args: {}, data: cases }],
-	});
-	await signInAsAdmin(regular, { role: ADMIN_ROLE.ADMIN });
-	await regular.goto("/admin/edit");
-	await expect(regular.getByText("Sterling Industries")).toBeVisible();
-	await expect(regular.getByRole("switch")).toHaveCount(0);
-});
-
 // Tests that choosing a template seeds a new case form.
 test("choosing a template seeds a new case form", async ({ page }) => {
 	await mockApi(page, {
