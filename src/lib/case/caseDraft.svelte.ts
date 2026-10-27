@@ -12,7 +12,7 @@ export type LoadableCase = {
 	brief: string;
 	commonInformation: string;
 	duration?: number | null;
-	accessCode: string;
+	accessCode?: string;
 	structure: CaseStructure;
 	collaboratorAdminIds?: string[];
 };
@@ -115,7 +115,7 @@ export class CaseDraft {
 		this.initialBrief = loaded.brief ?? "";
 		this.commonInformation = loaded.commonInformation ?? "";
 		this.simulationDurationMinutes = loaded.duration ?? null;
-		this.accessCode = isEditMode ? loaded.accessCode : "";
+		this.accessCode = isEditMode ? (loaded.accessCode ?? "") : "";
 		this.graph.load(loaded.structure);
 		if (isEditMode)
 			this.collaboratorAdminIds = loaded.collaboratorAdminIds ?? [];

@@ -9,38 +9,43 @@ import {
 	createCase,
 	deleteCase as deleteCaseWithAccess,
 	listCases,
-	listDemoCases,
+	listTemplateChoices,
 	loadCaseForAccess,
+	requireCaseAccess,
 	updateCase,
 } from "./services/cases";
 
-// Lists the cases flagged as demos, by id and name only.
-export const listDemos = adminQuery({
+// Lists the cases the caller can copy as a template: their own plus every case flagged as a template, by id and name only.
+export const listTemplates = adminQuery({
 	args: {},
 	handler: async (ctx) => {
-		return await listDemoCases(ctx);
+		return await listTemplateChoices(ctx, ctx.admin);
 	},
 });
 
-// Returns a demo case without its access code or owner, or null if the id is not a demo case.
-export const getDemo = adminQuery({
-	args: { caseId: v.string() },
+// Loads a case to copy as a template, without its access code or owner. Allowed for flagged templates and for cases the caller can access.
+export const getTemplate = adminQuery({
+	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
-		const id = ctx.db.normalizeId("cases", args.caseId);
-		const c = id ? await ctx.db.get("cases", id) : null;
-		if (!c?.isDemo) return null;
-		const { accessCode: _accessCode, ownerAdminId: _ownerAdminId, ...demo } = c;
-		return demo;
+		const c = await ctx.db.get("cases", args.caseId);
+		if (!c) throw new ConvexError("Case not found.");
+		if (!c.isTemplate) await requireCaseAccess(ctx, c, ctx.admin);
+		const {
+			accessCode: _accessCode,
+			ownerAdminId: _ownerAdminId,
+			...template
+		} = c;
+		return template;
 	},
 });
 
-// Turns a case's demo flag on or off; super admins only.
-export const setDemo = superAdminMutation({
-	args: { caseId: v.id("cases"), isDemo: v.boolean() },
+// Turns a case's template flag on or off; super admins only.
+export const setTemplate = superAdminMutation({
+	args: { caseId: v.id("cases"), isTemplate: v.boolean() },
 	handler: async (ctx, args) => {
 		if (!(await ctx.db.get("cases", args.caseId)))
 			throw new ConvexError("Case not found.");
-		await ctx.db.patch("cases", args.caseId, { isDemo: args.isDemo });
+		await ctx.db.patch("cases", args.caseId, { isTemplate: args.isTemplate });
 	},
 });
 

@@ -2,15 +2,12 @@ import { render, screen } from "@testing-library/svelte";
 import { createRawSnippet } from "svelte";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
-import DemoCaseView from "../../src/lib/components/DemoCaseView.svelte";
 import TemplatePicker from "../../src/lib/components/TemplatePicker.svelte";
 import RootLayout from "../../src/routes/+layout.svelte";
 import AppLayout from "../../src/routes/(app)/+layout.svelte";
 import EditCase from "../../src/routes/(app)/admin/cases/[id]/edit/+page.svelte";
 import NewCase from "../../src/routes/(app)/admin/cases/new/+page.svelte";
 import EditList from "../../src/routes/(app)/admin/edit/+page.svelte";
-import Demo from "../../src/routes/(app)/admin/new/demo/+page.svelte";
-import DemoDetail from "../../src/routes/(app)/admin/new/demo/[id]/+page.svelte";
 import Template from "../../src/routes/(app)/admin/new/template/+page.svelte";
 import { convexFake } from "../support/convexFake.svelte.js";
 
@@ -31,9 +28,6 @@ vi.mock("../../src/lib/components/CaseForm.svelte", () => ({
 	default: vi.fn(),
 }));
 vi.mock("../../src/lib/components/TemplatePicker.svelte", () => ({
-	default: vi.fn(),
-}));
-vi.mock("../../src/lib/components/DemoCaseView.svelte", () => ({
 	default: vi.fn(),
 }));
 
@@ -87,19 +81,6 @@ describe("admin case pages", () => {
 		(TemplatePicker as unknown as Mock).mockClear();
 		render(Template);
 		expect(propsOf(TemplatePicker)).toMatchObject({ mode: "template" });
-	});
-
-	// Tests that the demo page lists the demo cases through the picker.
-	it("renders the picker in demo mode", () => {
-		render(Demo);
-		expect(propsOf(TemplatePicker)).toMatchObject({ mode: "demo" });
-	});
-
-	// Tests that the demo detail page renders the read-only view for the case in the URL.
-	it("renders the demo view for the case in the URL", () => {
-		pageState.params = { id: "case-7" };
-		render(DemoDetail);
-		expect(propsOf(DemoCaseView)).toMatchObject({ caseId: "case-7" });
 	});
 });
 

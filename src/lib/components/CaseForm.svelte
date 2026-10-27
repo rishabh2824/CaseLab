@@ -50,11 +50,17 @@ let lastSavedCaseId: string | null = null;
 
 // Loads a case (or template) from the server into the form and marks it clean.
 async function loadCase(id: string): Promise<void> {
-	const loadedCase = await getConvexClient().query(api.cases.getForEdit, {
-		caseId: id as Id<"cases">,
-	});
-	draft.load(loadedCase, { isEditMode });
-	if (isEditMode) ownerAdminId = loadedCase.ownerAdminId ?? null;
+	const client = getConvexClient();
+	const caseId = id as Id<"cases">;
+	if (isEditMode) {
+		const loadedCase = await client.query(api.cases.getForEdit, { caseId });
+		draft.load(loadedCase, { isEditMode });
+		ownerAdminId = loadedCase.ownerAdminId;
+	} else {
+		draft.load(await client.query(api.cases.getTemplate, { caseId }), {
+			isEditMode,
+		});
+	}
 }
 
 $effect(() => {

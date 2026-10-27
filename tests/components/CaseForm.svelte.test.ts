@@ -23,6 +23,7 @@ import {
 } from "../support/factories.js";
 
 const getForEdit = convexFake.clientQuery(api.cases.getForEdit);
+const getTemplate = convexFake.clientQuery(api.cases.getTemplate);
 const createCase = convexFake.mutation(api.cases.create);
 const updateCase = convexFake.mutation(api.cases.update);
 
@@ -81,7 +82,7 @@ function makeCaseDoc(
 ): ConvexCaseDoc {
 	return {
 		_creationTime: 0,
-		isDemo: false,
+		isTemplate: false,
 		name: "Sterling Industries",
 		accessCode: "sterling",
 		brief: "Reduce costs.",
@@ -302,6 +303,33 @@ describe("CaseForm", () => {
 			).toBeInTheDocument();
 			expect(updateRequests).toHaveLength(1);
 			expect(queryCalls).toBe(2);
+		});
+	});
+
+	describe("template mode", () => {
+		// Tests that a template loads through getTemplate and seeds a new case with no access code.
+		it("seeds the form from the template without an access code", async () => {
+			const {
+				accessCode: _accessCode,
+				ownerAdminId: _owner,
+				...template
+			} = makeCaseDoc();
+			getTemplate.mockResolvedValue(template);
+			const { createRequests } = stubMutations();
+			const user = userEvent.setup();
+			renderForm({ templateId: template._id });
+
+			expect(
+				await screen.findByDisplayValue("Sterling Industries"),
+			).toBeInTheDocument();
+			expect(screen.getByDisplayValue("Mary")).toBeInTheDocument();
+			expect(screen.getByLabelText("Access code")).toHaveValue("");
+			expect(getTemplate).toHaveBeenCalledWith({ caseId: template._id });
+
+			await user.type(screen.getByLabelText("Access code"), "fresh");
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+			await waitFor(() => expect(createRequests).toHaveLength(1));
+			expect(createRequests[0]?.accessCode).toBe("fresh");
 		});
 	});
 

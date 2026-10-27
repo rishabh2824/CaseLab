@@ -23,7 +23,7 @@ async function seedCase(
 	return await t.run((ctx) =>
 		ctx.db.insert("cases", {
 			commonInformation: "",
-			isDemo: false,
+			isTemplate: false,
 			name: overrides.name ?? "Owned Case",
 			brief: "A brief.",
 			accessCode: overrides.accessCode ?? "seedcode",
@@ -79,11 +79,11 @@ describe("admin-only surface rejects anonymous callers", () => {
 		);
 		const caseId = await seedCase(t, adminId);
 		return [
-			["cases.getDemo", () => t.query(api.cases.getDemo, { caseId })],
-			["cases.listDemos", () => t.query(api.cases.listDemos, {})],
+			["cases.getTemplate", () => t.query(api.cases.getTemplate, { caseId })],
+			["cases.listTemplates", () => t.query(api.cases.listTemplates, {})],
 			[
-				"cases.setDemo",
-				() => t.mutation(api.cases.setDemo, { caseId, isDemo: true }),
+				"cases.setTemplate",
+				() => t.mutation(api.cases.setTemplate, { caseId, isTemplate: true }),
 			],
 			["cases.getForEdit", () => t.query(api.cases.getForEdit, { caseId })],
 			["cases.listAll", () => t.query(api.cases.listAll, {})],
@@ -139,11 +139,21 @@ describe("admin-only surface rejects anonymous callers", () => {
 		const caseId = await seedCase(t, adminId);
 
 		const calls: [string, () => Promise<unknown>][] = [
-			["cases.getDemo", () => asStranger.query(api.cases.getDemo, { caseId })],
-			["cases.listDemos", () => asStranger.query(api.cases.listDemos, {})],
 			[
-				"cases.setDemo",
-				() => asStranger.mutation(api.cases.setDemo, { caseId, isDemo: true }),
+				"cases.getTemplate",
+				() => asStranger.query(api.cases.getTemplate, { caseId }),
+			],
+			[
+				"cases.listTemplates",
+				() => asStranger.query(api.cases.listTemplates, {}),
+			],
+			[
+				"cases.setTemplate",
+				() =>
+					asStranger.mutation(api.cases.setTemplate, {
+						caseId,
+						isTemplate: true,
+					}),
 			],
 			["cases.listAll", () => asStranger.query(api.cases.listAll, {})],
 			[

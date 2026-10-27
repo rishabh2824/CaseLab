@@ -210,7 +210,7 @@ export async function startRun(
 	await t.run((ctx) =>
 		ctx.db.insert("cases", {
 			commonInformation: "",
-			isDemo: false,
+			isTemplate: false,
 			name: "Case",
 			brief: "Brief",
 			accessCode,

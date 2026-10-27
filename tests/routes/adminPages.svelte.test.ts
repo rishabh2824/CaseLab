@@ -52,8 +52,8 @@ describe("admin home", () => {
 });
 
 describe("new case chooser", () => {
-	// Tests that all three ways to begin a case are offered.
-	it("links to the blank form, the template picker and the demo", () => {
+	// Tests that both ways to begin a case are offered.
+	it("links to the blank form and the template picker", () => {
 		render(NewCase);
 		expect(
 			screen.getByRole("link", { name: /Start From Scratch/ }),
@@ -61,8 +61,5 @@ describe("new case chooser", () => {
 		expect(
 			screen.getByRole("link", { name: /Use Existing Case As Template/ }),
 		).toHaveAttribute("href", "/admin/new/template");
-		expect(
-			screen.getByRole("link", { name: /View demo cases/ }),
-		).toHaveAttribute("href", "/admin/new/demo");
 	});
 });

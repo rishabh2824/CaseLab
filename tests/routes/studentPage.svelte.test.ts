@@ -122,6 +122,7 @@ beforeEach(() => {
 	vi.mocked(downloadBlob).mockReset();
 	session.startRun({ runId: "run-1" });
 	Element.prototype.scrollIntoView = vi.fn();
+	Element.prototype.scrollTo = vi.fn();
 });
 
 describe("student page lifecycle", () => {
@@ -232,6 +233,17 @@ describe("chat pane", () => {
 		render(StudentPage);
 		expect(screen.getByText("Hi Mary")).toBeInTheDocument();
 		expect(screen.getByText("Hello.")).toBeInTheDocument();
+	});
+
+	// Tests that a new message scrolls only the chat box, never the page, which jumps on narrow screens.
+	it("scrolls the chat box to the newest message without scrolling the page", async () => {
+		run.activeMessages = [{ role: "user", content: "Hi Mary" }];
+		render(StudentPage);
+
+		await waitFor(() => expect(Element.prototype.scrollTo).toHaveBeenCalled());
+		const [scrolled] = vi.mocked(Element.prototype.scrollTo).mock.contexts;
+		expect(scrolled).toContain(screen.getByRole("log"));
+		expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
 	});
 
 	// Tests that the student's message shows in an otherwise empty chat while its reply is pending.

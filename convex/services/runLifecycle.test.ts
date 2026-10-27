@@ -26,7 +26,7 @@ async function seedCase(
 	const caseId = await t.run((ctx) =>
 		ctx.db.insert("cases", {
 			commonInformation: "",
-			isDemo: false,
+			isTemplate: false,
 			name: "Sterling Industries",
 			brief: "Reduce office supply costs.",
 			duration: overrides.duration,

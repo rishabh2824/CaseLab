@@ -43,30 +43,17 @@ export type CaseSummary = {
 	_id: Id<"cases">;
 	name: string;
 	accessCode: string;
-	isDemo: boolean;
+	isTemplate: boolean;
 };
 
-// Reduces a case document to its id, name, access code and demo flag.
+// Reduces a case document to its id, name, access code and template flag.
 function toCaseSummary(c: Doc<"cases">): CaseSummary {
 	return {
 		_id: c._id,
 		name: c.name,
 		accessCode: c.accessCode,
-		isDemo: c.isDemo,
+		isTemplate: c.isTemplate,
 	};
-}
-
-// Lists the cases flagged as demos, by name, without their access codes.
-export async function listDemoCases(
-	ctx: QueryCtx,
-): Promise<Pick<CaseSummary, "_id" | "name">[]> {
-	const demos = await ctx.db
-		.query("cases")
-		.withIndex("by_is_demo", (q) => q.eq("isDemo", true))
-		.collect();
-	return demos
-		.sort((a, b) => a.name.localeCompare(b.name))
-		.map(({ _id, name }) => ({ _id, name }));
 }
 
 // Lists the cases an admin can see by name: all for a super admin, otherwise owned plus collaborating.
@@ -99,6 +86,23 @@ export async function listCases(
 	return Array.from(byId.values())
 		.sort((a, b) => a.name.localeCompare(b.name))
 		.map(toCaseSummary);
+}
+
+// Lists the cases an admin can copy as a template by name: the ones they can see plus every flagged template, without access codes.
+export async function listTemplateChoices(
+	ctx: QueryCtx,
+	admin: Doc<"admins">,
+): Promise<Pick<CaseSummary, "_id" | "name">[]> {
+	const visible = await listCases(ctx, admin);
+	const templates = await ctx.db
+		.query("cases")
+		.withIndex("by_is_template", (q) => q.eq("isTemplate", true))
+		.collect();
+	const byId = new Map<Id<"cases">, string>();
+	for (const c of [...visible, ...templates]) byId.set(c._id, c.name);
+	return Array.from(byId, ([_id, name]) => ({ _id, name })).sort((a, b) =>
+		a.name.localeCompare(b.name),
+	);
 }
 
 // Deletes a case along with its file links and collaborators, without an access check.
@@ -286,7 +290,7 @@ export async function createCase(
 	const caseId = await ctx.db.insert("cases", {
 		...fields,
 		ownerAdminId: admin._id,
-		isDemo: false,
+		isTemplate: false,
 	});
 
 	await replaceCollaborators(ctx, caseId, collaboratorIds);

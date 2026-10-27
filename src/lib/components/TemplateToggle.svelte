@@ -8,23 +8,23 @@ import type { Id } from "../../../convex/_generated/dataModel.js";
 
 type Props = {
 	caseId: Id<"cases">;
-	isDemo: boolean;
+	isTemplate: boolean;
 };
 
-let { caseId, isDemo }: Props = $props();
+let { caseId, isTemplate }: Props = $props();
 
 const viewer = getViewerContext();
-const setDemo = useMutation(api.cases.setDemo);
+const setTemplate = useMutation(api.cases.setTemplate);
 
 let isSaving = $state(false);
 
-// Flips the demo flag, showing a toast if the request fails.
+// Flips the template flag, showing a toast if the request fails.
 async function toggle(): Promise<void> {
 	isSaving = true;
 	try {
-		await setDemo({ caseId, isDemo: !isDemo });
+		await setTemplate({ caseId, isTemplate: !isTemplate });
 	} catch (err) {
-		toast(getErrorMessage(err, "Failed to update the demo setting."));
+		toast(getErrorMessage(err, "Failed to update the template setting."));
 	} finally {
 		isSaving = false;
 	}
@@ -36,24 +36,24 @@ async function toggle(): Promise<void> {
 		<button
 			type="button"
 			role="switch"
-			aria-checked={isDemo}
-			aria-label="Show as a demo case"
-			aria-describedby="demo-tip-{caseId}"
+			aria-checked={isTemplate}
+			aria-label="Offer as a template"
+			aria-describedby="template-tip-{caseId}"
 			onclick={toggle}
 			disabled={isSaving}
-			class="relative h-5 w-10 shrink-0 rounded-full transition disabled:opacity-60 {isDemo ? 'bg-brand' : 'bg-line hover:bg-stone-soft/60'}"
+			class="relative h-5 w-10 shrink-0 rounded-full transition disabled:opacity-60 {isTemplate ? 'bg-brand' : 'bg-line hover:bg-stone-soft/60'}"
 		>
 			<span
 				aria-hidden="true"
-				class="absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform {isDemo ? 'translate-x-5' : 'translate-x-0'}"
+				class="absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform {isTemplate ? 'translate-x-5' : 'translate-x-0'}"
 			></span>
 		</button>
 		<span
-			id="demo-tip-{caseId}"
+			id="template-tip-{caseId}"
 			role="tooltip"
 			class="pointer-events-none invisible absolute right-0 top-full z-10 mt-2 w-64 rounded-lg border border-line bg-white px-3 py-2 text-xs leading-5 text-ink-soft opacity-0 shadow-soft transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100"
 		>
-			Demo Case: Allows other admins to view this case as read only. Access code stays hidden.
+			Template: lets every admin copy this case as the starting point for a new one. Access code stays hidden.
 		</span>
 	</div>
 {/if}

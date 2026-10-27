@@ -57,26 +57,5 @@ import PageHeader from "#lib/components/PageHeader.svelte";
 				</div>
 			</a>
 		</div>
-
-		<a
-			href="/admin/new/demo"
-			class="group mt-6 flex w-full items-center justify-between gap-4 rounded-2xl border border-line-soft bg-white px-6 py-5 text-left transition hover:border-brand hover:bg-cream/70"
-		>
-			<div>
-				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
-					Option 3
-				</p>
-				<h2 class="mt-2 font-display text-lg font-semibold text-ink">View demo cases</h2>
-				<p class="mt-1 text-sm leading-6 text-stone">
-					Browse fully built-out example cases before you start your own.
-				</p>
-			</div>
-			<span
-				aria-hidden="true"
-				class="shrink-0 text-stone transition group-hover:translate-x-1 group-hover:text-brand"
-			>
-				&rarr;
-			</span>
-		</a>
 	</div>
 </div>

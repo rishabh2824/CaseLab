@@ -5,10 +5,10 @@ import { getErrorMessage } from "#lib/errors.js";
 import type { CaseSummary } from "#lib/types.js";
 import { api } from "../../../convex/_generated/api.js";
 import ConfirmDialog from "./ConfirmDialog.svelte";
-import DemoToggle from "./DemoToggle.svelte";
 import PageHeader from "./PageHeader.svelte";
+import TemplateToggle from "./TemplateToggle.svelte";
 
-type Mode = "template" | "edit" | "demo";
+type Mode = "template" | "edit";
 type Props = {
 	mode?: Mode;
 };
@@ -32,24 +32,15 @@ const COPY: Record<
 			"The selected case will open in the form with all of its current details so you can edit it directly.",
 		empty: "No cases found.",
 	},
-	demo: {
-		eyebrow: "Demo Cases",
-		title: "Browse example cases",
-		description:
-			"These fully built-out cases are read-only examples of what a complete case looks like.",
-		empty: "No demo cases are available yet.",
-	},
 };
 
 let { mode = "template" }: Props = $props();
 
-const listQuery = useQuery(api.cases.listAll, () =>
-	mode === "demo" ? "skip" : {},
+// svelte-ignore state_referenced_locally
+const casesQuery = useQuery(
+	mode === "edit" ? api.cases.listAll : api.cases.listTemplates,
+	{},
 );
-const demosQuery = useQuery(api.cases.listDemos, () =>
-	mode === "demo" ? {} : "skip",
-);
-const casesQuery = $derived(mode === "demo" ? demosQuery : listQuery);
 const cases = $derived<ListedCase[]>(casesQuery.data ?? []);
 const copy = $derived(COPY[mode]);
 const deleteCase = useMutation(api.cases.deleteCase);
@@ -57,10 +48,9 @@ const deleteCase = useMutation(api.cases.deleteCase);
 let pendingDelete = $state<ListedCase | null>(null);
 let isDeleting = $state(false);
 
-// Returns the link for a case: its edit page, its demo page, or a new case seeded from it.
+// Returns the link for a case: its edit page, or a new case seeded from it.
 function caseHref(caseItem: ListedCase): string {
 	if (mode === "edit") return `/admin/cases/${caseItem._id}/edit`;
-	if (mode === "demo") return `/admin/new/demo/${caseItem._id}`;
 	return `/admin/cases/new?template=${caseItem._id}`;
 }
 
@@ -123,7 +113,7 @@ const isEditMode = $derived(mode === "edit");
 						</a>
 						{#if isEditMode}
 							<div class="absolute right-4 top-4">
-								<DemoToggle caseId={caseItem._id} isDemo={caseItem.isDemo === true} />
+								<TemplateToggle caseId={caseItem._id} isTemplate={caseItem.isTemplate === true} />
 							</div>
 						{/if}
 						</div>

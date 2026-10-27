@@ -63,7 +63,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		return await t.run((ctx) =>
 			ctx.db.insert("cases", {
 				commonInformation: "",
-				isDemo: false,
+				isTemplate: false,
 				name: "Case",
 				brief: "Brief",
 				accessCode: "seedcode",

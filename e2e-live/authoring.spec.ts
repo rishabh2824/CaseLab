@@ -47,12 +47,12 @@ test("choosing an existing case as a template seeds a new case without its acces
 	await expect(page.getByLabel("Access code")).toHaveValue("");
 });
 
-test("a super admin marks a case as a demo, and it opens read-only from the demo list", async ({
+test("a super admin marks a case as a template", async ({
 	page,
 	signInAs,
 	seedCase,
 }) => {
-	const { name, accessCode } = await seedCase({ role: "super" });
+	const { accessCode } = await seedCase({ role: "super" });
 	await signInAs(page, "super");
 	await page.goto("/admin/edit");
 
@@ -61,16 +61,7 @@ test("a super admin marks a case as a demo, and it opens read-only from the demo
 		.filter({ has: page.getByText(`Access code: ${accessCode}`) })
 		.filter({ has: page.getByRole("switch") })
 		.last();
-	const toggle = row.getByRole("switch", { name: "Show as a demo case" });
+	const toggle = row.getByRole("switch", { name: "Offer as a template" });
 	await toggle.click();
 	await expect(toggle).toHaveAttribute("aria-checked", "true");
-
-	await page.goto("/admin/new/demo");
-	await page.getByRole("link", { name: new RegExp(name) }).click();
-
-	await expect(page).toHaveURL(/\/admin\/new\/demo\/[^/]+$/);
-	await expect(page.getByRole("heading", { name })).toBeVisible();
-	await expect(page.getByText("Reduce office supply costs.")).toBeVisible();
-	await expect(page.getByText("Access code")).toHaveCount(0);
-	await expect(page.getByRole("textbox")).toHaveCount(0);
 });

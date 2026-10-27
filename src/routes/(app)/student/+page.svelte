@@ -5,12 +5,12 @@ import { toast } from "svelte-sonner";
 import SimulationClock from "#lib/components/SimulationClock.svelte";
 import { downloadBlob } from "#lib/download.js";
 import { getPersonaInitials } from "#lib/format.js";
-import { countWords } from "../../../../convex/lib/messageRules.js";
 import { session } from "#lib/session.svelte.js";
 import { createRunStore } from "#lib/student/run.svelte.js";
 import { api } from "../../../../convex/_generated/api.js";
 import type { Id } from "../../../../convex/_generated/dataModel.js";
 import { MAX_MESSAGE_WORDS } from "../../../../convex/lib/constants.js";
+import { countWords } from "../../../../convex/lib/messageRules.js";
 
 const run = createRunStore();
 
@@ -21,7 +21,7 @@ onMount(() => {
 let inputValue = $state("");
 let isExporting = $state(false);
 let chatInputEl = $state<HTMLTextAreaElement | null>(null);
-let messagesEndEl = $state<HTMLDivElement | null>(null);
+let messagesEl = $state<HTMLDivElement | null>(null);
 
 const wordCount = $derived(countWords(inputValue));
 const overWordLimit = $derived(wordCount > MAX_MESSAGE_WORDS);
@@ -48,7 +48,8 @@ $effect(() => {
 	scrollScheduled = true;
 	requestAnimationFrame(() => {
 		scrollScheduled = false;
-		messagesEndEl?.scrollIntoView({ block: "end" });
+		// Scroll the chat box itself; scrollIntoView would also move the page, which jumps on narrow screens where the chat sits above the composer.
+		messagesEl?.scrollTo({ top: messagesEl.scrollHeight });
 	});
 });
 
@@ -238,6 +239,7 @@ async function handleExportPdf(): Promise<void> {
 			{/if}
 
 			<div
+				bind:this={messagesEl}
 				class="mt-5 max-h-[55vh] min-h-72 overflow-y-auto rounded-2xl border border-dashed border-line bg-cream/40 p-6 text-center text-sm text-stone-soft"
 			>
 				{#if activeMessages.length === 0}
@@ -253,7 +255,6 @@ async function handleExportPdf(): Promise<void> {
 								{msg.content}
 							</div>
 						{/each}
-						<div bind:this={messagesEndEl}></div>
 					</div>
 				{/if}
 			</div>

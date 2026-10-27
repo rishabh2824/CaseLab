@@ -18,11 +18,10 @@ messages.
 
 **Admins** sign in with Google, and only emails on the admin roster can get in.
 They create cases from scratch, from an existing case as a template, or by
-importing an exported case form. They edit cases, add collaborators, and can
-look at the demo cases. **Super admins** also manage the roster (adding admins,
-and deleting them with their cases reassigned or removed) and choose which
-cases are shown as demos for new admins. The demo view is read-only and never
-shows a case's access code.
+importing an exported case form. They edit cases and add collaborators.
+**Super admins** also manage the roster (adding admins, and deleting them with
+their cases reassigned or removed) and choose which cases are offered as
+templates to every admin. A template is copied without its access code.
 
 ## Tech stack
 

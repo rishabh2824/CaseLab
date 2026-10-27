@@ -89,7 +89,7 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 				commonInformation: "",
 				accessCode: "claimcode",
 				ownerAdminId: owner,
-				isDemo: false,
+				isTemplate: false,
 				structure: { personas: [], referrals: [], roots: [] },
 			}),
 		);

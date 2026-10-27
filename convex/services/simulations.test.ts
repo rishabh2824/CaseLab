@@ -34,7 +34,7 @@ async function seedCase(
 	return await t.run((ctx) =>
 		ctx.db.insert("cases", {
 			commonInformation: "",
-			isDemo: false,
+			isTemplate: false,
 			name: overrides.name ?? "Sterling Industries",
 			brief: overrides.brief ?? "Reduce office supply costs.",
 			duration: overrides.duration,

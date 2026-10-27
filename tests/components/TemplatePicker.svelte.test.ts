@@ -15,13 +15,13 @@ vi.mock("#lib/adminViewer.js", () => ({
 }));
 
 const deleteCase = convexFake.mutation(api.cases.deleteCase);
-const setDemo = convexFake.mutation(api.cases.setDemo);
+const setTemplate = convexFake.mutation(api.cases.setTemplate);
 
 type CaseSummary = FunctionReturnType<typeof api.cases.listAll>[number];
 
 // Renders the picker in a mode, signed in with the given admin role.
 function renderPicker(
-	mode: "template" | "edit" | "demo",
+	mode: "template" | "edit",
 	role: "admin" | "super" = "admin",
 ) {
 	viewerRole = role;
@@ -35,7 +35,7 @@ function makeCaseSummary(
 	return {
 		name: "Sterling Industries",
 		accessCode: "sterling",
-		isDemo: false,
+		isTemplate: false,
 		...overrides,
 		_id: (overrides._id ?? "case-1") as Id<"cases">,
 	};
@@ -45,7 +45,7 @@ function makeCaseSummary(
 function stubCaseList(items: CaseSummary[]) {
 	convexFake.setQueryData(api.cases.listAll, items);
 	convexFake.setQueryData(
-		api.cases.listDemos,
+		api.cases.listTemplates,
 		items.map(({ _id, name }) => ({ _id, name })),
 	);
 }
@@ -168,18 +168,18 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 	});
 });
 
-describe("TemplatePicker demo toggle (edit mode)", () => {
-	// Tests that a super admin sees one switch per case, reflecting whether the case is a demo.
-	it("shows a super admin a switch per case that reflects the demo flag", async () => {
+describe("TemplatePicker template toggle (edit mode)", () => {
+	// Tests that a super admin sees one switch per case, reflecting whether the case is a template.
+	it("shows a super admin a switch per case that reflects the template flag", async () => {
 		stubCaseList([
-			makeCaseSummary({ _id: "case-1", name: "Alpha", isDemo: true }),
+			makeCaseSummary({ _id: "case-1", name: "Alpha", isTemplate: true }),
 			makeCaseSummary({ _id: "case-2", name: "Beta" }),
 		]);
 		renderPicker("edit", "super");
 		await screen.findByText("Alpha");
 
 		const switches = screen.getAllByRole("switch", {
-			name: "Show as a demo case",
+			name: "Offer as a template",
 		});
 		expect(switches.map((el) => el.getAttribute("aria-checked"))).toEqual([
 			"true",
@@ -203,33 +203,33 @@ describe("TemplatePicker demo toggle (edit mode)", () => {
 
 		const tooltip = screen.getByRole("tooltip");
 		expect(tooltip).toHaveTextContent(
-			"Demo Case: Allows other admins to view this case as read only. Access code stays hidden.",
+			"Template: lets every admin copy this case as the starting point for a new one. Access code stays hidden.",
 		);
 		expect(screen.getByRole("switch")).toHaveAccessibleDescription(
-			/Allows other admins to view this case as read only/,
+			/lets every admin copy this case/,
 		);
 	});
 
-	// Tests that clicking the switch asks the server to flip the demo flag.
+	// Tests that clicking the switch asks the server to flip the template flag.
 	it("sends the flipped value when the switch is clicked", async () => {
-		stubCaseList([makeCaseSummary({ _id: "case-1", isDemo: false })]);
-		setDemo.mockResolvedValue(null);
+		stubCaseList([makeCaseSummary({ _id: "case-1", isTemplate: false })]);
+		setTemplate.mockResolvedValue(null);
 		const user = userEvent.setup();
 		renderPicker("edit", "super");
 		await screen.findByText("Sterling Industries");
 
 		await user.click(screen.getByRole("switch"));
 
-		expect(setDemo).toHaveBeenCalledWith({
+		expect(setTemplate).toHaveBeenCalledWith({
 			caseId: "case-1",
-			isDemo: true,
+			isTemplate: true,
 		});
 	});
 
 	// Tests that a failed update shows a toast.
 	it("shows a toast when the update fails", async () => {
 		stubCaseList([makeCaseSummary()]);
-		setDemo.mockRejectedValue(new Error("Only a super admin can do this."));
+		setTemplate.mockRejectedValue(new Error("Only a super admin can do this."));
 		const user = userEvent.setup();
 		renderPicker("edit", "super");
 		await screen.findByText("Sterling Industries");
@@ -245,35 +245,5 @@ describe("TemplatePicker demo toggle (edit mode)", () => {
 		renderPicker("template", "super");
 		await screen.findByText("Sterling Industries");
 		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-	});
-});
-
-describe("TemplatePicker demo mode", () => {
-	// Tests that demo mode links each case to its demo page and shows no access code, delete or switch.
-	it("links to the demo page without access codes, delete or switch", async () => {
-		stubCaseList([makeCaseSummary()]);
-		renderPicker("demo", "super");
-		await screen.findByText("Sterling Industries");
-
-		expect(
-			screen.getByRole("link", { name: /Sterling Industries/ }),
-		).toHaveAttribute("href", "/admin/new/demo/case-1");
-		expect(screen.queryByText(/Access code/)).not.toBeInTheDocument();
-		expect(
-			screen.queryByRole("button", { name: "Delete case" }),
-		).not.toBeInTheDocument();
-		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-	});
-
-	// Tests that demo mode has its own heading and empty state.
-	it("has its own heading and empty message", async () => {
-		stubCaseList([]);
-		renderPicker("demo");
-		expect(
-			await screen.findByText("No demo cases are available yet."),
-		).toBeInTheDocument();
-		expect(
-			screen.getByRole("heading", { name: "Browse example cases" }),
-		).toBeInTheDocument();
 	});
 });
