@@ -175,6 +175,44 @@ describe("submitCase — profile photo upload", () => {
 	});
 });
 
+describe("submitCase — teaching notes", () => {
+	// Tests that a new teaching notes file is uploaded and sent as a reference at the top level of the payload.
+	it("uploads a File-valued teaching notes file and sends the returned FileRef", async () => {
+		const { uploadCountRequests, createRequests } = stubMutations();
+
+		await submitCase(
+			baseInput({
+				teachingNotes: new File(["notes"], "notes.docx", {
+					type: "application/msword",
+				}),
+			}),
+		);
+
+		expect(uploadCountRequests).toEqual([1]);
+		expect(createRequests[0]?.teachingNotes).toEqual({
+			storageId: "storage-1",
+			fileName: "notes.docx",
+			contentType: "application/msword",
+		});
+	});
+
+	// Tests that saved teaching notes pass through untouched, and that no notes means the field is omitted.
+	it("passes an existing reference through and omits the field when there are none", async () => {
+		const { uploadCountRequests, createRequests } = stubMutations();
+		const existing: FileRefPayload = {
+			storageId: "storage-existing" as GenericId<"_storage">,
+			fileName: "old.pdf",
+		};
+
+		await submitCase(baseInput({ teachingNotes: existing }));
+		await submitCase(baseInput({ teachingNotes: null }));
+
+		expect(uploadCountRequests).toEqual([]);
+		expect(createRequests[0]?.teachingNotes).toEqual(existing);
+		expect(createRequests[1]?.teachingNotes).toBeUndefined();
+	});
+});
+
 describe("submitCase — file attachments", () => {
 	// Tests that a File attachment is uploaded and replaced with a reference, keeping its other fields.
 	it("uploads a File-valued attachment, replacing it with a FileRef while keeping its other fields", async () => {
@@ -473,6 +511,7 @@ describe("submitCase — full payload", () => {
 			      "p1",
 			    ],
 			  },
+			  "teachingNotes": undefined,
 			}
 		`);
 	});

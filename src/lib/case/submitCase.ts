@@ -41,9 +41,13 @@ async function putToConvexStorage(
 	};
 }
 
-// Collects every new File (profile photos and attachments) that still needs uploading.
-function collectPendingUploads(personas: Persona[]): File[] {
+// Collects every new File (teaching notes, profile photos and attachments) that still needs uploading.
+function collectPendingUploads(
+	personas: Persona[],
+	teachingNotes: File | FileRefPayload,
+): File[] {
 	const files: File[] = [];
+	if (teachingNotes instanceof File) files.push(teachingNotes);
 	for (const persona of personas) {
 		if (persona.profilePhoto instanceof File) files.push(persona.profilePhoto);
 		for (const entry of persona.files) {
@@ -56,8 +60,9 @@ function collectPendingUploads(personas: Persona[]): File[] {
 // Uploads all pending files, discarding the successful ones and throwing if any upload fails.
 async function uploadAll(
 	personas: Persona[],
+	teachingNotes: File | FileRefPayload,
 ): Promise<Map<File, UploadedFileRef>> {
-	const pending = collectPendingUploads(personas);
+	const pending = collectPendingUploads(personas, teachingNotes);
 	const uploadUrls = await generateUploadUrls(pending.length);
 	const settled = await Promise.allSettled(
 		pending.map((file, i) => putToConvexStorage(file, uploadUrls[i] as string)),
@@ -121,6 +126,7 @@ export type SubmitCaseInput = {
 	personas: Persona[];
 	referrals: ReferralEdge[];
 	roots: string[];
+	teachingNotes?: File | FileRefPayload;
 	collaboratorAdminIds: string[];
 };
 
@@ -135,9 +141,10 @@ export async function submitCase({
 	personas,
 	referrals,
 	roots,
+	teachingNotes = null,
 	collaboratorAdminIds,
 }: SubmitCaseInput): Promise<{ caseId: Id<"cases"> }> {
-	const uploaded = await uploadAll(personas);
+	const uploaded = await uploadAll(personas, teachingNotes);
 	const personasPayload = personas.map((persona) =>
 		buildPersonaPayload(persona, uploaded),
 	);
@@ -148,6 +155,10 @@ export async function submitCase({
 		duration: simulationDurationMinutes ?? undefined,
 		accessCode: accessCode.trim(),
 		structure: { personas: personasPayload, referrals, roots },
+		teachingNotes:
+			(teachingNotes instanceof File
+				? uploaded.get(teachingNotes)
+				: teachingNotes) ?? undefined,
 		collaboratorAdminIds: collaboratorAdminIds as Id<"admins">[],
 	};
 

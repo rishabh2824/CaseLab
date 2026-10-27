@@ -172,6 +172,66 @@ describe("cases.setTemplate", () => {
 	});
 });
 
+describe("teaching notes access", () => {
+	// Seeds a case that has a stored teaching notes file.
+	async function seedWithNotes(t: T, ownerAdminId: Id<"admins">) {
+		const caseId = await seedCase(t, ownerAdminId, { isTemplate: true });
+		const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["n"])));
+		await t.run((ctx) =>
+			ctx.db.patch("cases", caseId, {
+				teachingNotes: { storageId, fileName: "notes.pdf" },
+			}),
+		);
+		return caseId;
+	}
+
+	// Tests that whoever can edit the case gets a download link, and an outsider is refused.
+	it("gives the owner and a collaborator a download link, and refuses an outsider", async () => {
+		const t = newTestConvex();
+		const owner = await withAdmin(t, { email: "owner@test.caselab.invalid" });
+		const helper = await withAdmin(t, { email: "helper@test.caselab.invalid" });
+		const outsider = await withAdmin(t, {
+			email: "outsider@test.caselab.invalid",
+		});
+		const caseId = await seedWithNotes(t, owner.adminId);
+		await t.run((ctx) =>
+			ctx.db.insert("collaborators", { caseId, adminId: helper.adminId }),
+		);
+
+		const mine = await owner.asUser.query(api.cases.getForEdit, { caseId });
+		const theirs = await helper.asUser.query(api.cases.getForEdit, { caseId });
+		expect(mine.teachingNotesUrl).toEqual(expect.any(String));
+		expect(theirs.teachingNotesUrl).toEqual(expect.any(String));
+		await expect(
+			outsider.asUser.query(api.cases.getForEdit, { caseId }),
+		).rejects.toThrow("You do not have access to this case.");
+	});
+
+	// Tests that a case without notes reports no link.
+	it("reports no link when the case has no notes", async () => {
+		const t = newTestConvex();
+		const { asUser, adminId } = await withAdmin(t);
+		const caseId = await seedCase(t, adminId);
+		const c = await asUser.query(api.cases.getForEdit, { caseId });
+		expect(c.teachingNotesUrl).toBeNull();
+	});
+
+	// Tests that copying a template never exposes the notes, even to the owner.
+	it("withholds the notes from getTemplate", async () => {
+		const t = newTestConvex();
+		const owner = await withAdmin(t, { email: "owner@test.caselab.invalid" });
+		const other = await withAdmin(t, { email: "other@test.caselab.invalid" });
+		const caseId = await seedWithNotes(t, owner.adminId);
+
+		for (const admin of [owner, other]) {
+			const template = await admin.asUser.query(api.cases.getTemplate, {
+				caseId,
+			});
+			expect(template).not.toHaveProperty("teachingNotes");
+		}
+	});
+});
+
 describe("cases.create", () => {
 	// Tests that creating through the public API returns the new case id and makes the caller its owner.
 	it("returns the new case id and records the caller as owner", async () => {

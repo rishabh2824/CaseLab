@@ -22,6 +22,14 @@ const selectableAdmins = $derived(
 	),
 );
 
+// Stores the chosen teaching notes file on the draft and resets the file input.
+function handleNotesChange(
+	event: Event & { currentTarget: EventTarget & HTMLInputElement },
+): void {
+	draft.teachingNotes = event.currentTarget.files?.[0] ?? null;
+	event.currentTarget.value = "";
+}
+
 // A field's error shows once the user has typed in it, or once errors are revealed form-wide.
 const errors = $derived(
 	Object.fromEntries(
@@ -116,6 +124,44 @@ const errors = $derived(
 					oninput={() => draft.touch("accessCode")}
 					class={INPUT_CLASS}
 				/>
+			{/snippet}
+		</FormField>
+
+		<FormField label="Teaching notes" id="teaching-notes">
+			{#snippet children(field)}
+				<input
+					{...field}
+					id="teaching-notes"
+					type="file"
+					onchange={handleNotesChange}
+					class="{INPUT_CLASS} file:mr-3 file:rounded-md file:border-0 file:bg-cream file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
+				/>
+				{#if draft.teachingNotes}
+					<p class="flex items-center gap-3 text-xs text-stone-soft">
+						{#if draft.teachingNotes instanceof File}
+							<span>Selected: {draft.teachingNotes.name}</span>
+						{:else if draft.teachingNotesUrl}
+							<a
+								href={draft.teachingNotesUrl}
+								target="_blank"
+								rel="noreferrer"
+								class="font-semibold text-ink underline decoration-ink/30 underline-offset-2 transition hover:decoration-ink"
+							>
+								{draft.teachingNotes.fileName}
+							</a>
+						{:else}
+							<span>Existing file: {draft.teachingNotes.fileName}</span>
+						{/if}
+						<button
+							type="button"
+							aria-label="Remove teaching notes"
+							onclick={() => (draft.teachingNotes = null)}
+							class="font-semibold transition hover:text-brand"
+						>
+							Remove
+						</button>
+					</p>
+				{/if}
 			{/snippet}
 		</FormField>
 

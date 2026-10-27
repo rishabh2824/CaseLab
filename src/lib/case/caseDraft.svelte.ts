@@ -1,5 +1,8 @@
 import { getCaseInfoErrors } from "../../../convex/lib/caseRules.js";
-import type { CaseStructure } from "../../../convex/models/cases.js";
+import type {
+	CaseStructure,
+	FileRefPayload,
+} from "../../../convex/models/cases.js";
 import { hasFieldErrors } from "./draft.js";
 import type { BuildHTMLFormInput } from "./exportCase.js";
 import { CaseGraph } from "./graph.svelte.js";
@@ -14,6 +17,8 @@ export type LoadableCase = {
 	duration?: number | null;
 	accessCode?: string;
 	structure: CaseStructure;
+	teachingNotes?: FileRefPayload;
+	teachingNotesUrl?: string | null;
 	collaboratorAdminIds?: string[];
 };
 
@@ -36,6 +41,9 @@ export class CaseDraft {
 	commonInformation = $state("");
 	simulationDurationMinutes = $state<number | null>(null);
 	accessCode = $state("");
+	teachingNotes = $state<File | FileRefPayload>(null);
+	// Where the saved teaching notes can be downloaded, when editing a case that has them.
+	teachingNotesUrl = $state<string | null>(null);
 	collaboratorAdminIds = $state<string[]>([]);
 	readonly graph = new CaseGraph();
 	showErrors = $state(false);
@@ -75,6 +83,7 @@ export class CaseDraft {
 		return JSON.stringify(
 			{
 				...this.#fields(),
+				teachingNotes: this.teachingNotes,
 				collaboratorAdminIds: this.collaboratorAdminIds,
 				personas: this.graph.personas,
 				referrals: this.graph.referrals,
@@ -109,7 +118,7 @@ export class CaseDraft {
 		);
 	}
 
-	// Fills the draft from a case loaded from the server and marks it clean. A template gets no access code or collaborators.
+	// Fills the draft from a case loaded from the server and marks it clean. A template gets no access code, teaching notes or collaborators.
 	load(loaded: LoadableCase, { isEditMode }: { isEditMode: boolean }): void {
 		this.caseName = loaded.name ?? "";
 		this.initialBrief = loaded.brief ?? "";
@@ -117,6 +126,10 @@ export class CaseDraft {
 		this.simulationDurationMinutes = loaded.duration ?? null;
 		this.accessCode = isEditMode ? (loaded.accessCode ?? "") : "";
 		this.graph.load(loaded.structure);
+		this.teachingNotes = isEditMode ? (loaded.teachingNotes ?? null) : null;
+		this.teachingNotesUrl = isEditMode
+			? (loaded.teachingNotesUrl ?? null)
+			: null;
 		if (isEditMode)
 			this.collaboratorAdminIds = loaded.collaboratorAdminIds ?? [];
 		this.revealErrors();
@@ -156,6 +169,7 @@ export class CaseDraft {
 			personas: this.graph.personas,
 			referrals: this.graph.referrals,
 			roots: this.graph.roots,
+			teachingNotes: this.teachingNotes,
 			collaboratorAdminIds: this.collaboratorAdminIds,
 		};
 	}

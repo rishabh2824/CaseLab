@@ -3,7 +3,12 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { getCaseInfoErrors, isSelectableCollaborator } from "../lib/caseRules";
 import { cleanStructure, validateGraph } from "../lib/caseStructure";
-import { type CaseStructure, caseStructureValidator } from "../models/cases";
+import {
+	type CaseStructure,
+	caseStructureValidator,
+	type FileRefPayload,
+	fileRefValidator,
+} from "../models/cases";
 import { existingStorageIds, syncCaseFiles } from "./files";
 
 const ACCESS_CODE_CONFLICT =
@@ -178,6 +183,7 @@ export const casePayloadArgs = {
 	duration: v.optional(v.number()),
 	accessCode: v.string(),
 	structure: caseStructureValidator,
+	teachingNotes: v.optional(fileRefValidator),
 	collaboratorAdminIds: v.array(v.id("admins")),
 };
 export type CasePayload = ObjectType<typeof casePayloadArgs>;
@@ -236,6 +242,7 @@ async function resolveCasePayload(
 		accessCode: string;
 		duration: number | undefined;
 		structure: CaseStructure;
+		teachingNotes: Exclude<FileRefPayload, null> | undefined;
 	};
 	collaboratorIds: Id<"admins">[];
 	storageIds: Set<Id<"_storage">>;
@@ -268,8 +275,24 @@ async function resolveCasePayload(
 		ctx,
 		payload.structure,
 	);
+	const notesPresent = await existingStorageIds(ctx, [
+		payload.teachingNotes ?? null,
+	]);
+	const teachingNotes =
+		payload.teachingNotes && notesPresent.has(payload.teachingNotes.storageId)
+			? payload.teachingNotes
+			: undefined;
+	if (teachingNotes) storageIds.add(teachingNotes.storageId);
 	return {
-		fields: { name, brief, commonInformation, accessCode, duration, structure },
+		fields: {
+			name,
+			brief,
+			commonInformation,
+			accessCode,
+			duration,
+			structure,
+			teachingNotes,
+		},
 		collaboratorIds,
 		storageIds,
 	};

@@ -23,7 +23,7 @@ export const listTemplates = adminQuery({
 	},
 });
 
-// Loads a case to copy as a template, without its access code or owner. Allowed for flagged templates and for cases the caller can access.
+// Loads a case to copy as a template, without its access code, owner or teaching notes. Allowed for flagged templates and for cases the caller can access.
 export const getTemplate = adminQuery({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
@@ -33,6 +33,7 @@ export const getTemplate = adminQuery({
 		const {
 			accessCode: _accessCode,
 			ownerAdminId: _ownerAdminId,
+			teachingNotes: _teachingNotes,
 			...template
 		} = c;
 		return template;
@@ -61,6 +62,9 @@ export const getForEdit = adminQuery({
 		return {
 			...c,
 			collaboratorAdminIds: collaboratorRows.map((row) => row.adminId),
+			teachingNotesUrl: c.teachingNotes
+				? await ctx.storage.getUrl(c.teachingNotes.storageId)
+				: null,
 		};
 	},
 });

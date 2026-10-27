@@ -94,6 +94,7 @@ function makeCaseDoc(
 			roots: ["p1"],
 		},
 		collaboratorAdminIds: [],
+		teachingNotesUrl: null,
 		...overrides,
 		_id: (overrides._id ?? "case-7") as Id<"cases">,
 		ownerAdminId: (overrides.ownerAdminId ?? "1") as Id<"admins">,
@@ -303,6 +304,66 @@ describe("CaseForm", () => {
 			).toBeInTheDocument();
 			expect(updateRequests).toHaveLength(1);
 			expect(queryCalls).toBe(2);
+		});
+	});
+
+	describe("teaching notes", () => {
+		// Tests that an edited case shows a download link for its notes and sends the file along when saved.
+		it("shows the saved notes as a download link and keeps them on save", async () => {
+			const notes = {
+				storageId: "s1" as Id<"_storage">,
+				fileName: "notes.pdf",
+			};
+			const doc = makeCaseDoc({
+				teachingNotes: notes,
+				teachingNotesUrl: "https://files.test/notes.pdf",
+			});
+			stubLoadCase(doc);
+			const { updateRequests } = stubMutations();
+			const user = userEvent.setup();
+			renderForm({ editCaseId: doc._id });
+
+			const link = await screen.findByRole("link", { name: "notes.pdf" });
+			expect(link).toHaveAttribute("href", "https://files.test/notes.pdf");
+
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+			await waitFor(() => expect(updateRequests).toHaveLength(1));
+			expect(updateRequests[0]?.teachingNotes).toEqual(notes);
+		});
+
+		// Tests that Remove clears the notes so they are not sent on save.
+		it("removes the notes when Remove is clicked", async () => {
+			const doc = makeCaseDoc({
+				teachingNotes: { storageId: "s1" as Id<"_storage">, fileName: "n.pdf" },
+				teachingNotesUrl: "https://files.test/n.pdf",
+			});
+			stubLoadCase(doc);
+			const { updateRequests } = stubMutations();
+			const user = userEvent.setup();
+			renderForm({ editCaseId: doc._id });
+			await screen.findByRole("link", { name: "n.pdf" });
+
+			await user.click(
+				screen.getByRole("button", { name: "Remove teaching notes" }),
+			);
+			expect(screen.queryByRole("link", { name: "n.pdf" })).toBeNull();
+
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+			await waitFor(() => expect(updateRequests).toHaveLength(1));
+			expect(updateRequests[0]?.teachingNotes).toBeUndefined();
+		});
+
+		// Tests that a newly chosen file is named in the form before saving.
+		it("names a newly chosen file", async () => {
+			const user = userEvent.setup();
+			renderForm();
+
+			await user.upload(
+				screen.getByLabelText("Teaching notes"),
+				new File(["x"], "fresh.docx"),
+			);
+
+			expect(screen.getByText("Selected: fresh.docx")).toBeInTheDocument();
 		});
 	});
 
@@ -631,9 +692,11 @@ describe("CaseForm", () => {
 			expect(
 				await screen.findByDisplayValue("Imported Case"),
 			).toBeInTheDocument();
-			expect(
-				screen.queryByText("Replace everything in this form?"),
-			).not.toBeInTheDocument();
+			await waitFor(() =>
+				expect(
+					screen.queryByText("Replace everything in this form?"),
+				).not.toBeInTheDocument(),
+			);
 		});
 
 		// Tests that cancelling the replace confirmation leaves the existing form content untouched.
@@ -662,9 +725,11 @@ describe("CaseForm", () => {
 
 			await user.click(screen.getByRole("button", { name: "Cancel" }));
 
-			expect(
-				screen.queryByText("Replace everything in this form?"),
-			).not.toBeInTheDocument();
+			await waitFor(() =>
+				expect(
+					screen.queryByText("Replace everything in this form?"),
+				).not.toBeInTheDocument(),
+			);
 			expect(screen.getByLabelText("Case name")).toHaveValue("Existing Case");
 		});
 

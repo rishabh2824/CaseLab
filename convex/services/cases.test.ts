@@ -491,6 +491,86 @@ describe("file links (via buildStructure/createCase)", () => {
 	});
 });
 
+describe("teaching notes", () => {
+	async function makeNotes(t: ReturnType<typeof newTestConvex>) {
+		const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["n"])));
+		return { storageId, notes: { storageId, fileName: "notes.pdf" } };
+	}
+
+	// Tests that the notes are stored on the case and linked so the file is kept.
+	it("stores the notes and links the file to the case", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const { storageId, notes } = await makeNotes(t);
+		const caseId = await t.run((ctx) =>
+			createCase(ctx, casePayload({ teachingNotes: notes }), owner),
+		);
+
+		const c = await t.run((ctx) => ctx.db.get(caseId));
+		expect(c?.teachingNotes).toEqual(notes);
+		const rows = await t.run((ctx) =>
+			ctx.db
+				.query("caseFiles")
+				.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
+				.collect(),
+		);
+		expect(rows).toHaveLength(1);
+	});
+
+	// Tests that removing the notes on update clears the field and deletes the upload.
+	it("clears the field and cleans up the file when the notes are removed", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const { storageId, notes } = await makeNotes(t);
+		const caseId = await t.run((ctx) =>
+			createCase(ctx, casePayload({ teachingNotes: notes }), owner),
+		);
+
+		await t.run((ctx) =>
+			updateCase(ctx, caseId, casePayload({ teachingNotes: undefined }), owner),
+		);
+		await t.finishAllScheduledFunctions(() => {});
+
+		const c = await t.run((ctx) => ctx.db.get(caseId));
+		expect(c?.teachingNotes).toBeUndefined();
+		expect(
+			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
+		).toBeNull();
+	});
+
+	// Tests that deleting the case deletes the notes file too.
+	it("deletes the notes file along with the case", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const { storageId, notes } = await makeNotes(t);
+		const caseId = await t.run((ctx) =>
+			createCase(ctx, casePayload({ teachingNotes: notes }), owner),
+		);
+
+		await t.run((ctx) => deleteCase(ctx, caseId, owner));
+		await t.finishAllScheduledFunctions(() => {});
+
+		expect(
+			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
+		).toBeNull();
+	});
+
+	// Tests that a notes reference whose upload is gone is dropped while the case still saves.
+	it("drops notes whose upload no longer exists", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const { storageId, notes } = await makeNotes(t);
+		await t.run((ctx) => ctx.storage.delete(storageId));
+
+		const caseId = await t.run((ctx) =>
+			createCase(ctx, casePayload({ teachingNotes: notes }), owner),
+		);
+
+		const c = await t.run((ctx) => ctx.db.get(caseId));
+		expect(c?.teachingNotes).toBeUndefined();
+	});
+});
+
 describe("a storage id with no backing object", () => {
 	// Tests that a photo reference to a nonexistent storage id is dropped while the rest of the case saves.
 	it("drops a photo ref whose storage id doesn't exist, saving the rest of the case fine", async () => {
