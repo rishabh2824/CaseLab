@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Id } from "../../convex/_generated/dataModel.js";
 import {
 	CaseDraft,
 	type LoadableCase,
@@ -18,10 +19,15 @@ function loadable(overrides: Partial<LoadableCase> = {}): LoadableCase {
 			referrals: [],
 			roots: ["a"],
 		},
-		collaboratorAdminIds: ["admin-2"],
+		collaborators: [ADMIN_2],
 		...overrides,
 	};
 }
+
+const ADMIN_2 = {
+	adminId: "admin-2" as Id<"admins">,
+	access: "edit" as const,
+};
 
 describe("CaseDraft", () => {
 	// Tests that a new draft is clean until the first change, and clean again after markSaved.
@@ -50,7 +56,11 @@ describe("CaseDraft", () => {
 		["the duration", (d: CaseDraft) => (d.simulationDurationMinutes = 45)],
 		[
 			"a collaborator",
-			(d: CaseDraft) => d.collaboratorAdminIds.push("admin-3"),
+			(d: CaseDraft) =>
+				d.collaborators.push({
+					adminId: "admin-3" as Id<"admins">,
+					access: "edit",
+				}),
 		],
 		["a persona", (d: CaseDraft) => (d.graph.personas[0]!.name = "Renamed")],
 	])("becomes dirty when %s changes", (_label, edit) => {
@@ -71,10 +81,20 @@ describe("CaseDraft", () => {
 		expect(draft.caseName).toBe("Sterling");
 		expect(draft.accessCode).toBe("sterling");
 		expect(draft.simulationDurationMinutes).toBe(30);
-		expect(draft.collaboratorAdminIds).toEqual(["admin-2"]);
+		expect(draft.collaborators).toEqual([ADMIN_2]);
 		expect(draft.graph.personas).toHaveLength(1);
 		expect(draft.showErrors).toBe(true);
 		expect(draft.isDirty).toBe(false);
+	});
+
+	// Tests that a view-only case locks the draft, and that a case without the flag stays editable.
+	it("reads canEdit from the loaded case, defaulting to editable", () => {
+		const draft = new CaseDraft();
+		draft.load(loadable({ canEdit: false }), { isEditMode: true });
+		expect(draft.canEdit).toBe(false);
+
+		draft.load(loadable(), { isEditMode: true });
+		expect(draft.canEdit).toBe(true);
 	});
 
 	// Tests that loading a template copies the content but not the access code or collaborators.
@@ -84,7 +104,7 @@ describe("CaseDraft", () => {
 
 		expect(draft.caseName).toBe("Sterling");
 		expect(draft.accessCode).toBe("");
-		expect(draft.collaboratorAdminIds).toEqual([]);
+		expect(draft.collaborators).toEqual([]);
 	});
 
 	// Tests that an imported file replaces the content but leaves the draft dirty, so it still has to be saved.
@@ -149,7 +169,7 @@ describe("CaseDraft", () => {
 			simulationDurationMinutes: 30,
 			accessCode: "sterling",
 			roots: ["a"],
-			collaboratorAdminIds: ["admin-2"],
+			collaborators: [ADMIN_2],
 		});
 		expect(exported).toMatchObject({
 			caseName: submit.caseName,

@@ -117,7 +117,7 @@ const isEditMode = $derived(mode === "edit");
 							</div>
 						{/if}
 						</div>
-						{#if isEditMode}
+						{#if isEditMode && caseItem.canEdit !== false}
 							<div class="mt-2 flex items-center justify-end gap-3">
 								<button
 									type="button"

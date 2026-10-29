@@ -107,7 +107,7 @@ function baseInput(overrides: Partial<SubmitCaseInput> = {}): SubmitCaseInput {
 		personas: [],
 		referrals: [],
 		roots: [],
-		collaboratorAdminIds: [],
+		collaborators: [],
 		...overrides,
 	};
 }
@@ -431,7 +431,10 @@ describe("submitCase — payload shaping", () => {
 				accessCode: "  abc  ",
 				referrals: [{ fromId: "p1", toId: "p2", conditions: "  when asked  " }],
 				roots: ["p1"],
-				collaboratorAdminIds: ["admin2", "admin5"],
+				collaborators: [
+					{ adminId: "admin2" as Id<"admins">, access: "edit" },
+					{ adminId: "admin5" as Id<"admins">, access: "view" },
+				],
 			}),
 		);
 
@@ -446,7 +449,10 @@ describe("submitCase — payload shaping", () => {
 			{ fromId: "p1", toId: "p2", conditions: "  when asked  " },
 		]);
 		expect((body.structure as SentStructure).roots).toEqual(["p1"]);
-		expect(body.collaboratorAdminIds).toEqual(["admin2", "admin5"]);
+		expect(body.collaborators).toEqual([
+			{ adminId: "admin2", access: "edit" },
+			{ adminId: "admin5", access: "view" },
+		]);
 	});
 });
 
@@ -463,7 +469,7 @@ describe("submitCase — full payload", () => {
 				],
 				referrals: [{ fromId: "p1", toId: "p2", conditions: "asks for Bob" }],
 				roots: ["p1"],
-				collaboratorAdminIds: ["admin2"],
+				collaborators: [{ adminId: "admin2" as Id<"admins">, access: "edit" }],
 			}),
 		);
 
@@ -471,8 +477,11 @@ describe("submitCase — full payload", () => {
 			{
 			  "accessCode": "abc",
 			  "brief": "Reduce office supply costs.",
-			  "collaboratorAdminIds": [
-			    "admin2",
+			  "collaborators": [
+			    {
+			      "access": "edit",
+			      "adminId": "admin2",
+			    },
 			  ],
 			  "commonInformation": "Background context.",
 			  "duration": 45,

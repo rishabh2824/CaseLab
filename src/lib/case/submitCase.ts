@@ -3,6 +3,7 @@ import { getConvexClient } from "convex-svelte";
 import { api } from "../../../convex/_generated/api.js";
 import type { Id } from "../../../convex/_generated/dataModel.js";
 import type {
+	CollaboratorPayload,
 	FileRefPayload,
 	Persona,
 	PersonaPayload,
@@ -127,7 +128,7 @@ export type SubmitCaseInput = {
 	referrals: ReferralEdge[];
 	roots: string[];
 	teachingNotes?: File | FileRefPayload;
-	collaboratorAdminIds: string[];
+	collaborators: CollaboratorPayload[];
 };
 
 // Uploads new files then creates or updates the case, discarding the uploads if the save fails.
@@ -142,7 +143,7 @@ export async function submitCase({
 	referrals,
 	roots,
 	teachingNotes = null,
-	collaboratorAdminIds,
+	collaborators,
 }: SubmitCaseInput): Promise<{ caseId: Id<"cases"> }> {
 	const uploaded = await uploadAll(personas, teachingNotes);
 	const personasPayload = personas.map((persona) =>
@@ -159,7 +160,7 @@ export async function submitCase({
 			(teachingNotes instanceof File
 				? uploaded.get(teachingNotes)
 				: teachingNotes) ?? undefined,
-		collaboratorAdminIds: collaboratorAdminIds as Id<"admins">[],
+		collaborators,
 	};
 
 	try {

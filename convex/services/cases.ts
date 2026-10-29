@@ -5,7 +5,10 @@ import { getCaseInfoErrors, isSelectableCollaborator } from "../lib/caseRules";
 import { cleanStructure, validateGraph } from "../lib/caseStructure";
 import {
 	type CaseStructure,
+	type CollaboratorAccess,
+	type CollaboratorPayload,
 	caseStructureValidator,
+	collaboratorValidator,
 	type FileRefPayload,
 	fileRefValidator,
 } from "../models/cases";
@@ -14,11 +17,12 @@ import { existingStorageIds, syncCaseFiles } from "./files";
 const ACCESS_CODE_CONFLICT =
 	"An access code with this value already exists on another case.";
 
-// Throws unless the admin is a super admin, the case owner or a collaborator.
+// Throws unless the admin is a super admin, the case owner or a collaborator with the needed access level.
 export async function requireCaseAccess(
 	ctx: QueryCtx | MutationCtx,
 	c: Doc<"cases">,
 	admin: Doc<"admins">,
+	need: CollaboratorAccess = "edit",
 ): Promise<void> {
 	if (admin.role === "super") return;
 	if (c.ownerAdminId === admin._id) return;
@@ -30,6 +34,8 @@ export async function requireCaseAccess(
 		.first();
 	if (!collaborating)
 		throw new ConvexError("You do not have access to this case.");
+	if (need === "edit" && collaborating.access !== "edit")
+		throw new ConvexError("You have view-only access to this case.");
 }
 
 // Loads a case and checks the admin may access it, throwing if it is missing or off limits.
@@ -37,10 +43,11 @@ export async function loadCaseForAccess(
 	ctx: QueryCtx | MutationCtx,
 	caseId: Id<"cases">,
 	admin: Doc<"admins">,
+	need: CollaboratorAccess = "edit",
 ): Promise<Doc<"cases">> {
 	const c = await ctx.db.get("cases", caseId);
 	if (!c) throw new ConvexError("Case not found.");
-	await requireCaseAccess(ctx, c, admin);
+	await requireCaseAccess(ctx, c, admin, need);
 	return c;
 }
 
@@ -49,15 +56,17 @@ export type CaseSummary = {
 	name: string;
 	accessCode: string;
 	isTemplate: boolean;
+	canEdit: boolean;
 };
 
-// Reduces a case document to its id, name, access code and template flag.
-function toCaseSummary(c: Doc<"cases">): CaseSummary {
+// Reduces a case document to its id, name, access code, template flag and whether the viewer may edit it.
+function toCaseSummary(c: Doc<"cases">, canEdit: boolean): CaseSummary {
 	return {
 		_id: c._id,
 		name: c.name,
 		accessCode: c.accessCode,
 		isTemplate: c.isTemplate,
+		canEdit,
 	};
 }
 
@@ -68,7 +77,9 @@ export async function listCases(
 ): Promise<CaseSummary[]> {
 	if (admin.role === "super") {
 		const all = await ctx.db.query("cases").collect();
-		return all.sort((a, b) => a.name.localeCompare(b.name)).map(toCaseSummary);
+		return all
+			.sort((a, b) => a.name.localeCompare(b.name))
+			.map((c) => toCaseSummary(c, true));
 	}
 
 	const owned = await ctx.db
@@ -84,13 +95,14 @@ export async function listCases(
 		collaboratingRows.map((row) => ctx.db.get("cases", row.caseId)),
 	);
 
-	const byId = new Map<Id<"cases">, Doc<"cases">>();
-	for (const c of owned) byId.set(c._id, c);
-	for (const c of collaboratingCases) if (c) byId.set(c._id, c);
+	const byId = new Map<Id<"cases">, CaseSummary>();
+	for (const c of owned) byId.set(c._id, toCaseSummary(c, true));
+	collaboratingRows.forEach((row, i) => {
+		const c = collaboratingCases[i];
+		if (c) byId.set(c._id, toCaseSummary(c, row.access === "edit"));
+	});
 
-	return Array.from(byId.values())
-		.sort((a, b) => a.name.localeCompare(b.name))
-		.map(toCaseSummary);
+	return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // Lists the cases an admin can copy as a template by name: the ones they can see plus every flagged template, without access codes.
@@ -147,23 +159,22 @@ export async function buildStructure(
 	return cleanStructure(structure, present);
 }
 
-// Dedupes collaborator ids and rejects the owner, unknown admins and super admins.
-async function resolveCollaboratorIds(
+// Dedupes collaborators by admin and rejects the owner, unknown admins and super admins.
+async function resolveCollaborators(
 	ctx: MutationCtx,
-	ids: Id<"admins">[],
+	collaborators: CollaboratorPayload[],
 	ownerAdminId: Id<"admins">,
-): Promise<Id<"admins">[]> {
-	const deduped = [...new Set(ids)];
-	if (deduped.length === 0) return [];
-	if (deduped.includes(ownerAdminId)) {
+): Promise<CollaboratorPayload[]> {
+	const byAdmin = new Map(collaborators.map((c) => [c.adminId, c]));
+	const ids = [...byAdmin.keys()];
+	if (ids.length === 0) return [];
+	if (ids.includes(ownerAdminId)) {
 		throw new ConvexError(
 			"The case owner cannot also be listed as a collaborator.",
 		);
 	}
-	const admins = await Promise.all(
-		deduped.map((id) => ctx.db.get("admins", id)),
-	);
-	const missing = deduped.filter((_, i) => admins[i] === null);
+	const admins = await Promise.all(ids.map((id) => ctx.db.get("admins", id)));
+	const missing = ids.filter((_, i) => admins[i] === null);
 	if (missing.length > 0)
 		throw new ConvexError(`Unknown admin id(s): ${missing.join(", ")}`);
 	if (
@@ -173,7 +184,7 @@ async function resolveCollaboratorIds(
 	) {
 		throw new ConvexError("Super admins cannot be added as collaborators.");
 	}
-	return deduped;
+	return [...byAdmin.values()];
 }
 
 export const casePayloadArgs = {
@@ -184,7 +195,7 @@ export const casePayloadArgs = {
 	accessCode: v.string(),
 	structure: caseStructureValidator,
 	teachingNotes: v.optional(fileRefValidator),
-	collaboratorAdminIds: v.array(v.id("admins")),
+	collaborators: v.array(collaboratorValidator),
 };
 export type CasePayload = ObjectType<typeof casePayloadArgs>;
 
@@ -205,25 +216,27 @@ async function ensureAccessCodeFree(
 	return normalized;
 }
 
-// Syncs a case's collaborator rows to the given admin ids, keeping existing rows intact.
+// Syncs a case's collaborator rows to the given collaborators, keeping unchanged rows intact.
 async function replaceCollaborators(
 	ctx: MutationCtx,
 	caseId: Id<"cases">,
-	collaboratorIds: Id<"admins">[],
+	collaborators: CollaboratorPayload[],
 ): Promise<void> {
 	const existing = await ctx.db
 		.query("collaborators")
 		.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
 		.collect();
+	const desired = new Map(collaborators.map((c) => [c.adminId, c.access]));
 	const existingAdminIds = new Set(existing.map((row) => row.adminId));
-	const desiredAdminIds = new Set(collaboratorIds);
 
 	for (const row of existing) {
-		if (!desiredAdminIds.has(row.adminId)) await ctx.db.delete(row._id);
+		const access = desired.get(row.adminId);
+		if (access === undefined) await ctx.db.delete(row._id);
+		else if (row.access !== access) await ctx.db.patch(row._id, { access });
 	}
-	for (const adminId of collaboratorIds) {
+	for (const [adminId, access] of desired) {
 		if (!existingAdminIds.has(adminId)) {
-			await ctx.db.insert("collaborators", { caseId, adminId });
+			await ctx.db.insert("collaborators", { caseId, adminId, access });
 		}
 	}
 }
@@ -244,7 +257,7 @@ async function resolveCasePayload(
 		structure: CaseStructure;
 		teachingNotes: Exclude<FileRefPayload, null> | undefined;
 	};
-	collaboratorIds: Id<"admins">[];
+	collaborators: CollaboratorPayload[];
 	storageIds: Set<Id<"_storage">>;
 }> {
 	const firstError = Object.values(
@@ -266,9 +279,9 @@ async function resolveCasePayload(
 		excludeCaseId,
 	);
 	const duration = payload.duration;
-	const collaboratorIds = await resolveCollaboratorIds(
+	const collaborators = await resolveCollaborators(
 		ctx,
-		payload.collaboratorAdminIds,
+		payload.collaborators,
 		ownerAdminId,
 	);
 	const { structure, storageIds } = await buildStructure(
@@ -293,7 +306,7 @@ async function resolveCasePayload(
 			structure,
 			teachingNotes,
 		},
-		collaboratorIds,
+		collaborators,
 		storageIds,
 	};
 }
@@ -304,7 +317,7 @@ export async function createCase(
 	payload: CasePayload,
 	admin: Doc<"admins">,
 ): Promise<Id<"cases">> {
-	const { fields, collaboratorIds, storageIds } = await resolveCasePayload(
+	const { fields, collaborators, storageIds } = await resolveCasePayload(
 		ctx,
 		payload,
 		admin._id,
@@ -316,7 +329,7 @@ export async function createCase(
 		isTemplate: false,
 	});
 
-	await replaceCollaborators(ctx, caseId, collaboratorIds);
+	await replaceCollaborators(ctx, caseId, collaborators);
 	await syncCaseFiles(ctx, caseId, storageIds);
 
 	return caseId;
@@ -331,7 +344,7 @@ export async function updateCase(
 ): Promise<void> {
 	const c = await loadCaseForAccess(ctx, caseId, admin);
 
-	const { fields, collaboratorIds, storageIds } = await resolveCasePayload(
+	const { fields, collaborators, storageIds } = await resolveCasePayload(
 		ctx,
 		payload,
 		c.ownerAdminId,
@@ -340,6 +353,6 @@ export async function updateCase(
 
 	await ctx.db.patch(caseId, fields);
 
-	await replaceCollaborators(ctx, caseId, collaboratorIds);
+	await replaceCollaborators(ctx, caseId, collaborators);
 	await syncCaseFiles(ctx, caseId, storageIds);
 }

@@ -9,6 +9,16 @@ export const fileRefValidator = v.union(
 	}),
 );
 
+export const collaboratorAccessValidator = v.union(
+	v.literal("edit"),
+	v.literal("view"),
+);
+
+export const collaboratorValidator = v.object({
+	adminId: v.id("admins"),
+	access: collaboratorAccessValidator,
+});
+
 export const fileEntryValidator = v.object({
 	file: fileRefValidator,
 	shareConditions: v.string(),
@@ -43,3 +53,6 @@ export type FileEntryPayload = Infer<typeof fileEntryValidator>;
 export type PersonaPayload = Infer<typeof personaPayloadValidator>;
 export type ReferralEdgePayload = Infer<typeof referralEdgeValidator>;
 export type CaseStructure = Infer<typeof caseStructureValidator>;
+
+export type CollaboratorAccess = Infer<typeof collaboratorAccessValidator>;
+export type CollaboratorPayload = Infer<typeof collaboratorValidator>;

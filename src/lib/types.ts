@@ -1,5 +1,7 @@
 export type { AdminRole } from "../../convex/lib/constants.js";
 export type {
+	CollaboratorAccess,
+	CollaboratorPayload,
 	FileEntryPayload,
 	FileRefPayload,
 	PersonaPayload,

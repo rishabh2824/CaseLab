@@ -85,12 +85,12 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
-		expect(result).toEqual({ casesDeleted: 1, casesReassigned: 0 });
+		expect(result).toEqual({ casesDeleted: 1 });
 		expect(await t.run((ctx) => ctx.db.get(caseId))).toBeNull();
 	});
 
-	// Tests that deleting an admin promotes the longest-standing collaborator instead of deleting a shared case.
-	it("promotes the longest-standing collaborator instead of deleting a shared case", async () => {
+	// Tests that deleting an admin deletes their shared cases too, and removes the collaborator rows.
+	it("deletes an owned case even when it has collaborators", async () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
 		const { adminId: ownerId } = await withAdmin(t, {
@@ -101,16 +101,19 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		});
 		const caseId = await seedCase(t, ownerId);
 		await t.run((ctx) =>
-			ctx.db.insert("collaborators", { caseId, adminId: collabId }),
+			ctx.db.insert("collaborators", {
+				caseId,
+				adminId: collabId,
+				access: "edit",
+			}),
 		);
 
 		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
-		expect(result).toEqual({ casesDeleted: 0, casesReassigned: 1 });
+		expect(result).toEqual({ casesDeleted: 1 });
 
-		const updatedCase = await t.run((ctx) => ctx.db.get(caseId));
-		expect(updatedCase?.ownerAdminId).toBe(collabId);
+		expect(await t.run((ctx) => ctx.db.get(caseId))).toBeNull();
 		const remainingCollaborators = await t.run((ctx) =>
 			ctx.db
 				.query("collaborators")
@@ -141,7 +144,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		const result = await asUser.mutation(api.admins.deleteWithCascade, {
 			adminId: ownerId,
 		});
-		expect(result).toEqual({ casesDeleted: 1, casesReassigned: 0 });
+		expect(result).toEqual({ casesDeleted: 1 });
 		expect(await t.run((ctx) => ctx.db.get(liveCaseId))).toBeNull();
 	});
 

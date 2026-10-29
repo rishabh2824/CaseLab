@@ -82,6 +82,9 @@ $effect(() => {
 		});
 });
 
+// A case shared with the viewer for reading only: every field is locked and there is nothing to save.
+const readOnly = $derived(isEditMode && !draft.canEdit);
+
 const effectiveOwnerId = $derived(
 	isEditMode ? ownerAdminId : (viewerQuery.data?._id ?? null),
 );
@@ -255,7 +258,7 @@ onMount(() => {
 	<div class="mx-auto max-w-4xl px-6 py-10">
 		<div class="rounded-2xl border border-line bg-white p-8 shadow-soft">
 			<form novalidate onsubmit={handleSubmit} class="flex flex-col gap-6">
-				<fieldset disabled={isSubmitting || isLoadingSource} class="contents">
+				<fieldset disabled={isSubmitting || isLoadingSource || readOnly} class="contents">
 				<div class="relative">
 					<div class="text-center">
 						<p class="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
@@ -292,6 +295,12 @@ onMount(() => {
 					</div>
 				</div>
 
+				{#if readOnly}
+					<p class="rounded-xl border border-line bg-cream px-4 py-3 text-sm text-stone">
+						View only: you can read this case and copy it as a template, but not save changes.
+					</p>
+				{/if}
+
 				{#if isLoadingSource}
 					<p class="text-center text-sm text-stone">
 						{isEditMode ? 'Loading case...' : 'Loading case template...'}
@@ -323,12 +332,14 @@ onMount(() => {
 					</p>
 				{/if}
 
-				<button
-					type="submit"
-					class="self-start rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-				>
-					{isSubmitting ? 'Submitting…' : 'Submit'}
-				</button>
+				{#if !readOnly}
+					<button
+						type="submit"
+						class="self-start rounded-lg bg-brand px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+					>
+						{isSubmitting ? 'Submitting…' : 'Submit'}
+					</button>
+				{/if}
 				</fieldset>
 			</form>
 		</div>

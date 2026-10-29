@@ -177,7 +177,7 @@ describe("persona ids as Convex record keys", () => {
 					referrals: [],
 					roots: ["$boss"],
 				},
-				collaboratorAdminIds: [],
+				collaborators: [],
 			}),
 		).rejects.toThrow(/persona id/i);
 	});

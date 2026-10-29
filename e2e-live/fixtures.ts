@@ -97,7 +97,7 @@ export const test = base.extend<LiveFixtures>({
 					referrals: options.referrals ?? [],
 					roots: ["A"],
 				},
-				collaboratorAdminIds: [],
+				collaborators: [],
 			});
 			return { accessCode, caseId, name };
 		});

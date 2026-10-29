@@ -45,7 +45,7 @@ function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 			referrals: [],
 			roots: ["A"],
 		},
-		collaboratorAdminIds: [] as Id<"admins">[],
+		collaborators: [],
 		...overrides,
 	};
 }
@@ -274,6 +274,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 			ctx.db.insert("collaborators", {
 				caseId,
 				adminId: collaborator.adminId,
+				access: "edit",
 			}),
 		);
 
@@ -297,6 +298,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 			ctx.db.insert("collaborators", {
 				caseId,
 				adminId: collaborator.adminId,
+				access: "edit",
 			}),
 		);
 

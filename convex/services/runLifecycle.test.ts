@@ -51,7 +51,7 @@ function payload(overrides: Record<string, unknown> = {}) {
 			referrals: [],
 			roots: ["A"],
 		},
-		collaboratorAdminIds: [] as Id<"admins">[],
+		collaborators: [],
 		...overrides,
 	};
 }

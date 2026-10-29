@@ -36,6 +36,7 @@ function makeCaseSummary(
 		name: "Sterling Industries",
 		accessCode: "sterling",
 		isTemplate: false,
+		canEdit: true,
 		...overrides,
 		_id: (overrides._id ?? "case-1") as Id<"cases">,
 	};
@@ -154,6 +155,17 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 
 		resolveDelete?.();
 		await waitFor(() => expect(dialogTitle).not.toBeInTheDocument());
+	});
+
+	// Tests that a case shared for viewing only offers no delete button.
+	it("does not offer a delete button for a case the viewer cannot edit", async () => {
+		stubCaseList([makeCaseSummary({ canEdit: false })]);
+		renderPicker("edit");
+		await screen.findByText("Sterling Industries");
+
+		expect(
+			screen.queryByRole("button", { name: "Delete case" }),
+		).not.toBeInTheDocument();
 	});
 
 	// Tests that template (create) mode offers no delete button.

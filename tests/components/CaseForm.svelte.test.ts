@@ -93,7 +93,8 @@ function makeCaseDoc(
 			referrals: [],
 			roots: ["p1"],
 		},
-		collaboratorAdminIds: [],
+		collaborators: [],
+		canEdit: true,
 		teachingNotesUrl: null,
 		...overrides,
 		_id: (overrides._id ?? "case-7") as Id<"cases">,
@@ -364,6 +365,36 @@ describe("CaseForm", () => {
 			);
 
 			expect(screen.getByText("Selected: fresh.docx")).toBeInTheDocument();
+		});
+	});
+
+	describe("view-only case", () => {
+		// Tests that a case shared for reading shows a banner, locks the fields and offers no Submit.
+		it("locks the form and hides Submit for a view-only collaborator", async () => {
+			const doc = makeCaseDoc({ canEdit: false });
+			stubLoadCase(doc);
+			renderForm({ editCaseId: doc._id });
+
+			expect(
+				await screen.findByDisplayValue("Sterling Industries"),
+			).toBeDisabled();
+			expect(screen.getByText(/View only:/)).toBeInTheDocument();
+			expect(screen.queryByRole("button", { name: "Submit" })).toBeNull();
+		});
+
+		// Tests that an editable case shows none of that.
+		it("shows no banner and keeps Submit for an editor", async () => {
+			const doc = makeCaseDoc();
+			stubLoadCase(doc);
+			renderForm({ editCaseId: doc._id });
+
+			expect(
+				await screen.findByDisplayValue("Sterling Industries"),
+			).toBeEnabled();
+			expect(screen.queryByText(/View only:/)).toBeNull();
+			expect(
+				screen.getByRole("button", { name: "Submit" }),
+			).toBeInTheDocument();
 		});
 	});
 
@@ -830,6 +861,10 @@ describe("CaseForm", () => {
 
 			expect(screen.getByText("1 selected")).toBeInTheDocument();
 			expect(checkbox).toBeChecked();
+			await user.selectOptions(
+				screen.getByLabelText("Access for Nina"),
+				"view",
+			);
 
 			await user.click(screen.getByRole("button", { name: "Submit" }));
 			await waitFor(() => {
@@ -838,7 +873,9 @@ describe("CaseForm", () => {
 				);
 			});
 
-			expect(createRequests[0]?.collaboratorAdminIds).toEqual(["9"]);
+			expect(createRequests[0]?.collaborators).toEqual([
+				{ adminId: "9", access: "view" },
+			]);
 
 			await user.click(checkbox);
 			expect(screen.queryByText("1 selected")).not.toBeInTheDocument();

@@ -2,7 +2,7 @@
 import { Popover } from "bits-ui";
 import type { CaseDraft } from "#lib/case/caseDraft.svelte.js";
 import { parseIntOrNull } from "#lib/case/draft.js";
-import type { AdminRow } from "#lib/types.js";
+import type { AdminRow, CollaboratorAccess } from "#lib/types.js";
 import { isSelectableCollaborator } from "../../../convex/lib/caseRules.js";
 import { RUN_LIFETIME_MINUTES } from "../../../convex/lib/constants.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
@@ -168,16 +168,16 @@ const errors = $derived(
 		<div class="flex flex-col gap-1.5">
 			<span class="text-xs font-medium text-stone-soft">Add collaborators</span>
 			<p class="text-xs text-stone">
-				Collaborators get full edit access to this case, same as the owner.
+				Edit collaborators can change this case like the owner. View-only collaborators can read it and copy it as a template.
 			</p>
 			<Popover.Root>
 				<Popover.Trigger
 					class="flex w-fit items-center gap-2 rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition hover:border-brand hover:text-brand"
 				>
 					Add collaborators
-					{#if draft.collaboratorAdminIds.length > 0}
+					{#if draft.collaborators.length > 0}
 						<span class="rounded-full bg-brand-tint px-2 py-0.5 text-xs font-semibold text-brand">
-							{draft.collaboratorAdminIds.length} selected
+							{draft.collaborators.length} selected
 						</span>
 					{/if}
 					<span aria-hidden="true">▾</span>
@@ -194,20 +194,35 @@ const errors = $derived(
 						{:else}
 							<div class="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
 								{#each selectableAdmins as admin (admin._id)}
-									<label class="flex items-center gap-2 text-sm text-ink-soft">
-										<input
-											type="checkbox"
-											checked={draft.collaboratorAdminIds.includes(admin._id)}
-											onchange={(event) => {
-												const checked = event.currentTarget.checked
-												draft.collaboratorAdminIds = checked
-													? [...draft.collaboratorAdminIds, admin._id]
-													: draft.collaboratorAdminIds.filter((id) => id !== admin._id)
-											}}
-											class="h-4 w-4 rounded border-line text-brand focus:ring-brand/30"
-										/>
-										<span>{admin.name || admin.email}</span>
-									</label>
+									{@const entry = draft.collaborators.find((c) => c.adminId === admin._id)}
+									<div class="flex items-center justify-between gap-2">
+										<label class="flex items-center gap-2 text-sm text-ink-soft">
+											<input
+												type="checkbox"
+												checked={entry !== undefined}
+												onchange={(event) => {
+													draft.collaborators = event.currentTarget.checked
+														? [...draft.collaborators, { adminId: admin._id, access: "edit" }]
+														: draft.collaborators.filter((c) => c.adminId !== admin._id)
+												}}
+												class="h-4 w-4 rounded border-line text-brand focus:ring-brand/30"
+											/>
+											<span>{admin.name || admin.email}</span>
+										</label>
+										{#if entry}
+											<select
+												aria-label="Access for {admin.name || admin.email}"
+												value={entry.access}
+												onchange={(event) => {
+													entry.access = event.currentTarget.value as CollaboratorAccess
+												}}
+												class="rounded-md border border-line bg-white px-1.5 py-0.5 text-xs text-ink-soft"
+											>
+												<option value="edit">Edit</option>
+												<option value="view">View only</option>
+											</select>
+										{/if}
+									</div>
 								{/each}
 							</div>
 						{/if}

@@ -1,6 +1,7 @@
 import { getCaseInfoErrors } from "../../../convex/lib/caseRules.js";
 import type {
 	CaseStructure,
+	CollaboratorPayload,
 	FileRefPayload,
 } from "../../../convex/models/cases.js";
 import { hasFieldErrors } from "./draft.js";
@@ -19,7 +20,8 @@ export type LoadableCase = {
 	structure: CaseStructure;
 	teachingNotes?: FileRefPayload;
 	teachingNotesUrl?: string | null;
-	collaboratorAdminIds?: string[];
+	collaborators?: CollaboratorPayload[];
+	canEdit?: boolean;
 };
 
 // Replaces File values with a small descriptor so the draft can be snapshotted as JSON.
@@ -44,7 +46,9 @@ export class CaseDraft {
 	teachingNotes = $state<File | FileRefPayload>(null);
 	// Where the saved teaching notes can be downloaded, when editing a case that has them.
 	teachingNotesUrl = $state<string | null>(null);
-	collaboratorAdminIds = $state<string[]>([]);
+	collaborators = $state<CollaboratorPayload[]>([]);
+	// False when the loaded case is only shared with the viewer for reading.
+	canEdit = $state(true);
 	readonly graph = new CaseGraph();
 	showErrors = $state(false);
 	// Case information fields the user has typed in, keyed by their error name.
@@ -84,7 +88,7 @@ export class CaseDraft {
 			{
 				...this.#fields(),
 				teachingNotes: this.teachingNotes,
-				collaboratorAdminIds: this.collaboratorAdminIds,
+				collaborators: this.collaborators,
 				personas: this.graph.personas,
 				referrals: this.graph.referrals,
 				roots: this.graph.roots,
@@ -130,8 +134,8 @@ export class CaseDraft {
 		this.teachingNotesUrl = isEditMode
 			? (loaded.teachingNotesUrl ?? null)
 			: null;
-		if (isEditMode)
-			this.collaboratorAdminIds = loaded.collaboratorAdminIds ?? [];
+		this.canEdit = loaded.canEdit ?? true;
+		if (isEditMode) this.collaborators = loaded.collaborators ?? [];
 		this.revealErrors();
 		this.markSaved();
 	}
@@ -170,7 +174,7 @@ export class CaseDraft {
 			referrals: this.graph.referrals,
 			roots: this.graph.roots,
 			teachingNotes: this.teachingNotes,
-			collaboratorAdminIds: this.collaboratorAdminIds,
+			collaborators: this.collaborators,
 		};
 	}
 }

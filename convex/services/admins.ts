@@ -64,11 +64,11 @@ export async function createAdmin(
 	return (await ctx.db.get("admins", id))!;
 }
 
-// Deletes an admin, deleting or handing over the cases they own and removing their sign-in (sessions, accounts and user).
+// Deletes an admin along with the cases they own and their sign-in (sessions, accounts and user).
 export async function deleteAdminWithCascade(
 	ctx: MutationCtx,
 	adminId: Id<"admins">,
-): Promise<{ casesDeleted: number; casesReassigned: number }> {
+): Promise<{ casesDeleted: number }> {
 	const admin = await ctx.db.get("admins", adminId);
 	if (!admin) throw new ConvexError("Admin not found.");
 	if (admin.role === "super")
@@ -78,28 +78,7 @@ export async function deleteAdminWithCascade(
 		.query("cases")
 		.withIndex("by_owner", (q) => q.eq("ownerAdminId", adminId))
 		.collect();
-
-	let casesDeleted = 0;
-	let casesReassigned = 0;
-
-	for (const c of ownedCases) {
-		const collaborators = (
-			await ctx.db
-				.query("collaborators")
-				.withIndex("by_case_and_admin", (q) => q.eq("caseId", c._id))
-				.collect()
-		).sort((a, b) => a._creationTime - b._creationTime);
-
-		if (collaborators.length === 0) {
-			await deleteCaseUnchecked(ctx, c._id);
-			casesDeleted++;
-		} else {
-			const oldest = collaborators[0]!;
-			await ctx.db.patch(c._id, { ownerAdminId: oldest.adminId });
-			await ctx.db.delete(oldest._id);
-			casesReassigned++;
-		}
-	}
+	for (const c of ownedCases) await deleteCaseUnchecked(ctx, c._id);
 
 	const collaboratingElsewhere = await ctx.db
 		.query("collaborators")
@@ -110,7 +89,7 @@ export async function deleteAdminWithCascade(
 	await ctx.db.delete(adminId);
 	await deleteAuthUser(ctx, admin.email);
 
-	return { casesDeleted, casesReassigned };
+	return { casesDeleted: ownedCases.length };
 }
 
 // Deletes every Better Auth session, account and the user itself for the given email, so no trace of the admin's sign-in remains.

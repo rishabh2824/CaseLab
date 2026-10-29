@@ -65,27 +65,16 @@ function requestDelete(admin: Doc<"admins">): void {
 	pendingDelete = admin;
 }
 
-// Deletes the pending admin and toasts a summary of the cases deleted or reassigned.
+// Deletes the pending admin and toasts how many of their cases were deleted.
 async function confirmDelete(): Promise<void> {
 	const admin = pendingDelete;
 	if (!admin) return;
 	isDeleting = true;
 	try {
 		const result = await deleteAdmin({ adminId: admin._id });
-		const parts: string[] = [];
-		if (result.casesDeleted > 0) {
-			parts.push(
-				`${result.casesDeleted} case${result.casesDeleted === 1 ? "" : "s"} deleted`,
-			);
-		}
-		if (result.casesReassigned > 0) {
-			parts.push(
-				`${result.casesReassigned} case${result.casesReassigned === 1 ? "" : "s"} reassigned`,
-			);
-		}
 		toast(
-			parts.length > 0
-				? `Deleted ${admin.email} — ${parts.join(", ")}.`
+			result.casesDeleted > 0
+				? `Deleted ${admin.email} — ${result.casesDeleted} case${result.casesDeleted === 1 ? "" : "s"} deleted.`
 				: `Deleted ${admin.email}.`,
 			{ duration: 4000 },
 		);
@@ -104,7 +93,7 @@ async function confirmDelete(): Promise<void> {
 		<PageHeader
 			eyebrow="Super Admin"
 			title="Manage admins"
-			description="Add an admin by email. Deleting an admin deletes any case they own with no collaborators, and reassigns ownership of cases they own with collaborators to the longest-standing collaborator."
+			description="Add an admin by email. Deleting an admin also deletes every case they own."
 		/>
 
 		<form
@@ -209,7 +198,7 @@ async function confirmDelete(): Promise<void> {
 	open={pendingDelete !== null}
 	onClose={() => (pendingDelete = null)}
 	title={pendingDelete ? `Delete ${pendingDelete.email}?` : ""}
-	description="This cannot be undone. Any case they own with no collaborators is deleted; a case they own that has collaborators is reassigned to the longest-standing collaborator."
+	description="This cannot be undone. Every case they own is deleted, including cases shared with collaborators."
 	confirming={isDeleting}
 	onConfirm={confirmDelete}
 />

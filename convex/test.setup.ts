@@ -194,7 +194,7 @@ export function casePayload(
 		brief: "Reduce office supply costs.",
 		commonInformation: "",
 		accessCode: uniqueAccessCode(),
-		collaboratorAdminIds: [],
+		collaborators: [],
 		...rest,
 		structure: { personas, referrals, roots },
 	};

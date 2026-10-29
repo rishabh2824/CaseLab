@@ -40,7 +40,9 @@ describe("case access control", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				casePayload({ collaboratorAdminIds: [collaborator._id] }),
+				casePayload({
+					collaborators: [{ adminId: collaborator._id, access: "edit" }],
+				}),
 				owner,
 			),
 		);
@@ -49,7 +51,9 @@ describe("case access control", () => {
 			updateCase(
 				ctx,
 				caseId,
-				casePayload({ collaboratorAdminIds: [third._id] }),
+				casePayload({
+					collaborators: [{ adminId: third._id, access: "edit" }],
+				}),
 				collaborator,
 			),
 		);
@@ -74,7 +78,10 @@ describe("case access control", () => {
 		const sharedId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				casePayload({ name: "Shared with B", collaboratorAdminIds: [b._id] }),
+				casePayload({
+					name: "Shared with B",
+					collaborators: [{ adminId: b._id, access: "edit" }],
+				}),
 				a,
 			),
 		);
@@ -102,6 +109,82 @@ describe("case access control", () => {
 	});
 });
 
+describe("view-only collaborators", () => {
+	async function setup() {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const viewer = await makeAdmin(t);
+		const caseId = await t.run((ctx) =>
+			createCase(
+				ctx,
+				casePayload({
+					collaborators: [{ adminId: viewer._id, access: "view" }],
+				}),
+				owner,
+			),
+		);
+		return { t, owner, viewer, caseId };
+	}
+
+	// Tests that a viewer can read the case but is refused every change.
+	it("lets a viewer see the case but refuses update and delete", async () => {
+		const { t, viewer, caseId } = await setup();
+		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+
+		await expect(
+			t.run((ctx) => requireCaseAccess(ctx, c, viewer, "view")),
+		).resolves.toBeNull();
+		await expect(
+			t.run((ctx) => updateCase(ctx, caseId, casePayload(), viewer)),
+		).rejects.toThrow("You have view-only access to this case.");
+		await expect(
+			t.run((ctx) => deleteCase(ctx, caseId, viewer)),
+		).rejects.toThrow("You have view-only access to this case.");
+	});
+
+	// Tests that the viewer's list entry says they cannot edit, while the owner's says they can.
+	it("marks the case as not editable in the viewer's list only", async () => {
+		const { t, owner, viewer, caseId } = await setup();
+
+		const asViewer = await t.run((ctx) => listCases(ctx, viewer));
+		const asOwner = await t.run((ctx) => listCases(ctx, owner));
+
+		expect(asViewer.find((c) => c._id === caseId)?.canEdit).toBe(false);
+		expect(asOwner.find((c) => c._id === caseId)?.canEdit).toBe(true);
+	});
+
+	// Tests that changing only the access level updates the existing row rather than replacing it.
+	it("changes a collaborator's access in place", async () => {
+		const { t, owner, viewer, caseId } = await setup();
+		const rowBefore = await t.run((ctx) =>
+			ctx.db
+				.query("collaborators")
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
+				.first(),
+		);
+
+		await t.run((ctx) =>
+			updateCase(
+				ctx,
+				caseId,
+				casePayload({
+					collaborators: [{ adminId: viewer._id, access: "edit" }],
+				}),
+				owner,
+			),
+		);
+
+		const rowAfter = await t.run((ctx) =>
+			ctx.db
+				.query("collaborators")
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
+				.first(),
+		);
+		expect(rowAfter?._id).toBe(rowBefore?._id);
+		expect(rowAfter?.access).toBe("edit");
+	});
+});
+
 describe("replaceCollaborators row stability (via updateCase)", () => {
 	// Tests that an existing collaborator's row is left untouched across an unrelated save.
 	it("keeps an existing collaborator's row across an unrelated save", async () => {
@@ -111,7 +194,9 @@ describe("replaceCollaborators row stability (via updateCase)", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				casePayload({ collaboratorAdminIds: [collaborator._id] }),
+				casePayload({
+					collaborators: [{ adminId: collaborator._id, access: "edit" }],
+				}),
 				owner,
 			),
 		);
@@ -127,7 +212,7 @@ describe("replaceCollaborators row stability (via updateCase)", () => {
 				ctx,
 				caseId,
 				casePayload({
-					collaboratorAdminIds: [collaborator._id],
+					collaborators: [{ adminId: collaborator._id, access: "edit" }],
 					name: "Renamed",
 				}),
 				owner,
@@ -153,7 +238,9 @@ describe("replaceCollaborators row stability (via updateCase)", () => {
 		const caseId = await t.run((ctx) =>
 			createCase(
 				ctx,
-				casePayload({ collaboratorAdminIds: [original._id] }),
+				casePayload({
+					collaborators: [{ adminId: original._id, access: "edit" }],
+				}),
 				owner,
 			),
 		);
@@ -168,7 +255,12 @@ describe("replaceCollaborators row stability (via updateCase)", () => {
 			updateCase(
 				ctx,
 				caseId,
-				casePayload({ collaboratorAdminIds: [original._id, added._id] }),
+				casePayload({
+					collaborators: [
+						{ adminId: original._id, access: "edit" },
+						{ adminId: added._id, access: "edit" },
+					],
+				}),
 				owner,
 			),
 		);
@@ -197,7 +289,9 @@ describe("collaborator validation (via createCase)", () => {
 			t.run((ctx) =>
 				createCase(
 					ctx,
-					casePayload({ collaboratorAdminIds: [owner._id] }),
+					casePayload({
+						collaborators: [{ adminId: owner._id, access: "edit" }],
+					}),
 					owner,
 				),
 			),
@@ -215,7 +309,9 @@ describe("collaborator validation (via createCase)", () => {
 			t.run((ctx) =>
 				createCase(
 					ctx,
-					casePayload({ collaboratorAdminIds: [bogusId] }),
+					casePayload({
+						collaborators: [{ adminId: bogusId, access: "edit" }],
+					}),
 					owner,
 				),
 			),
@@ -231,7 +327,9 @@ describe("collaborator validation (via createCase)", () => {
 			t.run((ctx) =>
 				createCase(
 					ctx,
-					casePayload({ collaboratorAdminIds: [superAdmin._id] }),
+					casePayload({
+						collaborators: [{ adminId: superAdmin._id, access: "edit" }],
+					}),
 					owner,
 				),
 			),

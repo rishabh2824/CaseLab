@@ -178,19 +178,16 @@ describe("deleting an admin", () => {
 		expect(deleteAdmin).not.toHaveBeenCalled();
 	});
 
-	// Tests that the toast summarises cases deleted and reassigned.
-	it("deletes and summarises deleted and reassigned cases", async () => {
-		deleteAdmin.mockResolvedValue({
-			casesDeleted: 1,
-			casesReassigned: 2,
-		});
+	// Tests that the toast says how many cases were deleted along with the admin.
+	it("deletes and summarises the deleted cases", async () => {
+		deleteAdmin.mockResolvedValue({ casesDeleted: 2 });
 		const user = userEvent.setup();
 		render(AdminsPage);
 		await user.click(screen.getByRole("button", { name: "Delete" }));
 		await confirmDialog(user);
 		await waitFor(() =>
 			expect(toast).toHaveBeenCalledWith(
-				"Deleted a@wisc.edu — 1 case deleted, 2 cases reassigned.",
+				"Deleted a@wisc.edu — 2 cases deleted.",
 				{ duration: 4000 },
 			),
 		);
@@ -203,7 +200,6 @@ describe("deleting an admin", () => {
 	it("toasts a plain message when no cases were affected", async () => {
 		deleteAdmin.mockResolvedValue({
 			casesDeleted: 0,
-			casesReassigned: 0,
 		});
 		const user = userEvent.setup();
 		render(AdminsPage);

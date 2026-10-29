@@ -195,7 +195,11 @@ describe("teaching notes access", () => {
 		});
 		const caseId = await seedWithNotes(t, owner.adminId);
 		await t.run((ctx) =>
-			ctx.db.insert("collaborators", { caseId, adminId: helper.adminId }),
+			ctx.db.insert("collaborators", {
+				caseId,
+				adminId: helper.adminId,
+				access: "edit",
+			}),
 		);
 
 		const mine = await owner.asUser.query(api.cases.getForEdit, { caseId });
@@ -232,6 +236,55 @@ describe("teaching notes access", () => {
 	});
 });
 
+describe("view-only collaborator through the public API", () => {
+	// Tests that a viewer can open and copy the case, sees it flagged read-only, and cannot save or delete it.
+	it("can read and copy the case but not update or delete it", async () => {
+		const t = newTestConvex();
+		const owner = await withAdmin(t, { email: "owner@test.caselab.invalid" });
+		const viewer = await withAdmin(t, { email: "viewer@test.caselab.invalid" });
+		const caseId = await seedCase(t, owner.adminId);
+		await t.run((ctx) =>
+			ctx.db.insert("collaborators", {
+				caseId,
+				adminId: viewer.adminId,
+				access: "view",
+			}),
+		);
+
+		const loaded = await viewer.asUser.query(api.cases.getForEdit, { caseId });
+		expect(loaded.canEdit).toBe(false);
+		expect(loaded.collaborators).toEqual([
+			{ adminId: viewer.adminId, access: "view" },
+		]);
+		const ownerView = await owner.asUser.query(api.cases.getForEdit, {
+			caseId,
+		});
+		expect(ownerView.canEdit).toBe(true);
+
+		const copy = await viewer.asUser.query(api.cases.getTemplate, { caseId });
+		expect(copy._id).toBe(caseId);
+
+		await expect(
+			viewer.asUser.mutation(api.cases.update, {
+				caseId,
+				name: "Changed",
+				brief: "Brief",
+				commonInformation: "",
+				accessCode: uniqueAccessCode(),
+				structure: {
+					personas: [personaPayload("A")],
+					referrals: [],
+					roots: ["A"],
+				},
+				collaborators: [],
+			}),
+		).rejects.toThrow("You have view-only access to this case.");
+		await expect(
+			viewer.asUser.mutation(api.cases.deleteCase, { caseId }),
+		).rejects.toThrow("You have view-only access to this case.");
+	});
+});
+
 describe("cases.create", () => {
 	// Tests that creating through the public API returns the new case id and makes the caller its owner.
 	it("returns the new case id and records the caller as owner", async () => {
@@ -247,7 +300,7 @@ describe("cases.create", () => {
 				referrals: [],
 				roots: ["A"],
 			},
-			collaboratorAdminIds: [],
+			collaborators: [],
 		});
 		const stored = await t.run((ctx) => ctx.db.get("cases", caseId));
 		expect(stored?.ownerAdminId).toBe(adminId);
@@ -272,7 +325,7 @@ describe("cases.update", () => {
 				referrals: [],
 				roots: ["A"],
 			},
-			collaboratorAdminIds: [],
+			collaborators: [],
 		});
 		const stored = await t.run((ctx) => ctx.db.get("cases", caseId));
 		expect(stored?.name).toBe("Renamed");

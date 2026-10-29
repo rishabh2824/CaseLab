@@ -29,7 +29,7 @@ export const getTemplate = adminQuery({
 	handler: async (ctx, args) => {
 		const c = await ctx.db.get("cases", args.caseId);
 		if (!c) throw new ConvexError("Case not found.");
-		if (!c.isTemplate) await requireCaseAccess(ctx, c, ctx.admin);
+		if (!c.isTemplate) await requireCaseAccess(ctx, c, ctx.admin, "view");
 		const {
 			accessCode: _accessCode,
 			ownerAdminId: _ownerAdminId,
@@ -50,18 +50,28 @@ export const setTemplate = superAdminMutation({
 	},
 });
 
-// Loads a case the caller can access, plus its collaborator admin ids, for the edit form.
+// Loads a case the caller can see, plus its collaborators and whether the caller may edit it, for the case form.
 export const getForEdit = adminQuery({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
-		const c = await loadCaseForAccess(ctx, args.caseId, ctx.admin);
+		const c = await loadCaseForAccess(ctx, args.caseId, ctx.admin, "view");
 		const collaboratorRows = await ctx.db
 			.query("collaborators")
 			.withIndex("by_case_and_admin", (q) => q.eq("caseId", c._id))
 			.collect();
+		const canEdit =
+			ctx.admin.role === "super" ||
+			c.ownerAdminId === ctx.admin._id ||
+			collaboratorRows.some(
+				(row) => row.adminId === ctx.admin._id && row.access === "edit",
+			);
 		return {
 			...c,
-			collaboratorAdminIds: collaboratorRows.map((row) => row.adminId),
+			collaborators: collaboratorRows.map(({ adminId, access }) => ({
+				adminId,
+				access,
+			})),
+			canEdit,
 			teachingNotesUrl: c.teachingNotes
 				? await ctx.storage.getUrl(c.teachingNotes.storageId)
 				: null,
