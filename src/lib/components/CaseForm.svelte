@@ -90,6 +90,8 @@ const effectiveOwnerId = $derived(
 );
 
 const displayedError = $derived(submitError || loadErrorMessage);
+// While true every field is locked. The persona outline stays clickable so a view-only case can still be browsed.
+const locked = $derived(isSubmitting || isLoadingSource || readOnly);
 
 // Exports the current form as a downloadable HTML template.
 function handleExportTemplate(): void {
@@ -258,7 +260,7 @@ onMount(() => {
 	<div class="mx-auto max-w-4xl px-6 py-10">
 		<div class="rounded-2xl border border-line bg-white p-8 shadow-soft">
 			<form novalidate onsubmit={handleSubmit} class="flex flex-col gap-6">
-				<fieldset disabled={isSubmitting || isLoadingSource || readOnly} class="contents">
+				<fieldset disabled={locked} class="contents">
 				<div class="relative">
 					<div class="text-center">
 						<p class="font-mono text-[11px] font-medium uppercase tracking-[0.28em] text-brand">
@@ -314,11 +316,15 @@ onMount(() => {
 					{effectiveOwnerId}
 				/>
 
+				</fieldset>
+
 				<CaseGraphEditor
 					graph={draft.graph}
 					showFieldErrors={draft.showErrors}
-					revealErrors={() => draft.revealErrors()}
+					disabled={locked}
 				/>
+
+				<fieldset disabled={locked} class="contents">
 
 				{#if displayedError}
 					<p class="text-sm font-medium text-brand">{displayedError}</p>

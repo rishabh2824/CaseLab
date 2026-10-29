@@ -1,30 +1,21 @@
 <script lang="ts">
-import {
-	getPersonaLabel,
-	parseIntOrNull,
-	referralsFrom,
-} from "#lib/case/draft.js";
-import type { CaseGraph } from "#lib/case/graph.svelte.js";
-import type { Persona, ReferralEdge } from "#lib/types.js";
+import { parseIntOrNull } from "#lib/case/draft.js";
+import type { Persona } from "#lib/types.js";
 import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
 import RemovableSection from "./RemovableSection.svelte";
 
 type Props = {
 	persona: Persona;
-	graph: CaseGraph;
 	showFieldErrors: boolean;
 };
 
-let { persona = $bindable(), graph, showFieldErrors }: Props = $props();
+let { persona = $bindable(), showFieldErrors }: Props = $props();
 const uid = $props.id();
 
 const errors = $derived(showFieldErrors ? getPersonaFieldErrors(persona) : {});
 
 type InputEvent_ = Event & { currentTarget: EventTarget & HTMLInputElement };
-type TextAreaEvent = Event & {
-	currentTarget: EventTarget & HTMLTextAreaElement;
-};
 
 // Stores the chosen profile photo on the persona and resets the file input.
 function handlePhotoChange(event: InputEvent_): void {
@@ -52,26 +43,6 @@ function handleFileChange(event: InputEvent_, fileIndex: number): void {
 	if (!entry) return;
 	entry.file = event.currentTarget.files?.[0] ?? null;
 	event.currentTarget.value = "";
-}
-
-const ownReferrals = $derived(referralsFrom(graph.referrals, persona.id));
-
-// Adds a new referred persona linked from this persona.
-function addReferral(): void {
-	graph.addReferral(persona.id);
-}
-
-// Removes a referral from this persona, along with anything that becomes unreachable.
-function removeReferral(referral: ReferralEdge): void {
-	graph.removeReferralsFrom(persona.id, [referral.toId]);
-}
-
-// Updates a referral's unlock conditions from the textarea.
-function handleReferralConditionsChange(
-	event: TextAreaEvent,
-	referral: ReferralEdge,
-): void {
-	referral.conditions = event.currentTarget.value;
 }
 </script>
 <div class="flex flex-col gap-4">
@@ -226,58 +197,6 @@ function handleReferralConditionsChange(
 									rows="2"
 									placeholder="Describe perceived contents"
 									bind:value={fileEntry.perceivedContents}
-									class={INPUT_CLASS}
-								></textarea>
-							{/snippet}
-						</FormField>
-				</RemovableSection>
-			{/each}
-		</div>
-	{/if}
-
-	<div class="flex items-center justify-between gap-2">
-		<span class="text-xs font-medium text-stone-soft">People this persona refers out</span>
-		<button
-			type="button"
-			onclick={addReferral}
-			class="rounded-lg border border-line px-3 py-1.5 text-xs font-semibold text-ink-soft transition hover:border-brand hover:text-brand"
-		>
-			+ Add referral
-		</button>
-	</div>
-
-	{#if ownReferrals.length > 0}
-		<div class="flex flex-col gap-3">
-			{#each ownReferrals as referral (referral.toId)}
-				{@const referredPersona = graph.byId.get(referral.toId) as Persona}
-				<RemovableSection
-					label={getPersonaLabel(referredPersona, 'Referred Persona')}
-					onRemove={() => removeReferral(referral)}
-				>
-						<FormField label="Name" id="{uid}-referral-{referral.toId}-name">
-							{#snippet children(field)}
-								<input
-									{...field}
-									id="{uid}-referral-{referral.toId}-name"
-									type="text"
-									placeholder="Enter name"
-									bind:value={referredPersona.name}
-									class={INPUT_CLASS}
-								/>
-							{/snippet}
-						</FormField>
-						<FormField
-							label="Describe the referral conditions"
-							id="{uid}-referral-{referral.toId}-conditions"
-						>
-							{#snippet children(field)}
-								<textarea
-									{...field}
-									id="{uid}-referral-{referral.toId}-conditions"
-									rows="2"
-									placeholder="Describe the referral conditions"
-									value={referral.conditions}
-									oninput={(event) => handleReferralConditionsChange(event, referral)}
 									class={INPUT_CLASS}
 								></textarea>
 							{/snippet}

@@ -46,6 +46,10 @@ vi.mock("#lib/adminViewer.js", () => ({
 	}),
 }));
 
+vi.mock("../../src/lib/components/PersonaDiagram.svelte", async () => ({
+	default: (await import("../support/PersonaDiagramStub.svelte")).default,
+}));
+
 // Builds an admin row with defaults and optional overrides.
 function makeAdminRow(
 	overrides: Partial<Omit<AdminRow, "_id">> & { _id?: string } = {},
@@ -149,7 +153,9 @@ async function fillValidCase(user: ReturnType<typeof userEvent.setup>) {
 	await user.type(screen.getByLabelText("Case name"), "Sterling Industries");
 	await user.type(screen.getByLabelText("Initial brief"), "Reduce costs.");
 	await user.type(screen.getByLabelText("Access code"), "sterling");
-	await user.click(screen.getByRole("button", { name: "+ Add root persona" }));
+	await user.click(
+		screen.getByRole("button", { name: "+ Add starting persona" }),
+	);
 	await user.type(screen.getByLabelText("Persona name"), "Mary");
 	await user.type(screen.getByLabelText("Title/Role"), "CFO");
 }
@@ -587,43 +593,172 @@ describe("CaseForm", () => {
 		});
 	});
 
-	describe("persona add/remove", () => {
-		// Tests that adding a root persona appends a new persona card.
-		it("adding a root persona appends a card", async () => {
+	describe("persona editor", () => {
+		// Returns the stubbed diagram's button for a persona or a referral.
+		const diagramButton = (name: string) =>
+			within(screen.getByRole("navigation", { name: "Personas" })).getByRole(
+				"button",
+				{ name },
+			);
+		// Counts the personas in the stubbed diagram.
+		const diagramPersonaCount = () =>
+			within(screen.getByRole("navigation", { name: "Personas" }))
+				.queryAllByRole("button")
+				.filter((button) => !button.textContent?.includes("→")).length;
+
+		// Tests that adding starting personas puts each in the diagram and opens the newest.
+		it("lists each added starting persona and opens the newest", async () => {
 			const user = userEvent.setup();
 			renderForm();
 
-			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(0);
+			expect(screen.queryByLabelText("Persona name")).toBeNull();
 			await user.click(
-				screen.getByRole("button", { name: "+ Add root persona" }),
+				screen.getByRole("button", { name: "+ Add starting persona" }),
 			);
-			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(1);
+			await user.type(screen.getByLabelText("Persona name"), "Mary");
 			await user.click(
-				screen.getByRole("button", { name: "+ Add root persona" }),
+				screen.getByRole("button", { name: "+ Add starting persona" }),
 			);
-			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(2);
+
+			expect(diagramPersonaCount()).toBe(2);
+			expect(screen.getByLabelText("Persona name")).toHaveValue("");
+			await user.click(diagramButton("Mary"));
+			expect(screen.getByLabelText("Persona name")).toHaveValue("Mary");
 		});
 
-		// Tests that removing a root also removes referrals into it and any persona left unreachable.
-		it("removing a root also removes referral edges into it, dropping a persona that becomes unreachable", async () => {
+		// Tests that a referral's condition is edited on the referred persona and saved with the case.
+		it("edits a referral's condition on the referred persona and saves it", async () => {
+			const { createRequests } = stubMutations();
 			const user = userEvent.setup();
 			renderForm();
-
-			await user.click(
-				screen.getByRole("button", { name: "+ Add root persona" }),
-			);
-			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(1);
+			await fillValidCase(user);
 
 			await user.click(screen.getByRole("button", { name: "+ Add referral" }));
-			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(2);
+			expect(screen.getByText("Referred by Mary")).toBeInTheDocument();
+			await user.type(screen.getByLabelText("Persona name"), "Bob");
+			await user.type(screen.getByLabelText("Title/Role"), "Analyst");
+			await user.type(
+				screen.getByLabelText(
+					"When should Mary refer the student to this persona?",
+				),
+				"asked about the budget",
+			);
 
-			const [rootRemoveButton] = screen.getAllByRole("button", {
-				name: "Remove",
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+			await waitFor(() => expect(createRequests).toHaveLength(1));
+			const structure = createRequests[0]?.structure as {
+				referrals: { conditions: string }[];
+			};
+			expect(structure.referrals).toEqual([
+				expect.objectContaining({ conditions: "asked about the budget" }),
+			]);
+		});
+
+		// Tests that removing a persona with referrals asks first, then removes the whole branch.
+		it("confirms before removing a persona along with the personas only it refers to", async () => {
+			const user = userEvent.setup();
+			renderForm();
+			await fillValidCase(user);
+			await user.click(screen.getByRole("button", { name: "+ Add referral" }));
+			await user.click(diagramButton("Mary"));
+
+			await user.click(screen.getByRole("button", { name: "Remove" }));
+			expect(await screen.findByText("Remove Mary?")).toBeInTheDocument();
+			expect(diagramPersonaCount()).toBe(2);
+
+			await user.click(
+				within(screen.getByRole("alertdialog")).getByRole("button", {
+					name: "Remove",
+				}),
+			);
+
+			await waitFor(() =>
+				expect(screen.queryByLabelText("Persona name")).toBeNull(),
+			);
+			expect(screen.queryByRole("navigation", { name: "Personas" })).toBeNull();
+		});
+
+		// Tests that clicking a referral opens the referred persona with that referral's condition focused.
+		it("focuses a referral's condition when its arrow is clicked", async () => {
+			const doc = makeCaseDoc({
+				structure: {
+					personas: [
+						makePersonaPayload(),
+						makePersonaPayload({ id: "p2", name: "Bob" }),
+					],
+					referrals: [makeReferral("p1", "p2", "asked")],
+					roots: ["p1"],
+				},
 			});
-			if (!rootRemoveButton) throw new Error("expected a Remove button");
-			await user.click(rootRemoveButton);
+			stubLoadCase(doc);
+			const user = userEvent.setup();
+			renderForm({ editCaseId: doc._id });
+			await screen.findByDisplayValue("Mary");
 
-			expect(screen.queryAllByLabelText("Persona name")).toHaveLength(0);
+			await user.click(diagramButton("Mary → Bob"));
+
+			expect(screen.getByLabelText("Persona name")).toHaveValue("Bob");
+			await waitFor(() =>
+				expect(
+					screen.getByLabelText(
+						"When should Mary refer the student to this persona?",
+					),
+				).toHaveFocus(),
+			);
+		});
+
+		// Tests that one of two referrals into a persona can be removed, keeping the persona.
+		it("removes one of two referrals into a persona, keeping the persona", async () => {
+			const doc = makeCaseDoc({
+				structure: {
+					personas: [
+						makePersonaPayload(),
+						makePersonaPayload({ id: "p2", name: "Raj" }),
+						makePersonaPayload({ id: "p3", name: "Bob" }),
+					],
+					referrals: [makeReferral("p1", "p3"), makeReferral("p2", "p3")],
+					roots: ["p1", "p2"],
+				},
+			});
+			stubLoadCase(doc);
+			const user = userEvent.setup();
+			renderForm({ editCaseId: doc._id });
+			await screen.findByDisplayValue("Mary");
+			await user.click(diagramButton("Bob"));
+
+			await user.click(
+				screen.getByRole("button", { name: "Remove referral from Raj" }),
+			);
+
+			expect(screen.getByText("Referred by Mary")).toBeInTheDocument();
+			expect(
+				screen.queryByRole("button", { name: /Remove referral/ }),
+			).toBeNull();
+			expect(diagramPersonaCount()).toBe(3);
+		});
+
+		// Tests that a view-only collaborator can still move between personas, with their fields locked.
+		it("lets a view-only collaborator browse personas", async () => {
+			const doc = makeCaseDoc({
+				canEdit: false,
+				structure: {
+					personas: [
+						makePersonaPayload(),
+						makePersonaPayload({ id: "p2", name: "Bob" }),
+					],
+					referrals: [makeReferral("p1", "p2")],
+					roots: ["p1"],
+				},
+			});
+			stubLoadCase(doc);
+			const user = userEvent.setup();
+			renderForm({ editCaseId: doc._id });
+			await screen.findByDisplayValue("Mary");
+
+			await user.click(diagramButton("Bob"));
+
+			expect(screen.getByLabelText("Persona name")).toHaveValue("Bob");
+			expect(screen.getByLabelText("Persona name")).toBeDisabled();
 		});
 	});
 

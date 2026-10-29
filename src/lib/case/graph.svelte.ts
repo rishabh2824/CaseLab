@@ -6,7 +6,6 @@ import {
 	createEmptyReferral,
 	hasFieldErrors,
 	personasById,
-	referredWithParents as referredWithParentsOf,
 } from "./draft.js";
 
 export type GraphInput = {
@@ -26,9 +25,6 @@ export class CaseGraph {
 	roots = $state<string[]>([]);
 
 	byId: Map<string, Persona> = $derived(personasById(this.personas));
-	referredWithParents = $derived(
-		referredWithParentsOf(this.personas, this.referrals, this.roots),
-	);
 
 	validation: GraphValidation = $derived.by(() => {
 		const rootsError =
@@ -57,17 +53,27 @@ export class CaseGraph {
 		return persona;
 	}
 
-	// Removes a root and every persona that was reachable only through it.
-	removeSubtree(rootId: string): void {
-		const keptRoots = this.roots.filter((id) => id !== rootId);
-		const stillReachable = reachableFrom(keptRoots, this.referrals);
-		const toRemove = new Set(
-			[...reachableFrom([rootId], this.referrals)].filter(
-				(id) => !stillReachable.has(id),
+	// Returns the ids removing the persona would delete: the persona itself and everyone reachable only through it.
+	removalSet(personaId: string): Set<string> {
+		const stillReachable = reachableFrom(
+			this.roots.filter((id) => id !== personaId),
+			this.referrals.filter(
+				(referral) =>
+					referral.fromId !== personaId && referral.toId !== personaId,
 			),
 		);
+		return new Set(
+			this.personas
+				.map((persona) => persona.id)
+				.filter((id) => !stillReachable.has(id)),
+		);
+	}
+
+	// Removes a persona, the referrals touching it and everyone reachable only through it.
+	removePersona(personaId: string): void {
+		const toRemove = this.removalSet(personaId);
 		this.#applyRemoval(toRemove);
-		this.roots = keptRoots;
+		this.roots = this.roots.filter((id) => !toRemove.has(id));
 	}
 
 	// Adds a blank referred persona linked from the given persona and returns both.
@@ -85,20 +91,39 @@ export class CaseGraph {
 		return { persona, referral };
 	}
 
-	// Removes a persona's referrals to the given targets, along with anything that becomes unreachable.
-	removeReferralsFrom(personaId: string, targetIds: Iterable<string>): void {
-		const targets = new Set(targetIds);
-		this.referrals = this.referrals.filter(
-			(referral) =>
-				!(referral.fromId === personaId && targets.has(referral.toId)),
+	// Whether one existing persona may refer to another: not itself, not a starting persona, not twice, and never closing a loop.
+	canLink(fromId: string, toId: string): boolean {
+		return (
+			fromId !== toId &&
+			this.byId.has(fromId) &&
+			this.byId.has(toId) &&
+			!this.roots.includes(toId) &&
+			!this.referrals.some(
+				(referral) => referral.fromId === fromId && referral.toId === toId,
+			) &&
+			!reachableFrom([toId], this.referrals).has(fromId)
 		);
-		const stillReachable = reachableFrom(this.roots, this.referrals);
-		const toRemove = new Set(
-			[...reachableFrom([...targets], this.referrals)].filter(
-				(id) => !stillReachable.has(id),
+	}
+
+	// Adds a referral between two existing personas, when canLink allows it.
+	link(fromId: string, toId: string): void {
+		if (!this.canLink(fromId, toId)) return;
+		this.referrals = [...this.referrals, createEmptyReferral({ fromId, toId })];
+	}
+
+	// Removes one referral, along with anyone it leaves unreachable.
+	unlink(fromId: string, toId: string): void {
+		this.referrals = this.referrals.filter(
+			(referral) => !(referral.fromId === fromId && referral.toId === toId),
+		);
+		const reachable = reachableFrom(this.roots, this.referrals);
+		this.#applyRemoval(
+			new Set(
+				this.personas
+					.map((persona) => persona.id)
+					.filter((id) => !reachable.has(id)),
 			),
 		);
-		this.#applyRemoval(toRemove);
 	}
 
 	// Deletes the given personas and any referrals that touch them.

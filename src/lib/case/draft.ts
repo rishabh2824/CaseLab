@@ -75,23 +75,3 @@ export const rootPersonas = <P extends { id: string }>(
 		.map((id) => byId.get(id))
 		.filter((persona): persona is P => Boolean(persona));
 };
-
-// Lists the non-root personas with a display label and the names of their referring parents.
-export const referredWithParents = <P extends { id: string; name: string }>(
-	personas: P[],
-	referrals: ReferralEdge[],
-	roots: string[],
-): { persona: P; label: string; parentLabel: string }[] => {
-	const byId = personasById(personas);
-	return personas
-		.filter((persona) => !roots.includes(persona.id))
-		.map((persona, index) => ({
-			persona,
-			label: getPersonaLabel(persona, `Referred Persona ${index + 1}`),
-			parentLabel: referralsTo(referrals, persona.id)
-				.map((referral) =>
-					getPersonaLabel(byId.get(referral.fromId) ?? { name: "" }, "Unknown"),
-				)
-				.join(", "),
-		}));
-};
