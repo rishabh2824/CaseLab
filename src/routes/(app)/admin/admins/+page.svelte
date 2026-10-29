@@ -42,11 +42,15 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 		toast("Email is required.");
 		return;
 	}
+	if (!name.trim()) {
+		toast("Name is required.");
+		return;
+	}
 	isAdding = true;
 	try {
 		await createAdmin({
 			email: trimmedEmail,
-			name: name.trim() || undefined,
+			name: name.trim(),
 			role,
 		});
 		email = "";
@@ -112,12 +116,11 @@ async function confirmDelete(): Promise<void> {
 				/>
 			</div>
 			<div class="flex min-w-[160px] flex-1 flex-col gap-1.5">
-				<label for="admin-name" class="text-xs font-medium text-stone-soft">
-					Name (optional)
-				</label>
+				<label for="admin-name" class="text-xs font-medium text-stone-soft">Name</label>
 				<input
 					id="admin-name"
 					type="text"
+					required
 					bind:value={name}
 					class="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
 					placeholder="Jane Doe"
@@ -168,7 +171,7 @@ async function confirmDelete(): Promise<void> {
 						{#each admins as admin (admin._id)}
 							<tr class="transition hover:bg-cream/60">
 								<td class="px-5 py-3 font-medium text-ink">{admin.email}</td>
-								<td class="px-5 py-3 text-stone">{admin.name || '—'}</td>
+								<td class="px-5 py-3 text-stone">{admin.name}</td>
 								<td class="px-5 py-3 text-stone">{ROLE_LABELS[admin.role] || admin.role}</td>
 								<td class="px-5 py-3 text-right">
 									{#if admin.role === "super"}

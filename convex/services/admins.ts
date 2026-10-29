@@ -49,17 +49,18 @@ export async function listAdmins(ctx: QueryCtx): Promise<Doc<"admins">[]> {
 	return admins.sort((a, b) => a.email.localeCompare(b.email));
 }
 
-// Creates an admin from a normalized email, rejecting blank and duplicate emails.
+// Creates an admin from a normalized email, rejecting blank names and blank or duplicate emails.
 export async function createAdmin(
 	ctx: MutationCtx,
-	args: { email: string; name?: string; role: AdminRole },
+	args: { email: string; name: string; role: AdminRole },
 ): Promise<Doc<"admins">> {
 	const email = normalizeEmail(args.email);
 	if (!email) throw new ConvexError("An admin email is required.");
+	const name = args.name.trim();
+	if (!name) throw new ConvexError("An admin name is required.");
 	if (await getAdminByEmail(ctx, email)) {
 		throw new ConvexError("An admin with this email already exists.");
 	}
-	const name = args.name?.trim() || undefined;
 	const id = await ctx.db.insert("admins", { email, name, role: args.role });
 	return (await ctx.db.get("admins", id))!;
 }

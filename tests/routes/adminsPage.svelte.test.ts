@@ -30,6 +30,7 @@ const SUPER = {
 	_id: "s1" as Id<"admins">,
 	_creationTime: 0,
 	email: "s@wisc.edu",
+	name: "Sam",
 	role: "super" as const,
 };
 
@@ -112,7 +113,7 @@ describe("adding an admin", () => {
 		const user = userEvent.setup();
 		render(AdminsPage);
 		await user.type(screen.getByLabelText("Email"), "  new@wisc.edu ");
-		await user.type(screen.getByLabelText("Name (optional)"), " New Person ");
+		await user.type(screen.getByLabelText("Name"), " New Person ");
 		await user.selectOptions(screen.getByLabelText("Role"), "super");
 		await user.click(screen.getByRole("button", { name: "Add admin" }));
 
@@ -127,24 +128,18 @@ describe("adding an admin", () => {
 			duration: 4000,
 		});
 		expect(screen.getByLabelText("Email")).toHaveValue("");
-		expect(screen.getByLabelText("Name (optional)")).toHaveValue("");
+		expect(screen.getByLabelText("Name")).toHaveValue("");
 		expect(screen.getByLabelText("Role")).toHaveValue("admin");
 	});
 
-	// Tests that a blank name is omitted instead of sent as an empty string.
-	it("omits a blank name", async () => {
-		createAdmin.mockResolvedValue(ADMIN);
+	// Tests that the form refuses to submit without a name.
+	it("does not create an admin without a name", async () => {
 		const user = userEvent.setup();
 		render(AdminsPage);
 		await user.type(screen.getByLabelText("Email"), "new@wisc.edu");
 		await user.click(screen.getByRole("button", { name: "Add admin" }));
-		await waitFor(() =>
-			expect(createAdmin).toHaveBeenCalledWith({
-				email: "new@wisc.edu",
-				name: undefined,
-				role: "admin",
-			}),
-		);
+
+		expect(createAdmin).not.toHaveBeenCalled();
 	});
 
 	// Tests that a server failure toasts a safe message and keeps the typed values.
@@ -155,6 +150,7 @@ describe("adding an admin", () => {
 		const user = userEvent.setup();
 		render(AdminsPage);
 		await user.type(screen.getByLabelText("Email"), "new@wisc.edu");
+		await user.type(screen.getByLabelText("Name"), "New Person");
 		await user.click(screen.getByRole("button", { name: "Add admin" }));
 		await waitFor(() =>
 			expect(toast).toHaveBeenCalledWith("Failed to add admin."),

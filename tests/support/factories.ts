@@ -167,6 +167,7 @@ export function makeRunState(overrides: Partial<StartedRun> = {}): StartedRun {
 			caseName: "Sterling Industries",
 			brief: "Reduce office supply costs.",
 			simulationDuration: 45,
+			authors: ["Olive Owner"],
 		},
 		contacts: [makeContact()],
 		sharedFiles: [],

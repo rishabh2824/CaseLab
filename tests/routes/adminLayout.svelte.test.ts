@@ -22,7 +22,7 @@ function viewerAs(role: "super" | "admin") {
 	return {
 		_id: "admin-1" as Id<"admins">,
 		email: "admin@wisc.edu",
-		name: undefined,
+		name: "Admin",
 		role,
 	};
 }

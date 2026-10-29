@@ -35,10 +35,24 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		const t = newTestConvex();
 		const { asUser } = await withAdmin(t, { role: "super" });
 		const created = await asUser.mutation(api.admins.create, {
+			name: "Test Admin",
 			email: "new@test.caselab.invalid",
 			role: "admin",
 		});
 		expect(created.email).toBe("new@test.caselab.invalid");
+	});
+
+	// Tests that creating an admin without a name is rejected.
+	it("rejects creating an admin with a blank name", async () => {
+		const t = newTestConvex();
+		const { asUser } = await withAdmin(t, { role: "super" });
+		await expect(
+			asUser.mutation(api.admins.create, {
+				name: "   ",
+				email: "blank@test.caselab.invalid",
+				role: "admin",
+			}),
+		).rejects.toThrow("An admin name is required.");
 	});
 
 	// Tests that creating an admin with a duplicate email is rejected.
@@ -48,6 +62,7 @@ describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 		await withAdmin(t, { email: "dup@test.caselab.invalid" });
 		await expect(
 			asUser.mutation(api.admins.create, {
+				name: "Test Admin",
 				email: "dup@test.caselab.invalid",
 				role: "admin",
 			}),

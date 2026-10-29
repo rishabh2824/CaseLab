@@ -66,6 +66,7 @@ const caseData = {
 	caseName: "Sterling Industries",
 	brief: "Reduce office supply costs.",
 	simulationDuration: null as number | null,
+	authors: ["Olive Owner"],
 };
 
 const disposers: (() => void)[] = [];

@@ -16,6 +16,7 @@ import {
 	getChatState,
 } from "./lib/turnState";
 import type { PersonaPayload } from "./models/cases";
+import { listCaseAuthors } from "./services/cases";
 import {
 	flattenPersonas,
 	graphPersonas,
@@ -268,6 +269,7 @@ export const get = query({
 				caseName: c.name,
 				brief: c.brief,
 				simulationDuration: c.duration ?? null,
+				authors: await listCaseAuthors(ctx, c),
 			},
 			contacts,
 			sharedFiles: sharedFiles,

@@ -207,11 +207,11 @@ const errors = $derived(
 												}}
 												class="h-4 w-4 rounded border-line text-brand focus:ring-brand/30"
 											/>
-											<span>{admin.name || admin.email}</span>
+											<span>{admin.name}</span>
 										</label>
 										{#if entry}
 											<select
-												aria-label="Access for {admin.name || admin.email}"
+												aria-label="Access for {admin.name}"
 												value={entry.access}
 												onchange={(event) => {
 													entry.access = event.currentTarget.value as CollaboratorAccess

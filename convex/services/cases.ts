@@ -1,7 +1,7 @@
 import { ConvexError, type ObjectType, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { getCaseInfoErrors, isSelectableCollaborator } from "../lib/caseRules";
+import { getCaseInfoErrors } from "../lib/caseRules";
 import { cleanStructure, validateGraph } from "../lib/caseStructure";
 import {
 	type CaseStructure,
@@ -159,7 +159,7 @@ export async function buildStructure(
 	return cleanStructure(structure, present);
 }
 
-// Dedupes collaborators by admin and rejects the owner, unknown admins and super admins.
+// Dedupes collaborators by admin and rejects the owner and unknown admins.
 async function resolveCollaborators(
 	ctx: MutationCtx,
 	collaborators: CollaboratorPayload[],
@@ -177,14 +177,26 @@ async function resolveCollaborators(
 	const missing = ids.filter((_, i) => admins[i] === null);
 	if (missing.length > 0)
 		throw new ConvexError(`Unknown admin id(s): ${missing.join(", ")}`);
-	if (
-		admins.some(
-			(admin) => admin && !isSelectableCollaborator(admin, ownerAdminId),
-		)
-	) {
-		throw new ConvexError("Super admins cannot be added as collaborators.");
-	}
 	return [...byAdmin.values()];
+}
+
+// Returns the names of a case's authors: the owner first, then collaborators with edit access.
+export async function listCaseAuthors(
+	ctx: QueryCtx,
+	c: Doc<"cases">,
+): Promise<string[]> {
+	const rows = await ctx.db
+		.query("collaborators")
+		.withIndex("by_case_and_admin", (q) => q.eq("caseId", c._id))
+		.take(100);
+	const adminIds = [
+		c.ownerAdminId,
+		...rows.filter((row) => row.access === "edit").map((row) => row.adminId),
+	];
+	const admins = await Promise.all(
+		adminIds.map((id) => ctx.db.get("admins", id)),
+	);
+	return admins.flatMap((admin) => (admin ? [admin.name] : []));
 }
 
 export const casePayloadArgs = {

@@ -347,6 +347,7 @@ describe("admin email identity", () => {
 			role: "super",
 		});
 		await superAdmin.asUser.mutation(api.admins.create, {
+			name: "Test Admin",
 			email: "Jane.Doe@Wisc.Edu",
 			role: "admin",
 		});
@@ -365,11 +366,13 @@ describe("admin email identity", () => {
 			role: "super",
 		});
 		await superAdmin.asUser.mutation(api.admins.create, {
+			name: "Test Admin",
 			email: "jane@wisc.edu",
 			role: "admin",
 		});
 		await expect(
 			superAdmin.asUser.mutation(api.admins.create, {
+				name: "Test Admin",
 				email: "  JANE@WISC.EDU ",
 				role: "admin",
 			}),
@@ -380,7 +383,11 @@ describe("admin email identity", () => {
 	it("resolves an admin when the signed-in identity's email differs only in casing", async () => {
 		const t = newTestConvex();
 		await t.run((ctx) =>
-			ctx.db.insert("admins", { email: "jane@wisc.edu", role: "admin" }),
+			ctx.db.insert("admins", {
+				name: "Test Admin",
+				email: "jane@wisc.edu",
+				role: "admin",
+			}),
 		);
 		const asJane = await withGoogleIdentity(t, "Jane@Wisc.Edu");
 
@@ -400,6 +407,7 @@ describe("admin email identity", () => {
 		});
 		await expect(
 			superAdmin.asUser.mutation(api.admins.create, {
+				name: "Test Admin",
 				email: "   ",
 				role: "admin",
 			}),

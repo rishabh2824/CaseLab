@@ -73,6 +73,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 	async function anonymousCallers(t: T) {
 		const adminId = await t.run((ctx) =>
 			ctx.db.insert("admins", {
+				name: "Test Admin",
 				email: "owner@test.caselab.invalid",
 				role: "admin",
 			}),
@@ -98,6 +99,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 				"admins.create",
 				() =>
 					t.mutation(api.admins.create, {
+						name: "Test Admin",
 						email: "x@y.z",
 						role: "admin" as const,
 					}),
@@ -132,6 +134,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 		const asStranger = await withStranger(t, "stranger@test.caselab.invalid");
 		const adminId = await t.run((ctx) =>
 			ctx.db.insert("admins", {
+				name: "Test Admin",
 				email: "owner@test.caselab.invalid",
 				role: "admin",
 			}),
@@ -181,6 +184,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 				"admins.create",
 				() =>
 					asStranger.mutation(api.admins.create, {
+						name: "Test Admin",
 						email: "x@y.z",
 						role: "admin" as const,
 					}),
@@ -327,6 +331,7 @@ describe("role boundaries", () => {
 
 		await expect(
 			regular.asUser.mutation(api.admins.create, {
+				name: "Test Admin",
 				email: "me-again@test.caselab.invalid",
 				role: "super",
 			}),
@@ -386,6 +391,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 	async function startRun(t: T, accessCode = "sterling") {
 		const adminId = await t.run((ctx) =>
 			ctx.db.insert("admins", {
+				name: "Test Admin",
 				email: `o-${Math.random()}@test.caselab.invalid`,
 				role: "admin",
 			}),

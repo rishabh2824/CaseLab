@@ -78,6 +78,7 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 		);
 		const owner = await t.run((ctx) =>
 			ctx.db.insert("admins", {
+				name: "Test Admin",
 				email: "owner@test.caselab.invalid",
 				role: "admin",
 			}),

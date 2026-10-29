@@ -59,6 +59,7 @@ class FakeRun implements PageRunStore {
 		caseName: "Sterling Industries",
 		brief: "Reduce costs.",
 		simulationDuration: null,
+		authors: ["Olive Owner", "Edith Editor"],
 	});
 	totalDurationSeconds = $state<number | null>(null);
 	activeMessages = $state<ChatMessage[]>([]);
@@ -380,6 +381,36 @@ describe("notes and ending", () => {
 		render(StudentPage);
 		await user.click(screen.getByRole("button", { name: "End simulation" }));
 		expect(run.endSimulation).toHaveBeenCalledOnce();
+	});
+});
+
+describe("authors", () => {
+	// Tests that the footer lists the case's authors for the student to see on hover.
+	it("lists the authors under an Authors button", () => {
+		render(StudentPage);
+		expect(screen.getByRole("button", { name: "Authors" })).toBeInTheDocument();
+		const list = screen.getByRole("list", { name: "Authors" });
+		expect(list).toHaveTextContent("Olive Owner");
+		expect(list).toHaveTextContent("Edith Editor");
+	});
+
+	// Tests that nothing is shown when the case has no authors to credit.
+	it("hides the footer when there are no authors", () => {
+		run.caseData = { ...run.caseData!, authors: [] };
+		render(StudentPage);
+		expect(screen.queryByRole("button", { name: "Authors" })).toBeNull();
+	});
+});
+
+describe("contact", () => {
+	// Tests that the footer offers a Contact box with the support email, even when there are no authors.
+	it("shows the contact email under a Contact button", () => {
+		run.caseData = { ...run.caseData!, authors: [] };
+		render(StudentPage);
+		expect(screen.getByRole("button", { name: "Contact" })).toBeInTheDocument();
+		expect(
+			screen.getByRole("link", { name: "jordan.tong@wisc.edu" }),
+		).toHaveAttribute("href", "mailto:jordan.tong@wisc.edu");
 	});
 });
 

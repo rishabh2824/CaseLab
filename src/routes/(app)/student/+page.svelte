@@ -338,4 +338,38 @@ async function handleExportPdf(): Promise<void> {
 	>
 		End simulation
 	</button>
+
+	<div class="fixed bottom-6 right-6 flex gap-3">
+		{#if run.caseData?.authors.length}
+			<div class="group relative">
+				<button
+					type="button"
+					class="rounded-xl border border-line bg-white px-4 py-3 text-sm font-semibold text-ink shadow-lg transition group-hover:bg-cream"
+				>
+					Authors
+				</button>
+				<div class="invisible absolute bottom-full right-0 pb-2 opacity-0 transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
+					<ul aria-label="Authors" class="min-w-44 space-y-1 rounded-xl border border-line bg-white px-4 py-3 text-sm text-ink-soft shadow-lg">
+						{#each run.caseData.authors as author, index (index)}
+							<li>{author}</li>
+						{/each}
+					</ul>
+				</div>
+			</div>
+		{/if}
+
+		<div class="group relative">
+			<button
+				type="button"
+				class="rounded-xl border border-line bg-white px-4 py-3 text-sm font-semibold text-ink shadow-lg transition group-hover:bg-cream"
+			>
+				Contact
+			</button>
+			<div class="invisible absolute bottom-full right-0 pb-2 opacity-0 transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
+				<p class="whitespace-nowrap rounded-xl border border-line bg-white px-4 py-3 text-sm text-ink-soft shadow-lg">
+					<a href="mailto:jordan.tong@wisc.edu" class="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">jordan.tong@wisc.edu</a>
+				</p>
+			</div>
+		</div>
+	</div>
 </div>

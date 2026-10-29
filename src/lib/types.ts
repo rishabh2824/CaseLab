@@ -30,7 +30,7 @@ export type Persona = Omit<PersonaPayload, "profilePhoto" | "files"> & {
 export type AdminRow = {
 	_id: Id<"admins">;
 	email: string;
-	name?: string;
+	name: string;
 	role: AdminRole;
 };
 

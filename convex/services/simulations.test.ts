@@ -27,6 +27,7 @@ async function seedCase(
 ): Promise<Id<"cases">> {
 	const ownerAdminId = await t.run((ctx) =>
 		ctx.db.insert("admins", {
+			name: "Test Admin",
 			email: `owner-${Math.random()}@test.caselab.invalid`,
 			role: "admin",
 		}),
@@ -104,6 +105,7 @@ describe("startSimulation", () => {
 			caseName: "Acme Case",
 			brief: "Do the thing.",
 			simulationDuration: 30,
+			authors: ["Test Admin"],
 		});
 		expect(state.contacts).toHaveLength(2);
 		expect(new Set(state.contacts.map((c) => c.id))).toEqual(

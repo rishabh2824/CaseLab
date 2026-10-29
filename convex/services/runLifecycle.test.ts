@@ -19,6 +19,7 @@ async function seedCase(
 ): Promise<{ caseId: Id<"cases">; admin: Doc<"admins"> }> {
 	const adminId = await t.run((ctx) =>
 		ctx.db.insert("admins", {
+			name: "Test Admin",
 			email: `owner-${Math.random().toString(36).slice(2)}@test.caselab.invalid`,
 			role: "admin",
 		}),

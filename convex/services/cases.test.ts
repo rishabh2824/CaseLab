@@ -5,6 +5,7 @@ import { casePayload, makeAdmin, newTestConvex } from "../test.setup";
 import {
 	createCase,
 	deleteCase,
+	listCaseAuthors,
 	listCases,
 	requireCaseAccess,
 	updateCase,
@@ -318,22 +319,78 @@ describe("collaborator validation (via createCase)", () => {
 		).rejects.toThrow(/Unknown admin id/);
 	});
 
-	// Tests that a super admin in the collaborator list is rejected.
-	it("rejects a super admin as a collaborator", async () => {
+	// Tests that a super admin can be added as a collaborator so they can be credited as an author.
+	it("accepts a super admin as a collaborator", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const superAdmin = await makeAdmin(t, "super");
-		await expect(
-			t.run((ctx) =>
-				createCase(
-					ctx,
-					casePayload({
-						collaborators: [{ adminId: superAdmin._id, access: "edit" }],
-					}),
-					owner,
-				),
+		const caseId = await t.run((ctx) =>
+			createCase(
+				ctx,
+				casePayload({
+					collaborators: [{ adminId: superAdmin._id, access: "edit" }],
+				}),
+				owner,
 			),
-		).rejects.toThrow("Super admins cannot be added as collaborators.");
+		);
+		const rows = await t.run((ctx) =>
+			ctx.db
+				.query("collaborators")
+				.withIndex("by_case_and_admin", (q) => q.eq("caseId", caseId))
+				.collect(),
+		);
+		expect(rows.map((row) => row.adminId)).toEqual([superAdmin._id]);
+	});
+});
+
+describe("listCaseAuthors", () => {
+	const named = (t: ReturnType<typeof newTestConvex>, name: string) =>
+		t.run(async (ctx) => {
+			const id = await ctx.db.insert("admins", {
+				email: `${name.toLowerCase()}@test.caselab.invalid`,
+				name,
+				role: "admin",
+			});
+			return (await ctx.db.get(id))!;
+		});
+
+	// Tests that the owner comes first, followed by edit collaborators only.
+	it("lists the owner then edit collaborators, leaving out view-only ones", async () => {
+		const t = newTestConvex();
+		const owner = await named(t, "Olive");
+		const editor = await named(t, "Edith");
+		const viewer = await named(t, "Vera");
+		const caseId = await t.run((ctx) =>
+			createCase(
+				ctx,
+				casePayload({
+					collaborators: [
+						{ adminId: viewer._id, access: "view" },
+						{ adminId: editor._id, access: "edit" },
+					],
+				}),
+				owner,
+			),
+		);
+		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+
+		await expect(t.run((ctx) => listCaseAuthors(ctx, c))).resolves.toEqual([
+			"Olive",
+			"Edith",
+		]);
+	});
+
+	// Tests that a super admin who never collaborated is not credited, though they can edit.
+	it("does not list a super admin who is not a collaborator", async () => {
+		const t = newTestConvex();
+		const owner = await named(t, "Olive");
+		await makeAdmin(t, "super");
+		const caseId = await t.run((ctx) => createCase(ctx, casePayload(), owner));
+		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+
+		await expect(t.run((ctx) => listCaseAuthors(ctx, c))).resolves.toEqual([
+			"Olive",
+		]);
 	});
 });
 

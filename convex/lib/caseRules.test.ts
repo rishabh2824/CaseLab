@@ -99,24 +99,13 @@ describe("getPersonaFieldErrors", () => {
 });
 
 describe("isSelectableCollaborator", () => {
-	// Tests that a super admin is never selectable, whoever the owner is.
-	it("rejects a super admin", () => {
-		expect(isSelectableCollaborator({ _id: "a", role: "super" }, null)).toBe(
-			false,
-		);
-	});
-
 	// Tests that the effective owner is not selectable as their own collaborator.
 	it("rejects the effective owner", () => {
-		expect(isSelectableCollaborator({ _id: "a", role: "admin" }, "a")).toBe(
-			false,
-		);
+		expect(isSelectableCollaborator({ _id: "a" }, "a")).toBe(false);
 	});
 
-	// Tests that any other regular admin is selectable.
-	it("accepts another regular admin", () => {
-		expect(isSelectableCollaborator({ _id: "a", role: "admin" }, "b")).toBe(
-			true,
-		);
+	// Tests that any other admin is selectable.
+	it("accepts another admin", () => {
+		expect(isSelectableCollaborator({ _id: "a" }, "b")).toBe(true);
 	});
 });

@@ -36,6 +36,7 @@ describe("adminForSignIn", () => {
 		const t = newTestConvex();
 		await t.run((ctx) =>
 			ctx.db.insert("admins", {
+				name: "Test Admin",
 				email: "a@test.caselab.invalid",
 				role: "admin",
 			}),
@@ -111,6 +112,7 @@ describe("sign-in authorization hook", () => {
 		const t = newTestConvex();
 		await t.run((ctx) =>
 			ctx.db.insert("admins", {
+				name: "Test Admin",
 				email: "a@test.caselab.invalid",
 				role: "admin",
 			}),

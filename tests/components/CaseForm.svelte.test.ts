@@ -807,8 +807,8 @@ describe("CaseForm", () => {
 			expect(await screen.findByText("Nina")).toBeInTheDocument();
 		});
 
-		// Tests that SUPER admins and the case owner are excluded from the picker in edit mode.
-		it("excludes SUPER admins and the case's owner from the selectable list in edit mode", async () => {
+		// Tests that the case owner is excluded from the picker in edit mode, while super admins stay selectable so they can be credited.
+		it("excludes the case's owner but offers super admins in edit mode", async () => {
 			const doc = makeCaseDoc({ ownerAdminId: "5" });
 			stubLoadCase(doc);
 			setRoster([
@@ -823,7 +823,7 @@ describe("CaseForm", () => {
 
 			expect(await screen.findByText("Rank Rita")).toBeInTheDocument();
 			expect(screen.queryByText("Owner Olivia")).not.toBeInTheDocument();
-			expect(screen.queryByText("Super Sam")).not.toBeInTheDocument();
+			expect(screen.getByText("Super Sam")).toBeInTheDocument();
 		});
 
 		// Tests that the signed-in admin is excluded from the picker as the effective owner in create mode.

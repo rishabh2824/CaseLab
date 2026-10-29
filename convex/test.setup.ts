@@ -152,7 +152,7 @@ export async function withAdmin(
 	const adminId = await t.run(async (ctx) =>
 		ctx.db.insert("admins", {
 			email,
-			name: overrides.name,
+			name: overrides.name ?? "Test Admin",
 			role: overrides.role ?? "admin",
 		}),
 	);
@@ -171,6 +171,7 @@ export async function makeAdmin(
 ): Promise<Doc<"admins">> {
 	const id = await t.run((ctx) =>
 		ctx.db.insert("admins", {
+			name: "Test Admin",
 			email: `${role}-${Math.random().toString(36).slice(2)}@test.caselab.invalid`,
 			role,
 		}),

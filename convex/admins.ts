@@ -39,7 +39,7 @@ export const listAll = adminQuery({
 
 // Creates a new admin (super admins only).
 export const create = superAdminMutation({
-	args: { email: v.string(), name: v.optional(v.string()), role: adminRole },
+	args: { email: v.string(), name: v.string(), role: adminRole },
 	handler: async (ctx, args) => {
 		return await createAdmin(ctx, args);
 	},
