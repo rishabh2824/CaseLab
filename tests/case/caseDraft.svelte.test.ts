@@ -17,7 +17,6 @@ function loadable(overrides: Partial<LoadableCase> = {}): LoadableCase {
 		structure: {
 			personas: [makePersonaPayload({ id: "a", name: "Mary", role: "CFO" })],
 			referrals: [],
-			roots: ["a"],
 		},
 		collaborators: [ADMIN_2],
 		...overrides,
@@ -87,6 +86,21 @@ describe("CaseDraft", () => {
 		expect(draft.isDirty).toBe(false);
 	});
 
+	// Tests that a persona saved without a photo or availability limit loads as null, the form's empty value, so editing it back to empty is not a change.
+	it("loads missing photo and availability as null and stays clean when an edit is reverted", () => {
+		const draft = new CaseDraft();
+		draft.load(loadable(), { isEditMode: true });
+
+		const persona = draft.graph.personas[0]!;
+		expect(persona.profilePhoto).toBeNull();
+		expect(persona.availabilityMinutes).toBeNull();
+
+		persona.availabilityMinutes = 30;
+		expect(draft.isDirty).toBe(true);
+		persona.availabilityMinutes = null;
+		expect(draft.isDirty).toBe(false);
+	});
+
 	// Tests that a view-only case locks the draft, and that a case without the flag stays editable.
 	it("reads canEdit from the loaded case, defaulting to editable", () => {
 		const draft = new CaseDraft();
@@ -120,7 +134,6 @@ describe("CaseDraft", () => {
 			commonInformation: "",
 			personas: [],
 			referrals: [],
-			roots: [],
 		});
 
 		expect(draft.caseName).toBe("Imported");
@@ -168,7 +181,6 @@ describe("CaseDraft", () => {
 			commonInformation: "Background.",
 			simulationDurationMinutes: 30,
 			accessCode: "sterling",
-			roots: ["a"],
 			collaborators: [ADMIN_2],
 		});
 		expect(exported).toMatchObject({

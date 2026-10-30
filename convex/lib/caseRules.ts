@@ -58,7 +58,7 @@ export function getCaseInfoErrors({
 export function getPersonaFieldErrors(persona: {
 	name: string;
 	role: string;
-	availabilityMinutes: number | null;
+	availabilityMinutes?: number | null;
 }): PersonaFieldErrors {
 	const errors: PersonaFieldErrors = {};
 	if (!persona.name.trim()) errors.name = "Name is required.";

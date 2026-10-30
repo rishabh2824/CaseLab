@@ -32,13 +32,11 @@ function parseNumberField(text: string, label: string): number | null {
 type CaseGraph = {
 	personas: Persona[];
 	referrals: ReferralEdge[];
-	roots: string[];
 };
 
-// Reads personas, roots and referral edges from the form DOM, in document order.
+// Reads personas and referral edges from the form DOM, in document order.
 function readCaseGraphFromDom(doc: Document): CaseGraph {
 	const personas: Persona[] = [];
-	const roots: string[] = [];
 
 	for (const card of doc.querySelectorAll(".persona-card[data-persona-id]")) {
 		const id = card.getAttribute("data-persona-id");
@@ -63,7 +61,6 @@ function readCaseGraphFromDom(doc: Document): CaseGraph {
 			profilePhoto: null,
 			files,
 		});
-		if (card.getAttribute("data-persona-root") === "true") roots.push(id);
 	}
 
 	const referrals: ReferralEdge[] = [];
@@ -84,10 +81,10 @@ function readCaseGraphFromDom(doc: Document): CaseGraph {
 		});
 	}
 
-	return { personas, referrals, roots };
+	return { personas, referrals };
 }
 
-// Gives every persona a new UUID and rewrites referrals and roots to match.
+// Gives every persona a new UUID and rewrites referrals to match.
 function mintFreshPersonaIds(graph: CaseGraph): CaseGraph {
 	const idMap = new Map(
 		graph.personas.map((persona) => [persona.id, crypto.randomUUID()]),
@@ -102,7 +99,6 @@ function mintFreshPersonaIds(graph: CaseGraph): CaseGraph {
 			fromId: idMap.get(referral.fromId) as string,
 			toId: idMap.get(referral.toId) as string,
 		})),
-		roots: graph.roots.map((id) => idMap.get(id) as string),
 	};
 }
 
@@ -114,7 +110,6 @@ export type ImportedCaseData = {
 	commonInformation: string;
 	personas: Persona[];
 	referrals: ReferralEdge[];
-	roots: string[];
 };
 
 // Parses an exported case form into case data, throwing CaseImportError for anything that isn't a clean export.
@@ -130,7 +125,7 @@ export function parseHTMLForm(htmlText: string): ImportedCaseData {
 	const graph = readCaseGraphFromDom(doc);
 	const problem = validateStructure(graph);
 	if (problem) throw new CaseImportError(problem);
-	const { personas, referrals, roots } = mintFreshPersonaIds(graph);
+	const { personas, referrals } = mintFreshPersonaIds(graph);
 
 	return {
 		caseName: fieldValue(doc, "case_name").trim(),
@@ -143,6 +138,5 @@ export function parseHTMLForm(htmlText: string): ImportedCaseData {
 		commonInformation: fieldValue(doc, "common_information").trim(),
 		personas,
 		referrals,
-		roots,
 	};
 }

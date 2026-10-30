@@ -1,13 +1,10 @@
 import { type Infer, v } from "convex/values";
 
-export const fileRefValidator = v.union(
-	v.null(),
-	v.object({
-		storageId: v.id("_storage"),
-		fileName: v.string(),
-		contentType: v.optional(v.string()),
-	}),
-);
+export const fileRefValidator = v.object({
+	storageId: v.id("_storage"),
+	fileName: v.string(),
+	contentType: v.optional(v.string()),
+});
 
 export const collaboratorAccessValidator = v.union(
 	v.literal("edit"),
@@ -29,10 +26,10 @@ export const personaPayloadValidator = v.object({
 	id: v.string(),
 	name: v.string(),
 	role: v.string(),
-	profilePhoto: fileRefValidator,
+	profilePhoto: v.optional(fileRefValidator),
 	knownFacts: v.string(),
 	personalityTraits: v.string(),
-	availabilityMinutes: v.union(v.number(), v.null()),
+	availabilityMinutes: v.optional(v.number()),
 	files: v.array(fileEntryValidator),
 });
 
@@ -45,7 +42,6 @@ export const referralEdgeValidator = v.object({
 export const caseStructureValidator = v.object({
 	personas: v.array(personaPayloadValidator),
 	referrals: v.array(referralEdgeValidator),
-	roots: v.array(v.string()),
 });
 
 export type FileRefPayload = Infer<typeof fileRefValidator>;

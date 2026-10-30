@@ -10,14 +10,11 @@ import {
 } from "./_generated/server";
 import { GRACE_PERIOD_MINUTES, RUN_LIFETIME_MINUTES } from "./lib/constants";
 import { STUDENT_ERROR, studentError } from "./lib/studentErrors";
-import {
-	type ChatStateMap,
-	type ChatStateOut,
-	getChatState,
-} from "./lib/turnState";
+import { isChatEnded } from "./lib/turnState";
 import type { PersonaPayload } from "./models/cases";
 import { listCaseAuthors } from "./services/cases";
 import {
+	flaggedCounts,
 	flattenPersonas,
 	graphPersonas,
 	graphRootPersonas,
@@ -58,24 +55,24 @@ function toContactOut(
 	photoUrl: string | null,
 	isReferred: boolean,
 	availableAtMinutes: number,
-	chatState: ChatStateOut,
+	warnings: number,
 ): ContactOut {
 	return {
 		id: persona.id,
 		name: persona.name,
 		role: persona.role,
 		profilePhotoUrl: photoUrl,
-		availabilityDuration: persona.availabilityMinutes,
+		availabilityDuration: persona.availabilityMinutes ?? null,
 		availableAt: availableAtMinutes,
 		isReferred,
-		chatEnded: chatState.ended,
+		chatEnded: isChatEnded(warnings),
 	};
 }
 
 // Builds the contact list from root personas followed by unlocked referred personas.
 async function buildContacts(
 	ctx: QueryCtx | MutationCtx,
-	personaChatState: ChatStateMap,
+	flagged: Map<string, number>,
 	unlockedAt: Record<string, number>,
 	rootPersonas: PersonaPayload[],
 	referredPersonas: PersonaPayload[],
@@ -101,7 +98,7 @@ async function buildContacts(
 					: null,
 				isReferred,
 				availableAt,
-				getChatState(personaChatState, persona.id),
+				flagged.get(persona.id) ?? 0,
 			),
 		),
 	);
@@ -132,29 +129,32 @@ async function toSharedFileOut(
 
 export type ChatMessageOut = { role: "user" | "assistant"; content: string };
 export type ReplyStatusOut = {
-	id: Id<"runMessages">;
-	status: "pending" | "done" | "failed";
+	id: Id<"turns">;
+	status: Doc<"turns">["status"];
 } | null;
 
-// Loads a persona's message rows for a run, oldest first.
-async function queryPersonaRows(
+// Loads a persona's turns for a run, oldest first.
+async function queryPersonaTurns(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 	personaId: string,
-): Promise<Doc<"runMessages">[]> {
+): Promise<Doc<"turns">[]> {
 	return await ctx.db
-		.query("runMessages")
+		.query("turns")
 		.withIndex("by_run_persona", (q) =>
 			q.eq("runId", runId).eq("personaId", personaId),
 		)
 		.collect();
 }
 
-// Reduces message rows to role/content pairs, hiding pending and failed replies.
-function toChatMessages(rows: Doc<"runMessages">[]): ChatMessageOut[] {
-	return rows
-		.filter((row) => row.role === "user" || row.status === "done")
-		.map((row) => ({ role: row.role, content: row.content }));
+// Turns finished and flagged turns into student and persona messages, hiding pending and failed ones.
+function toChatMessages(turns: Doc<"turns">[]): ChatMessageOut[] {
+	return turns
+		.filter((turn) => turn.status === "done" || turn.status === "flagged")
+		.flatMap((turn): ChatMessageOut[] => [
+			{ role: "user", content: turn.studentMessage },
+			{ role: "assistant", content: turn.reply },
+		]);
 }
 
 type ExportPersonaOut = {
@@ -217,7 +217,6 @@ export const start = mutation({
 			expiresAt,
 			unlockedAt: {},
 			sharedFiles: [],
-			personaChatState: {},
 		});
 		await ctx.scheduler.runAt(expiresAt, internal.simulations.destroy, {
 			runId,
@@ -235,7 +234,7 @@ export const get = query({
 		const graph = flattenPersonas(c.structure);
 		const contacts = await buildContacts(
 			ctx,
-			run.personaChatState,
+			await flaggedCounts(ctx, runId),
 			run.unlockedAt,
 			graphRootPersonas(graph),
 			graphPersonas(
@@ -245,10 +244,8 @@ export const get = query({
 		);
 		const fileNames = new Map(
 			c.structure.personas.flatMap((persona) =>
-				persona.files.flatMap((entry) =>
-					entry.file
-						? [[entry.file.storageId, entry.file.fileName] as const]
-						: [],
+				persona.files.map(
+					(entry) => [entry.file.storageId, entry.file.fileName] as const,
 				),
 			),
 		);
@@ -279,14 +276,11 @@ export const get = query({
 export const getPersonaHistory = query({
 	args: { runId: v.id("runs"), personaId: v.string() },
 	handler: async (ctx, { runId, personaId }) => {
-		const rows = await queryPersonaRows(ctx, runId, personaId);
-		const last = rows.at(-1);
+		const turns = await queryPersonaTurns(ctx, runId, personaId);
+		const last = turns.at(-1);
 		return {
-			messages: toChatMessages(rows),
-			reply:
-				last?.role === "assistant"
-					? { id: last._id, status: last.status }
-					: null,
+			messages: toChatMessages(turns),
+			reply: last ? { id: last._id, status: last.status } : null,
 		};
 	},
 });
@@ -306,19 +300,12 @@ export const exportRun = query({
 		const personas = await Promise.all(
 			personaIds.map(async (personaId): Promise<ExportPersonaOut> => {
 				const persona = graph.personas.get(personaId);
-				const rows = await queryPersonaRows(ctx, runId, personaId);
-				const last = rows.at(-1);
-				// A student message whose reply is still pending is left out of the export.
-				const messages = toChatMessages(
-					last?.role === "assistant" && last.status === "pending"
-						? rows.slice(0, -2)
-						: rows,
-				);
+				const turns = await queryPersonaTurns(ctx, runId, personaId);
 				return {
 					id: personaId,
 					name: persona?.name ?? "",
 					role: persona?.role ?? "",
-					messages,
+					messages: toChatMessages(turns),
 				};
 			}),
 		);
@@ -327,17 +314,17 @@ export const exportRun = query({
 	},
 });
 
-// Deletes a run together with its messages; safe to call on a missing run (scheduled when the run starts).
+// Deletes a run together with its turns; safe to call on a missing run (scheduled when the run starts).
 export const destroy = internalMutation({
 	args: { runId: v.id("runs") },
 	handler: async (ctx, { runId }) => {
 		if ((await ctx.db.get(runId)) === null) return;
 
-		const messages = await ctx.db
-			.query("runMessages")
+		const turns = await ctx.db
+			.query("turns")
 			.withIndex("by_run_persona", (q) => q.eq("runId", runId))
 			.collect();
-		for (const message of messages) await ctx.db.delete(message._id);
+		for (const turn of turns) await ctx.db.delete(turn._id);
 
 		await ctx.db.delete(runId);
 	},

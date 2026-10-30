@@ -35,32 +35,12 @@ export function personaAvailability(
 	return { available: true, availableIn: 0, expiresIn: null };
 }
 
-export type ChatStateMap = Record<
-	string,
-	{ warningCount: number; ended: boolean; endReason?: string }
->;
-export type ChatStateOut = {
-	ended: boolean;
-	endReason: string | null;
-	warningCount: number;
-};
-
-// Returns a persona's chat state, defaulting to an open chat with no warnings.
-export function getChatState(
-	personaChatState: ChatStateMap,
-	personaId: string,
-): ChatStateOut {
-	const state = personaChatState[personaId];
-	return state
-		? {
-				ended: state.ended,
-				endReason: state.endReason ?? null,
-				warningCount: state.warningCount,
-			}
-		: { ended: false, endReason: null, warningCount: 0 };
-}
-
 export const NONSENSE_THRESHOLD = 3;
+
+// Whether a persona has flagged enough messages to end its conversation.
+export function isChatEnded(warnings: number): boolean {
+	return warnings >= NONSENSE_THRESHOLD;
+}
 
 // Returns the canned warning or chat-ending message for a flagged message.
 export function boundaryReply(personaName: string, shouldEnd: boolean): string {

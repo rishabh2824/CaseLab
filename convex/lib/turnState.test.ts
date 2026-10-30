@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
 	boundaryReply,
 	elapsedMinutes,
-	getChatState,
+	isChatEnded,
+	NONSENSE_THRESHOLD,
 	personaAvailability,
 } from "./turnState";
 
@@ -95,34 +96,13 @@ describe("personaAvailability", () => {
 	});
 });
 
-describe("getChatState", () => {
-	// Tests that getChatState returns defaults for a persona with no recorded state.
-	it("defaults for a persona with no recorded state", () => {
-		expect(getChatState({}, "A")).toEqual({
-			ended: false,
-			endReason: null,
-			warningCount: 0,
-		});
-	});
-
-	// Tests that getChatState reads existing state without mutating the map.
-	it("reads existing state without mutating the map", () => {
-		const map = { A: { warningCount: 2, ended: false } };
-		const before = structuredClone(map);
-		const state = getChatState(map, "A");
-		expect(state).toEqual({
-			ended: false,
-			endReason: null,
-			warningCount: 2,
-		});
-		expect(map).toEqual(before);
-		expect(state).not.toBe(map.A);
-	});
-
-	// Tests that getChatState maps a missing endReason to null.
-	it("maps a missing endReason to null rather than undefined", () => {
-		const map = { A: { warningCount: 1, ended: true } };
-		expect(getChatState(map, "A").endReason).toBeNull();
+describe("isChatEnded", () => {
+	// Tests that a chat ends exactly when the warnings reach the threshold.
+	it("ends the chat at NONSENSE_THRESHOLD warnings and not before", () => {
+		expect(isChatEnded(0)).toBe(false);
+		expect(isChatEnded(NONSENSE_THRESHOLD - 1)).toBe(false);
+		expect(isChatEnded(NONSENSE_THRESHOLD)).toBe(true);
+		expect(isChatEnded(NONSENSE_THRESHOLD + 1)).toBe(true);
 	});
 });
 

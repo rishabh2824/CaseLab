@@ -28,10 +28,8 @@ export function personaPayload(
 		id,
 		name: `Persona ${id}`,
 		role: "Role",
-		profilePhoto: null,
 		knownFacts: "",
 		personalityTraits: "",
-		availabilityMinutes: null,
 		files: [],
 		...overrides,
 	};
@@ -81,18 +79,16 @@ export function fileEntry(
 	return { file, shareConditions, perceivedContents };
 }
 
-// Builds a case structure, defaulting to a single root persona.
+// Builds a case structure, defaulting to a single persona (a root, since nobody refers to it).
 export function caseStructure(
 	overrides: Partial<{
 		personas: ServerPersonaPayload[];
 		referrals: ReferralEdgePayload[];
-		roots: string[];
 	}> = {},
 ): CaseStructure {
 	return {
 		personas: overrides.personas ?? [personaPayload("A")],
 		referrals: overrides.referrals ?? [],
-		roots: overrides.roots ?? ["A"],
 	};
 }
 
@@ -189,10 +185,8 @@ export function makePersonaPayload(
 		id: "p1",
 		name: "Persona",
 		role: "Role",
-		profilePhoto: null,
 		knownFacts: "",
 		personalityTraits: "",
-		availabilityMinutes: null,
 		files: [],
 		...overrides,
 	};

@@ -86,7 +86,7 @@ export async function seedBackend(): Promise<Record<Role, string>> {
 	for (const table of [
 		"cases",
 		"runs",
-		"runMessages",
+		"turns",
 		"collaborators",
 		"caseFiles",
 	]) {

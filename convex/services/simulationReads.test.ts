@@ -41,7 +41,6 @@ describe("flattenPersonas", () => {
 				personaPayload("A", { name: "Zed" }),
 				personaPayload("B", { name: "Alice" }),
 			],
-			roots: ["A", "B"],
 		});
 		const graph = flattenPersonas(structure);
 		expect(graph.roots.map((id) => graph.personas.get(id)!.name)).toEqual([
@@ -70,7 +69,6 @@ describe("flattenPersonas", () => {
 		const structure = caseStructure({
 			personas: [personaPayload("A"), personaPayload("B"), personaPayload("C")],
 			referrals: [referralEdge("A", "C"), referralEdge("B", "C")],
-			roots: ["A", "B"],
 		});
 		const graph = flattenPersonas(structure);
 		expect(graph.referrals.map((e) => `${e.fromId}->${e.toId}`).sort()).toEqual(
@@ -79,16 +77,15 @@ describe("flattenPersonas", () => {
 		expect([...graph.personas.keys()].sort()).toEqual(["A", "B", "C"]);
 	});
 
-	// Tests that a persona that is both a root and a referral target is stored once.
-	it("stores a persona that is both a root and a referral target once", () => {
+	// Tests that roots are the personas nobody refers to, so a referred persona is not one.
+	it("computes the roots as the personas nobody refers to", () => {
 		const structure = caseStructure({
-			personas: [personaPayload("A"), personaPayload("B")],
+			personas: [personaPayload("A"), personaPayload("B"), personaPayload("C")],
 			referrals: [referralEdge("A", "B")],
-			roots: ["A", "B"],
 		});
 		const graph = flattenPersonas(structure);
-		expect([...graph.roots].sort()).toEqual(["A", "B"]);
-		expect([...graph.personas.keys()].sort()).toEqual(["A", "B"]);
+		expect([...graph.roots].sort()).toEqual(["A", "C"]);
+		expect([...graph.personas.keys()].sort()).toEqual(["A", "B", "C"]);
 		expect(graph.referrals).toHaveLength(1);
 	});
 });
@@ -113,7 +110,6 @@ function buildGraph(): PersonaGraph {
 			referralEdge("B", "C"),
 			referralEdge("A", "D"),
 		],
-		roots: ["A", "B"],
 	});
 	return flattenPersonas(structure);
 }

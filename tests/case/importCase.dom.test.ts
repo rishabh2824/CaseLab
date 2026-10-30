@@ -59,15 +59,14 @@ describe("parseHTMLForm — file shape", () => {
 		expect(() => parseHTMLForm(html)).toThrow(CaseImportError);
 	});
 
-	// Tests that a file where every persona is marked referred (no roots) is rejected.
-	it("throws CaseImportError when every persona is marked referred (no roots)", () => {
+	// Tests that a file where every persona is referred by another, so none can start, is rejected.
+	it("throws CaseImportError when every persona is referred by another (no roots)", () => {
 		const a = makePersona();
 		const b = makePersona();
 		const html = buildHTMLForm({
 			...baseCaseFields,
 			personas: [a, b],
-			referrals: [makeReferral(a.id, b.id)],
-			roots: [],
+			referrals: [makeReferral(a.id, b.id), makeReferral(b.id, a.id)],
 		});
 		expect(() => parseHTMLForm(html)).toThrow(CaseImportError);
 	});
@@ -85,7 +84,6 @@ describe("parseHTMLForm — field extraction", () => {
 			commonInformation: "  Shared budget context.  ",
 			personas: [persona],
 			referrals: [],
-			roots: [persona.id],
 		});
 		const data = parseHTMLForm(html);
 		expect(data.caseName).toBe("Acme Corp");
@@ -104,7 +102,6 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 			...baseCaseFields,
 			personas: [persona],
 			referrals: [],
-			roots: [persona.id],
 		});
 		setField(doc, "simulation_duration_minutes", "not-a-number");
 		expect(() => parseHTMLForm(serialize(doc))).toThrow(/Simulation duration/);
@@ -117,7 +114,6 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 			...baseCaseFields,
 			personas: [persona],
 			referrals: [],
-			roots: [persona.id],
 		});
 		setField(doc, "simulation_duration_minutes", "12.6");
 		expect(parseHTMLForm(serialize(doc)).simulationDurationMinutes).toBe(13);
@@ -131,7 +127,6 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 			simulationDurationMinutes: null,
 			personas: [persona],
 			referrals: [],
-			roots: [persona.id],
 		});
 		expect(parseHTMLForm(html).simulationDurationMinutes).toBeNull();
 	});
@@ -146,22 +141,20 @@ describe("parseHTMLForm — persona graph validation", () => {
 			...baseCaseFields,
 			personas: [p1, p2],
 			referrals: [makeReferral(p1.id, p2.id), makeReferral(p2.id, p1.id)],
-			roots: [p1.id],
 		});
-		expect(() => parseHTMLForm(html)).toThrow(/cycle detected/i);
+		expect(() => parseHTMLForm(html)).toThrow(/cycle/i);
 	});
 
-	// Tests that a persona nothing points at is rejected.
-	it("throws CaseImportError naming a persona that isn't reachable from a root", () => {
+	// Tests that a persona nothing refers to is imported as another starting persona, not rejected.
+	it("imports a persona nothing refers to as a starting persona", () => {
 		const root = makePersona();
-		const orphan = makePersona({ name: "Orphan" });
+		const other = makePersona({ name: "Standalone" });
 		const html = buildHTMLForm({
 			...baseCaseFields,
-			personas: [root, orphan],
+			personas: [root, other],
 			referrals: [],
-			roots: [root.id],
 		});
-		expect(() => parseHTMLForm(html)).toThrow(/Orphan/);
+		expect(parseHTMLForm(html).personas).toHaveLength(2);
 	});
 
 	// Tests that two personas referring to the same third persona are both kept.
@@ -176,7 +169,6 @@ describe("parseHTMLForm — persona graph validation", () => {
 				makeReferral(parentA.id, shared.id),
 				makeReferral(parentB.id, shared.id),
 			],
-			roots: [parentA.id, parentB.id],
 		});
 		const data = parseHTMLForm(html);
 		expect(data.personas.map((p) => p.name).sort()).toEqual(
@@ -214,7 +206,6 @@ describe("parseHTMLForm — file sharing", () => {
 			...baseCaseFields,
 			personas: [persona],
 			referrals: [],
-			roots: [persona.id],
 		});
 		const data = parseHTMLForm(html);
 		expect(data.personas[0]?.files).toEqual([
@@ -238,7 +229,6 @@ describe("parseHTMLForm — file sharing", () => {
 			...baseCaseFields,
 			personas: [persona],
 			referrals: [],
-			roots: [persona.id],
 		});
 		const data = parseHTMLForm(html);
 		expect(data.personas[0]?.files).toEqual([]);

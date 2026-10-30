@@ -92,7 +92,7 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 				accessCode: "claimcode",
 				ownerAdminId: owner,
 				isTemplate: false,
-				structure: { personas: [], referrals: [], roots: [] },
+				structure: { personas: [], referrals: [] },
 			}),
 		);
 		await t.run((ctx) => ctx.db.insert("caseFiles", { caseId, storageId }));
@@ -158,7 +158,7 @@ describe("sweepAbandonedUploads (weekly cleanup of uploads no save ever claimed)
 				accessCode: "sweepcode",
 				ownerAdminId: owner,
 				isTemplate: false,
-				structure: { personas: [], referrals: [], roots: [] },
+				structure: { personas: [], referrals: [] },
 			});
 		});
 	}

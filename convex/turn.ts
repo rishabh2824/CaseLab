@@ -15,13 +15,11 @@ import { countWords } from "./lib/messageRules";
 import { STUDENT_ERROR, studentError } from "./lib/studentErrors";
 import {
 	boundaryReply,
-	type ChatStateOut,
 	elapsedMinutes,
-	getChatState,
-	NONSENSE_THRESHOLD,
+	isChatEnded,
 	personaAvailability,
 } from "./lib/turnState";
-import { flattenPersonas } from "./services/simulationReads";
+import { flaggedCounts, flattenPersonas } from "./services/simulationReads";
 import {
 	buildTurnContext,
 	generateReply,
@@ -40,14 +38,14 @@ const personaUnavailable = () =>
 		"Persona is not available yet.",
 	);
 
-// Returns the newest message row for a persona in a run.
-async function lastRow(
+// Returns the newest turn for a persona in a run.
+async function lastTurn(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 	personaId: string,
-): Promise<Doc<"runMessages"> | null> {
+): Promise<Doc<"turns"> | null> {
 	return await ctx.db
-		.query("runMessages")
+		.query("turns")
 		.withIndex("by_run_persona", (q) =>
 			q.eq("runId", runId).eq("personaId", personaId),
 		)
@@ -55,22 +53,22 @@ async function lastRow(
 		.first();
 }
 
-// Returns the reply row if it is still pending, otherwise null so late callers do nothing.
-async function pendingReply(
+// Returns the turn if it is still pending, otherwise null so late callers do nothing.
+async function pendingTurn(
 	ctx: MutationCtx,
-	replyId: Id<"runMessages">,
-): Promise<Doc<"runMessages"> | null> {
-	const reply = await ctx.db.get("runMessages", replyId);
-	return reply?.status === "pending" ? reply : null;
+	turnId: Id<"turns">,
+): Promise<Doc<"turns"> | null> {
+	const turn = await ctx.db.get("turns", turnId);
+	return turn?.status === "pending" ? turn : null;
 }
 
-// Saves a student message with a pending reply and starts generating the reply.
+// Saves a student message as a pending turn and starts generating the reply.
 export const sendMessage = mutation({
 	args: { runId: v.id("runs"), personaId: v.string(), message: v.string() },
 	handler: async (
 		ctx,
 		{ runId, personaId, message: rawMessage },
-	): Promise<{ replyId: Id<"runMessages"> }> => {
+	): Promise<{ turnId: Id<"turns"> }> => {
 		const message = rawMessage.trim();
 		if (!personaId || !message)
 			throw studentError(
@@ -91,7 +89,8 @@ export const sendMessage = mutation({
 		}
 
 		const { run, c } = await loadLiveRun(ctx, runId);
-		if (getChatState(run.personaChatState, personaId).ended)
+		const warnings = (await flaggedCounts(ctx, runId)).get(personaId) ?? 0;
+		if (isChatEnded(warnings))
 			throw studentError(
 				STUDENT_ERROR.CONVERSATION_ENDED,
 				"This conversation has ended.",
@@ -115,55 +114,48 @@ export const sendMessage = mutation({
 				: null;
 		if (availableAt === null) throw personaUnavailable();
 		if (
-			!personaAvailability(persona.availabilityMinutes, availableAt, elapsed)
-				.available
+			!personaAvailability(
+				persona.availabilityMinutes ?? null,
+				availableAt,
+				elapsed,
+			).available
 		) {
 			throw personaUnavailable();
 		}
 
-		const previous = await lastRow(ctx, runId, personaId);
-		if (previous?.role === "assistant" && previous.status === "pending") {
+		const previous = await lastTurn(ctx, runId, personaId);
+		if (previous?.status === "pending") {
 			throw studentError(
 				STUDENT_ERROR.REPLY_IN_PROGRESS,
 				"A reply is already being generated for this contact. Please wait.",
 			);
 		}
 
-		const userMessageId = await ctx.db.insert("runMessages", {
+		const turnId = await ctx.db.insert("turns", {
 			runId,
-			personaId: personaId,
-			role: "user",
-			content: message,
-			status: "done",
-		});
-		const replyId = await ctx.db.insert("runMessages", {
-			runId,
-			personaId: personaId,
-			role: "assistant",
-			content: "",
+			personaId,
+			studentMessage: message,
+			reply: "",
 			status: "pending",
-			userMessageId,
 		});
-		await ctx.scheduler.runAfter(0, internal.turn.reply, { replyId });
+		await ctx.scheduler.runAfter(0, internal.turn.reply, { turnId });
 		await ctx.scheduler.runAfter(TURN_EXPIRY_MS, internal.turn.failTurn, {
-			replyId,
+			turnId,
 		});
-		return { replyId };
+		return { turnId };
 	},
 });
 
-// Loads what the reply action needs for a pending reply, or null if it already finished or was failed.
+// Loads what the reply action needs for a pending turn, or null if it already finished or was failed.
 export const turnContext = internalQuery({
-	args: { replyId: v.id("runMessages") },
-	handler: async (ctx, { replyId }): Promise<ReplyJob | null> => {
-		const reply = await ctx.db.get("runMessages", replyId);
-		if (reply?.status !== "pending" || !reply.userMessageId) return null;
-		const userRow = await ctx.db.get("runMessages", reply.userMessageId);
-		if (!userRow) return null;
+	args: { turnId: v.id("turns") },
+	handler: async (ctx, { turnId }): Promise<ReplyJob | null> => {
+		const turn = await ctx.db.get("turns", turnId);
+		if (turn?.status !== "pending") return null;
 
-		const { run, c } = await loadRun(ctx, reply.runId);
+		const { run, c } = await loadRun(ctx, turn.runId);
 		const graph = flattenPersonas(c.structure);
-		const persona = graph.personas.get(reply.personaId);
+		const persona = graph.personas.get(turn.personaId);
 		if (!persona) return null;
 		const context = await buildTurnContext(
 			ctx,
@@ -171,106 +163,77 @@ export const turnContext = internalQuery({
 			c,
 			graph,
 			persona,
-			userRow._creationTime,
+			turn._creationTime,
 		);
 		return {
-			replyId,
+			turnId,
 			runId: run._id,
 			personaId: persona.id,
-			message: userRow.content,
+			message: turn.studentMessage,
 			context,
 		};
 	},
 });
 
-// Runs a pending reply: classifies the message, generates the reply and applies its outcome, failing the turn on any error.
+// Runs a pending turn: classifies the message, generates the reply and applies its outcome, failing the turn on any error.
 export const reply = internalAction({
-	args: { replyId: v.id("runMessages") },
-	handler: async (ctx, { replyId }): Promise<void> => {
+	args: { turnId: v.id("turns") },
+	handler: async (ctx, { turnId }): Promise<void> => {
 		try {
-			const job = await ctx.runQuery(internal.turn.turnContext, { replyId });
+			const job = await ctx.runQuery(internal.turn.turnContext, { turnId });
 			if (job) await generateReply(ctx, job);
 			// Nothing to generate (for example the persona was removed mid-reply): fail the turn now rather than leave it pending until the expiry. A no-op if it already finished.
-			else await ctx.runMutation(internal.turn.failTurn, { replyId });
+			else await ctx.runMutation(internal.turn.failTurn, { turnId });
 		} catch (err) {
 			console.error("Reply failed", err);
-			await ctx.runMutation(internal.turn.failTurn, { replyId });
+			await ctx.runMutation(internal.turn.failTurn, { turnId });
 		}
 	},
 });
 
-// Fails a pending reply: removes the student message and keeps a hidden failed row so the client can tell.
+// Fails a pending turn. It keeps the student's message but is hidden from the chat.
 export const failTurn = internalMutation({
-	args: { replyId: v.id("runMessages") },
-	handler: async (ctx, { replyId }): Promise<void> => {
-		const reply = await pendingReply(ctx, replyId);
-		if (!reply) return;
-		if (reply.userMessageId)
-			await ctx.db.delete("runMessages", reply.userMessageId);
-		await ctx.db.patch("runMessages", replyId, {
-			status: "failed",
-			userMessageId: undefined,
-		});
+	args: { turnId: v.id("turns") },
+	handler: async (ctx, { turnId }): Promise<void> => {
+		if (!(await pendingTurn(ctx, turnId))) return;
+		await ctx.db.patch("turns", turnId, { status: "failed" });
 	},
 });
 
-// Records a warning or chat-ending boundary reply for a flagged message, dropping that message.
+// Flags a pending turn and answers it with a warning, or a chat-ending boundary reply once the persona has flagged enough messages.
 export const applyBoundary = internalMutation({
 	args: {
-		replyId: v.id("runMessages"),
-		label: v.string(),
+		turnId: v.id("turns"),
 		personaName: v.string(),
 	},
-	handler: async (
-		ctx,
-		{ replyId, label, personaName },
-	): Promise<ChatStateOut | null> => {
-		const reply = await pendingReply(ctx, replyId);
-		if (!reply) return null;
-		const run = await ctx.db.get("runs", reply.runId);
-		if (!run) return null;
+	handler: async (ctx, { turnId, personaName }): Promise<void> => {
+		const turn = await pendingTurn(ctx, turnId);
+		if (!turn) return;
 
-		const previous = getChatState(run.personaChatState, reply.personaId);
-		const warningCount = previous.warningCount + 1;
-		const ended = warningCount >= NONSENSE_THRESHOLD;
-		const endReason = ended ? label : previous.endReason;
-		await ctx.db.patch("runs", run._id, {
-			personaChatState: {
-				...run.personaChatState,
-				[reply.personaId]: {
-					warningCount,
-					ended,
-					endReason: endReason ?? undefined,
-				},
-			},
+		const previous =
+			(await flaggedCounts(ctx, turn.runId)).get(turn.personaId) ?? 0;
+		await ctx.db.patch("turns", turnId, {
+			reply: boundaryReply(personaName, isChatEnded(previous + 1)),
+			status: "flagged",
 		});
-
-		if (reply.userMessageId)
-			await ctx.db.delete("runMessages", reply.userMessageId);
-		await ctx.db.patch("runMessages", replyId, {
-			content: boundaryReply(personaName, ended),
-			status: "done",
-			userMessageId: undefined,
-		});
-		return { ended, endReason: endReason ?? null, warningCount };
 	},
 });
 
 // Saves the finished reply, unlocks the introduced personas and records shared files.
 export const applyDecisions = internalMutation({
 	args: {
-		replyId: v.id("runMessages"),
+		turnId: v.id("turns"),
 		reply: v.string(),
 		unlockedReferrals: v.array(v.object({ referredPersonaId: v.string() })),
 		sharedFiles: v.array(v.object({ storageId: v.id("_storage") })),
 	},
 	handler: async (
 		ctx,
-		{ replyId, reply: replyText, unlockedReferrals, sharedFiles },
+		{ turnId, reply: replyText, unlockedReferrals, sharedFiles },
 	): Promise<void> => {
-		const reply = await pendingReply(ctx, replyId);
-		if (!reply) return;
-		const run = await ctx.db.get("runs", reply.runId);
+		const turn = await pendingTurn(ctx, turnId);
+		if (!turn) return;
+		const run = await ctx.db.get("runs", turn.runId);
 		if (!run) return;
 
 		// Writing the run re-runs every subscribed run-state query, so only do it when something changed.
@@ -293,9 +256,6 @@ export const applyDecisions = internalMutation({
 				sharedFiles: [...sharedFileIds],
 			});
 		}
-		await ctx.db.patch("runMessages", replyId, {
-			content: replyText,
-			status: "done",
-		});
+		await ctx.db.patch("turns", turnId, { reply: replyText, status: "done" });
 	},
 });

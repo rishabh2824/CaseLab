@@ -39,7 +39,7 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-// Asserts a failed turn left no assistant reply, a failed reply row and no visible user message.
+// Asserts a failed turn shows nothing in the chat, is marked failed and left the run state untouched.
 async function expectTurnFailedCleanly(
 	t: T,
 	runId: Id<"runs">,
@@ -78,7 +78,6 @@ async function startRunWithCandidates(t: T) {
 			personaPayload("B"),
 		],
 		referrals: [referralEdge("A", "B", "the user asks for B")],
-		roots: ["A"],
 	});
 	return { state: await startRun(t, structure), storageId };
 }
@@ -371,9 +370,7 @@ describe("reply lifecycle", () => {
 
 		await send(t, state.runId, "A", "hi");
 
-		expect(await t.run((ctx) => ctx.db.query("runMessages").collect())).toEqual(
-			[],
-		);
+		expect(await t.run((ctx) => ctx.db.query("turns").collect())).toEqual([]);
 	});
 
 	function stubReplyAttempts(bodies: string[]) {
@@ -433,8 +430,10 @@ describe("the concurrency guard is the real serialization point", () => {
 				message: "second message",
 			}),
 		).rejects.toThrow(/already being generated/);
-		const rows = await t.run((ctx) => ctx.db.query("runMessages").collect());
-		expect(rows.map((r) => r.content)).not.toContain("second message");
+		const turns = await t.run((ctx) => ctx.db.query("turns").collect());
+		expect(turns.map((turn) => turn.studentMessage)).not.toContain(
+			"second message",
+		);
 	});
 
 	// Tests that concurrent turns on two different personas are allowed.
@@ -444,7 +443,6 @@ describe("the concurrency guard is the real serialization point", () => {
 			t,
 			caseStructure({
 				personas: [personaPayload("A"), personaPayload("B")],
-				roots: ["A", "B"],
 			}),
 		);
 		stubLlm({ replyText: "reply" });
@@ -476,7 +474,6 @@ describe("the concurrency guard is the real serialization point", () => {
 					referralEdge("A", "C", "the user asks for C"),
 					referralEdge("B", "D", "the user asks for D"),
 				],
-				roots: ["A", "B"],
 			}),
 		);
 		stubLlm({ replyText: "meet them", introduce: ["R1"] });
@@ -492,16 +489,20 @@ describe("the concurrency guard is the real serialization point", () => {
 });
 
 describe("a stuck reply is failed by expiry", () => {
-	// Tests that failing a pending reply removes the student message and frees the persona for a new message.
-	it("fails a pending reply, removes its message and accepts a new message", async () => {
+	// Tests that failing a pending turn hides it but keeps the student's message, and frees the persona for a new message.
+	it("fails a pending turn, hides it, keeps its message and accepts a new message", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t);
-		const replyId = await insertPendingReply(t, state.runId, "A", "first");
+		const turnId = await insertPendingReply(t, state.runId, "A", "first");
 
-		await t.mutation(internal.turn.failTurn, { replyId });
+		await t.mutation(internal.turn.failTurn, { turnId });
 
 		expect((await lastReply(t, state.runId, "A"))?.status).toBe("failed");
 		expect(await visibleMessages(t, state.runId, "A")).toEqual([]);
+		expect(await t.run((ctx) => ctx.db.get("turns", turnId))).toMatchObject({
+			studentMessage: "first",
+			status: "failed",
+		});
 		stubLlm({ replyText: "second" });
 		await send(t, state.runId, "A", "second message");
 		expect(
@@ -513,18 +514,18 @@ describe("a stuck reply is failed by expiry", () => {
 	it("ignores a reply that finishes after the turn was failed", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t);
-		const replyId = await insertPendingReply(t, state.runId, "A", "first");
-		await t.mutation(internal.turn.failTurn, { replyId });
+		const turnId = await insertPendingReply(t, state.runId, "A", "first");
+		await t.mutation(internal.turn.failTurn, { turnId });
 
 		await t.mutation(internal.turn.applyDecisions, {
-			replyId: replyId,
+			turnId: turnId,
 			reply: "too late",
 			unlockedReferrals: [{ referredPersonaId: "B" }],
 			sharedFiles: [],
 		});
 
-		const row = await t.run((ctx) => ctx.db.get("runMessages", replyId));
-		expect(row).toMatchObject({ status: "failed", content: "" });
+		const row = await t.run((ctx) => ctx.db.get("turns", turnId));
+		expect(row).toMatchObject({ status: "failed", reply: "" });
 		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
 	});
@@ -533,20 +534,16 @@ describe("a stuck reply is failed by expiry", () => {
 	it("ignores a boundary reply that arrives after the turn was failed", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t);
-		const replyId = await insertPendingReply(t, state.runId, "A", "first");
-		await t.mutation(internal.turn.failTurn, { replyId });
+		const turnId = await insertPendingReply(t, state.runId, "A", "first");
+		await t.mutation(internal.turn.failTurn, { turnId });
 
-		const outcome = await t.mutation(internal.turn.applyBoundary, {
-			replyId,
-			label: "nonsense",
+		await t.mutation(internal.turn.applyBoundary, {
+			turnId,
 			personaName: "Persona A",
 		});
 
-		expect(outcome).toBeNull();
-		const row = await t.run((ctx) => ctx.db.get("runMessages", replyId));
-		expect(row).toMatchObject({ status: "failed", content: "" });
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
-		expect(run.personaChatState).toEqual({});
+		const row = await t.run((ctx) => ctx.db.get("turns", turnId));
+		expect(row).toMatchObject({ status: "failed", reply: "" });
 	});
 
 	// Tests that a reply whose persona was removed from the case mid-reply is failed straight away.
@@ -556,22 +553,20 @@ describe("a stuck reply is failed by expiry", () => {
 			t,
 			caseStructure({
 				personas: [personaPayload("A"), personaPayload("B")],
-				roots: ["A", "B"],
 			}),
 		);
-		const replyId = await insertPendingReply(t, state.runId, "A", "first");
+		const turnId = await insertPendingReply(t, state.runId, "A", "first");
 		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
 		await t.run((ctx) =>
 			ctx.db.patch(run.caseId, {
 				structure: {
 					personas: [personaPayload("B")],
 					referrals: [],
-					roots: ["B"],
 				},
 			}),
 		);
 
-		await t.action(internal.turn.reply, { replyId });
+		await t.action(internal.turn.reply, { turnId });
 
 		expect((await lastReply(t, state.runId, "A"))?.status).toBe("failed");
 		expect(await visibleMessages(t, state.runId, "A")).toEqual([]);
@@ -587,13 +582,13 @@ describe("a stuck reply is failed by expiry", () => {
 			vi.fn(() => new Promise(() => {})),
 		);
 
-		const { replyId } = await t.mutation(api.turn.sendMessage, {
+		const { turnId } = await t.mutation(api.turn.sendMessage, {
 			runId: state.runId,
 			personaId: "A",
 			message: "hi",
 		});
 		vi.advanceTimersByTime(TURN_EXPIRY_MS + 1);
-		await settleReply(t, replyId);
+		await settleReply(t, turnId);
 
 		expect((await lastReply(t, state.runId, "A"))?.status).toBe("failed");
 		expect(await visibleMessages(t, state.runId, "A")).toEqual([]);

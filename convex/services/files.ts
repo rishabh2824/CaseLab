@@ -6,7 +6,7 @@ import type { FileRefPayload } from "../models/cases";
 // Returns the storage ids among the given references whose uploads still exist.
 export async function existingStorageIds(
 	ctx: QueryCtx,
-	refs: FileRefPayload[],
+	refs: (FileRefPayload | undefined)[],
 ): Promise<Set<Id<"_storage">>> {
 	const ids = new Set(refs.flatMap((ref) => (ref ? [ref.storageId] : [])));
 	const found = await Promise.all(

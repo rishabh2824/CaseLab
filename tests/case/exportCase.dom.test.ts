@@ -22,13 +22,11 @@ describe("buildHTMLForm", () => {
 		);
 		const cards = doc.querySelectorAll(".persona-card");
 		expect(cards).toHaveLength(2);
-		expect(cards[0]?.getAttribute("data-persona-root")).toBe("true");
-		expect(cards[1]?.getAttribute("data-persona-root")).toBe("false");
 		expect(doc.querySelectorAll(".referral-row")).toHaveLength(1);
 	});
 
-	// Tests that the first root is marked fixed with no remove button while other personas get one.
-	it("marks the first root data-fixed-root and hides its remove button; other personas get one", () => {
+	// Tests that every persona card gets a remove button and none carries a root marker, since roots are worked out from the referrals.
+	it("gives every persona a remove button and no root dropdown", () => {
 		const root = makePersona();
 		const referred = makePersona();
 		const doc = parseForm(
@@ -40,49 +38,16 @@ describe("buildHTMLForm", () => {
 				commonInformation: "",
 				personas: [root, referred],
 				referrals: [makeReferral(root.id, referred.id)],
-				roots: [root.id],
 			}),
 		);
-		const rootCard = doc.querySelector(
-			`[data-persona-id="${root.id}"]`,
-		) as Element;
-		const referredCard = doc.querySelector(
-			`[data-persona-id="${referred.id}"]`,
-		) as Element;
 
-		expect(rootCard.getAttribute("data-fixed-root")).toBe("true");
-		expect(rootCard.querySelector('[data-action="remove-persona"]')).toBeNull();
-
-		expect(referredCard.getAttribute("data-fixed-root")).toBe("false");
-		expect(
-			referredCard.querySelector('[data-action="remove-persona"]'),
-		).not.toBeNull();
-	});
-
-	// Tests that each persona's data-persona-root reflects the roots list.
-	it("sets data-persona-root per persona according to the roots list", () => {
-		const a = makePersona();
-		const b = makePersona();
-		const c = makePersona();
-		const doc = parseForm(
-			buildHTMLForm({
-				caseName: "Case",
-				accessCode: "ABC",
-				simulationDurationMinutes: null,
-				initialBrief: "Brief",
-				commonInformation: "",
-				personas: [a, b, c],
-				referrals: [makeReferral(a.id, b.id), makeReferral(a.id, c.id)],
-				roots: [a.id, c.id],
-			}),
-		);
-		const rootOf = (id: string) =>
-			doc
-				.querySelector(`[data-persona-id="${id}"]`)
-				?.getAttribute("data-persona-root");
-		expect(rootOf(a.id)).toBe("true");
-		expect(rootOf(b.id)).toBe("false");
-		expect(rootOf(c.id)).toBe("true");
+		for (const card of doc.querySelectorAll(".persona-card")) {
+			expect(
+				card.querySelector('[data-action="remove-persona"]'),
+			).not.toBeNull();
+			expect(card.hasAttribute("data-persona-root")).toBe(false);
+		}
+		expect(doc.querySelector('[data-role="persona-type"]')).toBeNull();
 	});
 
 	describe("HTML escaping", () => {
@@ -110,7 +75,6 @@ describe("buildHTMLForm", () => {
 						commonInformation: "",
 						personas: [persona],
 						referrals: [],
-						roots: [persona.id],
 					}),
 				);
 				const selector = personaOverrides
@@ -135,7 +99,6 @@ describe("buildHTMLForm", () => {
 					commonInformation: "",
 					personas: [persona],
 					referrals: [],
-					roots: [persona.id],
 				}),
 			);
 			const card = doc.querySelector(".persona-card") as Element;
@@ -208,7 +171,6 @@ describe("buildHTMLForm's embedded script", () => {
 				commonInformation: "",
 				personas: [a, b, c],
 				referrals: [makeReferral(a.id, b.id), makeReferral(b.id, c.id)],
-				roots: [a.id],
 			}),
 		);
 		const doc = dom.window.document;
@@ -239,7 +201,6 @@ describe("buildHTMLForm's embedded script", () => {
 				commonInformation: "",
 				personas: [a, d, c],
 				referrals: [makeReferral(a.id, c.id), makeReferral(d.id, c.id)],
-				roots: [a.id, d.id],
 			}),
 		);
 		const doc = dom.window.document;
@@ -268,7 +229,6 @@ describe("buildHTMLForm's embedded script", () => {
 				commonInformation: "",
 				personas: [persona],
 				referrals: [],
-				roots: [persona.id],
 			}),
 		);
 		expect(

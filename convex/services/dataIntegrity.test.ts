@@ -34,8 +34,8 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
-describe("a persona that is both a root and a referral target", () => {
-	async function unlockRootViaReferral(t: T) {
+describe("a persona that another persona refers to is not a root", () => {
+	async function unlockViaReferral(t: T) {
 		const state = await startRun(
 			t,
 			caseStructure({
@@ -43,7 +43,6 @@ describe("a persona that is both a root and a referral target", () => {
 				referrals: [
 					referralEdge("A", "B", "the user asks who else is involved"),
 				],
-				roots: ["A", "B"],
 			}),
 		);
 		stubLlm({ replyText: "You should talk to B.", introduce: ["R1"] });
@@ -51,19 +50,57 @@ describe("a persona that is both a root and a referral target", () => {
 		return state;
 	}
 
-	// Tests that a persona that is both a root and a referral target appears exactly once in the contact list.
-	it("REGRESSION: appears exactly once in the contact list", async () => {
+	// Tests that a referred persona is not a contact until it is introduced.
+	it("is not a contact, nor messageable, until it is introduced", async () => {
 		const t = newTestConvex();
-		const state = await unlockRootViaReferral(t);
+		const state = await startRun(
+			t,
+			caseStructure({
+				personas: [personaPayload("A"), personaPayload("B")],
+				referrals: [
+					referralEdge("A", "B", "the user asks who else is involved"),
+				],
+			}),
+		);
+
+		const live = await t.query(api.simulations.get, { runId: state.runId });
+		expect(live.contacts.map((c) => c.id)).toEqual(["A"]);
+		await expect(
+			t.mutation(api.turn.sendMessage, {
+				runId: state.runId,
+				personaId: "B",
+				message: "hello",
+			}),
+		).rejects.toThrow(/not available/i);
+	});
+
+	// Tests that personas nobody refers to are all available from the start.
+	it("leaves every unreferred persona available from the start", async () => {
+		const t = newTestConvex();
+		const state = await startRun(
+			t,
+			caseStructure({
+				personas: [personaPayload("A"), personaPayload("B")],
+			}),
+		);
 
 		const live = await t.query(api.simulations.get, { runId: state.runId });
 		expect(live.contacts.map((c) => c.id)).toEqual(["A", "B"]);
 	});
 
-	// Tests that a persona that is both a root and a referral target appears exactly once in the export.
+	// Tests that a persona introduced by a referral appears exactly once in the contact list.
+	it("REGRESSION: appears exactly once in the contact list once introduced", async () => {
+		const t = newTestConvex();
+		const state = await unlockViaReferral(t);
+
+		const live = await t.query(api.simulations.get, { runId: state.runId });
+		expect(live.contacts.map((c) => c.id)).toEqual(["A", "B"]);
+	});
+
+	// Tests that a persona introduced by a referral appears exactly once in the export.
 	it("REGRESSION: appears exactly once in the export, with one copy of its transcript", async () => {
 		const t = newTestConvex();
-		const state = await unlockRootViaReferral(t);
+		const state = await unlockViaReferral(t);
 		stubLlm({ replyText: "Hello from B." });
 		await sendTurn(t, state.runId, "B", "hi B");
 
@@ -74,55 +111,6 @@ describe("a persona that is both a root and a referral target", () => {
 		expect(exported.personas.find((p) => p.id === "B")?.messages).toHaveLength(
 			2,
 		);
-	});
-
-	// Tests that a root id already recorded in unlockedAt is not listed twice.
-	it("lists a root id that is already recorded in a run's unlockedAt only once", async () => {
-		const t = newTestConvex();
-		const state = await startRun(
-			t,
-			caseStructure({
-				personas: [personaPayload("A"), personaPayload("B")],
-				referrals: [
-					referralEdge("A", "B", "the user asks who else is involved"),
-				],
-				roots: ["A", "B"],
-			}),
-		);
-		await t.run((ctx) =>
-			ctx.db.patch(state.runId, {
-				unlockedAt: { B: 3 },
-			}),
-		);
-
-		const live = await t.query(api.simulations.get, { runId: state.runId });
-		expect(live.contacts.map((c) => c.id)).toEqual(["A", "B"]);
-
-		const exported = await t.query(api.simulations.exportRun, {
-			runId: state.runId,
-		});
-		expect(exported.personas.map((p) => p.id)).toEqual(["A", "B"]);
-	});
-
-	// Tests that a persona that is already a root is never offered as a referral candidate.
-	it("is never offered as a referral candidate in the first place", async () => {
-		const t = newTestConvex();
-		const state = await startRun(
-			t,
-			caseStructure({
-				personas: [personaPayload("A"), personaPayload("B")],
-				referrals: [
-					referralEdge("A", "B", "the user asks who else is involved"),
-				],
-				roots: ["A", "B"],
-			}),
-		);
-		const { calls } = stubLlm({ replyText: "hi" });
-		await sendTurn(t, state.runId, "A", "who else?");
-
-		const prompt = calls.find((c) => c.kind === "reply")!.body.messages[0]
-			.content;
-		expect(prompt).toContain("You have no one to introduce this turn.");
 	});
 });
 
@@ -175,7 +163,6 @@ describe("persona ids as Convex record keys", () => {
 				structure: {
 					personas: [personaPayload("$boss")],
 					referrals: [],
-					roots: ["$boss"],
 				},
 				collaborators: [],
 			}),
@@ -190,7 +177,7 @@ describe("persona ids as Convex record keys", () => {
 			t.run((ctx) =>
 				createCase(
 					ctx,
-					casePayload({ personas: [personaPayload("café")], roots: ["café"] }),
+					casePayload({ personas: [personaPayload("café")] }),
 					admin,
 				),
 			),
@@ -426,7 +413,7 @@ describe("persona graph structure", () => {
 		const referrals = Array.from({ length: 4999 }, (_, i) =>
 			referralEdge(`p${i}`, `p${i + 1}`, "next"),
 		);
-		expect(() => validateGraph(personas, referrals, ["p0"])).not.toThrow();
+		expect(() => validateGraph(personas, referrals)).not.toThrow();
 	});
 
 	// Tests that a cycle at the end of a long chain is still detected.
@@ -440,16 +427,25 @@ describe("persona graph structure", () => {
 			),
 			referralEdge("p499", "p250", "back"),
 		];
-		expect(() => validateGraph(personas, referrals, ["p0"])).toThrow(/cycle/i);
+		expect(() => validateGraph(personas, referrals)).toThrow(/cycle/i);
 	});
 
-	// Tests that a case with no root personas is rejected at save time.
+	// Tests that a case where every persona is referred by another, so none can start, is rejected at save time.
 	it("REGRESSION: rejects a case with no root personas at save time", async () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
 		await expect(
-			t.run((ctx) => createCase(ctx, casePayload({ roots: [] }), admin)),
-		).rejects.toThrow(/root/i);
+			t.run((ctx) =>
+				createCase(
+					ctx,
+					casePayload({
+						personas: [personaPayload("A"), personaPayload("B")],
+						referrals: [referralEdge("A", "B"), referralEdge("B", "A")],
+					}),
+					admin,
+				),
+			),
+		).rejects.toThrow(/cycle/i);
 	});
 
 	// Tests that an empty persona list is rejected at save time.
@@ -457,9 +453,7 @@ describe("persona graph structure", () => {
 		const t = newTestConvex();
 		const admin = await makeAdmin(t);
 		await expect(
-			t.run((ctx) =>
-				createCase(ctx, casePayload({ personas: [], roots: [] }), admin),
-			),
+			t.run((ctx) => createCase(ctx, casePayload({ personas: [] }), admin)),
 		).rejects.toThrow();
 	});
 });

@@ -76,10 +76,8 @@ export const test = base.extend<LiveFixtures>({
 				id,
 				name: personaName,
 				role,
-				profilePhoto: null,
 				knownFacts: "The vendor is Acme Supplies.",
 				personalityTraits: "",
-				availabilityMinutes: null,
 				files: [],
 			});
 			const { caseId } = await client.mutation(api.cases.create, {
@@ -95,7 +93,6 @@ export const test = base.extend<LiveFixtures>({
 						),
 					],
 					referrals: options.referrals ?? [],
-					roots: ["A"],
 				},
 				collaborators: [],
 			});

@@ -40,7 +40,7 @@ export type TurnContext = {
 };
 
 export type ReplyJob = {
-	replyId: Id<"runMessages">;
+	turnId: Id<"turns">;
 	runId: Id<"runs">;
 	personaId: string;
 	message: string;
@@ -60,7 +60,6 @@ export async function buildTurnContext(
 		.filter(
 			(referral) =>
 				!Object.hasOwn(run.unlockedAt, referral.toId) &&
-				!graph.roots.includes(referral.toId) &&
 				referral.conditions.trim(),
 		)
 		.map((referral) => {
@@ -91,8 +90,8 @@ export async function buildTurnContext(
 		];
 	});
 
-	const rows = await ctx.db
-		.query("runMessages")
+	const turns = await ctx.db
+		.query("turns")
 		.withIndex("by_run_persona", (q) =>
 			q
 				.eq("runId", run._id)
@@ -102,7 +101,7 @@ export async function buildTurnContext(
 		.filter((q) => q.eq(q.field("status"), "done"))
 		.order("desc")
 		.take(RECENT_HISTORY_LIMIT);
-	rows.reverse();
+	turns.reverse();
 
 	return {
 		caseBrief: c.brief,
@@ -110,17 +109,17 @@ export async function buildTurnContext(
 		persona,
 		pendingReferrals,
 		pendingFiles,
-		decisionHistory: rows.map((row) => ({
-			role: row.role,
-			content: row.content,
-		})),
+		decisionHistory: turns.flatMap((turn): DecisionMessage[] => [
+			{ role: "user", content: turn.studentMessage },
+			{ role: "assistant", content: turn.reply },
+		]),
 	};
 }
 
 // Generates the persona reply for a job and saves it, or saves a boundary reply if the message was flagged.
 export async function generateReply(
 	ctx: ActionCtx,
-	{ replyId, message, context }: ReplyJob,
+	{ turnId, message, context }: ReplyJob,
 ): Promise<void> {
 	const harassmentPromise = classifyHarassment(
 		message,
@@ -172,8 +171,7 @@ export async function generateReply(
 	const label = await harassmentPromise;
 	if (label !== "normal") {
 		await ctx.runMutation(internal.turn.applyBoundary, {
-			replyId,
-			label,
+			turnId,
 			personaName: context.persona.name,
 		});
 		return;
@@ -197,7 +195,7 @@ export async function generateReply(
 		.map((f) => ({ storageId: f.storageId }));
 
 	await ctx.runMutation(internal.turn.applyDecisions, {
-		replyId,
+		turnId,
 		reply,
 		unlockedReferrals,
 		sharedFiles,

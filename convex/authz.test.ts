@@ -43,7 +43,6 @@ function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 		structure: {
 			personas: [personaPayload("A")],
 			referrals: [],
-			roots: ["A"],
 		},
 		collaborators: [],
 		...overrides,
@@ -434,11 +433,11 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		const b = await startRun(t, "beta");
 
 		await t.run((ctx) =>
-			ctx.db.insert("runMessages", {
+			ctx.db.insert("turns", {
 				runId: a.runId,
 				personaId: "A",
-				role: "user",
-				content: "run A private message",
+				studentMessage: "run A private message",
+				reply: "run A private reply",
 				status: "done",
 			}),
 		);

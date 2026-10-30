@@ -91,7 +91,6 @@ describe("startSimulation", () => {
 					personaPayload("A", { name: "Alice" }),
 					personaPayload("B", { name: "Bob" }),
 				],
-				roots: ["A", "B"],
 			}),
 		});
 
@@ -243,7 +242,6 @@ describe("getSimulationState", () => {
 		const structure = caseStructure({
 			personas: [personaPayload("A"), personaPayload("B")],
 			referrals: [referralEdge("A", "B")],
-			roots: ["A"],
 		});
 		const state = await startRun(t, structure);
 		await t.run((ctx) =>
@@ -275,7 +273,6 @@ describe("exportSimulation", () => {
 				referralEdge("A", "C", "unlock Carl"),
 				referralEdge("B", "D", "unlock Dana"),
 			],
-			roots: ["A", "B"],
 		});
 		const state = await startRun(t, structure);
 		await t.run((ctx) =>
@@ -284,20 +281,11 @@ describe("exportSimulation", () => {
 			}),
 		);
 		await t.run((ctx) =>
-			ctx.db.insert("runMessages", {
+			ctx.db.insert("turns", {
 				runId: state.runId,
 				personaId: "C",
-				role: "user",
-				content: "hi Carl",
-				status: "done",
-			}),
-		);
-		await t.run((ctx) =>
-			ctx.db.insert("runMessages", {
-				runId: state.runId,
-				personaId: "C",
-				role: "assistant",
-				content: "Hello, I'm Carl.",
+				studentMessage: "hi Carl",
+				reply: "Hello, I'm Carl.",
 				status: "done",
 			}),
 		);
@@ -319,20 +307,15 @@ describe("exportSimulation with unfinished replies", () => {
 	it("leaves out a message with a pending reply and hides failed replies", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure());
-		await t.run(async (ctx) => {
-			for (const [role, content] of [
-				["user", "first"],
-				["assistant", "first reply"],
-			] as const) {
-				await ctx.db.insert("runMessages", {
-					runId: state.runId,
-					personaId: "A",
-					role,
-					content,
-					status: "done",
-				});
-			}
-		});
+		await t.run((ctx) =>
+			ctx.db.insert("turns", {
+				runId: state.runId,
+				personaId: "A",
+				studentMessage: "first",
+				reply: "first reply",
+				status: "done",
+			}),
+		);
 		await insertPendingReply(t, state.runId, "A", "still waiting");
 
 		const exported = await t.query(api.simulations.exportRun, {

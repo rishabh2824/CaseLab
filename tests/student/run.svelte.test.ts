@@ -55,7 +55,7 @@ function setHistory(
 		{
 			data: {
 				messages,
-				reply: reply && { ...reply, id: reply.id as Id<"runMessages"> },
+				reply: reply && { ...reply, id: reply.id as Id<"turns"> },
 			},
 		},
 	);
@@ -108,7 +108,7 @@ async function primeRun(
 
 beforeEach(() => {
 	session.clearRun();
-	sendMessage.mockResolvedValue({ replyId: "r1" as Id<"runMessages"> });
+	sendMessage.mockResolvedValue({ turnId: "r1" as Id<"turns"> });
 });
 
 afterEach(() => {

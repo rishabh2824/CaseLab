@@ -95,7 +95,6 @@ function makeCaseDoc(
 		structure: {
 			personas: [makePersonaPayload()],
 			referrals: [],
-			roots: ["p1"],
 		},
 		collaborators: [],
 		canEdit: true,
@@ -687,7 +686,6 @@ describe("CaseForm", () => {
 						makePersonaPayload({ id: "p2", name: "Bob" }),
 					],
 					referrals: [makeReferral("p1", "p2", "asked")],
-					roots: ["p1"],
 				},
 			});
 			stubLoadCase(doc);
@@ -717,7 +715,6 @@ describe("CaseForm", () => {
 						makePersonaPayload({ id: "p3", name: "Bob" }),
 					],
 					referrals: [makeReferral("p1", "p3"), makeReferral("p2", "p3")],
-					roots: ["p1", "p2"],
 				},
 			});
 			stubLoadCase(doc);
@@ -747,7 +744,6 @@ describe("CaseForm", () => {
 						makePersonaPayload({ id: "p2", name: "Bob" }),
 					],
 					referrals: [makeReferral("p1", "p2")],
-					roots: ["p1"],
 				},
 			});
 			stubLoadCase(doc);
@@ -803,7 +799,6 @@ describe("CaseForm", () => {
 				commonInformation: "Original background",
 				personas: [root, referred],
 				referrals: [makeReferral("root1", "ref1", "always")],
-				roots: ["root1"],
 			});
 			const tweaked = html
 				.replaceAll("Original Case", "Tweaked Case")
@@ -835,7 +830,6 @@ describe("CaseForm", () => {
 				commonInformation: "Imported background",
 				personas: [],
 				referrals: [],
-				roots: [],
 			});
 			const file = new File([html], "export.html", { type: "text/html" });
 			const user = userEvent.setup();
@@ -875,7 +869,6 @@ describe("CaseForm", () => {
 				commonInformation: "Imported background",
 				personas: [],
 				referrals: [],
-				roots: [],
 			});
 			const file = new File([html], "export.html", { type: "text/html" });
 			const user = userEvent.setup();

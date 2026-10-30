@@ -83,7 +83,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 				brief: "Brief",
 				accessCode: "seedcode",
 				ownerAdminId: ownerAdminId as Id<"admins">,
-				structure: { personas: [], referrals: [], roots: [] },
+				structure: { personas: [], referrals: [] },
 			}),
 		);
 	}
@@ -152,7 +152,6 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 				expiresAt: Date.now() + 1_000_000,
 				unlockedAt: {},
 				sharedFiles: [],
-				personaChatState: {},
 			}),
 		);
 

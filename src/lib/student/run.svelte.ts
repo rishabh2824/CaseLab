@@ -67,7 +67,7 @@ export class RunStore {
 	// The one clock everything time-based derives from, ticking once a second.
 	#now = $state(Date.now());
 	// The reply started by the last send, until the server reports it done or failed.
-	#awaitedReplyId = $state<string | null>(null);
+	#awaitedTurnId = $state<string | null>(null);
 
 	#runStateQuery = useQuery(api.simulations.get, () =>
 		session.runId ? { runId: session.runId as Id<"runs"> } : "skip",
@@ -154,9 +154,9 @@ export class RunStore {
 		});
 		$effect(() => {
 			const reply = this.#history?.reply;
-			if (!this.#awaitedReplyId || reply?.id !== this.#awaitedReplyId) return;
+			if (!this.#awaitedTurnId || reply?.id !== this.#awaitedTurnId) return;
 			if (reply.status === "pending") return;
-			this.#awaitedReplyId = null;
+			this.#awaitedTurnId = null;
 			if (reply.status === "failed")
 				notify(
 					"Something went wrong generating a reply. Please resend your message.",
@@ -281,7 +281,7 @@ export class RunStore {
 		message: string,
 	): Promise<void> {
 		try {
-			const { replyId } = await getConvexClient().mutation(
+			const { turnId } = await getConvexClient().mutation(
 				api.turn.sendMessage,
 				{
 					runId,
@@ -289,7 +289,7 @@ export class RunStore {
 					message,
 				},
 			);
-			this.#awaitedReplyId = replyId;
+			this.#awaitedTurnId = turnId;
 		} catch (err) {
 			const error = studentErrorData(err);
 			if (

@@ -11,6 +11,7 @@
 import type * as admins from "../admins.js";
 import type * as auth from "../auth.js";
 import type * as cases from "../cases.js";
+import type * as crons from "../crons.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
 import type * as lib_caseGraph from "../lib/caseGraph.js";
@@ -22,6 +23,7 @@ import type * as lib_messageRules from "../lib/messageRules.js";
 import type * as lib_prompt from "../lib/prompt.js";
 import type * as lib_studentErrors from "../lib/studentErrors.js";
 import type * as lib_turnState from "../lib/turnState.js";
+import type * as migrations from "../migrations.js";
 import type * as models_cases from "../models/cases.js";
 import type * as services_adminFunctions from "../services/adminFunctions.js";
 import type * as services_admins from "../services/admins.js";
@@ -43,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   admins: typeof admins;
   auth: typeof auth;
   cases: typeof cases;
+  crons: typeof crons;
   files: typeof files;
   http: typeof http;
   "lib/caseGraph": typeof lib_caseGraph;
@@ -54,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   "lib/prompt": typeof lib_prompt;
   "lib/studentErrors": typeof lib_studentErrors;
   "lib/turnState": typeof lib_turnState;
+  migrations: typeof migrations;
   "models/cases": typeof models_cases;
   "services/adminFunctions": typeof services_adminFunctions;
   "services/admins": typeof services_admins;

@@ -34,8 +34,8 @@ describe("cleanStructure", () => {
 		);
 
 		const persona = structure.personas[0]!;
-		expect(persona.profilePhoto).toBeNull();
-		expect(persona.files.map((f) => f.file?.fileName)).toEqual(["kept.pdf"]);
+		expect(persona.profilePhoto).toBeUndefined();
+		expect(persona.files.map((f) => f.file.fileName)).toEqual(["kept.pdf"]);
 		expect([...storageIds]).toEqual([present]);
 	});
 
@@ -58,7 +58,6 @@ describe("validateGraph", () => {
 			validateGraph(
 				[personaPayload("A"), personaPayload("B")],
 				[referralEdge("A", "B"), referralEdge("B", "A")],
-				["A"],
 			),
 		).toThrow(/cycle/i);
 	});
@@ -66,7 +65,7 @@ describe("validateGraph", () => {
 	// Tests that persona field errors are reported against the persona's id.
 	it("reports the first persona field error with the persona id", () => {
 		expect(() =>
-			validateGraph([personaPayload("A", { name: "  " })], [], ["A"]),
+			validateGraph([personaPayload("A", { name: "  " })], []),
 		).toThrow(/Persona A: Name is required/);
 	});
 
@@ -80,7 +79,7 @@ describe("validateGraph", () => {
 		"emoji-🙂",
 		`"><script>alert(1)</script>`,
 	])("rejects %j as a persona id", (badId) => {
-		expect(() => validateGraph([personaPayload(badId)], [], [badId])).toThrow(
+		expect(() => validateGraph([personaPayload(badId)], [])).toThrow(
 			/Invalid persona id/,
 		);
 	});
@@ -93,6 +92,6 @@ describe("validateGraph", () => {
 		"persona.A",
 		"A-B",
 	])("accepts %j as a persona id", (id) => {
-		expect(() => validateGraph([personaPayload(id)], [], [id])).not.toThrow();
+		expect(() => validateGraph([personaPayload(id)], [])).not.toThrow();
 	});
 });

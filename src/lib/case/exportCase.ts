@@ -13,14 +13,9 @@ const escapeHtml = (value: unknown): string =>
 
 const REACHABLE_FROM_SOURCE = reachableFrom.toString();
 
-// Serializes a value as JSON that is safe to embed in an inline script tag.
-const jsonForInlineScript = (value: unknown): string =>
-	JSON.stringify(value).replace(/</g, "\\u003c");
-
 type Graph = {
 	personas: Persona[];
 	referrals: ReferralEdge[];
-	roots: string[];
 };
 
 // Builds a starter graph with one root persona referring to one referred persona.
@@ -30,7 +25,6 @@ function scaffoldGraph(): Graph {
 	return {
 		personas: [root, referred],
 		referrals: [{ fromId: root.id, toId: referred.id, conditions: "" }],
-		roots: [root.id],
 	};
 }
 
@@ -112,35 +106,19 @@ function filesBlockMarkup(persona: Persona | null | undefined): string {
   </div>`;
 }
 
-// Renders a persona card, with a fixed-root chip for the required first root.
-function personaCardMarkup(
-	persona: Persona,
-	isRoot: boolean,
-	isFixedRoot: boolean,
-): string {
-	const availabilityHint = isRoot
-		? "Blank = the whole simulation."
-		: "Counts from when they're unlocked.";
-
-	const headControls = isFixedRoot
-		? `<span class="chip chip--fixed-root">Root &middot; required</span>`
-		: `<select class="persona-type-select" data-role="persona-type">
-        <option value="root" ${isRoot ? "selected" : ""}>Root (available from the start)</option>
-        <option value="referred" ${isRoot ? "" : "selected"}>Referred (unlocked later)</option>
-      </select>
-      <button type="button" class="btn-text btn-remove" data-action="remove-persona">Remove persona</button>`;
-
-	return `<article class="persona-card" data-persona-id="${escapeHtml(persona.id)}" data-persona-root="${isRoot}" data-fixed-root="${isFixedRoot}">
+// Renders a persona card.
+function personaCardMarkup(persona: Persona): string {
+	return `<article class="persona-card" data-persona-id="${escapeHtml(persona.id)}">
     <div class="persona-card-head">
       <span class="chip chip--persona">${escapeHtml(persona.id.slice(0, 6))}</span>
-      ${headControls}
+      <button type="button" class="btn-text btn-remove" data-action="remove-persona">Remove persona</button>
     </div>
     ${fields({ field: "name", label: "Name", value: persona.name, required: true })}
     ${fields({ field: "role", label: "Role / Title", value: persona.role, required: true })}
     ${fields({
 			field: "availability_minutes",
 			label: "Available for (minutes)",
-			hint: availabilityHint,
+			hint: "Blank = the whole simulation. For a referred persona, counts from when they're unlocked.",
 			value: persona.availabilityMinutes,
 		})}
     ${fields({
@@ -228,8 +206,6 @@ const STYLES = `
   .persona-card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
   .chip { font-family: var(--font-mono); font-size: 11px; font-weight: 600; border-radius: 5px; padding: 2px 7px; letter-spacing: 0.02em; }
   .chip--persona { background: var(--ink); color: var(--paper); }
-  .chip--fixed-root { background: var(--brand-tint); color: var(--brand-dark); border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent); border-radius: 999px; padding: 3px 10px; }
-  .persona-type-select { font-family: var(--font-mono); font-size: 11.5px; border: 1px solid var(--line-strong); border-radius: 999px; padding: 3px 10px; background: var(--paper); color: var(--muted); }
   .btn-text { border: none; background: none; font-family: var(--font-body); font-size: 12.5px; font-weight: 600; color: var(--brand); cursor: pointer; padding: 2px 4px; margin-left: auto; }
   .btn-text:hover { color: var(--brand-dark); text-decoration: underline; }
   .btn-add { border: 1px dashed var(--line-strong); background: none; color: var(--muted); font-family: var(--font-body); font-weight: 600; font-size: 12.5px; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
@@ -257,7 +233,6 @@ export type BuildHTMLFormInput = {
 	commonInformation: string;
 	personas?: Persona[] | null;
 	referrals?: ReferralEdge[] | null;
-	roots?: string[] | null;
 };
 
 // Builds the standalone, editable HTML export of a case, including its embedded script.
@@ -269,24 +244,13 @@ export function buildHTMLForm({
 	commonInformation,
 	personas,
 	referrals,
-	roots,
 }: BuildHTMLFormInput): string {
 	const graph: Graph =
 		Array.isArray(personas) && personas.length > 0
-			? { personas, referrals: referrals ?? [], roots: roots ?? [] }
+			? { personas, referrals: referrals ?? [] }
 			: scaffoldGraph();
 
-	const fixedRootId = graph.roots[0] ?? null;
-
-	const personaCards = graph.personas
-		.map((persona) =>
-			personaCardMarkup(
-				persona,
-				graph.roots.includes(persona.id),
-				persona.id === fixedRootId,
-			),
-		)
-		.join("\n");
+	const personaCards = graph.personas.map(personaCardMarkup).join("\n");
 	const referralRows = graph.referrals
 		.map((referral) => referralRowMarkup(referral, graph.personas))
 		.join("\n");
@@ -356,8 +320,8 @@ export function buildHTMLForm({
 
                         <h2 class="section-title">Personas</h2>
                         <p class="section-hint">
-                            Every persona gets one card, whether available from the start (Root) or unlocked later via a
-                            referral (Referred) — switch that with the dropdown on each card.
+                            Every persona gets one card. A persona nobody refers to is available from the start; add a
+                            referral to a persona to have it unlocked later instead.
                         </p>
                         <div id="personas-list">${personaCards}</div>
                         <button type="button" class="btn-add" id="add-persona-btn">+ Add persona</button>
@@ -379,7 +343,7 @@ export function buildHTMLForm({
             </div>
 
             <template id="persona-template">
-                ${personaCardMarkup(createEmptyPersona(), true, false)}
+                ${personaCardMarkup(createEmptyPersona())}
             </template>
 
             <template id="referral-template">
@@ -392,7 +356,6 @@ export function buildHTMLForm({
 
             <script>
 (function () {
-  var FIXED_ROOT_ID = ${jsonForInlineScript(fixedRootId)};
   var personasList = document.getElementById('personas-list');
   var referralsList = document.getElementById('referrals-list');
   var personaTemplate = document.getElementById('persona-template');
@@ -408,13 +371,6 @@ export function buildHTMLForm({
         var nameField = el.querySelector('textarea[data-field="name"]');
         return { id: el.getAttribute('data-persona-id'), name: (nameField && nameField.value.trim()) || '' };
       }
-    );
-  }
-
-  function currentRoots() {
-    return Array.prototype.map.call(
-      document.querySelectorAll('[data-persona-root="true"]'),
-      function (el) { return el.getAttribute('data-persona-id'); }
     );
   }
 
@@ -435,8 +391,16 @@ export function buildHTMLForm({
     });
   }
 
-  function pruneUnreachablePersonas() {
-    var stillReachable = reachableFrom(currentRoots(), currentReferralEdges());
+  // The personas nobody refers to: available from the start.
+  function currentRoots() {
+    var referred = {};
+    currentReferralEdges().forEach(function (edge) { referred[edge.toId] = true; });
+    return currentPersonas().map(function (p) { return p.id; }).filter(function (id) { return !referred[id]; });
+  }
+
+  // Removes the personas the given roots no longer reach, so deleting a persona or referral never promotes someone it introduced to a starting persona.
+  function pruneUnreachablePersonas(roots) {
+    var stillReachable = reachableFrom(roots, currentReferralEdges());
     document.querySelectorAll('[data-persona-id]').forEach(function (card) {
       var id = card.getAttribute('data-persona-id');
       if (stillReachable.has(id)) return;
@@ -473,11 +437,12 @@ export function buildHTMLForm({
   }
 
   function removePersona(card) {
+    if (currentPersonas().length <= 1) return;
     var id = card.getAttribute('data-persona-id');
-    if (id === FIXED_ROOT_ID) return;
+    var roots = currentRoots().filter(function (rootId) { return rootId !== id; });
     removeReferralEdgesTouching(id);
     card.remove();
-    pruneUnreachablePersonas();
+    pruneUnreachablePersonas(roots);
     refreshReferralOptions();
   }
 
@@ -490,8 +455,9 @@ export function buildHTMLForm({
   }
 
   function removeReferral(row) {
+    var roots = currentRoots();
     row.remove();
-    pruneUnreachablePersonas();
+    pruneUnreachablePersonas(roots);
     refreshReferralOptions();
   }
 
@@ -528,10 +494,6 @@ export function buildHTMLForm({
   });
 
   document.addEventListener('change', function (event) {
-    if (event.target.getAttribute('data-role') === 'persona-type') {
-      var card = event.target.closest('.persona-card');
-      card.setAttribute('data-persona-root', event.target.value === 'root' ? 'true' : 'false');
-    }
     if (event.target.getAttribute('data-field') === 'name') {
       refreshReferralOptions();
     }

@@ -50,7 +50,6 @@ function payload(overrides: Record<string, unknown> = {}) {
 		structure: {
 			personas: [personaPayload("A")],
 			referrals: [],
-			roots: ["A"],
 		},
 		collaborators: [],
 		...overrides,
@@ -90,19 +89,19 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		).resolves.toBeNull();
 	});
 
-	// Tests that destroying a run leaves no orphaned messages, including a pending reply.
-	it("leaves no orphaned messages behind", async () => {
+	// Tests that destroying a run leaves no orphaned turns, including a pending one.
+	it("leaves no orphaned turns behind", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
 		const state = await t.mutation(api.simulations.start, {
 			accessCode: "sterling",
 		});
 		await t.run(async (ctx) => {
-			await ctx.db.insert("runMessages", {
+			await ctx.db.insert("turns", {
 				runId: state.runId,
 				personaId: "A",
-				role: "user",
-				content: "hello",
+				studentMessage: "hello",
+				reply: "hi there",
 				status: "done",
 			});
 		});
@@ -112,9 +111,9 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 
 		const leftovers = await t.run(async (ctx) => ({
 			run: await ctx.db.get(state.runId),
-			messages: await ctx.db.query("runMessages").collect(),
+			turns: await ctx.db.query("turns").collect(),
 		}));
-		expect(leftovers).toEqual({ run: null, messages: [] });
+		expect(leftovers).toEqual({ run: null, turns: [] });
 	});
 
 	// Tests that startSimulation schedules a destroy that really deletes the run when it fires.

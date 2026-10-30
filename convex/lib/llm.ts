@@ -126,7 +126,8 @@ export async function generatePersonaReply(
 	}
 }
 
-export const RECENT_HISTORY_LIMIT = 10;
+// How many recent turns (a student message and its reply) reach the model.
+export const RECENT_HISTORY_LIMIT = 5;
 
 // Formats the conversation, already limited to the recent turns, as 'role: content' lines.
 function formatTranscript(conversation: TranscriptMessage[]): string {

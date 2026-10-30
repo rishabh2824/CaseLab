@@ -147,8 +147,8 @@ export async function buildStructure(
 	ctx: QueryCtx,
 	structure: CaseStructure,
 ): Promise<{ structure: CaseStructure; storageIds: Set<Id<"_storage">> }> {
-	const { personas, referrals, roots } = structure;
-	validateGraph(personas, referrals, roots);
+	const { personas, referrals } = structure;
+	validateGraph(personas, referrals);
 	const present = await existingStorageIds(
 		ctx,
 		personas.flatMap((persona) => [
@@ -267,7 +267,7 @@ async function resolveCasePayload(
 		accessCode: string;
 		duration: number | undefined;
 		structure: CaseStructure;
-		teachingNotes: Exclude<FileRefPayload, null> | undefined;
+		teachingNotes: FileRefPayload | undefined;
 	};
 	collaborators: CollaboratorPayload[];
 	storageIds: Set<Id<"_storage">>;
@@ -300,9 +300,7 @@ async function resolveCasePayload(
 		ctx,
 		payload.structure,
 	);
-	const notesPresent = await existingStorageIds(ctx, [
-		payload.teachingNotes ?? null,
-	]);
+	const notesPresent = await existingStorageIds(ctx, [payload.teachingNotes]);
 	const teachingNotes =
 		payload.teachingNotes && notesPresent.has(payload.teachingNotes.storageId)
 			? payload.teachingNotes

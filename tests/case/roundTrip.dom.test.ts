@@ -1,5 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
+import { rootIds } from "../../convex/lib/caseGraph.js";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import { parseHTMLForm } from "../../src/lib/case/importCase.js";
 import type { Persona, ReferralEdge } from "../../src/lib/types.js";
@@ -55,7 +56,6 @@ type GeneratedCase = {
 	commonInformation: string;
 	personas: Array<Persona & { knownFacts: string; personalityTraits: string }>;
 	referrals: ReferralEdge[];
-	roots: string[];
 };
 
 const caseArb: fc.Arbitrary<GeneratedCase> = fc
@@ -86,10 +86,6 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 				textArb,
 				textArb,
 				fc.option(fc.integer({ min: 0, max: 600 }), { nil: null }),
-				fc.array(fc.boolean(), {
-					minLength: Math.max(n - 1, 0),
-					maxLength: Math.max(n - 1, 0),
-				}),
 			)
 			.map(
 				([
@@ -102,7 +98,6 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 					initialBrief,
 					commonInformation,
 					simulationDurationMinutes,
-					extraRootFlags,
 				]) => {
 					const personas: Array<
 						Persona & { knownFacts: string; personalityTraits: string }
@@ -136,11 +131,6 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 						if (extraFlags[k]) addEdge(i, j, k % n);
 					});
 
-					const roots = [
-						ids[0] as string,
-						...ids.slice(1).filter((_, i) => extraRootFlags[i]),
-					];
-
 					return {
 						caseName,
 						accessCode,
@@ -149,7 +139,6 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 						commonInformation,
 						personas,
 						referrals,
-						roots,
 					};
 				},
 			);
@@ -160,7 +149,7 @@ const edgeKey = (e: ReferralEdge) =>
 	`${e.fromId}->${e.toId}::${(e.conditions ?? "").trim()}`;
 
 describe("buildHTMLForm / parseHTMLForm round trip", () => {
-	// Tests that exporting then importing a case reproduces the same personas, referrals and roots.
+	// Tests that exporting then importing a case reproduces the same personas, referrals and roots (the personas nobody refers to).
 	it("reconstructs the same personas, referrals, and roots", () => {
 		fc.assert(
 			fc.property(caseArb, (generated) => {
@@ -182,7 +171,17 @@ describe("buildHTMLForm / parseHTMLForm round trip", () => {
 						data.personas[i]?.id,
 					]),
 				);
-				expect(data.roots).toEqual(generated.roots.map((id) => idMap.get(id)));
+				expect(
+					rootIds(
+						data.personas.map((persona) => persona.id),
+						data.referrals,
+					),
+				).toEqual(
+					rootIds(
+						generated.personas.map((persona) => persona.id),
+						generated.referrals,
+					).map((id) => idMap.get(id)),
+				);
 				for (const [imported, original] of zip(
 					data.personas,
 					generated.personas,

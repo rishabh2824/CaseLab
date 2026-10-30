@@ -12,13 +12,12 @@ import { getPersonaFieldErrors } from "./caseRules";
 // Persona ids become record keys in a run, and Convex record keys may not start with "_" or "$".
 const PERSONA_ID_FORMAT = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 
-// Validates a case's personas, roots and referrals for saving: the shared graph rules, safe persona ids and required persona fields.
+// Validates a case's personas and referrals for saving: the shared graph rules, safe persona ids and required persona fields.
 export function validateGraph(
 	personas: PersonaPayload[],
 	referrals: ReferralEdgePayload[],
-	roots: string[],
 ): void {
-	const problem = validateStructure({ personas, referrals, roots });
+	const problem = validateStructure({ personas, referrals });
 	if (problem) throw new ConvexError(problem);
 
 	for (const { id } of personas) {
@@ -37,11 +36,11 @@ export function validateGraph(
 
 // Trims persona text, drops file references whose upload is gone and returns the cleaned structure plus the storage ids it uses.
 export function cleanStructure(
-	{ personas, referrals, roots }: CaseStructure,
+	{ personas, referrals }: CaseStructure,
 	presentStorageIds: Set<Id<"_storage">>,
 ): { structure: CaseStructure; storageIds: Set<Id<"_storage">> } {
-	const kept = (ref: FileRefPayload): FileRefPayload =>
-		ref && presentStorageIds.has(ref.storageId) ? ref : null;
+	const kept = (ref: FileRefPayload | undefined): FileRefPayload | undefined =>
+		ref && presentStorageIds.has(ref.storageId) ? ref : undefined;
 
 	const outPersonas = personas.map((persona) => ({
 		id: persona.id,
@@ -66,7 +65,7 @@ export function cleanStructure(
 		),
 	);
 	return {
-		structure: { personas: outPersonas, referrals, roots },
+		structure: { personas: outPersonas, referrals },
 		storageIds,
 	};
 }

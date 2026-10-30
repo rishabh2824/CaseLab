@@ -21,19 +21,21 @@ export const reachableFrom = (
 	return reachable;
 };
 
+// Returns the ids nobody refers to: the root personas, available from the start. In a graph without cycles every other persona is reachable from one of them.
+export function rootIds(ids: string[], edges: GraphEdge[]): string[] {
+	const referred = new Set(edges.map((edge) => edge.toId));
+	return ids.filter((id) => !referred.has(id));
+}
+
 // Checks the shape of a case's persona graph and returns the first problem as a message, or null when it is sound. Shared by the server (on save) and the client (on import).
 export function validateStructure({
 	personas,
 	referrals,
-	roots,
 }: {
-	personas: { id: string; name: string }[];
+	personas: { id: string }[];
 	referrals: GraphEdge[];
-	roots: string[];
 }): string | null {
 	if (personas.length === 0) return "A case needs at least one persona.";
-	if (roots.length === 0)
-		return "A case needs at least one root persona to start from.";
 
 	const ids = personas.map((persona) => persona.id);
 	const known = new Set<string>();
@@ -41,13 +43,6 @@ export function validateStructure({
 	for (const id of ids) (known.has(id) ? duplicates : known).add(id);
 	if (duplicates.size > 0)
 		return `Duplicate persona id(s): ${[...duplicates].sort().join(", ")}`;
-
-	const seenRoots = new Set<string>();
-	for (const rootId of roots) {
-		if (!known.has(rootId)) return `Unknown root persona id: ${rootId}`;
-		if (seenRoots.has(rootId)) return `Duplicate root persona id: ${rootId}`;
-		seenRoots.add(rootId);
-	}
 
 	const seenReferrals = new Set<string>();
 	for (const referral of referrals) {
@@ -62,13 +57,6 @@ export function validateStructure({
 	}
 
 	if (hasCycle(ids, referrals)) return "Referrals can't form a cycle.";
-
-	const reachable = reachableFrom(roots, referrals);
-	const unreachable = personas.find((persona) => !reachable.has(persona.id));
-	if (unreachable) {
-		const name = unreachable.name.trim();
-		return `Persona ${unreachable.id}${name ? ` (${name})` : ""} isn't connected to any root persona.`;
-	}
 	return null;
 }
 
@@ -77,7 +65,7 @@ export function hasCycle(ids: string[], edges: GraphEdge[]): boolean {
 	const incoming = new Map(ids.map((id) => [id, 0]));
 	for (const edge of edges)
 		incoming.set(edge.toId, (incoming.get(edge.toId) ?? 0) + 1);
-	const ready = ids.filter((id) => incoming.get(id) === 0);
+	const ready = rootIds(ids, edges);
 	let peeled = 0;
 	while (ready.length > 0) {
 		const currentId = ready.pop() as string;

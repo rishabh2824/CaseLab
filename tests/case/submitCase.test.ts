@@ -19,7 +19,6 @@ import { server } from "../support/msw.js";
 type SentStructure = {
 	personas: PersonaPayload[];
 	referrals: ReferralEdge[];
-	roots: string[];
 };
 
 const generateUploadUrls = convexFake.mutation(api.uploads.generateUploadUrls);
@@ -106,7 +105,6 @@ function baseInput(overrides: Partial<SubmitCaseInput> = {}): SubmitCaseInput {
 		accessCode: "abc",
 		personas: [],
 		referrals: [],
-		roots: [],
 		collaborators: [],
 		...overrides,
 	};
@@ -242,8 +240,8 @@ describe("submitCase — file attachments", () => {
 		expect(sentFile?.perceivedContents).toBe("budget");
 	});
 
-	// Tests that an attachment with a null file is kept as-is without an upload.
-	it("preserves a file:null attachment entry as-is, uploading nothing for it", async () => {
+	// Tests that an attachment row with no file is dropped from the payload without an upload.
+	it("drops a file:null attachment entry, uploading nothing for it", async () => {
 		const { uploadCountRequests, createRequests } = stubMutations();
 		const persona = makePersona({
 			files: [{ file: null, shareConditions: "never", perceivedContents: "" }],
@@ -254,7 +252,7 @@ describe("submitCase — file attachments", () => {
 		expect(uploadCountRequests).toEqual([]);
 		expect(createRequests).toHaveLength(1);
 		const personas = (createRequests[0]!.structure as SentStructure).personas;
-		expect(personas[0]?.files?.[0]?.file).toBeNull();
+		expect(personas[0]?.files).toEqual([]);
 	});
 });
 
@@ -419,8 +417,8 @@ describe("submitCase — upload failures", () => {
 });
 
 describe("submitCase — payload shaping", () => {
-	// Tests that text fields are trimmed, and referrals (conditions untrimmed), roots and collaborators are passed through.
-	it("trims top-level text fields and passes referrals (conditions untrimmed), roots and collaborator ids through unchanged", async () => {
+	// Tests that text fields are trimmed, and referrals (conditions untrimmed) and collaborators are passed through.
+	it("trims top-level text fields and passes referrals (conditions untrimmed) and collaborator ids through unchanged", async () => {
 		const { createRequests } = stubMutations();
 
 		await submitCase(
@@ -430,7 +428,6 @@ describe("submitCase — payload shaping", () => {
 				commonInformation: "  Background context.  ",
 				accessCode: "  abc  ",
 				referrals: [{ fromId: "p1", toId: "p2", conditions: "  when asked  " }],
-				roots: ["p1"],
 				collaborators: [
 					{ adminId: "admin2" as Id<"admins">, access: "edit" },
 					{ adminId: "admin5" as Id<"admins">, access: "view" },
@@ -448,11 +445,40 @@ describe("submitCase — payload shaping", () => {
 		expect((body.structure as SentStructure).referrals).toEqual([
 			{ fromId: "p1", toId: "p2", conditions: "  when asked  " },
 		]);
-		expect((body.structure as SentStructure).roots).toEqual(["p1"]);
 		expect(body.collaborators).toEqual([
 			{ adminId: "admin2", access: "edit" },
 			{ adminId: "admin5", access: "view" },
 		]);
+	});
+});
+
+describe("submitCase — empty values", () => {
+	// Tests that a missing photo, a missing availability limit and a file row without a file are left out of the payload.
+	it("omits the photo, the availability limit and file rows that have no file", async () => {
+		const { createRequests } = stubMutations();
+		const kept = makePersona({
+			id: "p1",
+			availabilityMinutes: 15,
+			files: [
+				{ file: null, shareConditions: "x", perceivedContents: "y" },
+				{
+					file: { storageId: "s1" as Id<"_storage">, fileName: "a.pdf" },
+					shareConditions: "x",
+					perceivedContents: "y",
+				},
+			],
+		});
+		const bare = makePersona({ id: "p2" });
+
+		await submitCase(baseInput({ personas: [kept, bare] }));
+
+		const [sentKept, sentBare] = (createRequests[0]!.structure as SentStructure)
+			.personas;
+		expect(sentKept).not.toHaveProperty("profilePhoto");
+		expect(sentKept?.availabilityMinutes).toBe(15);
+		expect(sentKept?.files).toHaveLength(1);
+		expect(sentBare).not.toHaveProperty("profilePhoto");
+		expect(sentBare).not.toHaveProperty("availabilityMinutes");
 	});
 });
 
@@ -468,7 +494,6 @@ describe("submitCase — full payload", () => {
 					makePersona({ id: "p2", name: "Bob", role: "COO" }),
 				],
 				referrals: [{ fromId: "p1", toId: "p2", conditions: "asks for Bob" }],
-				roots: ["p1"],
 				collaborators: [{ adminId: "admin2" as Id<"admins">, access: "edit" }],
 			}),
 		);
@@ -489,23 +514,19 @@ describe("submitCase — full payload", () => {
 			  "structure": {
 			    "personas": [
 			      {
-			        "availabilityMinutes": null,
 			        "files": [],
 			        "id": "p1",
 			        "knownFacts": "",
 			        "name": "Mary",
 			        "personalityTraits": "",
-			        "profilePhoto": null,
 			        "role": "CFO",
 			      },
 			      {
-			        "availabilityMinutes": null,
 			        "files": [],
 			        "id": "p2",
 			        "knownFacts": "",
 			        "name": "Bob",
 			        "personalityTraits": "",
-			        "profilePhoto": null,
 			        "role": "COO",
 			      },
 			    ],
@@ -515,9 +536,6 @@ describe("submitCase — full payload", () => {
 			        "fromId": "p1",
 			        "toId": "p2",
 			      },
-			    ],
-			    "roots": [
-			      "p1",
 			    ],
 			  },
 			  "teachingNotes": undefined,

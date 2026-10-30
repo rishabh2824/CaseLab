@@ -1,4 +1,4 @@
-import { reachableFrom } from "../../../convex/lib/caseGraph.js";
+import { reachableFrom, rootIds } from "../../../convex/lib/caseGraph.js";
 import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
 import type { Persona, ReferralEdge } from "../types.js";
 import {
@@ -11,7 +11,6 @@ import {
 export type GraphInput = {
 	personas: Persona[];
 	referrals: ReferralEdge[];
-	roots: string[];
 };
 
 export type GraphValidation = {
@@ -22,13 +21,19 @@ export type GraphValidation = {
 export class CaseGraph {
 	personas = $state<Persona[]>([]);
 	referrals = $state<ReferralEdge[]>([]);
-	roots = $state<string[]>([]);
 
 	byId: Map<string, Persona> = $derived(personasById(this.personas));
+	// The personas nobody refers to: available from the start.
+	roots: string[] = $derived(
+		rootIds(
+			this.personas.map((persona) => persona.id),
+			this.referrals,
+		),
+	);
 
 	validation: GraphValidation = $derived.by(() => {
 		const rootsError =
-			this.roots.length < 1 ? "At least 1 persona is required" : null;
+			this.personas.length < 1 ? "At least 1 persona is required" : null;
 		const hasAnyPersonaError = this.personas.some((persona) =>
 			hasFieldErrors(getPersonaFieldErrors(persona)),
 		);
@@ -38,18 +43,16 @@ export class CaseGraph {
 		};
 	});
 
-	// Replaces the graph's personas, referrals and roots.
+	// Replaces the graph's personas and referrals.
 	load(input: GraphInput): void {
 		this.personas = input.personas;
 		this.referrals = input.referrals;
-		this.roots = input.roots;
 	}
 
 	// Adds a new blank root persona and returns it.
 	addRoot(overrides?: Partial<Persona>): Persona {
 		const persona = createEmptyPersona(overrides);
 		this.personas = [...this.personas, persona];
-		this.roots = [...this.roots, persona.id];
 		return persona;
 	}
 
@@ -71,9 +74,7 @@ export class CaseGraph {
 
 	// Removes a persona, the referrals touching it and everyone reachable only through it.
 	removePersona(personaId: string): void {
-		const toRemove = this.removalSet(personaId);
-		this.#applyRemoval(toRemove);
-		this.roots = this.roots.filter((id) => !toRemove.has(id));
+		this.#applyRemoval(this.removalSet(personaId));
 	}
 
 	// Adds a blank referred persona linked from the given persona and returns both.
@@ -111,12 +112,13 @@ export class CaseGraph {
 		this.referrals = [...this.referrals, createEmptyReferral({ fromId, toId })];
 	}
 
-	// Removes one referral, along with anyone it leaves unreachable.
+	// Removes one referral, along with anyone it leaves unreachable. Without that, the persona it introduced would become a starting persona.
 	unlink(fromId: string, toId: string): void {
+		const roots = this.roots;
 		this.referrals = this.referrals.filter(
 			(referral) => !(referral.fromId === fromId && referral.toId === toId),
 		);
-		const reachable = reachableFrom(this.roots, this.referrals);
+		const reachable = reachableFrom(roots, this.referrals);
 		this.#applyRemoval(
 			new Set(
 				this.personas

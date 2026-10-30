@@ -24,34 +24,34 @@ export function newTestConvex() {
 	return t;
 }
 
-// Waits until a reply is no longer pending, failing if it takes too long.
+// Waits until a turn is no longer pending, failing if it takes too long.
 export async function settleReply(
 	t: ReturnType<typeof newTestConvex>,
-	replyId: Id<"runMessages">,
+	turnId: Id<"turns">,
 ): Promise<void> {
 	await vi.waitFor(
 		async () => {
-			const row = await t.run((ctx) => ctx.db.get("runMessages", replyId));
+			const row = await t.run((ctx) => ctx.db.get("turns", turnId));
 			if (row?.status === "pending") throw new Error("Reply is still pending.");
 		},
 		{ timeout: 5000, interval: 5 },
 	);
 }
 
-// Sends a student message, waits for the reply to settle and returns the reply row id.
+// Sends a student message, waits for the reply to settle and returns the turn id.
 export async function sendTurn(
 	t: ReturnType<typeof newTestConvex>,
 	runId: Id<"runs">,
 	personaId: string,
 	message: string,
-): Promise<Id<"runMessages">> {
-	const { replyId } = await t.mutation(api.turn.sendMessage, {
+): Promise<Id<"turns">> {
+	const { turnId } = await t.mutation(api.turn.sendMessage, {
 		runId,
 		personaId,
 		message,
 	});
-	await settleReply(t, replyId);
-	return replyId;
+	await settleReply(t, turnId);
+	return turnId;
 }
 
 // Returns a persona's visible chat messages for a run.
@@ -78,30 +78,22 @@ export async function lastReply(
 	return history.reply;
 }
 
-// Inserts a student message with a pending reply, without starting a reply, and returns the reply id.
+// Inserts a pending turn for a student message, without starting a reply, and returns the turn id.
 export async function insertPendingReply(
 	t: ReturnType<typeof newTestConvex>,
 	runId: Id<"runs">,
 	personaId: string,
 	message: string,
 ) {
-	return await t.run(async (ctx) => {
-		const userMessageId = await ctx.db.insert("runMessages", {
+	return await t.run((ctx) =>
+		ctx.db.insert("turns", {
 			runId,
-			personaId: personaId,
-			role: "user",
-			content: message,
-			status: "done",
-		});
-		return await ctx.db.insert("runMessages", {
-			runId,
-			personaId: personaId,
-			role: "assistant",
-			content: "",
+			personaId,
+			studentMessage: message,
+			reply: "",
 			status: "pending",
-			userMessageId,
-		});
-	});
+		}),
+	);
 }
 
 // Creates a Better Auth user and session for an email and returns a test client acting as them.
@@ -187,7 +179,6 @@ export function casePayload(
 	const {
 		personas = [personaPayload("A")],
 		referrals = [],
-		roots = ["A"],
 		...rest
 	} = overrides;
 	return {
@@ -197,7 +188,7 @@ export function casePayload(
 		accessCode: uniqueAccessCode(),
 		collaborators: [],
 		...rest,
-		structure: { personas, referrals, roots },
+		structure: { personas, referrals },
 	};
 }
 

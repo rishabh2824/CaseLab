@@ -10,8 +10,6 @@ import type {
 	ReferralEdge,
 } from "../types.js";
 
-type UploadedFileRef = Exclude<FileRefPayload, null>;
-
 // Requests the given number of upload URLs from Convex.
 async function generateUploadUrls(count: number): Promise<string[]> {
 	if (count === 0) return [];
@@ -24,7 +22,7 @@ async function generateUploadUrls(count: number): Promise<string[]> {
 async function putToConvexStorage(
 	file: File,
 	uploadUrl: string,
-): Promise<UploadedFileRef> {
+): Promise<FileRefPayload> {
 	const response = await fetch(uploadUrl, {
 		method: "POST",
 		headers: { "Content-Type": file.type || "application/octet-stream" },
@@ -45,7 +43,7 @@ async function putToConvexStorage(
 // Collects every new File (teaching notes, profile photos and attachments) that still needs uploading.
 function collectPendingUploads(
 	personas: Persona[],
-	teachingNotes: File | FileRefPayload,
+	teachingNotes: File | FileRefPayload | null,
 ): File[] {
 	const files: File[] = [];
 	if (teachingNotes instanceof File) files.push(teachingNotes);
@@ -61,14 +59,14 @@ function collectPendingUploads(
 // Uploads all pending files, discarding the successful ones and throwing if any upload fails.
 async function uploadAll(
 	personas: Persona[],
-	teachingNotes: File | FileRefPayload,
-): Promise<Map<File, UploadedFileRef>> {
+	teachingNotes: File | FileRefPayload | null,
+): Promise<Map<File, FileRefPayload>> {
 	const pending = collectPendingUploads(personas, teachingNotes);
 	const uploadUrls = await generateUploadUrls(pending.length);
 	const settled = await Promise.allSettled(
 		pending.map((file, i) => putToConvexStorage(file, uploadUrls[i] as string)),
 	);
-	const succeeded = new Map<File, UploadedFileRef>();
+	const succeeded = new Map<File, FileRefPayload>();
 	const failures: unknown[] = [];
 	settled.forEach((result, i) => {
 		if (result.status === "fulfilled") {
@@ -87,26 +85,29 @@ async function uploadAll(
 	return succeeded;
 }
 
-// Swaps a persona's new File objects for their uploaded references.
+// Swaps a persona's new File objects for their uploaded references, and leaves out whatever is empty: no photo, no availability limit, and file rows without a file.
 function buildPersonaPayload(
 	persona: Persona,
-	uploaded: Map<File, UploadedFileRef>,
+	uploaded: Map<File, FileRefPayload>,
 ): PersonaPayload {
-	const profilePhoto =
-		persona.profilePhoto instanceof File
-			? (uploaded.get(persona.profilePhoto) ?? null)
-			: persona.profilePhoto;
-	const files = persona.files.map((entry) => {
-		if (!(entry.file instanceof File))
-			return { ...entry, file: entry.file ?? null };
-		return { ...entry, file: uploaded.get(entry.file) ?? null };
-	});
-	return { ...persona, profilePhoto, files };
+	const { profilePhoto, availabilityMinutes, files, ...rest } = persona;
+	const photo =
+		profilePhoto instanceof File ? uploaded.get(profilePhoto) : profilePhoto;
+	return {
+		...rest,
+		...(photo ? { profilePhoto: photo } : {}),
+		...(availabilityMinutes !== null ? { availabilityMinutes } : {}),
+		files: files.flatMap((entry) => {
+			const file =
+				entry.file instanceof File ? uploaded.get(entry.file) : entry.file;
+			return file ? [{ ...entry, file }] : [];
+		}),
+	};
 }
 
 // Deletes freshly uploaded files from storage, ignoring any errors.
 async function discardNewUploads(
-	uploaded: Map<File, UploadedFileRef>,
+	uploaded: Map<File, FileRefPayload>,
 ): Promise<void> {
 	if (uploaded.size === 0) return;
 	const storageIds = [...uploaded.values()].map((ref) => ref.storageId);
@@ -126,8 +127,7 @@ export type SubmitCaseInput = {
 	accessCode: string;
 	personas: Persona[];
 	referrals: ReferralEdge[];
-	roots: string[];
-	teachingNotes?: File | FileRefPayload;
+	teachingNotes?: File | FileRefPayload | null;
 	collaborators: CollaboratorPayload[];
 };
 
@@ -141,7 +141,6 @@ export async function submitCase({
 	accessCode,
 	personas,
 	referrals,
-	roots,
 	teachingNotes = null,
 	collaborators,
 }: SubmitCaseInput): Promise<{ caseId: Id<"cases"> }> {
@@ -155,7 +154,7 @@ export async function submitCase({
 		commonInformation: commonInformation.trim(),
 		duration: simulationDurationMinutes ?? undefined,
 		accessCode: accessCode.trim(),
-		structure: { personas: personasPayload, referrals, roots },
+		structure: { personas: personasPayload, referrals },
 		teachingNotes:
 			(teachingNotes instanceof File
 				? uploaded.get(teachingNotes)

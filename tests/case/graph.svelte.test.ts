@@ -13,7 +13,6 @@ function diamondGraph(): CaseGraph {
 			makeReferral("p2", "p4"),
 			makeReferral("p3", "p4"),
 		],
-		roots: ["p1"],
 	});
 	return graph;
 }
@@ -42,7 +41,6 @@ describe("CaseGraph.removePersona", () => {
 				makeReferral("p2", "p4"),
 				makeReferral("p4", "p5"),
 			],
-			roots: ["p1"],
 		});
 
 		graph.removePersona("p4");
@@ -57,7 +55,6 @@ describe("CaseGraph.removePersona", () => {
 		graph.load({
 			personas: ["r1", "r2", "c1"].map((id) => makePersona({ id })),
 			referrals: [makeReferral("r1", "c1")],
-			roots: ["r1", "r2"],
 		});
 
 		graph.removePersona("r1");
@@ -125,7 +122,6 @@ describe("CaseGraph.unlink", () => {
 		graph.load({
 			personas: ["p1", "p2", "p3"].map((id) => makePersona({ id })),
 			referrals: [makeReferral("p1", "p2"), makeReferral("p2", "p3")],
-			roots: ["p1"],
 		});
 
 		graph.unlink("p1", "p2");

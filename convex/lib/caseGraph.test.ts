@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { hasCycle, reachableFrom, validateStructure } from "./caseGraph";
+import {
+	hasCycle,
+	reachableFrom,
+	rootIds,
+	validateStructure,
+} from "./caseGraph";
 
 const edge = (fromId: string, toId: string) => ({ fromId, toId });
 
@@ -67,8 +72,28 @@ describe("reachableFrom", () => {
 	});
 });
 
+describe("rootIds", () => {
+	// Tests that the roots are exactly the personas nobody refers to, in the given order.
+	it("returns the ids with no incoming referral", () => {
+		expect(
+			rootIds(["A", "B", "C", "D"], [edge("A", "C"), edge("B", "C")]),
+		).toEqual(["A", "B", "D"]);
+	});
+
+	// Tests that a persona referred by a root is not a root, and that no edges means every persona is one.
+	it("treats a referred persona as not a root, and every persona as a root without edges", () => {
+		expect(rootIds(["A", "B"], [edge("A", "B")])).toEqual(["A"]);
+		expect(rootIds(["A", "B"], [])).toEqual(["A", "B"]);
+	});
+
+	// Tests that a graph where everyone is referred has no roots.
+	it("returns nothing when every persona is referred", () => {
+		expect(rootIds(["A", "B"], [edge("A", "B"), edge("B", "A")])).toEqual([]);
+	});
+});
+
 describe("validateStructure", () => {
-	const persona = (id: string, name = id) => ({ id, name });
+	const persona = (id: string) => ({ id });
 
 	// Tests that a sound graph, including a persona with two parents, has no problem.
 	it("accepts a sound graph, including a persona referred by two parents", () => {
@@ -76,71 +101,56 @@ describe("validateStructure", () => {
 			validateStructure({
 				personas: [persona("A"), persona("B"), persona("C")],
 				referrals: [edge("A", "C"), edge("B", "C")],
-				roots: ["A", "B"],
 			}),
 		).toBeNull();
 	});
 
 	// Tests that each rule reports its own problem.
 	it.each([
-		["no personas", [], [], [], /at least one persona/],
-		["no roots", [persona("A")], [], [], /at least one root/],
+		["no personas", [], [], /at least one persona/],
 		[
 			"duplicate persona ids",
 			[persona("A"), persona("A")],
 			[],
-			["A"],
 			/Duplicate persona id/,
 		],
-		["an unknown root", [persona("A")], [], ["A", "X"], /Unknown root/],
-		["a duplicate root", [persona("A")], [], ["A", "A"], /Duplicate root/],
 		[
 			"an unknown referral source",
 			[persona("A")],
 			[edge("X", "A")],
-			["A"],
 			/Unknown referral fromId/,
 		],
 		[
 			"an unknown referral target",
 			[persona("A")],
 			[edge("A", "X")],
-			["A"],
 			/Unknown referral toId/,
 		],
 		[
 			"a duplicate referral",
 			[persona("A"), persona("B")],
 			[edge("A", "B"), edge("A", "B")],
-			["A"],
 			/Duplicate referral/,
 		],
 		[
-			"a cycle",
+			"a cycle, which leaves no root",
 			[persona("A"), persona("B")],
 			[edge("A", "B"), edge("B", "A")],
-			["A"],
 			/cycle/i,
 		],
-		["a self-referral", [persona("A")], [edge("A", "A")], ["A"], /cycle/i],
-	] as const)("reports %s", (_label, personas, referrals, roots, expected) => {
+		["a self-referral", [persona("A")], [edge("A", "A")], /cycle/i],
+		[
+			"a loop that no root leads into",
+			[persona("A"), persona("B"), persona("C")],
+			[edge("B", "C"), edge("C", "B")],
+			/cycle/i,
+		],
+	] as const)("reports %s", (_label, personas, referrals, expected) => {
 		expect(
 			validateStructure({
 				personas: [...personas],
 				referrals: [...referrals],
-				roots: [...roots],
 			}),
 		).toMatch(expected);
-	});
-
-	// Tests that an unreachable persona is named in the problem.
-	it("names a persona that no root can reach", () => {
-		expect(
-			validateStructure({
-				personas: [persona("A"), persona("B", "Orphan")],
-				referrals: [],
-				roots: ["A"],
-			}),
-		).toMatch(/B \(Orphan\) isn't connected/);
 	});
 });

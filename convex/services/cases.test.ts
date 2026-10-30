@@ -10,6 +10,7 @@ import {
 	requireCaseAccess,
 	updateCase,
 } from "./cases";
+import { flattenPersonas } from "./simulationReads";
 
 describe("case access control", () => {
 	// Tests that the owner can read, update and delete their own case.
@@ -506,20 +507,16 @@ describe("persona graph persistence", () => {
 						personaPayload("C", { name: "Shared CFO" }),
 					],
 					referrals: [referralEdge("A", "C"), referralEdge("B", "C")],
-					roots: ["A", "B"],
 				}),
 				owner,
 			),
 		);
 		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
-		const structure = c.structure as {
-			referrals: { fromId: string; toId: string }[];
-			roots: string[];
-		};
 		expect(
-			new Set(structure.referrals.map((r) => `${r.fromId}->${r.toId}`)),
+			new Set(c.structure.referrals.map((r) => `${r.fromId}->${r.toId}`)),
 		).toEqual(new Set(["A->C", "B->C"]));
-		expect(new Set(structure.roots)).toEqual(new Set(["A", "B"]));
+		// Both parents are roots, sorted by name.
+		expect(flattenPersonas(c.structure).roots).toEqual(["B", "A"]);
 	});
 
 	// Tests that a client-supplied persona id stays stable across create and update.
@@ -527,11 +524,7 @@ describe("persona graph persistence", () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const caseId = await t.run((ctx) =>
-			createCase(
-				ctx,
-				casePayload({ personas: [personaPayload("A")], roots: ["A"] }),
-				owner,
-			),
+			createCase(ctx, casePayload({ personas: [personaPayload("A")] }), owner),
 		);
 
 		await t.run((ctx) =>
@@ -540,7 +533,6 @@ describe("persona graph persistence", () => {
 				caseId,
 				casePayload({
 					personas: [personaPayload("A", { name: "Renamed" })],
-					roots: ["A"],
 				}),
 				owner,
 			),
@@ -583,7 +575,6 @@ describe("file links (via buildStructure/createCase)", () => {
 							},
 						}),
 					],
-					roots: ["A", "B"],
 				}),
 				owner,
 			),
@@ -615,7 +606,6 @@ describe("file links (via buildStructure/createCase)", () => {
 				ctx,
 				casePayload({
 					personas: [personaPayload("A", { profilePhoto: photo })],
-					roots: ["A"],
 				}),
 				owner,
 			),
@@ -630,7 +620,6 @@ describe("file links (via buildStructure/createCase)", () => {
 						personaPayload("A", { profilePhoto: photo }),
 						personaPayload("B", { profilePhoto: photo }),
 					],
-					roots: ["A", "B"],
 				}),
 				owner,
 			),
@@ -749,17 +738,13 @@ describe("a storage id with no backing object", () => {
 							},
 						}),
 					],
-					roots: ["A"],
 				}),
 				owner,
 			),
 		);
 
 		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
-		const structure = c.structure as {
-			personas: { profilePhoto: unknown }[];
-		};
-		expect(structure.personas[0]?.profilePhoto).toBeNull();
+		expect(c.structure.personas[0]).not.toHaveProperty("profilePhoto");
 		const rows = await t.run((ctx) =>
 			ctx.db
 				.query("caseFiles")
@@ -793,7 +778,6 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				ctx,
 				casePayload({
 					personas: [personaPayload("A", { profilePhoto: photo })],
-					roots: ["A"],
 				}),
 				owner,
 			),
@@ -832,7 +816,6 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				casePayload({
 					name: "First",
 					personas: [personaPayload("A", { profilePhoto: photo })],
-					roots: ["A"],
 				}),
 				owner,
 			),
@@ -843,7 +826,6 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				casePayload({
 					name: "Second",
 					personas: [personaPayload("A", { profilePhoto: photo })],
-					roots: ["A"],
 				}),
 				owner,
 			),
@@ -877,7 +859,6 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 						personaPayload("A", { profilePhoto: photo }),
 						personaPayload("B", { profilePhoto: photo }),
 					],
-					roots: ["A", "B"],
 				}),
 				owner,
 			),
@@ -889,10 +870,9 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				caseId,
 				casePayload({
 					personas: [
-						personaPayload("A", { profilePhoto: null }),
+						personaPayload("A"),
 						personaPayload("B", { profilePhoto: photo }),
 					],
-					roots: ["A", "B"],
 				}),
 				owner,
 			),
@@ -914,11 +894,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				ctx,
 				caseId,
 				casePayload({
-					personas: [
-						personaPayload("A", { profilePhoto: null }),
-						personaPayload("B", { profilePhoto: null }),
-					],
-					roots: ["A", "B"],
+					personas: [personaPayload("A"), personaPayload("B")],
 				}),
 				owner,
 			),

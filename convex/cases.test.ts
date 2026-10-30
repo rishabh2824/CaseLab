@@ -274,7 +274,6 @@ describe("view-only collaborator through the public API", () => {
 				structure: {
 					personas: [personaPayload("A")],
 					referrals: [],
-					roots: ["A"],
 				},
 				collaborators: [],
 			}),
@@ -298,7 +297,6 @@ describe("cases.create", () => {
 			structure: {
 				personas: [personaPayload("A")],
 				referrals: [],
-				roots: ["A"],
 			},
 			collaborators: [],
 		});
@@ -323,7 +321,6 @@ describe("cases.update", () => {
 			structure: {
 				personas: [personaPayload("A")],
 				referrals: [],
-				roots: ["A"],
 			},
 			collaborators: [],
 		});

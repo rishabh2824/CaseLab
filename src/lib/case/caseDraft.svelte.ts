@@ -43,7 +43,7 @@ export class CaseDraft {
 	commonInformation = $state("");
 	simulationDurationMinutes = $state<number | null>(null);
 	accessCode = $state("");
-	teachingNotes = $state<File | FileRefPayload>(null);
+	teachingNotes = $state<File | FileRefPayload | null>(null);
 	// Where the saved teaching notes can be downloaded, when editing a case that has them.
 	teachingNotesUrl = $state<string | null>(null);
 	collaborators = $state<CollaboratorPayload[]>([]);
@@ -91,7 +91,6 @@ export class CaseDraft {
 				collaborators: this.collaborators,
 				personas: this.graph.personas,
 				referrals: this.graph.referrals,
-				roots: this.graph.roots,
 			},
 			fileReplacer,
 		);
@@ -129,7 +128,15 @@ export class CaseDraft {
 		this.commonInformation = loaded.commonInformation ?? "";
 		this.simulationDurationMinutes = loaded.duration ?? null;
 		this.accessCode = isEditMode ? (loaded.accessCode ?? "") : "";
-		this.graph.load(loaded.structure);
+		// The form edits missing values as null, so the snapshot taken below matches what an edit produces.
+		this.graph.load({
+			personas: loaded.structure.personas.map((persona) => ({
+				...persona,
+				profilePhoto: persona.profilePhoto ?? null,
+				availabilityMinutes: persona.availabilityMinutes ?? null,
+			})),
+			referrals: loaded.structure.referrals,
+		});
 		this.teachingNotes = isEditMode ? (loaded.teachingNotes ?? null) : null;
 		this.teachingNotesUrl = isEditMode
 			? (loaded.teachingNotesUrl ?? null)
@@ -150,7 +157,6 @@ export class CaseDraft {
 		this.graph.load({
 			personas: data.personas,
 			referrals: data.referrals,
-			roots: data.roots,
 		});
 		this.revealErrors();
 	}
@@ -161,7 +167,6 @@ export class CaseDraft {
 			...this.#fields(),
 			personas: this.graph.personas,
 			referrals: this.graph.referrals,
-			roots: this.graph.roots,
 		};
 	}
 
@@ -172,7 +177,6 @@ export class CaseDraft {
 			...this.#fields(),
 			personas: this.graph.personas,
 			referrals: this.graph.referrals,
-			roots: this.graph.roots,
 			teachingNotes: this.teachingNotes,
 			collaborators: this.collaborators,
 		};
