@@ -64,9 +64,10 @@ const CONFIRM_CLASS =
 						{secondaryLabel}
 					</button>
 				{/if}
-				<AlertDialog.Action onclick={onConfirm} disabled={confirming} class={CONFIRM_CLASS}>
+				<!-- Not AlertDialog.Action: it closes the dialog on click, before an async confirm can finish. -->
+				<button type="button" onclick={onConfirm} disabled={confirming} class={CONFIRM_CLASS}>
 					{confirming ? pendingLabel : confirmLabel}
-				</AlertDialog.Action>
+				</button>
 			</div>
 		</AlertDialog.Content>
 	</AlertDialog.Portal>

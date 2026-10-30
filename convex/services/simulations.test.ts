@@ -222,7 +222,7 @@ describe("startSimulation", () => {
 			accessCode: "long",
 		});
 		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
-		expect(run.expiresAt - run._creationTime).toBeCloseTo(120 * 60_000, 1);
+		expect(run.expiresAt - run._creationTime).toBeCloseTo(240 * 60_000, 1);
 	});
 });
 

@@ -46,13 +46,6 @@ export const hasFieldErrors = (
 	errors: Record<string, string | undefined>,
 ): boolean => Object.values(errors).some(Boolean);
 
-// Returns the referrals authored by the given persona.
-export const referralsFrom = (
-	referrals: ReferralEdge[],
-	personaId: string,
-): ReferralEdge[] =>
-	referrals.filter((referral) => referral.fromId === personaId);
-
 // Returns the referrals that point at the given persona.
 export const referralsTo = (
 	referrals: ReferralEdge[],
@@ -64,14 +57,3 @@ export const referralsTo = (
 export const personasById = <P extends { id: string }>(
 	personas: P[],
 ): Map<string, P> => new Map(personas.map((p) => [p.id, p]));
-
-// Returns the root personas in roots order, skipping ids that don't exist.
-export const rootPersonas = <P extends { id: string }>(
-	personas: P[],
-	roots: string[],
-): P[] => {
-	const byId = personasById(personas);
-	return roots
-		.map((id) => byId.get(id))
-		.filter((persona): persona is P => Boolean(persona));
-};

@@ -4,7 +4,7 @@ import type { CaseDraft } from "#lib/case/caseDraft.svelte.js";
 import { parseIntOrNull } from "#lib/case/draft.js";
 import type { AdminRow, CollaboratorAccess } from "#lib/types.js";
 import { isSelectableCollaborator } from "../../../convex/lib/caseRules.js";
-import { RUN_LIFETIME_MINUTES } from "../../../convex/lib/constants.js";
+import { MAX_DURATION_MINUTES } from "../../../convex/lib/constants.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
 
 type Props = {
@@ -99,7 +99,7 @@ const errors = $derived(
 					id="simulation-duration"
 					type="number"
 					min="1"
-					max={RUN_LIFETIME_MINUTES}
+					max={MAX_DURATION_MINUTES}
 					step="1"
 					placeholder="Leave empty for unlimited"
 					value={draft.simulationDurationMinutes ?? ''}

@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { api } from "./_generated/api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { newTestConvex, withAdmin } from "./test.setup";
 
 describe("generateUploadUrls (batched)", () => {
@@ -132,5 +133,85 @@ describe("discardUploads (undoing a failed create/update's uploads)", () => {
 		await expect(
 			asUser.mutation(api.uploads.discardUploads, { storageIds: [] }),
 		).resolves.toBeNull();
+	});
+});
+
+describe("sweepAbandonedUploads (weekly cleanup of uploads no save ever claimed)", () => {
+	const DAY_MS = 24 * 60 * 60_000;
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	// Creates a case row to hang caseFiles links off.
+	async function makeCase(t: ReturnType<typeof newTestConvex>) {
+		return await t.run(async (ctx) => {
+			const owner = await ctx.db.insert("admins", {
+				name: "Test Admin",
+				email: "owner@test.caselab.invalid",
+				role: "admin",
+			});
+			return await ctx.db.insert("cases", {
+				name: "Case",
+				brief: "Brief",
+				commonInformation: "",
+				accessCode: "sweepcode",
+				ownerAdminId: owner,
+				isTemplate: false,
+				structure: { personas: [], referrals: [], roots: [] },
+			});
+		});
+	}
+
+	// Tests that old unclaimed uploads are deleted while claimed and recent ones survive.
+	it("deletes old unclaimed uploads but keeps claimed and recent ones", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const t = newTestConvex();
+		const caseId = await makeCase(t);
+		const [orphan, claimed] = await t.run((ctx) =>
+			Promise.all([
+				ctx.storage.store(new Blob(["orphan"])),
+				ctx.storage.store(new Blob(["claimed"])),
+			]),
+		);
+		await t.run((ctx) =>
+			ctx.db.insert("caseFiles", { caseId, storageId: claimed! }),
+		);
+		vi.setSystemTime(Date.now() + 2 * DAY_MS);
+		const recent = await t.run((ctx) =>
+			ctx.storage.store(new Blob(["recent"])),
+		);
+
+		await t.mutation(internal.files.sweepAbandonedUploads, {});
+
+		const exists = (id: Id<"_storage">) =>
+			t.run(async (ctx) => (await ctx.db.system.get("_storage", id)) !== null);
+		expect(await exists(orphan!)).toBe(false);
+		expect(await exists(claimed!)).toBe(true);
+		expect(await exists(recent)).toBe(true);
+	});
+
+	// Tests that the sweep carries on past the first batch.
+	it("keeps going past the first batch", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		const t = newTestConvex();
+		const ids = await t.run((ctx) =>
+			Promise.all(
+				Array.from({ length: 250 }, (_, i) =>
+					ctx.storage.store(new Blob([`orphan-${i}`])),
+				),
+			),
+		);
+		vi.setSystemTime(Date.now() + 2 * DAY_MS);
+
+		await t.mutation(internal.files.sweepAbandonedUploads, {});
+		await t.finishAllScheduledFunctions(() => {});
+
+		const remaining = await t.run(async (ctx) =>
+			(
+				await Promise.all(ids.map((id) => ctx.db.system.get("_storage", id)))
+			).filter(Boolean),
+		);
+		expect(remaining).toHaveLength(0);
 	});
 });

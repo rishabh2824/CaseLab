@@ -3,7 +3,6 @@ import { parseIntOrNull } from "#lib/case/draft.js";
 import type { Persona } from "#lib/types.js";
 import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
-import RemovableSection from "./RemovableSection.svelte";
 
 type Props = {
 	persona: Persona;
@@ -154,7 +153,20 @@ function handleFileChange(event: InputEvent_, fileIndex: number): void {
 	{#if persona.files.length > 0}
 		<div class="flex flex-col gap-3">
 			{#each persona.files as fileEntry, fileIndex (fileIndex)}
-				<RemovableSection label="File {fileIndex + 1}" onRemove={() => removeFile(fileIndex)}>
+				<!-- Remove sits beside the <details>, not inside its <summary>, so the summary stays free of interactive content. -->
+				<div class="relative">
+					<button
+						type="button"
+						onclick={() => removeFile(fileIndex)}
+						class="absolute right-3 top-2.5 rounded-md px-2 py-1 text-xs font-semibold text-stone-soft transition hover:text-brand"
+					>
+						Remove
+					</button>
+					<details class="rounded-xl border border-line-soft bg-cream/40">
+						<summary class="cursor-pointer select-none px-4 py-3 pr-24 text-sm font-semibold text-ink">
+							File {fileIndex + 1}
+						</summary>
+						<div class="flex flex-col gap-3 border-t border-line-soft px-4 py-4">
 						<FormField label="Upload file" id="{uid}-file-{fileIndex}-upload">
 							{#snippet children(field)}
 								<input
@@ -201,7 +213,9 @@ function handleFileChange(event: InputEvent_, fileIndex: number): void {
 								></textarea>
 							{/snippet}
 						</FormField>
-				</RemovableSection>
+						</div>
+					</details>
+				</div>
 			{/each}
 		</div>
 	{/if}

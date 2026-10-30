@@ -8,7 +8,7 @@ import {
 } from "../../tests/support/factories";
 import { api } from "../_generated/api";
 import { validateGraph } from "../lib/caseStructure";
-import { MAX_MESSAGE_CHARS } from "../lib/constants";
+import { GRACE_PERIOD_MINUTES, MAX_MESSAGE_CHARS } from "../lib/constants";
 import { STUDENT_ERROR } from "../lib/studentErrors";
 import {
 	casePayload,
@@ -237,7 +237,9 @@ describe("simulation duration", () => {
 		const lifetimeMinutes = Math.round(
 			(run.expiresAt - run._creationTime) / 60_000,
 		);
-		expect(c.duration!).toBeLessThanOrEqual(lifetimeMinutes);
+		expect(c.duration! + GRACE_PERIOD_MINUTES).toBeLessThanOrEqual(
+			lifetimeMinutes,
+		);
 	});
 });
 

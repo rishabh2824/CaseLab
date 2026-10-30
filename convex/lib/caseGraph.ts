@@ -61,9 +61,7 @@ export function validateStructure({
 		seenReferrals.add(key);
 	}
 
-	const { dropped } = splitCyclicEdges(ids, referrals);
-	if (dropped.length > 0)
-		return `Referral cycle detected involving persona id: ${dropped[0]!.toId}`;
+	if (hasCycle(ids, referrals)) return "Referrals can't form a cycle.";
 
 	const reachable = reachableFrom(roots, referrals);
 	const unreachable = personas.find((persona) => !reachable.has(persona.id));
@@ -74,51 +72,22 @@ export function validateStructure({
 	return null;
 }
 
-// Walks the graph depth-first from each id in order and splits the edges into those that are kept and those that would close a cycle.
-export function splitCyclicEdges<E extends GraphEdge>(
-	ids: string[],
-	edges: E[],
-): { accepted: E[]; dropped: E[] } {
-	const edgesFrom = new Map<string, E[]>();
-	for (const edge of edges) {
-		const outgoing = edgesFrom.get(edge.fromId) ?? [];
-		outgoing.push(edge);
-		edgesFrom.set(edge.fromId, outgoing);
-	}
-
-	const UNVISITED = 0;
-	const IN_PROGRESS = 1;
-	const DONE = 2;
-	const state = new Map<string, number>(ids.map((id) => [id, UNVISITED]));
-	const accepted: E[] = [];
-	const dropped: E[] = [];
-
-	const stack: { node: string; edge: number }[] = [];
-	for (const startId of ids) {
-		if (state.get(startId) !== UNVISITED) continue;
-		state.set(startId, IN_PROGRESS);
-		stack.push({ node: startId, edge: 0 });
-
-		while (stack.length > 0) {
-			const frame = stack[stack.length - 1]!;
-			const outgoing = edgesFrom.get(frame.node) ?? [];
-			if (frame.edge >= outgoing.length) {
-				state.set(frame.node, DONE);
-				stack.pop();
-				continue;
-			}
-			const edge = outgoing[frame.edge]!;
-			frame.edge += 1;
-			if (state.get(edge.toId) === IN_PROGRESS) {
-				dropped.push(edge);
-				continue;
-			}
-			accepted.push(edge);
-			if (state.get(edge.toId) === UNVISITED) {
-				state.set(edge.toId, IN_PROGRESS);
-				stack.push({ node: edge.toId, edge: 0 });
-			}
+// Whether the referrals contain a cycle, by repeatedly peeling off personas nobody refers to: anything left over sits on or behind a loop.
+export function hasCycle(ids: string[], edges: GraphEdge[]): boolean {
+	const incoming = new Map(ids.map((id) => [id, 0]));
+	for (const edge of edges)
+		incoming.set(edge.toId, (incoming.get(edge.toId) ?? 0) + 1);
+	const ready = ids.filter((id) => incoming.get(id) === 0);
+	let peeled = 0;
+	while (ready.length > 0) {
+		const currentId = ready.pop() as string;
+		peeled += 1;
+		for (const edge of edges) {
+			if (edge.fromId !== currentId) continue;
+			const remaining = (incoming.get(edge.toId) as number) - 1;
+			incoming.set(edge.toId, remaining);
+			if (remaining === 0) ready.push(edge.toId);
 		}
 	}
-	return { accepted, dropped };
+	return peeled < ids.length;
 }

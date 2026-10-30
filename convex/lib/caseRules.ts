@@ -1,4 +1,4 @@
-import { ACCESS_CODE_FORMAT, RUN_LIFETIME_MINUTES } from "./constants";
+import { ACCESS_CODE_FORMAT, MAX_DURATION_MINUTES } from "./constants";
 
 // Field rules and messages shared by the Convex backend (which throws the first one) and the browser (which shows them inline). Kept free of Convex imports.
 
@@ -40,14 +40,14 @@ export function getCaseInfoErrors({
 		typeof simulationDurationMinutes === "number" &&
 		(!Number.isInteger(simulationDurationMinutes) ||
 			simulationDurationMinutes < 1 ||
-			simulationDurationMinutes > RUN_LIFETIME_MINUTES)
+			simulationDurationMinutes > MAX_DURATION_MINUTES)
 	) {
-		const hours = RUN_LIFETIME_MINUTES / 60;
+		const hours = MAX_DURATION_MINUTES / 60;
 		const hoursLabel = Number.isInteger(hours)
 			? String(hours)
 			: hours.toFixed(1);
 		errors.simulationDuration =
-			`Simulation duration must be a whole number of minutes between 1 and ${RUN_LIFETIME_MINUTES} ` +
+			`Simulation duration must be a whole number of minutes between 1 and ${MAX_DURATION_MINUTES} ` +
 			`(${hoursLabel} hour${hours === 1 ? "" : "s"}).`;
 	}
 

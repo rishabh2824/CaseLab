@@ -6,7 +6,6 @@ import {
 	getPersonaLabel,
 	hasFieldErrors,
 	parseIntOrNull,
-	referralsFrom,
 	referralsTo,
 } from "../../src/lib/case/draft.js";
 import { makeReferral } from "../support/factories.js";
@@ -71,20 +70,12 @@ describe("hasFieldErrors", () => {
 	});
 });
 
-describe("referralsFrom / referralsTo", () => {
+describe("referralsTo", () => {
 	const referrals = [
 		makeReferral("p1", "p2"),
 		makeReferral("p1", "p3"),
 		makeReferral("p2", "p3"),
 	];
-
-	// Tests that referralsFrom returns only the edges a given persona authored.
-	it("referralsFrom returns edges authored by the given persona", () => {
-		expect(referralsFrom(referrals, "p1")).toEqual([
-			makeReferral("p1", "p2"),
-			makeReferral("p1", "p3"),
-		]);
-	});
 
 	// Tests that referralsTo returns every edge pointing at a persona, including from multiple parents.
 	it("referralsTo returns edges pointing at the given persona (possibly multiple parents)", () => {
@@ -94,9 +85,8 @@ describe("referralsFrom / referralsTo", () => {
 		]);
 	});
 
-	// Tests that referralsFrom/referralsTo return an empty array when no edges match.
+	// Tests that referralsTo returns an empty array when no edges match.
 	it("returns [] when no edges match", () => {
-		expect(referralsFrom(referrals, "p3")).toEqual([]);
 		expect(referralsTo(referrals, "p1")).toEqual([]);
 	});
 });

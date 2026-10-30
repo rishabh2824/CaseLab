@@ -4,7 +4,7 @@ import {
 	getPersonaFieldErrors,
 	isSelectableCollaborator,
 } from "./caseRules";
-import { RUN_LIFETIME_MINUTES } from "./constants";
+import { MAX_DURATION_MINUTES } from "./constants";
 
 const valid = {
 	caseName: "Sterling",
@@ -48,7 +48,7 @@ describe("getCaseInfoErrors", () => {
 	);
 
 	// Tests that the duration must be a whole number within the run lifetime.
-	it.each([0, -5, 2.5, RUN_LIFETIME_MINUTES + 1])(
+	it.each([0, -5, 2.5, MAX_DURATION_MINUTES + 1])(
 		"rejects a duration of %s minutes",
 		(simulationDurationMinutes) => {
 			expect(
@@ -59,7 +59,7 @@ describe("getCaseInfoErrors", () => {
 	);
 
 	// Tests that the boundary durations are accepted.
-	it.each([1, RUN_LIFETIME_MINUTES])(
+	it.each([1, MAX_DURATION_MINUTES])(
 		"accepts a duration of %s minutes",
 		(n) => {
 			expect(

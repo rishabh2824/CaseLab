@@ -5,7 +5,13 @@ import type { adminRole } from "../schema";
 
 export type AdminRole = Infer<typeof adminRole>;
 
-export const RUN_LIFETIME_MINUTES = 120;
+export const MAX_DURATION_MINUTES = 120;
+
+// Extra time after a case's duration before its run is deleted.
+export const GRACE_PERIOD_MINUTES = 15;
+
+// Hard cap on a run's lifetime. Leaves room for the grace period after the longest allowed duration.
+export const RUN_LIFETIME_MINUTES = 240;
 
 export const MAX_MESSAGE_WORDS = 50;
 

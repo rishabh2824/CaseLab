@@ -8,7 +8,7 @@ import {
 	type QueryCtx,
 	query,
 } from "./_generated/server";
-import { RUN_LIFETIME_MINUTES } from "./lib/constants";
+import { GRACE_PERIOD_MINUTES, RUN_LIFETIME_MINUTES } from "./lib/constants";
 import { STUDENT_ERROR, studentError } from "./lib/studentErrors";
 import {
 	type ChatStateMap,
@@ -23,8 +23,6 @@ import {
 	graphRootPersonas,
 	referredContactIds,
 } from "./services/simulationReads";
-
-const GRACE_PERIOD_MINUTES = 15;
 
 // Trims and lower-cases a student's access code.
 function normalizeAccessCode(raw: string): string {
