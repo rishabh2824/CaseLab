@@ -417,8 +417,8 @@ describe("submitCase — upload failures", () => {
 });
 
 describe("submitCase — payload shaping", () => {
-	// Tests that text fields are trimmed, and referrals (conditions untrimmed) and collaborators are passed through.
-	it("trims top-level text fields and passes referrals (conditions untrimmed) and collaborator ids through unchanged", async () => {
+	// Tests that text fields, referrals and collaborators are passed through as typed, since the server trims them.
+	it("passes top-level text fields, referrals and collaborator ids through unchanged", async () => {
 		const { createRequests } = stubMutations();
 
 		await submitCase(
@@ -438,10 +438,10 @@ describe("submitCase — payload shaping", () => {
 		expect(createRequests).toHaveLength(1);
 		const [body] = createRequests;
 		if (!body) throw new Error("expected a captured create request");
-		expect(body.name).toBe("Sterling Industries");
-		expect(body.brief).toBe("Reduce office supply costs.");
-		expect(body.commonInformation).toBe("Background context.");
-		expect(body.accessCode).toBe("abc");
+		expect(body.name).toBe("  Sterling Industries  ");
+		expect(body.brief).toBe("  Reduce office supply costs.  ");
+		expect(body.commonInformation).toBe("  Background context.  ");
+		expect(body.accessCode).toBe("  abc  ");
 		expect((body.structure as SentStructure).referrals).toEqual([
 			{ fromId: "p1", toId: "p2", conditions: "  when asked  " },
 		]);

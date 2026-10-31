@@ -30,23 +30,13 @@ beforeEach(() => {
 });
 
 describe("landing page access-code form", () => {
-	// Tests that a blank code is refused on the client without calling the server.
-	it("rejects a blank code without calling the server", async () => {
-		render(Landing);
-		const user = userEvent.setup();
-		await user.type(screen.getByLabelText("Access code"), "   ");
-		await user.click(screen.getByRole("button", { name: "Open Case" }));
-		expect(screen.getByText("Invalid access code.")).toBeInTheDocument();
-		expect(start).not.toHaveBeenCalled();
-	});
-
-	// Tests that the code is trimmed and lower-cased before it is sent.
-	it("sends the trimmed, lower-cased code to the start mutation", async () => {
+	// Tests that the code is sent as typed, since the server trims and lower-cases it and rejects a blank one.
+	it("sends the code as typed to the start mutation", async () => {
 		start.mockResolvedValue(run("run-1"));
 		render(Landing);
 		await submitCode("  Sterling-42 ");
 		await waitFor(() => expect(start).toHaveBeenCalledOnce());
-		expect(start).toHaveBeenCalledWith({ accessCode: "sterling-42" });
+		expect(start).toHaveBeenCalledWith({ accessCode: "  Sterling-42 " });
 	});
 
 	// Tests that a started run is stored in the session and the student goes to the simulation.

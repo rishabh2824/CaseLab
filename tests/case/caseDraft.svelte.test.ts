@@ -111,14 +111,19 @@ describe("CaseDraft", () => {
 		expect(draft.isDirty).toBe(false);
 	});
 
-	// Tests that a view-only case locks the draft, and that a case without the flag stays editable.
-	it("reads canEdit from the loaded case, defaulting to editable", () => {
-		const draft = new CaseDraft();
-		draft.load(loadable({ canEdit: false }), { isEditMode: true });
-		expect(draft.canEdit).toBe(false);
+	// Tests that a view-only case locks the draft, and that a template or an editable case leaves it editable.
+	it("reads canEdit from the loaded case, and stays editable otherwise", () => {
+		const viewOnly = new CaseDraft();
+		viewOnly.load(loadable({ canEdit: false }), { isEditMode: true });
+		expect(viewOnly.canEdit).toBe(false);
 
-		draft.load(loadable(), { isEditMode: true });
-		expect(draft.canEdit).toBe(true);
+		const editable = new CaseDraft();
+		editable.load(loadable(), { isEditMode: true });
+		expect(editable.canEdit).toBe(true);
+
+		const template = new CaseDraft();
+		template.load(loadable({ canEdit: false }), { isEditMode: false });
+		expect(template.canEdit).toBe(true);
 	});
 
 	// Tests that loading a template copies the content but not the access code or collaborators.

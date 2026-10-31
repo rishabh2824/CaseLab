@@ -233,8 +233,8 @@ export const applyDecisions = internalMutation({
 	): Promise<void> => {
 		const turn = await pendingTurn(ctx, turnId);
 		if (!turn) return;
-		const run = await ctx.db.get("runs", turn.runId);
-		if (!run) return;
+		// A turn is deleted together with its run, so a pending turn always has one.
+		const run = (await ctx.db.get("runs", turn.runId))!;
 
 		// Writing the run re-runs every subscribed run-state query, so only do it when something changed.
 		const elapsed = elapsedMinutes(run._creationTime, Date.now());

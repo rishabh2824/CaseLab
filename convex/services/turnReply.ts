@@ -64,12 +64,12 @@ export async function buildTurnContext(
 				referral.conditions.trim(),
 		)
 		.map((referral) => {
-			const referred = graph.personas.get(referral.toId);
+			const referred = graph.personas.get(referral.toId)!;
 			return {
 				referredPersonaId: referral.toId,
 				conditionTrigger: referral.conditions,
-				referredName: referred?.name ?? "",
-				referredRole: referred?.role ?? "",
+				referredName: referred.name,
+				referredRole: referred.role,
 			};
 		});
 
@@ -84,7 +84,7 @@ export async function buildTurnContext(
 		return [
 			{
 				storageId: file.storageId,
-				fileName: file.fileName || "file",
+				fileName: file.fileName,
 				shareConditions: entry.shareConditions,
 				perceivedContents: entry.perceivedContents,
 			},

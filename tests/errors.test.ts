@@ -17,10 +17,11 @@ describe("getErrorMessage", () => {
 		expect(getErrorMessage(err, "fallback")).toBe("Access code is required.");
 	});
 
-	// Tests that a plain Error's own message is returned when it is not a Convex wrapper.
-	it("returns a plain Error's message when it isn't the redacted Convex wrapper", () => {
-		const err = new Error("Failed to upload file.");
-		expect(getErrorMessage(err, "fallback")).toBe("Failed to upload file.");
+	// Tests that a plain Error never reaches the user, since only errors written for them carry a message to show.
+	it("falls back for a plain Error rather than showing its message", () => {
+		expect(getErrorMessage(new Error("Failed to fetch"), "fallback")).toBe(
+			"fallback",
+		);
 	});
 
 	// Tests that Convex-wrapped messages, redacted or not, fall back to the default message.

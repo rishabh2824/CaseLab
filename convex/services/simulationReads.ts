@@ -19,9 +19,7 @@ export function flattenPersonas(structure: CaseStructure): PersonaGraph {
 	const roots = rootIds(
 		structure.personas.map((p) => p.id),
 		structure.referrals,
-	).sort((a, b) =>
-		(personas.get(a)?.name ?? "").localeCompare(personas.get(b)?.name ?? ""),
-	);
+	).sort((a, b) => personas.get(a)!.name.localeCompare(personas.get(b)!.name));
 	return { personas, referrals: structure.referrals, roots };
 }
 
@@ -45,11 +43,13 @@ export async function flaggedCounts(
 	return counts;
 }
 
-// Dedupes unlocked ids and drops any that are roots.
+// Returns the unlocked ids that are still referred personas of the case: not roots, and not removed from the case since the run began.
 export function referredContactIds(
 	graph: PersonaGraph,
 	unlockedReferredIds: Iterable<string>,
 ): string[] {
 	const roots = new Set(graph.roots);
-	return [...new Set(unlockedReferredIds)].filter((id) => !roots.has(id));
+	return [...new Set(unlockedReferredIds)].filter(
+		(id) => graph.personas.has(id) && !roots.has(id),
+	);
 }

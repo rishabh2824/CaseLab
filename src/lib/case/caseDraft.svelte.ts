@@ -114,15 +114,12 @@ export class CaseDraft {
 		);
 	}
 
-	// Fills the draft from a case loaded from the server and marks it clean. A template gets no access code, teaching notes or collaborators.
+	// Fills the draft from a case loaded from the server and marks it clean. A template has no access code, teaching notes or collaborators, so those stay empty.
 	load(loaded: LoadableCase, { isEditMode }: { isEditMode: boolean }): void {
-		// Only a case opened for editing has an access code, teaching notes and collaborators.
-		const editing = isEditMode && "canEdit" in loaded ? loaded : null;
 		this.caseName = loaded.name;
 		this.initialBrief = loaded.brief;
 		this.commonInformation = loaded.commonInformation;
 		this.simulationDurationMinutes = loaded.duration ?? null;
-		this.accessCode = editing?.accessCode ?? "";
 		// The form edits missing values as null, so the snapshot taken below matches what an edit produces.
 		this.graph.load({
 			personas: loaded.structure.personas.map((persona) => ({
@@ -132,10 +129,13 @@ export class CaseDraft {
 			})),
 			referrals: loaded.structure.referrals,
 		});
-		this.teachingNotes = editing?.teachingNotes ?? null;
-		this.teachingNotesUrl = editing?.teachingNotesUrl ?? null;
-		this.canEdit = editing?.canEdit ?? true;
-		if (editing) this.collaborators = editing.collaborators;
+		if (isEditMode && "canEdit" in loaded) {
+			this.accessCode = loaded.accessCode;
+			this.teachingNotes = loaded.teachingNotes ?? null;
+			this.teachingNotesUrl = loaded.teachingNotesUrl;
+			this.canEdit = loaded.canEdit;
+			this.collaborators = loaded.collaborators;
+		}
 		this.revealErrors();
 		this.markSaved();
 	}

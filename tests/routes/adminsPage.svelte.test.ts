@@ -107,13 +107,13 @@ describe("admins list", () => {
 });
 
 describe("adding an admin", () => {
-	// Tests that the form sends trimmed values, then resets and confirms.
-	it("creates the admin with trimmed values, resets the form and toasts", async () => {
-		createAdmin.mockResolvedValue(ADMIN);
+	// Tests that the form sends the typed values, then resets and confirms with the saved admin's email.
+	it("creates the admin, resets the form and toasts", async () => {
+		createAdmin.mockResolvedValue({ ...ADMIN, email: "new@wisc.edu" });
 		const user = userEvent.setup();
 		render(AdminsPage);
-		await user.type(screen.getByLabelText("Email"), "  new@wisc.edu ");
-		await user.type(screen.getByLabelText("Name"), " New Person ");
+		await user.type(screen.getByLabelText("Email"), "new@wisc.edu");
+		await user.type(screen.getByLabelText("Name"), "New Person");
 		await user.selectOptions(screen.getByLabelText("Role"), "super");
 		await user.click(screen.getByRole("button", { name: "Add admin" }));
 
@@ -130,16 +130,6 @@ describe("adding an admin", () => {
 		expect(screen.getByLabelText("Email")).toHaveValue("");
 		expect(screen.getByLabelText("Name")).toHaveValue("");
 		expect(screen.getByLabelText("Role")).toHaveValue("admin");
-	});
-
-	// Tests that the form refuses to submit without a name.
-	it("does not create an admin without a name", async () => {
-		const user = userEvent.setup();
-		render(AdminsPage);
-		await user.type(screen.getByLabelText("Email"), "new@wisc.edu");
-		await user.click(screen.getByRole("button", { name: "Add admin" }));
-
-		expect(createAdmin).not.toHaveBeenCalled();
 	});
 
 	// Tests that a server failure toasts a safe message and keeps the typed values.

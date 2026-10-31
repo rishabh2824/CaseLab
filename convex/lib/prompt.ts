@@ -9,8 +9,8 @@ export type CandidateReferral = {
 export type CandidateFile = {
 	handle: string;
 	name: string;
-	perceivedContents: string | null;
-	shareConditions: string | null;
+	perceivedContents: string;
+	shareConditions: string;
 };
 
 // Escapes regex metacharacters in a string.
@@ -50,7 +50,7 @@ export function systemPrompt(
 				'connecting the user with anyone; keep "introduce" empty.';
 
 	const describeFile = (f: CandidateFile): string => {
-		const perceived = (f.perceivedContents ?? "").trim();
+		const perceived = f.perceivedContents.trim();
 		const base = perceived
 			? `${f.handle}: ${f.name} (what you believe it contains: ${perceived})`
 			: `${f.handle}: ${f.name}`;

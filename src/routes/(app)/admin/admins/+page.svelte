@@ -34,29 +34,16 @@ let isAdding = $state(false);
 let pendingDelete = $state<Doc<"admins"> | null>(null);
 let isDeleting = $state(false);
 
-// Validates and submits the add-admin form, showing a toast for the result.
+// Submits the add-admin form, showing a toast for the result. The server validates the fields.
 async function handleAdd(event: SubmitEvent): Promise<void> {
 	event.preventDefault();
-	const trimmedEmail = email.trim();
-	if (!trimmedEmail) {
-		toast("Email is required.");
-		return;
-	}
-	if (!name.trim()) {
-		toast("Name is required.");
-		return;
-	}
 	isAdding = true;
 	try {
-		await createAdmin({
-			email: trimmedEmail,
-			name: name.trim(),
-			role,
-		});
+		const admin = await createAdmin({ email, name, role });
 		email = "";
 		name = "";
 		role = "admin";
-		toast(`Added ${trimmedEmail}.`, { duration: 4000 });
+		toast(`Added ${admin.email}.`, { duration: 4000 });
 	} catch (err) {
 		toast(getErrorMessage(err, "Failed to add admin."));
 	} finally {
@@ -172,7 +159,7 @@ async function confirmDelete(): Promise<void> {
 							<tr class="transition hover:bg-cream/60">
 								<td class="px-5 py-3 font-medium text-ink">{admin.email}</td>
 								<td class="px-5 py-3 text-stone">{admin.name}</td>
-								<td class="px-5 py-3 text-stone">{ROLE_LABELS[admin.role] || admin.role}</td>
+								<td class="px-5 py-3 text-stone">{ROLE_LABELS[admin.role]}</td>
 								<td class="px-5 py-3 text-right">
 									{#if admin.role === "super"}
 										<span class="text-sm text-stone-soft">Super admins can't be deleted</span>

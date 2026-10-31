@@ -31,15 +31,10 @@ async function submit(code: string): Promise<void> {
 	}
 }
 
-// Handles the access-code form submit, rejecting a blank code and lower-casing the rest.
+// Handles the access-code form submit. The server trims and lower-cases the code and rejects a blank one.
 function handleSubmit(event: SubmitEvent): void {
 	event.preventDefault();
-	const code = accessCode.trim();
-	if (!code) {
-		error = "Invalid access code.";
-		return;
-	}
-	submit(code.toLowerCase());
+	submit(accessCode);
 }
 </script>
 

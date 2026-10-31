@@ -206,8 +206,8 @@ export const get = query({
 			await flaggedCounts(ctx, runId),
 			run.unlockedAt,
 			graph.roots.map((id) => graph.personas.get(id)!),
-			referredContactIds(graph, Object.keys(run.unlockedAt)).flatMap(
-				(id) => graph.personas.get(id) ?? [],
+			referredContactIds(graph, Object.keys(run.unlockedAt)).map(
+				(id) => graph.personas.get(id)!,
 			),
 		);
 		const fileNames = new Map(
@@ -267,12 +267,12 @@ export const exportRun = query({
 
 		const personas = await Promise.all(
 			personaIds.map(async (personaId) => {
-				const persona = graph.personas.get(personaId);
+				const persona = graph.personas.get(personaId)!;
 				const turns = await queryPersonaTurns(ctx, runId, personaId);
 				return {
 					id: personaId,
-					name: persona?.name ?? "",
-					role: persona?.role ?? "",
+					name: persona.name,
+					role: persona.role,
 					messages: toChatMessages(turns),
 				};
 			}),

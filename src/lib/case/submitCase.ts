@@ -1,4 +1,4 @@
-import type { GenericId } from "convex/values";
+import { ConvexError, type GenericId } from "convex/values";
 import { getConvexClient } from "convex-svelte";
 import { api } from "../../../convex/_generated/api.js";
 import type { Id } from "../../../convex/_generated/dataModel.js";
@@ -29,7 +29,7 @@ async function putToConvexStorage(
 		headers: { "Content-Type": file.type || "application/octet-stream" },
 		body: file,
 	});
-	if (!response.ok) throw new Error("Failed to upload file.");
+	if (!response.ok) throw new ConvexError("Failed to upload file.");
 	const { storageId } = (await response.json()) as {
 		storageId: GenericId<"_storage">;
 	};
@@ -79,9 +79,9 @@ async function uploadAll(
 	if (failures.length > 0) {
 		await discardNewUploads(succeeded);
 		const firstFailure = failures[0];
-		throw firstFailure instanceof Error
+		throw firstFailure instanceof ConvexError
 			? firstFailure
-			: new Error("Failed to upload one or more files.");
+			: new ConvexError("Failed to upload one or more files.");
 	}
 	return succeeded;
 }
@@ -144,11 +144,11 @@ export async function submitCase({
 		buildPersonaPayload(persona, uploaded),
 	);
 	const scalars = {
-		name: caseName.trim(),
-		brief: initialBrief.trim(),
-		commonInformation: commonInformation.trim(),
+		name: caseName,
+		brief: initialBrief,
+		commonInformation,
 		duration: simulationDurationMinutes ?? undefined,
-		accessCode: accessCode.trim(),
+		accessCode,
 		structure: { personas: personasPayload, referrals },
 		teachingNotes:
 			(teachingNotes instanceof File

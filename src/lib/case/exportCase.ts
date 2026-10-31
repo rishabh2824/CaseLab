@@ -56,10 +56,7 @@ function fields({
 
 // Renders one file entry row in the exported form.
 function fileRowMarkup(
-	file: {
-		shareConditions?: string | null;
-		perceivedContents?: string | null;
-	},
+	file: { shareConditions: string; perceivedContents: string },
 	index: number,
 ): string {
 	return `<div class="file-row" data-file="true">
@@ -71,13 +68,13 @@ function fileRowMarkup(
 			field: "share_conditions",
 			label:
 				"Describe the conditions under which the persona will share the file",
-			value: file.shareConditions ?? "",
+			value: file.shareConditions,
 			rows: 2,
 		})}
     ${fields({
 			field: "perceived_contents",
 			label: "What does the persona think is in this file?",
-			value: file.perceivedContents ?? "",
+			value: file.perceivedContents,
 			rows: 2,
 		})}
   </div>`;

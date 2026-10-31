@@ -7,6 +7,7 @@ import {
 } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { FunctionReturnType } from "convex/server";
+import { ConvexError } from "convex/values";
 import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { beforeNavigate, goto } from "$app/navigation";
@@ -270,7 +271,9 @@ describe("CaseForm", () => {
 		it("surfaces a save failure inline", async () => {
 			const doc = makeCaseDoc();
 			stubLoadCase(doc);
-			updateCase.mockRejectedValue(new Error("Access code already in use."));
+			updateCase.mockRejectedValue(
+				new ConvexError("Access code already in use."),
+			);
 			const user = userEvent.setup();
 			renderForm({ editCaseId: doc._id });
 			await screen.findByDisplayValue("Sterling Industries");

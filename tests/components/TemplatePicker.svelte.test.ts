@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import type { FunctionReturnType } from "convex/server";
+import { ConvexError } from "convex/values";
 import * as sonner from "svelte-sonner";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../../convex/_generated/api.js";
@@ -114,7 +115,7 @@ describe("TemplatePicker delete-confirmation flow (edit mode)", () => {
 	// Tests that a failed delete keeps the dialog open and shows a toast.
 	it("keeps the dialog open and shows a toast when the delete request fails", async () => {
 		stubCaseList([makeCaseSummary()]);
-		deleteCase.mockRejectedValue(new Error("Case not found."));
+		deleteCase.mockRejectedValue(new ConvexError("Case not found."));
 		const user = userEvent.setup();
 		renderPicker("edit");
 		await screen.findByText("Sterling Industries");
