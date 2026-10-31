@@ -85,9 +85,10 @@ export async function deleteAdminWithCascade(
 		.query("collaborators")
 		.withIndex("by_admin", (q) => q.eq("adminId", adminId))
 		.collect();
-	for (const row of collaboratingElsewhere) await ctx.db.delete(row._id);
+	for (const row of collaboratingElsewhere)
+		await ctx.db.delete("collaborators", row._id);
 
-	await ctx.db.delete(adminId);
+	await ctx.db.delete("admins", adminId);
 	await deleteAuthUser(ctx, admin.email);
 
 	return { casesDeleted: ownedCases.length };

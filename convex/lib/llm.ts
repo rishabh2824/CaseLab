@@ -1,3 +1,5 @@
+import { env } from "../_generated/server";
+
 const DEFAULT_LLM_BASE_URL = "https://openrouter.ai/api/v1";
 const LLM_MODEL = "anthropic/claude-sonnet-5.5";
 const LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-5.5";
@@ -8,7 +10,7 @@ export const PERSONA_REPLY_RETRIES = 2;
 
 // Returns the LLM API key from the environment, throwing if it is missing.
 function requireLlmKey(): string {
-	const key = process.env.LLM_KEY;
+	const key = env.LLM_KEY;
 	if (!key) throw new Error("Missing required environment variable: LLM_KEY");
 	return key;
 }
@@ -28,8 +30,7 @@ async function chatCompletion(
 	body: Record<string, unknown>,
 	timeoutMs: number,
 ) {
-	// Overridable so an end-to-end run can point the backend at a local stand-in for the provider.
-	const baseUrl = process.env.LLM_BASE_URL || DEFAULT_LLM_BASE_URL;
+	const baseUrl = env.LLM_BASE_URL || DEFAULT_LLM_BASE_URL;
 	const response = await fetch(`${baseUrl}/chat/completions`, {
 		method: "POST",
 		headers: {

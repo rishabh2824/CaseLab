@@ -18,7 +18,7 @@ describe("case access control", () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const caseId = await t.run((ctx) => createCase(ctx, casePayload(), owner));
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 		await expect(
 			t.run((ctx) => requireCaseAccess(ctx, c, owner)),
 		).resolves.toBeNull();
@@ -27,10 +27,12 @@ describe("case access control", () => {
 				updateCase(ctx, caseId, casePayload({ name: "Renamed" }), owner),
 			),
 		).resolves.toBeNull();
-		expect((await t.run((ctx) => ctx.db.get(caseId)))?.name).toBe("Renamed");
+		expect((await t.run((ctx) => ctx.db.get("cases", caseId)))?.name).toBe(
+			"Renamed",
+		);
 
 		await t.run((ctx) => deleteCase(ctx, caseId, owner));
-		expect(await t.run((ctx) => ctx.db.get(caseId))).toBeNull();
+		expect(await t.run((ctx) => ctx.db.get("cases", caseId))).toBeNull();
 	});
 
 	// Tests that a collaborator has full access, including editing the collaborator list.
@@ -60,7 +62,7 @@ describe("case access control", () => {
 			),
 		);
 
-		const cAfter = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const cAfter = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 		await expect(
 			t.run((ctx) => requireCaseAccess(ctx, cAfter, collaborator)),
 		).rejects.toThrow();
@@ -131,7 +133,7 @@ describe("view-only collaborators", () => {
 	// Tests that a viewer can read the case but is refused every change.
 	it("lets a viewer see the case but refuses update and delete", async () => {
 		const { t, viewer, caseId } = await setup();
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 
 		await expect(
 			t.run((ctx) => requireCaseAccess(ctx, c, viewer, "view")),
@@ -352,7 +354,7 @@ describe("listCaseAuthors", () => {
 				name,
 				role: "admin",
 			});
-			return (await ctx.db.get(id))!;
+			return (await ctx.db.get("admins", id))!;
 		});
 
 	// Tests that the owner comes first, followed by edit collaborators only.
@@ -373,7 +375,7 @@ describe("listCaseAuthors", () => {
 				owner,
 			),
 		);
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 
 		await expect(t.run((ctx) => listCaseAuthors(ctx, c))).resolves.toEqual([
 			"Olive",
@@ -387,7 +389,7 @@ describe("listCaseAuthors", () => {
 		const owner = await named(t, "Olive");
 		await makeAdmin(t, "super");
 		const caseId = await t.run((ctx) => createCase(ctx, casePayload(), owner));
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 
 		await expect(t.run((ctx) => listCaseAuthors(ctx, c))).resolves.toEqual([
 			"Olive",
@@ -416,7 +418,7 @@ describe("required fields (via createCase)", () => {
 				owner,
 			),
 		);
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 		expect(c.name).toBe("Sterling Industries");
 		expect(c.brief).toBe("Do it.");
 	});
@@ -437,7 +439,7 @@ describe("required fields (via createCase)", () => {
 				owner,
 			),
 		);
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 		expect(c.commonInformation).toBe("Shared context.");
 		const structure = c.structure as {
 			personas: { name: string; role: string }[];
@@ -450,7 +452,7 @@ describe("required fields (via createCase)", () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const caseId = await t.run((ctx) => createCase(ctx, casePayload(), owner));
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 		expect(c.commonInformation).toBe("");
 	});
 });
@@ -511,7 +513,9 @@ describe("persona graph persistence", () => {
 				owner,
 			),
 		);
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
+		const c = (await t.run((ctx) =>
+			ctx.db.get("cases", caseId),
+		))! as Doc<"cases">;
 		expect(
 			new Set(c.structure.referrals.map((r) => `${r.fromId}->${r.toId}`)),
 		).toEqual(new Set(["A->C", "B->C"]));
@@ -538,7 +542,9 @@ describe("persona graph persistence", () => {
 			),
 		);
 
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
+		const c = (await t.run((ctx) =>
+			ctx.db.get("cases", caseId),
+		))! as Doc<"cases">;
 		const structure = c.structure as {
 			personas: { id: string; name: string }[];
 		};
@@ -650,7 +656,7 @@ describe("teaching notes", () => {
 			createCase(ctx, casePayload({ teachingNotes: notes }), owner),
 		);
 
-		const c = await t.run((ctx) => ctx.db.get(caseId));
+		const c = await t.run((ctx) => ctx.db.get("cases", caseId));
 		expect(c?.teachingNotes).toEqual(notes);
 		const rows = await t.run((ctx) =>
 			ctx.db
@@ -675,7 +681,7 @@ describe("teaching notes", () => {
 		);
 		await t.finishAllScheduledFunctions(() => {});
 
-		const c = await t.run((ctx) => ctx.db.get(caseId));
+		const c = await t.run((ctx) => ctx.db.get("cases", caseId));
 		expect(c?.teachingNotes).toBeUndefined();
 		expect(
 			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
@@ -710,7 +716,7 @@ describe("teaching notes", () => {
 			createCase(ctx, casePayload({ teachingNotes: notes }), owner),
 		);
 
-		const c = await t.run((ctx) => ctx.db.get(caseId));
+		const c = await t.run((ctx) => ctx.db.get("cases", caseId));
 		expect(c?.teachingNotes).toBeUndefined();
 	});
 });
@@ -743,7 +749,9 @@ describe("a storage id with no backing object", () => {
 			),
 		);
 
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))! as Doc<"cases">;
+		const c = (await t.run((ctx) =>
+			ctx.db.get("cases", caseId),
+		))! as Doc<"cases">;
 		expect(c.structure.personas[0]).not.toHaveProperty("profilePhoto");
 		const rows = await t.run((ctx) =>
 			ctx.db

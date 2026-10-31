@@ -10,8 +10,6 @@ export type {
 
 import type { FunctionReturnType } from "convex/server";
 import type { api } from "../../convex/_generated/api.js";
-import type { Id } from "../../convex/_generated/dataModel.js";
-import type { AdminRole } from "../../convex/lib/constants.js";
 import type {
 	FileEntryPayload,
 	FileRefPayload,
@@ -32,14 +30,8 @@ export type Persona = Omit<
 	files: DraftFileEntry[];
 };
 
-export type AdminRow = {
-	_id: Id<"admins">;
-	email: string;
-	name: string;
-	role: AdminRole;
-};
-
 // What the backend returns to the client, derived from the functions themselves.
+export type AdminRow = FunctionReturnType<typeof api.admins.listAll>[number];
 type RunState = FunctionReturnType<typeof api.simulations.get>;
 export type Contact = RunState["contacts"][number];
 export type SharedFile = RunState["sharedFiles"][number];

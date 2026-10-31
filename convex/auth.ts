@@ -5,7 +5,7 @@ import { betterAuth } from "better-auth/minimal";
 import { v } from "convex/values";
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
-import { internalQuery } from "./_generated/server";
+import { env, internalQuery } from "./_generated/server";
 import authConfig from "./auth.config";
 import { getAdminByEmail } from "./services/admins";
 
@@ -20,12 +20,12 @@ export const adminForSignIn = internalQuery({
 // Builds the Better Auth instance, allowing only Google accounts that are on the admin roster.
 export const createAuth = (ctx: GenericCtx<DataModel>) =>
 	betterAuth({
-		baseURL: process.env.CONVEX_SITE_URL,
+		baseURL: env.CONVEX_SITE_URL,
 		database: authComponent.adapter(ctx),
 		socialProviders: {
 			google: {
-				clientId: process.env.GOOGLE_CLIENT_ID as string,
-				clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
+				clientId: env.GOOGLE_CLIENT_ID,
+				clientSecret: env.GOOGLE_CLIENT_SECRET,
 			},
 		},
 		databaseHooks: {
@@ -53,8 +53,5 @@ export const createAuth = (ctx: GenericCtx<DataModel>) =>
 				},
 			},
 		},
-		plugins: [
-			crossDomain({ siteUrl: process.env.SITE_URL as string }),
-			convex({ authConfig }),
-		],
+		plugins: [crossDomain({ siteUrl: env.SITE_URL }), convex({ authConfig })],
 	});

@@ -36,7 +36,7 @@ async function seedCase(
 			structure: overrides.structure ?? caseStructure(),
 		}),
 	);
-	const admin = (await t.run((ctx) => ctx.db.get(adminId)))!;
+	const admin = (await t.run((ctx) => ctx.db.get("admins", adminId)))!;
 	return { caseId, admin };
 }
 
@@ -110,7 +110,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		await t.mutation(internal.simulations.destroy, { runId: state.runId });
 
 		const leftovers = await t.run(async (ctx) => ({
-			run: await ctx.db.get(state.runId),
+			run: await ctx.db.get("runs", state.runId),
 			turns: await ctx.db.query("turns").collect(),
 		}));
 		expect(leftovers).toEqual({ run: null, turns: [] });
@@ -128,7 +128,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 
 			await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-			expect(await t.run((ctx) => ctx.db.get(state.runId))).toBeNull();
+			expect(await t.run((ctx) => ctx.db.get("runs", state.runId))).toBeNull();
 		} finally {
 			vi.useRealTimers();
 		}
@@ -168,7 +168,7 @@ describe("reads against a run that has gone away", () => {
 			accessCode: "sterling",
 		});
 		await t.run((ctx) =>
-			ctx.db.patch(state.runId, { expiresAt: Date.now() - 1 }),
+			ctx.db.patch("runs", state.runId, { expiresAt: Date.now() - 1 }),
 		);
 
 		await expect(
@@ -180,7 +180,9 @@ describe("reads against a run that has gone away", () => {
 		await expect(sendTurn(t, state.runId, "A", "hi")).rejects.toThrow(
 			"Run expired.",
 		);
-		expect(await t.run((ctx) => ctx.db.get(state.runId))).not.toBeNull();
+		expect(
+			await t.run((ctx) => ctx.db.get("runs", state.runId)),
+		).not.toBeNull();
 	});
 
 	// Tests that a run whose case was removed reports a case error instead of crashing.
@@ -190,7 +192,7 @@ describe("reads against a run that has gone away", () => {
 		const state = await t.mutation(api.simulations.start, {
 			accessCode: "sterling",
 		});
-		await t.run((ctx) => ctx.db.delete(caseId));
+		await t.run((ctx) => ctx.db.delete("cases", caseId));
 
 		await expect(
 			t.query(api.simulations.get, { runId: state.runId }),

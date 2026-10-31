@@ -168,7 +168,7 @@ export async function makeAdmin(
 			role,
 		}),
 	);
-	return (await t.run((ctx) => ctx.db.get(id)))!;
+	return (await t.run((ctx) => ctx.db.get("admins", id)))!;
 }
 
 // Builds a valid case create/update payload with a unique access code and optional overrides.

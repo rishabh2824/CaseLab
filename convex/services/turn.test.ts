@@ -114,8 +114,8 @@ describe("startTurn validation", () => {
 	it("rejects a message once the simulation's duration has elapsed", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure(), "timed");
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
-		await t.run((ctx) => ctx.db.patch(run.caseId, { duration: 10 }));
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
+		await t.run((ctx) => ctx.db.patch("cases", run.caseId, { duration: 10 }));
 		advanceClock(15);
 		expect(
 			await studentRejection(
@@ -135,8 +135,8 @@ describe("startTurn validation", () => {
 	it("accepts a message just before the duration and rejects it exactly at the duration", async () => {
 		const t = newTestConvex();
 		const state = await startRun(t, caseStructure(), "edge");
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
-		await t.run((ctx) => ctx.db.patch(run.caseId, { duration: 10 }));
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
+		await t.run((ctx) => ctx.db.patch("cases", run.caseId, { duration: 10 }));
 		stubLlm();
 
 		advanceClock(9);
@@ -203,7 +203,7 @@ describe("normal turn happy path", () => {
 				personas: [personaPayload("A"), personaPayload("B")],
 			}),
 		);
-		const before = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const before = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		stubLlm();
 
 		const { turnId } = await t.mutation(api.turn.sendMessage, {
@@ -212,7 +212,9 @@ describe("normal turn happy path", () => {
 			message: "switching to B",
 		});
 
-		expect(await t.run((ctx) => ctx.db.get(state.runId))).toEqual(before);
+		expect(await t.run((ctx) => ctx.db.get("runs", state.runId))).toEqual(
+			before,
+		);
 		await settleReply(t, turnId);
 	});
 
@@ -462,7 +464,7 @@ describe("referrals", () => {
 			"unlock condition: the user explicitly asks to speak with Bob",
 		);
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toContain("B");
 		expect(run.unlockedAt.B).toBeDefined();
 
@@ -499,7 +501,7 @@ describe("referrals", () => {
 		expect(replyCall.body.messages[0].content).toContain(
 			"[undisclosed contact]",
 		);
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
 	});
 
@@ -511,7 +513,7 @@ describe("referrals", () => {
 
 		await send(t, state.runId, "A", "hi");
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
 	});
 
@@ -523,7 +525,7 @@ describe("referrals", () => {
 
 		await send(t, state.runId, "A", "hi");
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
 	});
 
@@ -538,8 +540,9 @@ describe("referrals", () => {
 			unlockedReferrals: [{ referredPersonaId: "B" }],
 			sharedFiles: [],
 		});
-		const firstUnlockedAt = (await t.run((ctx) => ctx.db.get(state.runId)))!
-			.unlockedAt.B;
+		const firstUnlockedAt = (await t.run((ctx) =>
+			ctx.db.get("runs", state.runId),
+		))!.unlockedAt.B;
 
 		advanceClock(5);
 		const second = await insertPendingReply(t, state.runId, "A", "hi again");
@@ -550,7 +553,7 @@ describe("referrals", () => {
 			sharedFiles: [],
 		});
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
 		expect(run.unlockedAt.B).toBe(firstUnlockedAt);
 	});
@@ -641,7 +644,7 @@ describe("referrals", () => {
 			"You have no one to introduce this turn.",
 		);
 		expect(replyCall.body.messages[0].content).not.toContain("Bob");
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
 	});
 });
@@ -688,7 +691,7 @@ describe("files", () => {
 			"sharing condition: the user asks about the budget",
 		);
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.sharedFiles).toContain(storageId);
 
 		const live = await t.query(api.simulations.get, { runId: state.runId });
@@ -725,7 +728,7 @@ describe("files", () => {
 			"You have no file to send this turn.",
 		);
 		expect(replyCall.body.messages[0].content).not.toContain("budget.pdf");
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.sharedFiles).toEqual([]);
 	});
 
@@ -737,7 +740,7 @@ describe("files", () => {
 
 		await send(t, state.runId, "A", "Can I see the budget?");
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.sharedFiles).toEqual([]);
 	});
 
@@ -761,7 +764,7 @@ describe("files", () => {
 			"budget.pdf",
 		);
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.sharedFiles).toHaveLength(1);
 	});
 
@@ -776,7 +779,7 @@ describe("files", () => {
 
 		await send(t, state.runId, "A", "hi");
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.sharedFiles).toEqual([]);
 	});
 });

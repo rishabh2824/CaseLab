@@ -101,7 +101,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 			adminId: ownerId,
 		});
 		expect(result).toEqual({ casesDeleted: 1 });
-		expect(await t.run((ctx) => ctx.db.get(caseId))).toBeNull();
+		expect(await t.run((ctx) => ctx.db.get("cases", caseId))).toBeNull();
 	});
 
 	// Tests that deleting an admin deletes their shared cases too, and removes the collaborator rows.
@@ -128,7 +128,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 		});
 		expect(result).toEqual({ casesDeleted: 1 });
 
-		expect(await t.run((ctx) => ctx.db.get(caseId))).toBeNull();
+		expect(await t.run((ctx) => ctx.db.get("cases", caseId))).toBeNull();
 		const remainingCollaborators = await t.run((ctx) =>
 			ctx.db
 				.query("collaborators")
@@ -159,7 +159,7 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 			adminId: ownerId,
 		});
 		expect(result).toEqual({ casesDeleted: 1 });
-		expect(await t.run((ctx) => ctx.db.get(liveCaseId))).toBeNull();
+		expect(await t.run((ctx) => ctx.db.get("cases", liveCaseId))).toBeNull();
 	});
 
 	// Tests that deleting an admin removes their Better Auth user, sessions and accounts.

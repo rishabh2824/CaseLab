@@ -143,14 +143,14 @@ export function makeContact(overrides: Partial<Contact> = {}): Contact {
 
 // Builds a shared file with default details.
 export function makeSharedFile(
-	overrides: Partial<SharedFile> = {},
+	overrides: Partial<Omit<SharedFile, "fileId">> & { fileId?: string } = {},
 ): SharedFile {
 	return {
-		fileId: "7",
 		fileName: "budget.pdf",
 		contentType: "application/pdf",
 		url: "https://spaces.example/budget.pdf",
 		...overrides,
+		fileId: (overrides.fileId ?? "7") as Id<"_storage">,
 	};
 }
 

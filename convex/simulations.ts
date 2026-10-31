@@ -38,17 +38,6 @@ function computeExpiresAt(
 	return startTime + ttlMs;
 }
 
-export type ContactOut = {
-	id: string;
-	name: string;
-	role: string;
-	profilePhotoUrl: string | null;
-	availabilityDuration: number | null;
-	availableAt: number;
-	isReferred: boolean;
-	chatEnded: boolean;
-};
-
 // Builds the student-facing contact for a persona, without exposing its secret fields.
 function toContactOut(
 	persona: PersonaPayload,
@@ -56,7 +45,7 @@ function toContactOut(
 	isReferred: boolean,
 	availableAtMinutes: number,
 	warnings: number,
-): ContactOut {
+) {
 	return {
 		id: persona.id,
 		name: persona.name,
@@ -76,7 +65,7 @@ async function buildContacts(
 	unlockedAt: Record<string, number>,
 	rootPersonas: PersonaPayload[],
 	referredPersonas: PersonaPayload[],
-): Promise<ContactOut[]> {
+) {
 	const entries = [
 		...rootPersonas.map((persona) => ({
 			persona,
@@ -104,19 +93,12 @@ async function buildContacts(
 	);
 }
 
-export type SharedFileOut = {
-	fileId: string;
-	fileName: string;
-	contentType: string | null;
-	url: string | null;
-};
-
 // Builds the student-facing shared file with its URL, or null if the upload is gone.
 async function toSharedFileOut(
 	ctx: QueryCtx | MutationCtx,
 	storageId: Id<"_storage">,
 	fileName: string | undefined,
-): Promise<SharedFileOut | null> {
+) {
 	const stored = await ctx.db.system.get("_storage", storageId);
 	if (!stored) return null;
 	return {
@@ -127,11 +109,7 @@ async function toSharedFileOut(
 	};
 }
 
-export type ChatMessageOut = { role: "user" | "assistant"; content: string };
-export type ReplyStatusOut = {
-	id: Id<"turns">;
-	status: Doc<"turns">["status"];
-} | null;
+type ChatMessageOut = { role: "user" | "assistant"; content: string };
 
 // Loads a persona's turns for a run, oldest first.
 async function queryPersonaTurns(
@@ -157,21 +135,14 @@ function toChatMessages(turns: Doc<"turns">[]): ChatMessageOut[] {
 		]);
 }
 
-type ExportPersonaOut = {
-	id: string;
-	name: string;
-	role: string;
-	messages: ChatMessageOut[];
-};
-
 // Loads a run and its case, throwing student errors if the run or its case is missing. Reads no clock, so it is safe in queries: the scheduled destroy is what ends a run.
 export async function loadRun(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
 ): Promise<{ run: Doc<"runs">; c: Doc<"cases"> }> {
-	const run = await ctx.db.get(runId);
+	const run = await ctx.db.get("runs", runId);
 	if (!run) throw studentError(STUDENT_ERROR.RUN_NOT_FOUND, "Run not found.");
-	const c = await ctx.db.get(run.caseId);
+	const c = await ctx.db.get("cases", run.caseId);
 	if (!c) throw studentError(STUDENT_ERROR.CASE_NOT_FOUND, "Case not found.");
 	return { run, c };
 }
@@ -255,7 +226,7 @@ export const get = query({
 					toSharedFileOut(ctx, storageId, fileNames.get(storageId)),
 				),
 			)
-		).filter((file): file is SharedFileOut => file !== null);
+		).filter((file) => file !== null);
 
 		return {
 			runId: runId,
@@ -298,7 +269,7 @@ export const exportRun = query({
 		const personaIds = [...graph.roots, ...referredIds];
 
 		const personas = await Promise.all(
-			personaIds.map(async (personaId): Promise<ExportPersonaOut> => {
+			personaIds.map(async (personaId) => {
 				const persona = graph.personas.get(personaId);
 				const turns = await queryPersonaTurns(ctx, runId, personaId);
 				return {
@@ -318,14 +289,14 @@ export const exportRun = query({
 export const destroy = internalMutation({
 	args: { runId: v.id("runs") },
 	handler: async (ctx, { runId }) => {
-		if ((await ctx.db.get(runId)) === null) return;
+		if ((await ctx.db.get("runs", runId)) === null) return;
 
 		const turns = await ctx.db
 			.query("turns")
 			.withIndex("by_run_persona", (q) => q.eq("runId", runId))
 			.collect();
-		for (const turn of turns) await ctx.db.delete(turn._id);
+		for (const turn of turns) await ctx.db.delete("turns", turn._id);
 
-		await ctx.db.delete(runId);
+		await ctx.db.delete("runs", runId);
 	},
 });

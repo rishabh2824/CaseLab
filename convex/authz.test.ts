@@ -224,7 +224,7 @@ describe("admin-only surface rejects anonymous callers", () => {
 		const { asUser, adminId } = await withAdmin(t, { role: "admin" });
 		await expect(asUser.query(api.cases.listAll, {})).resolves.toEqual([]);
 
-		await t.run((ctx) => ctx.db.delete(adminId));
+		await t.run((ctx) => ctx.db.delete("admins", adminId));
 
 		await expect(asUser.query(api.cases.listAll, {})).rejects.toThrow(
 			"Your account is not authorized.",
@@ -310,7 +310,7 @@ describe("cross-admin case isolation (object ownership)", () => {
 			...casePayloadArgs({ name: "Renamed by collaborator" }),
 		});
 
-		const after = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const after = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 		expect(after.ownerAdminId).toBe(owner.adminId);
 	});
 });

@@ -140,7 +140,7 @@ describe("shared files resolve from storage", () => {
 
 		await sendTurn(t, state.runId, "A", "budget?");
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.sharedFiles).toEqual([storageId]);
 		const live = await t.query(api.simulations.get, { runId: state.runId });
 		expect(live.sharedFiles).toMatchObject([
@@ -215,11 +215,11 @@ describe("simulation duration", () => {
 				admin,
 			),
 		);
-		const c = (await t.run((ctx) => ctx.db.get(caseId)))!;
+		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 		const state = await t.mutation(api.simulations.start, {
 			accessCode: "capped",
 		});
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 
 		const lifetimeMinutes = Math.round(
 			(run.expiresAt - run._creationTime) / 60_000,

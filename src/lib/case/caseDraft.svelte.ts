@@ -1,6 +1,7 @@
+import type { FunctionReturnType } from "convex/server";
+import type { api } from "../../../convex/_generated/api.js";
 import { getCaseInfoErrors } from "../../../convex/lib/caseRules.js";
 import type {
-	CaseStructure,
 	CollaboratorPayload,
 	FileRefPayload,
 } from "../../../convex/models/cases.js";
@@ -10,19 +11,10 @@ import { CaseGraph } from "./graph.svelte.js";
 import type { ImportedCaseData } from "./importCase.js";
 import type { SubmitCaseInput } from "./submitCase.js";
 
-// The case fields the form loads from the server, for both editing and templating.
-export type LoadableCase = {
-	name: string;
-	brief: string;
-	commonInformation: string;
-	duration?: number | null;
-	accessCode?: string;
-	structure: CaseStructure;
-	teachingNotes?: FileRefPayload;
-	teachingNotesUrl?: string | null;
-	collaborators?: CollaboratorPayload[];
-	canEdit?: boolean;
-};
+// What the form loads from the server: a case opened for editing, or a template to copy.
+export type LoadableCase =
+	| FunctionReturnType<typeof api.cases.getForEdit>
+	| FunctionReturnType<typeof api.cases.getTemplate>;
 
 // Replaces File values with a small descriptor so the draft can be snapshotted as JSON.
 function fileReplacer(_key: string, value: unknown): unknown {
@@ -123,11 +115,13 @@ export class CaseDraft {
 
 	// Fills the draft from a case loaded from the server and marks it clean. A template gets no access code, teaching notes or collaborators.
 	load(loaded: LoadableCase, { isEditMode }: { isEditMode: boolean }): void {
-		this.caseName = loaded.name ?? "";
-		this.initialBrief = loaded.brief ?? "";
-		this.commonInformation = loaded.commonInformation ?? "";
+		// Only a case opened for editing has an access code, teaching notes and collaborators.
+		const editing = isEditMode && "canEdit" in loaded ? loaded : null;
+		this.caseName = loaded.name;
+		this.initialBrief = loaded.brief;
+		this.commonInformation = loaded.commonInformation;
 		this.simulationDurationMinutes = loaded.duration ?? null;
-		this.accessCode = isEditMode ? (loaded.accessCode ?? "") : "";
+		this.accessCode = editing?.accessCode ?? "";
 		// The form edits missing values as null, so the snapshot taken below matches what an edit produces.
 		this.graph.load({
 			personas: loaded.structure.personas.map((persona) => ({
@@ -137,12 +131,10 @@ export class CaseDraft {
 			})),
 			referrals: loaded.structure.referrals,
 		});
-		this.teachingNotes = isEditMode ? (loaded.teachingNotes ?? null) : null;
-		this.teachingNotesUrl = isEditMode
-			? (loaded.teachingNotesUrl ?? null)
-			: null;
-		this.canEdit = loaded.canEdit ?? true;
-		if (isEditMode) this.collaborators = loaded.collaborators ?? [];
+		this.teachingNotes = editing?.teachingNotes ?? null;
+		this.teachingNotesUrl = editing?.teachingNotesUrl ?? null;
+		this.canEdit = editing?.canEdit ?? true;
+		if (editing) this.collaborators = editing.collaborators;
 		this.revealErrors();
 		this.markSaved();
 	}

@@ -129,7 +129,7 @@ export async function deleteCaseUnchecked(
 ): Promise<void> {
 	await syncCaseFiles(ctx, caseId, new Set());
 	await replaceCollaborators(ctx, caseId, []);
-	await ctx.db.delete(caseId);
+	await ctx.db.delete("cases", caseId);
 }
 
 // Deletes a case after checking the admin has access to it.
@@ -243,8 +243,9 @@ async function replaceCollaborators(
 
 	for (const row of existing) {
 		const access = desired.get(row.adminId);
-		if (access === undefined) await ctx.db.delete(row._id);
-		else if (row.access !== access) await ctx.db.patch(row._id, { access });
+		if (access === undefined) await ctx.db.delete("collaborators", row._id);
+		else if (row.access !== access)
+			await ctx.db.patch("collaborators", row._id, { access });
 	}
 	for (const [adminId, access] of desired) {
 		if (!existingAdminIds.has(adminId)) {
@@ -361,7 +362,7 @@ export async function updateCase(
 		caseId,
 	);
 
-	await ctx.db.patch(caseId, fields);
+	await ctx.db.patch("cases", caseId, fields);
 
 	await replaceCollaborators(ctx, caseId, collaborators);
 	await syncCaseFiles(ctx, caseId, storageIds);

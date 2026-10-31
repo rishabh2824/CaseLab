@@ -207,7 +207,7 @@ describe("startSimulation", () => {
 		const state = await t.mutation(api.simulations.start, {
 			accessCode: "timed",
 		});
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.expiresAt - run._creationTime).toBeCloseTo(60 * 60_000, 1);
 		expect(run._creationTime).toBeGreaterThanOrEqual(before);
 	});
@@ -220,7 +220,7 @@ describe("startSimulation", () => {
 		const state = await t.mutation(api.simulations.start, {
 			accessCode: "long",
 		});
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.expiresAt - run._creationTime).toBeCloseTo(240 * 60_000, 1);
 	});
 });
@@ -245,7 +245,7 @@ describe("getSimulationState", () => {
 		});
 		const state = await startRun(t, structure);
 		await t.run((ctx) =>
-			ctx.db.patch(state.runId, {
+			ctx.db.patch("runs", state.runId, {
 				unlockedAt: { B: 7 },
 			}),
 		);
@@ -276,7 +276,7 @@ describe("exportSimulation", () => {
 		});
 		const state = await startRun(t, structure);
 		await t.run((ctx) =>
-			ctx.db.patch(state.runId, {
+			ctx.db.patch("runs", state.runId, {
 				unlockedAt: { D: 1, C: 5 },
 			}),
 		);

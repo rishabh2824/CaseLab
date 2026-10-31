@@ -1,4 +1,6 @@
+import type { FunctionReturnType } from "convex/server";
 import { describe, expect, it } from "vitest";
+import type { api } from "../../convex/_generated/api.js";
 import type { Id } from "../../convex/_generated/dataModel.js";
 import {
 	CaseDraft,
@@ -6,9 +8,17 @@ import {
 } from "../../src/lib/case/caseDraft.svelte.js";
 import { makePersonaPayload } from "../support/factories.js";
 
+type EditableCase = FunctionReturnType<typeof api.cases.getForEdit>;
+
 // Builds a case as the server returns it for editing, with one root persona.
-function loadable(overrides: Partial<LoadableCase> = {}): LoadableCase {
+function loadable(overrides: Partial<EditableCase> = {}): LoadableCase {
 	return {
+		_id: "case-1" as Id<"cases">,
+		_creationTime: 0,
+		ownerAdminId: "admin-1" as Id<"admins">,
+		isTemplate: false,
+		canEdit: true,
+		teachingNotesUrl: null,
 		name: "Sterling",
 		brief: "Cut costs.",
 		commonInformation: "Background.",

@@ -29,13 +29,10 @@ const updateCase = convexFake.mutation(api.cases.update);
 
 // Sets the admin roster the collaborator picker subscribes to.
 function setRoster(rows: AdminRow[]) {
-	convexFake.setQueryData(
-		api.admins.listAll,
-		rows.map((row) => ({ ...row, _creationTime: 0 })),
-	);
+	convexFake.setQueryData(api.admins.listAll, rows);
 }
 
-let currentViewer: AdminRow | null = null;
+let currentViewer: FunctionReturnType<typeof api.admins.viewer> = null;
 
 vi.mock("#lib/adminViewer.js", () => ({
 	getViewerContext: () => ({
@@ -56,6 +53,7 @@ function makeAdminRow(
 ): AdminRow {
 	return {
 		_id: "admin-1",
+		_creationTime: 0,
 		email: "admin@wisc.edu",
 		name: "Admin One",
 		role: "admin",

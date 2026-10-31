@@ -50,7 +50,7 @@ async function expectTurnFailedCleanly(
 
 	expect((await lastReply(t, runId, personaId))?.status).toBe("failed");
 
-	const run = (await t.run((ctx) => ctx.db.get(runId)))!;
+	const run = (await t.run((ctx) => ctx.db.get("runs", runId)))!;
 	expect({
 		unlocked: Object.keys(run.unlockedAt),
 		shared: run.sharedFiles,
@@ -201,7 +201,7 @@ describe("decision fields the schema should have prevented", () => {
 
 		await send(t, state.runId, "A", "budget and B please");
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
 		expect(run.sharedFiles).toEqual([storageId]);
 	});
@@ -221,7 +221,7 @@ describe("decision fields the schema should have prevented", () => {
 
 		await send(t, state.runId, "A", "hi");
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual(["B"]);
 	});
 
@@ -243,7 +243,7 @@ describe("decision fields the schema should have prevented", () => {
 
 		const history = await visibleMessages(t, state.runId, "A");
 		expect(history.at(-1)).toEqual({ role: "assistant", content: injection });
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
 		expect(run.sharedFiles).toEqual([]);
 	});
@@ -329,7 +329,7 @@ describe("the harassment classifier is a separate, fail-open dependency", () => 
 
 		await send(t, state.runId, "A", "asdkjhaskjdh");
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
 		expect(run.sharedFiles).not.toContain(storageId);
 		const history = await visibleMessages(t, state.runId, "A");
@@ -483,7 +483,7 @@ describe("the concurrency guard is the real serialization point", () => {
 			send(t, state.runId, "B", "connect me with D"),
 		]);
 
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect([...Object.keys(run.unlockedAt)].sort()).toEqual(["C", "D"]);
 	});
 });
@@ -526,7 +526,7 @@ describe("a stuck reply is failed by expiry", () => {
 
 		const row = await t.run((ctx) => ctx.db.get("turns", turnId));
 		expect(row).toMatchObject({ status: "failed", reply: "" });
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(Object.keys(run.unlockedAt)).toEqual([]);
 	});
 
@@ -556,9 +556,9 @@ describe("a stuck reply is failed by expiry", () => {
 			}),
 		);
 		const turnId = await insertPendingReply(t, state.runId, "A", "first");
-		const run = (await t.run((ctx) => ctx.db.get(state.runId)))!;
+		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		await t.run((ctx) =>
-			ctx.db.patch(run.caseId, {
+			ctx.db.patch("cases", run.caseId, {
 				structure: {
 					personas: [personaPayload("B")],
 					referrals: [],
