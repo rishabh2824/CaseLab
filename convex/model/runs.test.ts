@@ -4,7 +4,12 @@ import {
 	personaPayload,
 	referralEdge,
 } from "../../tests/support/factories";
-import { flattenPersonas } from "./simulationReads";
+import {
+	boundaryReply,
+	flattenPersonas,
+	isChatEnded,
+	NONSENSE_THRESHOLD,
+} from "./runs";
 
 describe("flattenPersonas", () => {
 	// Tests that persona secrets are carried through unchanged.
@@ -80,5 +85,37 @@ describe("flattenPersonas", () => {
 		expect([...graph.roots].sort()).toEqual(["A", "C"]);
 		expect([...graph.personas.keys()].sort()).toEqual(["A", "B", "C"]);
 		expect(graph.referrals).toHaveLength(1);
+	});
+});
+
+describe("isChatEnded", () => {
+	// Tests that a chat ends exactly when the warnings reach the threshold.
+	it("ends the chat at NONSENSE_THRESHOLD warnings and not before", () => {
+		expect(isChatEnded(0)).toBe(false);
+		expect(isChatEnded(NONSENSE_THRESHOLD - 1)).toBe(false);
+		expect(isChatEnded(NONSENSE_THRESHOLD)).toBe(true);
+		expect(isChatEnded(NONSENSE_THRESHOLD + 1)).toBe(true);
+	});
+});
+
+describe("boundaryReply", () => {
+	// Tests that boundaryReply names the persona when ending the conversation.
+	it("names the persona when ending the conversation", () => {
+		expect(boundaryReply("Mary", true)).toMatch(
+			/^Mary is ending this conversation/,
+		);
+	});
+
+	// Tests that boundaryReply gives a fixed warning regardless of name when not ending.
+	it("is a fixed warning regardless of name when not ending", () => {
+		expect(boundaryReply("Mary", false)).toBe(
+			"I am not able to follow that. Please send a clear, respectful, case-related " +
+				"question if you want to continue.",
+		);
+	});
+
+	// Tests that boundaryReply falls back to 'I' for an empty name.
+	it("falls back to 'I' for an empty name", () => {
+		expect(boundaryReply("", true)).toMatch(/^I is ending this conversation/);
 	});
 });

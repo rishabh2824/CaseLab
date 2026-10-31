@@ -3,7 +3,7 @@ import { components } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { authComponent } from "../auth";
-import type { AdminRole } from "../lib/constants";
+import type { AdminRole } from "../shared/validators";
 import { deleteCaseUnchecked } from "./cases";
 
 // Trims and lower-cases an email so lookups ignore casing and padding.

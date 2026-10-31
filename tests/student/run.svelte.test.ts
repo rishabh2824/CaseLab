@@ -2,10 +2,10 @@ import { getFunctionName } from "convex/server";
 import { flushSync, tick } from "svelte";
 import { toast } from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
+import { STUDENT_ERROR } from "#shared/studentErrors.js";
 import { goto } from "$app/navigation";
-import { api } from "../../convex/_generated/api.js";
-import type { Id } from "../../convex/_generated/dataModel.js";
-import { STUDENT_ERROR } from "../../convex/lib/studentErrors.js";
 import { session } from "../../src/lib/session.svelte.js";
 import { RunStore } from "../../src/lib/student/run.svelte.js";
 import {
@@ -684,6 +684,15 @@ describe("notification diffing (#diffAndNotify, observed via the live query)", (
 const notesKey = (runId: string) => `caselab:notes:${runId}`;
 
 describe("notes", () => {
+	// Tests that a store created for a run that already has stored notes starts with them.
+	it("starts with the notes stored for the run", async () => {
+		sessionStorage.setItem(notesKey("run-1"), "saved earlier");
+		session.startRun({ runId: "run-1" });
+		const { run } = freshRun();
+
+		expect(run.notes).toBe("saved earlier");
+	});
+
 	// Tests that setNotes keeps the text and writes it to storage straight away.
 	it("setNotes writes to sessionStorage immediately", async () => {
 		const { run, session } = await freshRun();

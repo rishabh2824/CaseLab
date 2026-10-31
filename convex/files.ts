@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
-import { storageHasReferences } from "./services/files";
+import { storageHasReferences } from "./model/files";
 
 const SWEEP_BATCH_SIZE = 100;
 

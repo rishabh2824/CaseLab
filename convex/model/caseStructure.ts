@@ -1,13 +1,13 @@
 import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
+import { validateStructure } from "../shared/caseGraph";
+import { getPersonaFieldErrors } from "../shared/rules";
 import type {
 	CaseStructure,
 	FileRefPayload,
 	PersonaPayload,
 	ReferralEdgePayload,
-} from "../models/cases";
-import { validateStructure } from "./caseGraph";
-import { getPersonaFieldErrors } from "./caseRules";
+} from "../shared/validators";
 
 // Persona ids become record keys in a run, and Convex record keys may not start with "_" or "$".
 const PERSONA_ID_FORMAT = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;

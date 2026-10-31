@@ -1,10 +1,12 @@
 <script lang="ts">
 import { Popover } from "bits-ui";
 import type { CaseDraft } from "#lib/case/caseDraft.svelte.js";
-import { parseIntOrNull } from "#lib/case/draft.js";
+import { numberInputValue } from "#lib/case/draft.js";
 import type { AdminRow, CollaboratorAccess } from "#lib/types.js";
-import { isSelectableCollaborator } from "../../../convex/lib/caseRules.js";
-import { MAX_DURATION_MINUTES } from "../../../convex/lib/constants.js";
+import {
+	isSelectableCollaborator,
+	MAX_DURATION_MINUTES,
+} from "#shared/rules.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
 
 type Props = {
@@ -105,7 +107,7 @@ const errors = $derived(
 					value={draft.simulationDurationMinutes ?? ''}
 					oninput={(event) => {
 						draft.touch("simulationDuration")
-						draft.simulationDurationMinutes = parseIntOrNull(event.currentTarget.value)
+						draft.simulationDurationMinutes = numberInputValue(event.currentTarget)
 					}}
 					class={INPUT_CLASS}
 				/>

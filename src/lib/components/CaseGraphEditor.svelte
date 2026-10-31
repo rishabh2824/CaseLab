@@ -24,6 +24,10 @@ let selectedId = $state<string | null>(null);
 const selected = $derived(
 	graph.byId.get(selectedId ?? "") ?? graph.byId.get(graph.roots[0] ?? ""),
 );
+// Where the open persona sits in the graph. Binding straight to graph.personas[...] would make Svelte warn, because the graph belongs to the case form, so the editor below binds through a getter and a setter that writes back here.
+const selectedIndex = $derived(
+	graph.personas.findIndex((persona) => persona.id === selected?.id),
+);
 const incoming = $derived(
 	selected ? referralsTo(graph.referrals, selected.id) : [],
 );
@@ -151,7 +155,7 @@ function confirmRemove(): void {
 				{/each}
 
 				{#key selected.id}
-					<PersonaFields bind:persona={() => selected, () => {}} {showFieldErrors} />
+					<PersonaFields bind:persona={() => selected, (next) => (graph.personas[selectedIndex] = next)} {showFieldErrors} />
 				{/key}
 			</fieldset>
 		{:else}

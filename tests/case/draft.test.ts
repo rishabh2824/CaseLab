@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getPersonaFieldErrors } from "../../convex/lib/caseRules.js";
+import { getPersonaFieldErrors } from "#shared/rules.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
 	getPersonaLabel,
 	hasFieldErrors,
-	parseIntOrNull,
+	numberInputValue,
 	referralsTo,
 } from "../../src/lib/case/draft.js";
 import { makeReferral } from "../support/factories.js";
@@ -91,19 +91,32 @@ describe("referralsTo", () => {
 	});
 });
 
-describe("parseIntOrNull", () => {
-	// Tests that blank and non-numeric input is null.
-	it.each(["", "abc", "Infinity", "NaN"])("returns null for %j", (raw) => {
-		expect(parseIntOrNull(raw)).toBeNull();
+describe("numberInputValue", () => {
+	// Builds the parts of a number input that the function reads, since jsdom does not model badInput.
+	const input = (value: string, badInput = false) =>
+		({
+			value,
+			valueAsNumber: value === "" ? Number.NaN : Number(value),
+			validity: { badInput },
+		}) as HTMLInputElement;
+
+	// Tests that a blank field means no value.
+	it("returns null for a blank field", () => {
+		expect(numberInputValue(input(""))).toBeNull();
 	});
 
-	// Tests that numbers are truncated toward zero, not rounded.
+	// Tests that text the browser could not read as a number is NaN, so validation rejects it instead of it counting as blank.
+	it("returns NaN when the browser reports bad input", () => {
+		expect(numberInputValue(input("", true))).toBeNaN();
+	});
+
+	// Tests that the typed number is passed through untouched, so a decimal reaches the whole-number check.
 	it.each([
 		["12", 12],
-		["12.9", 12],
-		["-3.7", -3],
+		["12.9", 12.9],
+		["-3.7", -3.7],
 		["0", 0],
-	])("parses %j as %i", (raw, expected) => {
-		expect(parseIntOrNull(raw)).toBe(expected);
+	])("returns %j as %d without rounding", (raw, expected) => {
+		expect(numberInputValue(input(raw))).toBe(expected);
 	});
 });

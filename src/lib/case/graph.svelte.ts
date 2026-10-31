@@ -1,5 +1,5 @@
-import { reachableFrom, rootIds } from "../../../convex/lib/caseGraph.js";
-import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
+import { reachableFrom, rootIds } from "#shared/caseGraph.js";
+import { getPersonaFieldErrors } from "#shared/rules.js";
 import type { GraphData, Persona, ReferralEdge } from "../types.js";
 import {
 	createEmptyPersona,

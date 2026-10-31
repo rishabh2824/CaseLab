@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { caseStructure, personaPayload } from "../../tests/support/factories";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { CaseStructure } from "../models/cases";
+import type { CaseStructure } from "../shared/validators";
 import { insertPendingReply, newTestConvex, sendTurn } from "../test.setup";
 import { deleteCase, updateCase } from "./cases";
 

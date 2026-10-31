@@ -4,7 +4,7 @@ import { Background, type Edge, MarkerType, SvelteFlow } from "@xyflow/svelte";
 import "@xyflow/svelte/dist/style.css";
 import { hasFieldErrors } from "#lib/case/draft.js";
 import type { CaseGraph } from "#lib/case/graph.svelte.js";
-import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
+import { getPersonaFieldErrors } from "#shared/rules.js";
 import PersonaNode, { type PersonaFlowNode } from "./PersonaNode.svelte";
 
 type Props = {

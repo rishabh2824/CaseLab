@@ -1,4 +1,4 @@
-import type { PersonaPayload } from "../models/cases";
+import type { PersonaPayload } from "../shared/validators";
 
 export type CandidateReferral = {
 	handle: string;

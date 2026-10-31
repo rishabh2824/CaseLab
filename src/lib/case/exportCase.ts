@@ -1,4 +1,4 @@
-import { reachableFrom } from "../../../convex/lib/caseGraph.js";
+import { reachableFrom } from "#shared/caseGraph.js";
 import { downloadBlob } from "../download.js";
 import type { CaseInfo, GraphData, Persona, ReferralEdge } from "../types.js";
 import { createEmptyPersona, createEmptyReferral } from "./draft.js";

@@ -2,6 +2,8 @@
 import { getConvexClient, useQuery } from "convex-svelte";
 import { onMount, untrack } from "svelte";
 import { toast } from "svelte-sonner";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import { getViewerContext } from "#lib/adminViewer.js";
 import { CaseDraft } from "#lib/case/caseDraft.svelte.js";
 import { buildHTMLForm, downloadForm } from "#lib/case/exportCase.js";
@@ -9,8 +11,6 @@ import { CaseImportError, parseHTMLForm } from "#lib/case/importCase.js";
 import { submitCase } from "#lib/case/submitCase.js";
 import { getErrorMessage } from "#lib/errors.js";
 import { beforeNavigate, goto } from "$app/navigation";
-import { api } from "../../../convex/_generated/api.js";
-import type { Id } from "../../../convex/_generated/dataModel.js";
 import CaseGraphEditor from "./CaseGraphEditor.svelte";
 import CaseInfoFields from "./CaseInfoFields.svelte";
 import ConfirmDialog from "./ConfirmDialog.svelte";

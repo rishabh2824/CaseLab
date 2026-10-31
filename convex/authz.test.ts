@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { caseStructure, personaPayload } from "../tests/support/factories";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import type { CaseStructure } from "./models/cases";
+import type { CaseStructure } from "./shared/validators";
 import { newTestConvex, withAdmin, withStranger } from "./test.setup";
 
 type T = ReturnType<typeof newTestConvex>;
@@ -468,8 +468,8 @@ describe("the registered-function surface", () => {
 	);
 
 	// Files that hold plain logic and must never register a function (the admin wrapper builders are the one exception).
-	const isLogicFile = (path: string) => /^(services|lib|models)\//.test(path);
-	const BUILDER_FILE = "services/adminFunctions.ts";
+	const isLogicFile = (path: string) => /^(model|shared)\//.test(path);
+	const BUILDER_FILE = "model/functions.ts";
 
 	const ADMIN_WRAPPERS = new Set([
 		"adminQuery",
@@ -523,8 +523,8 @@ describe("the registered-function surface", () => {
 		expect(ungated).toEqual([]);
 	});
 
-	// Tests that no function is registered in services, lib or models, so the public surface is always a top-level module.
-	it("registers no functions in services, lib or models", () => {
+	// Tests that no function is registered in model or shared, so the public surface is always a top-level module.
+	it("registers no functions in model or shared", () => {
 		const offenders = Object.entries(sources)
 			.filter(([path]) => isLogicFile(path) && path !== BUILDER_FILE)
 			.filter(([, source]) =>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { personaPayload } from "../../tests/support/factories";
-import type { PersonaPayload } from "../models/cases";
+import type { PersonaPayload } from "../shared/validators";
 import { systemPrompt as buildSystemPrompt, cleanReply } from "./prompt";
 
 // Calls the real system prompt builder and joins its stable and dynamic parts into one string.

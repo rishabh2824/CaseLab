@@ -2,15 +2,14 @@
 import { getConvexClient } from "convex-svelte";
 import { onMount, tick } from "svelte";
 import { toast } from "svelte-sonner";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import SimulationClock from "#lib/components/SimulationClock.svelte";
 import { downloadBlob } from "#lib/download.js";
 import { getPersonaInitials } from "#lib/format.js";
 import { session } from "#lib/session.svelte.js";
 import { createRunStore } from "#lib/student/run.svelte.js";
-import { api } from "../../../../convex/_generated/api.js";
-import type { Id } from "../../../../convex/_generated/dataModel.js";
-import { MAX_MESSAGE_WORDS } from "../../../../convex/lib/constants.js";
-import { countWords } from "../../../../convex/lib/messageRules.js";
+import { countWords, MAX_MESSAGE_WORDS } from "#shared/rules.js";
 
 const run = createRunStore();
 

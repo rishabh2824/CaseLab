@@ -1,7 +1,7 @@
 import { ConvexError, type GenericId } from "convex/values";
 import { getConvexClient } from "convex-svelte";
-import { api } from "../../../convex/_generated/api.js";
-import type { Id } from "../../../convex/_generated/dataModel.js";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import type {
 	CaseInfo,
 	CollaboratorPayload,

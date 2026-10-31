@@ -6,8 +6,8 @@ import {
 } from "../../tests/support/factories";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { STUDENT_ERROR } from "../lib/studentErrors";
-import type { CaseStructure } from "../models/cases";
+import { STUDENT_ERROR } from "../shared/studentErrors";
+import type { CaseStructure } from "../shared/validators";
 import {
 	insertPendingReply,
 	newTestConvex,

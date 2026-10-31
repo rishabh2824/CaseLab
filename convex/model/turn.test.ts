@@ -7,9 +7,7 @@ import {
 } from "../../tests/support/factories";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { RECENT_HISTORY_LIMIT } from "../lib/llm";
-import { STUDENT_ERROR } from "../lib/studentErrors";
-import { NONSENSE_THRESHOLD } from "../lib/turnState";
+import { STUDENT_ERROR } from "../shared/studentErrors";
 import {
 	insertPendingReply,
 	lastReply,
@@ -21,6 +19,8 @@ import {
 	studentRejection,
 	visibleMessages,
 } from "../test.setup";
+import { RECENT_HISTORY_LIMIT } from "./llm";
+import { NONSENSE_THRESHOLD } from "./runs";
 
 beforeEach(() => {
 	vi.stubEnv("LLM_KEY", "test-key");
@@ -153,6 +153,28 @@ describe("startTurn validation", () => {
 				}),
 			),
 		).toMatchObject({ code: STUDENT_ERROR.SIMULATION_ENDED });
+	});
+
+	// Tests that a locked persona whose id is also an Object.prototype key ("constructor") stays locked, instead of finding the inherited property in the unlocked record.
+	it("keeps a locked persona locked when its id is an inherited object key", async () => {
+		const t = newTestConvex();
+		const structure = caseStructure({
+			personas: [personaPayload("A"), personaPayload("constructor")],
+			referrals: [referralEdge("A", "constructor", "the user asks for it")],
+		});
+		const state = await startRun(t, structure);
+		expect(
+			await studentRejection(
+				t.mutation(api.turn.sendMessage, {
+					runId: state.runId,
+					personaId: "constructor",
+					message: "hi",
+				}),
+			),
+		).toEqual({
+			code: STUDENT_ERROR.PERSONA_UNAVAILABLE,
+			message: "Persona is not available yet.",
+		});
 	});
 
 	// Tests that a message is rejected once the persona's own availability window has expired.

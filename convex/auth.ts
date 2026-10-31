@@ -7,7 +7,7 @@ import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import { env, internalQuery } from "./_generated/server";
 import authConfig from "./auth.config";
-import { getAdminByEmail } from "./services/admins";
+import { getAdminByEmail } from "./model/admins";
 
 export const authComponent = createClient<DataModel>(components.betterAuth);
 

@@ -4,7 +4,9 @@
 	"version": "0.0.1",
 	"type": "module",
 	"imports": {
-		"#lib/*": "./src/lib/*"
+		"#lib/*": "./src/lib/*",
+		"#shared/*": "./convex/shared/*",
+		"#convex/*": "./convex/_generated/*"
 	},
 	"packageManager": "pnpm@12.15.0",
 	"engines": {

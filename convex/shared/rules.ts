@@ -1,6 +1,13 @@
-import { ACCESS_CODE_FORMAT, MAX_DURATION_MINUTES } from "./constants";
+// Case and message limits, and the field rules built on them. Shared by the Convex backend (which throws the first failing rule) and the browser (which shows them inline). Kept free of Convex imports.
 
-// Field rules and messages shared by the Convex backend (which throws the first one) and the browser (which shows them inline). Kept free of Convex imports.
+export const MAX_DURATION_MINUTES = 120;
+
+export const MAX_MESSAGE_WORDS = 50;
+
+// Backstop for messages whose few "words" are enormous, which the word limit alone lets through.
+export const MAX_MESSAGE_CHARS = 2000;
+
+export const ACCESS_CODE_FORMAT = /^[a-z]+$/;
 
 export type CaseInfoFieldErrors = Partial<
 	Record<
@@ -78,3 +85,7 @@ export const isSelectableCollaborator = (
 	admin: { _id: string },
 	effectiveOwnerId: string | null,
 ): boolean => admin._id !== effectiveOwnerId;
+
+// Counts whitespace-separated words. Shared by the server's message limit and the student page's live counter, so they cannot disagree.
+export const countWords = (value: string): number =>
+	value.trim().split(/\s+/).filter(Boolean).length;

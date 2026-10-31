@@ -1,21 +1,21 @@
-export type { AdminRole } from "../../convex/lib/constants.js";
 export type {
+	AdminRole,
 	CollaboratorAccess,
 	CollaboratorPayload,
 	FileEntryPayload,
 	FileRefPayload,
 	PersonaPayload,
 	ReferralEdgePayload as ReferralEdge,
-} from "../../convex/models/cases.js";
+} from "#shared/validators.js";
 
 import type { FunctionReturnType } from "convex/server";
-import type { api } from "../../convex/_generated/api.js";
+import type { api } from "#convex/api.js";
 import type {
 	FileEntryPayload,
 	FileRefPayload,
 	PersonaPayload,
 	ReferralEdgePayload,
-} from "../../convex/models/cases.js";
+} from "#shared/validators.js";
 
 export type DraftFileEntry = Omit<FileEntryPayload, "file"> & {
 	file?: File | FileRefPayload | null;

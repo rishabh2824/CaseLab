@@ -1,10 +1,10 @@
 <script lang="ts">
 import { useMutation } from "convex-svelte";
 import { toast } from "svelte-sonner";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import { getViewerContext } from "#lib/adminViewer.js";
 import { getErrorMessage } from "#lib/errors.js";
-import { api } from "../../../convex/_generated/api.js";
-import type { Id } from "../../../convex/_generated/dataModel.js";
 
 type Props = {
 	caseId: Id<"cases">;

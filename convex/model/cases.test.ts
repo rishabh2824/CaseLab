@@ -10,7 +10,7 @@ import {
 	requireCaseAccess,
 	updateCase,
 } from "./cases";
-import { flattenPersonas } from "./simulationReads";
+import { flattenPersonas } from "./runs";
 
 describe("case access control", () => {
 	// Tests that the owner can read, update and delete their own case.

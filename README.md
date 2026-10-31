@@ -42,9 +42,8 @@ templates to every admin. A template is copied without its access code.
 | Path | What lives there |
 |---|---|
 | `convex/*.ts` | The public Convex functions, one file per area: `admins`, `cases`, `simulations`, `turn`, `files`, `uploads`. Also `schema.ts`, `auth.ts` and `http.ts`. |
-| `convex/services/` | The logic behind those functions, as plain functions that never register a Convex function. |
-| `convex/lib/` | Pure helpers shared with the browser (`constants`, `caseRules`, `caseGraph`, `turnState`, `studentErrors`) and the LLM code (`llm`, `prompt`). |
-| `convex/models/` | Validators for the stored case structure. |
+| `convex/model/` | Server-only logic behind those functions, as plain functions that take a `ctx` or call the LLM and never register a Convex function (`cases`, `admins`, `runs`, `reply`, `llm`, `prompt`, and the others). |
+| `convex/shared/` | Pure code the browser imports too, with no `ctx` and no schema: `rules` (limits and field rules), `caseGraph`, `availability`, `studentErrors` and `validators`. The browser reaches it as `#shared/*`, and the generated API as `#convex/*`. |
 | `convex/migrations.ts` | Temporary one-off data migrations. Delete them once every deployment has run them. |
 | `src/routes/` | SvelteKit routes: the landing page, `/student`, and `/admin/...`. |
 | `src/lib/` | Components, the student run store, and the case form code (`case/`). |
@@ -154,7 +153,7 @@ upload URLs, and only the resulting storage ids are submitted with the case. A
 from storage only when no case uses it any more.
 
 **Shared code.** The case field rules and messages, the cycle check on
-referrals, and the availability logic each live once in `convex/lib/` and are
+referrals, and the availability logic each live once in `convex/shared/` and are
 used by both the backend and the browser.
 
 ## Working on the Convex code

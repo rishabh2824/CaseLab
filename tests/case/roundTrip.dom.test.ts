@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { rootIds } from "../../convex/lib/caseGraph.js";
+import { rootIds } from "#shared/caseGraph.js";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import { parseHTMLForm } from "../../src/lib/case/importCase.js";
 import type { Persona, ReferralEdge } from "../../src/lib/types.js";

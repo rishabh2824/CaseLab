@@ -4,8 +4,8 @@ import type { FunctionReturnType } from "convex/server";
 import { ConvexError } from "convex/values";
 import * as sonner from "svelte-sonner";
 import { describe, expect, it, vi } from "vitest";
-import { api } from "../../convex/_generated/api.js";
-import type { Id } from "../../convex/_generated/dataModel.js";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import TemplatePicker from "../../src/lib/components/TemplatePicker.svelte";
 import { convexFake } from "../support/convexFake.svelte.js";
 

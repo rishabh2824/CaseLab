@@ -1,10 +1,9 @@
 import type { Persona, ReferralEdge } from "../types.js";
 
-// Parses a numeric string to a whole number, returning null for blank or non-numeric input.
-export function parseIntOrNull(raw: string): number | null {
-	if (raw === "") return null;
-	const parsed = Number(raw);
-	return Number.isFinite(parsed) ? Math.trunc(parsed) : null;
+// Reads a number field as typed: null when blank, NaN when the text is not a number, otherwise its value. Nothing is rounded or dropped here, so the form's validation sees exactly what the user entered.
+export function numberInputValue(input: HTMLInputElement): number | null {
+	if (input.validity.badInput) return Number.NaN;
+	return input.value === "" ? null : input.valueAsNumber;
 }
 
 // Creates a blank persona with a fresh UUID, with optional field overrides.

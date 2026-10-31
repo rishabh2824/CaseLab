@@ -1,4 +1,4 @@
-import { validateStructure } from "../../../convex/lib/caseGraph.js";
+import { validateStructure } from "#shared/caseGraph.js";
 import type { CaseInfo, GraphData, Persona, ReferralEdge } from "../types.js";
 
 export class CaseImportError extends Error {}

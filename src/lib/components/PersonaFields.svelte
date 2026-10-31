@@ -1,7 +1,7 @@
 <script lang="ts">
-import { parseIntOrNull } from "#lib/case/draft.js";
+import { numberInputValue } from "#lib/case/draft.js";
 import type { Persona } from "#lib/types.js";
-import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
+import { getPersonaFieldErrors } from "#shared/rules.js";
 import FormField, { INPUT_CLASS } from "./FormField.svelte";
 
 type Props = {
@@ -132,7 +132,7 @@ function handleFileChange(event: InputEvent_, fileIndex: number): void {
 				placeholder="Leave blank for unlimited"
 				value={persona.availabilityMinutes ?? ''}
 				oninput={(event) => {
-					persona.availabilityMinutes = parseIntOrNull(event.currentTarget.value)
+					persona.availabilityMinutes = numberInputValue(event.currentTarget)
 				}}
 				class={INPUT_CLASS}
 			/>

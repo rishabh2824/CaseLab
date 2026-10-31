@@ -1,9 +1,6 @@
 import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
-import {
-	STUDENT_ERROR,
-	studentErrorData,
-} from "../convex/lib/studentErrors.js";
+import { STUDENT_ERROR, studentErrorData } from "#shared/studentErrors.js";
 import { getErrorMessage } from "../src/lib/errors.js";
 import {
 	clientServerError,

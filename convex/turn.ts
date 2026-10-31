@@ -9,23 +9,23 @@ import {
 	mutation,
 	type QueryCtx,
 } from "./_generated/server";
-import { MAX_MESSAGE_CHARS, MAX_MESSAGE_WORDS } from "./lib/constants";
-import { LLM_ATTEMPT_TIMEOUT_MS, PERSONA_REPLY_RETRIES } from "./lib/llm";
-import { countWords } from "./lib/messageRules";
-import { STUDENT_ERROR, studentError } from "./lib/studentErrors";
+import { LLM_ATTEMPT_TIMEOUT_MS, PERSONA_REPLY_RETRIES } from "./model/llm";
+import { buildTurnContext, generateReply, type ReplyJob } from "./model/reply";
 import {
 	boundaryReply,
-	elapsedMinutes,
+	flaggedCounts,
+	flattenPersonas,
 	isChatEnded,
-	personaAvailability,
-} from "./lib/turnState";
-import { flaggedCounts, flattenPersonas } from "./services/simulationReads";
+	loadLiveRun,
+	loadRun,
+} from "./model/runs";
+import { elapsedMinutes, personaAvailability } from "./shared/availability";
 import {
-	buildTurnContext,
-	generateReply,
-	type ReplyJob,
-} from "./services/turnReply";
-import { loadLiveRun, loadRun } from "./simulations";
+	countWords,
+	MAX_MESSAGE_CHARS,
+	MAX_MESSAGE_WORDS,
+} from "./shared/rules";
+import { STUDENT_ERROR, studentError } from "./shared/studentErrors";
 
 // How long a reply may stay pending before it is failed. Covers the slowest LLM attempts plus a margin.
 export const TURN_EXPIRY_MS =
@@ -107,12 +107,12 @@ export const sendMessage = mutation({
 		const persona = graph.personas.get(personaId);
 		if (!persona)
 			throw studentError(STUDENT_ERROR.PERSONA_NOT_FOUND, "Persona not found.");
-		const availableAt = graph.roots.includes(personaId)
-			? 0
-			: Object.hasOwn(run.unlockedAt, personaId)
-				? run.unlockedAt[personaId]!
-				: null;
-		if (availableAt === null) throw personaUnavailable();
+		// Own keys only: an id like "constructor" is valid, and would otherwise find the inherited property and look unlocked.
+		const unlockedAt = Object.hasOwn(run.unlockedAt, personaId)
+			? run.unlockedAt[personaId]
+			: undefined;
+		const availableAt = graph.roots.includes(personaId) ? 0 : unlockedAt;
+		if (availableAt === undefined) throw personaUnavailable();
 		if (
 			!personaAvailability(
 				persona.availabilityMinutes ?? null,

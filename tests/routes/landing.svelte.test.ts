@@ -2,10 +2,10 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
 import { beforeEach, describe, expect, it } from "vitest";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
+import { STUDENT_ERROR } from "#shared/studentErrors.js";
 import { goto } from "$app/navigation";
-import { api } from "../../convex/_generated/api.js";
-import type { Id } from "../../convex/_generated/dataModel.js";
-import { STUDENT_ERROR } from "../../convex/lib/studentErrors.js";
 import { session } from "../../src/lib/session.svelte.js";
 import Landing from "../../src/routes/+page.svelte";
 import {

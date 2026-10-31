@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
-import { adminMutation } from "./services/adminFunctions";
-import { storageHasReferences } from "./services/files";
+import { storageHasReferences } from "./model/files";
+import { adminMutation } from "./model/functions";
 
 const MAX_UPLOAD_BATCH = 200;
 

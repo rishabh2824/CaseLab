@@ -1,7 +1,7 @@
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import type { FileRefPayload } from "../models/cases";
+import type { FileRefPayload } from "../shared/validators";
 
 // Returns the storage ids among the given references whose uploads still exist.
 export async function existingStorageIds(

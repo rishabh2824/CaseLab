@@ -1,6 +1,6 @@
 import type { UseQueryReturn } from "convex-svelte";
 import { createContext } from "svelte";
-import type { api } from "../../convex/_generated/api.js";
+import type { api } from "#convex/api.js";
 
 type ViewerQuery = UseQueryReturn<typeof api.admins.viewer>;
 

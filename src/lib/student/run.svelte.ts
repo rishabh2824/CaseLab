@@ -1,13 +1,10 @@
 import { getConvexClient, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
+import { personaAvailability } from "#shared/availability.js";
+import { STUDENT_ERROR, studentErrorData } from "#shared/studentErrors.js";
 import { goto } from "$app/navigation";
-import { api } from "../../../convex/_generated/api.js";
-import type { Id } from "../../../convex/_generated/dataModel.js";
-import {
-	STUDENT_ERROR,
-	studentErrorData,
-} from "../../../convex/lib/studentErrors.js";
-import { personaAvailability } from "../../../convex/lib/turnState.js";
 import { getErrorMessage } from "../errors.js";
 import { session } from "../session.svelte.js";
 import type { ChatMessage, Contact, SharedFile } from "../types.js";
@@ -27,9 +24,13 @@ const notesKey = (runId: string) => `caselab:notes:${runId}`;
 export class RunStore {
 	loadError = $state("");
 	activeContactId = $state<string | null>(null);
-	notes = $state("");
+	// Read once here: the key is only the run id, which is already known when the store is created.
+	notes = $state(
+		session.runId
+			? (sessionStorage.getItem(notesKey(session.runId)) ?? "")
+			: "",
+	);
 
-	#notesInitialized = false;
 	#seenContacts = new Set<string>();
 	#seenFiles = new Set<string>();
 	#seenInitialized = false;
@@ -147,12 +148,8 @@ export class RunStore {
 		if (!session.runId) goto("/");
 	}
 
-	// Restores notes and the selected contact after the run loads, then updates notifications and timers.
+	// Restores the selected contact after the run loads, then updates notifications.
 	#afterLoad(): void {
-		if (!this.#notesInitialized && session.runId) {
-			this.notes = sessionStorage.getItem(notesKey(session.runId)) ?? "";
-			this.#notesInitialized = true;
-		}
 		if (this.activeContactId == null) {
 			const rows = this.contacts;
 			const remembered = rows.find((c) => c.id === session.activePersonaId);

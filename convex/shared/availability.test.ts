@@ -1,12 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import {
-	boundaryReply,
-	elapsedMinutes,
-	isChatEnded,
-	NONSENSE_THRESHOLD,
-	personaAvailability,
-} from "./turnState";
+import { elapsedMinutes, personaAvailability } from "./availability";
 
 describe("personaAvailability", () => {
 	// Tests that a persona is reported as not yet available before its availableAt time.
@@ -93,38 +87,6 @@ describe("personaAvailability", () => {
 				},
 			),
 		);
-	});
-});
-
-describe("isChatEnded", () => {
-	// Tests that a chat ends exactly when the warnings reach the threshold.
-	it("ends the chat at NONSENSE_THRESHOLD warnings and not before", () => {
-		expect(isChatEnded(0)).toBe(false);
-		expect(isChatEnded(NONSENSE_THRESHOLD - 1)).toBe(false);
-		expect(isChatEnded(NONSENSE_THRESHOLD)).toBe(true);
-		expect(isChatEnded(NONSENSE_THRESHOLD + 1)).toBe(true);
-	});
-});
-
-describe("boundaryReply", () => {
-	// Tests that boundaryReply names the persona when ending the conversation.
-	it("names the persona when ending the conversation", () => {
-		expect(boundaryReply("Mary", true)).toMatch(
-			/^Mary is ending this conversation/,
-		);
-	});
-
-	// Tests that boundaryReply gives a fixed warning regardless of name when not ending.
-	it("is a fixed warning regardless of name when not ending", () => {
-		expect(boundaryReply("Mary", false)).toBe(
-			"I am not able to follow that. Please send a clear, respectful, case-related " +
-				"question if you want to continue.",
-		);
-	});
-
-	// Tests that boundaryReply falls back to 'I' for an empty name.
-	it("falls back to 'I' for an empty name", () => {
-		expect(boundaryReply("", true)).toMatch(/^I is ending this conversation/);
 	});
 });
 

@@ -1,20 +1,20 @@
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, QueryCtx } from "../_generated/server";
+import type { PersonaPayload } from "../shared/validators";
 import {
 	classifyHarassment,
 	generatePersonaReply,
 	RECENT_HISTORY_LIMIT,
-} from "../lib/llm";
+} from "./llm";
 import {
 	type CandidateFile,
 	type CandidateReferral,
 	cleanReply,
 	replyInstructions,
 	systemPrompt,
-} from "../lib/prompt";
-import type { PersonaPayload } from "../models/cases";
-import type { PersonaGraph } from "./simulationReads";
+} from "./prompt";
+import type { PersonaGraph } from "./runs";
 
 type PendingReferral = {
 	referredPersonaId: string;

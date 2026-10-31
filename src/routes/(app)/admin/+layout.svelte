@@ -5,12 +5,12 @@ import {
 } from "@mmailaender/convex-better-auth-svelte/svelte";
 import { getConvexClient, useQuery } from "convex-svelte";
 import type { Snippet } from "svelte";
+import { api } from "#convex/api.js";
 import { setViewerContext } from "#lib/adminViewer.js";
 import { authClient } from "#lib/auth-client.js";
 import AdminTopBar from "#lib/components/AdminTopBar.svelte";
 import { getErrorMessage } from "#lib/errors.js";
 import { goto } from "$app/navigation";
-import { api } from "../../../../convex/_generated/api.js";
 
 type Props = { children: Snippet };
 let { children }: Props = $props();

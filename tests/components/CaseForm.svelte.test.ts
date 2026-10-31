@@ -10,9 +10,9 @@ import type { FunctionReturnType } from "convex/server";
 import { ConvexError } from "convex/values";
 import * as sonner from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import { beforeNavigate, goto } from "$app/navigation";
-import { api } from "../../convex/_generated/api.js";
-import type { Id } from "../../convex/_generated/dataModel.js";
 import { buildHTMLForm } from "../../src/lib/case/exportCase.js";
 import CaseForm from "../../src/lib/components/CaseForm.svelte";
 import type { AdminRow, PersonaPayload } from "../../src/lib/types.js";
@@ -605,6 +605,61 @@ describe("CaseForm", () => {
 			within(screen.getByRole("navigation", { name: "Personas" }))
 				.queryAllByRole("button")
 				.filter((button) => !button.textContent?.includes("→")).length;
+
+		// Tests that a decimal in a number field is rejected with the whole-number error instead of being rounded down and saved.
+		it("shows the whole-number error for a decimal availability instead of truncating it", async () => {
+			const user = userEvent.setup();
+			renderForm();
+			await user.click(
+				screen.getByRole("button", { name: "+ Add starting persona" }),
+			);
+
+			const availability = screen.getByLabelText(
+				"How long is this persona available for?",
+			);
+			await user.type(availability, "1.5");
+			// Field errors show once the student tries to submit.
+			await user.click(screen.getByRole("button", { name: "Submit" }));
+
+			expect(
+				await screen.findByText(
+					"Must be a whole number of minutes, at least 1.",
+				),
+			).toBeInTheDocument();
+			await user.clear(availability);
+			await waitFor(() =>
+				expect(
+					screen.queryByText("Must be a whole number of minutes, at least 1."),
+				).toBeNull(),
+			);
+		});
+
+		// Tests that editing the open persona reaches the form's own persona through a real binding, and that Svelte raises no ownership warning about it.
+		it("edits the open persona through a genuine binding without ownership warnings", async () => {
+			const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+			try {
+				const user = userEvent.setup();
+				renderForm();
+				await user.click(
+					screen.getByRole("button", { name: "+ Add starting persona" }),
+				);
+				await user.type(screen.getByLabelText("Persona name"), "Mary");
+				await user.type(screen.getByLabelText("Title/Role"), "CFO");
+
+				// The stubbed diagram lists personas from the form's graph, so a name it shows came through the binding.
+				expect(
+					within(
+						screen.getByRole("navigation", { name: "Personas" }),
+					).getByRole("button", { name: "Mary" }),
+				).toBeInTheDocument();
+				const ownershipWarnings = warn.mock.calls.filter(([message]) =>
+					String(message).includes("ownership"),
+				);
+				expect(ownershipWarnings).toEqual([]);
+			} finally {
+				warn.mockRestore();
+			}
+		});
 
 		// Tests that adding starting personas puts each in the diagram and opens the newest.
 		it("lists each added starting persona and opens the newest", async () => {

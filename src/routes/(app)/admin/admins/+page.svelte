@@ -1,14 +1,14 @@
 <script lang="ts">
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
+import { api } from "#convex/api.js";
+import type { Doc } from "#convex/dataModel.js";
 import { getViewerContext } from "#lib/adminViewer.js";
 import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
 import PageHeader from "#lib/components/PageHeader.svelte";
 import { getErrorMessage } from "#lib/errors.js";
 import type { AdminRole } from "#lib/types.js";
 import { goto } from "$app/navigation";
-import { api } from "../../../../../convex/_generated/api.js";
-import type { Doc } from "../../../../../convex/_generated/dataModel.js";
 
 const ROLE_LABELS: Record<AdminRole, string> = {
 	super: "Super Admin",

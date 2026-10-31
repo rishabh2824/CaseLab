@@ -34,26 +34,3 @@ export function personaAvailability(
 	}
 	return { available: true, availableIn: 0, expiresIn: null };
 }
-
-export const NONSENSE_THRESHOLD = 3;
-
-// Whether a persona has flagged enough messages to end its conversation.
-export function isChatEnded(warnings: number): boolean {
-	return warnings >= NONSENSE_THRESHOLD;
-}
-
-// Returns the canned warning or chat-ending message for a flagged message.
-export function boundaryReply(personaName: string, shouldEnd: boolean): string {
-	const name = personaName || "I";
-	if (shouldEnd) {
-		return (
-			`${name} is ending this conversation because the messages are not coherent or ` +
-			"respectful enough to continue. Please send clear, respectful case-related " +
-			"questions to another contact."
-		);
-	}
-	return (
-		"I am not able to follow that. Please send a clear, respectful, case-related " +
-		"question if you want to continue."
-	);
-}

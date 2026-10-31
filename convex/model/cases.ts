@@ -1,8 +1,7 @@
 import { ConvexError, type ObjectType, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { getCaseInfoErrors } from "../lib/caseRules";
-import { cleanStructure, validateGraph } from "../lib/caseStructure";
+import { getCaseInfoErrors } from "../shared/rules";
 import {
 	type CaseStructure,
 	type CollaboratorAccess,
@@ -11,7 +10,8 @@ import {
 	collaboratorValidator,
 	type FileRefPayload,
 	fileRefValidator,
-} from "../models/cases";
+} from "../shared/validators";
+import { cleanStructure, validateGraph } from "./caseStructure";
 import { existingStorageIds, syncCaseFiles } from "./files";
 
 const ACCESS_CODE_CONFLICT =

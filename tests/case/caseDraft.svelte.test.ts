@@ -1,7 +1,7 @@
 import type { FunctionReturnType } from "convex/server";
 import { describe, expect, it } from "vitest";
-import type { api } from "../../convex/_generated/api.js";
-import type { Id } from "../../convex/_generated/dataModel.js";
+import type { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import {
 	CaseDraft,
 	type LoadableCase,

@@ -1,5 +1,5 @@
 import { ConvexError } from "convex/values";
-import { studentErrorData } from "../../convex/lib/studentErrors.js";
+import { studentErrorData } from "#shared/studentErrors.js";
 
 // Returns the message of an error written for the user (a student error or a ConvexError with a string), or the fallback for anything else, such as a redacted server error or a network failure.
 export function getErrorMessage(err: unknown, fallback: string): string {

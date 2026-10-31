@@ -1,10 +1,5 @@
 import { ConvexError, v } from "convex/values";
 import {
-	adminMutation,
-	adminQuery,
-	superAdminMutation,
-} from "./services/adminFunctions";
-import {
 	casePayloadArgs,
 	createCase,
 	deleteCase as deleteCaseWithAccess,
@@ -13,7 +8,12 @@ import {
 	loadCaseForAccess,
 	requireCaseAccess,
 	updateCase,
-} from "./services/cases";
+} from "./model/cases";
+import {
+	adminMutation,
+	adminQuery,
+	superAdminMutation,
+} from "./model/functions";
 
 // Lists the cases the caller can copy as a template: their own plus every case flagged as a template, by id and name only.
 export const listTemplates = adminQuery({

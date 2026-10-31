@@ -1,12 +1,11 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import {
+	adminRole,
 	caseStructureValidator,
 	collaboratorAccessValidator,
 	fileRefValidator,
-} from "./models/cases";
-
-export const adminRole = v.union(v.literal("super"), v.literal("admin"));
+} from "./shared/validators";
 
 export default defineSchema(
 	{

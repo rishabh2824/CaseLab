@@ -1,9 +1,9 @@
 <script lang="ts">
 import { useMutation, useQuery } from "convex-svelte";
 import { toast } from "svelte-sonner";
+import { api } from "#convex/api.js";
 import { getErrorMessage } from "#lib/errors.js";
 import type { CaseSummary } from "#lib/types.js";
-import { api } from "../../../convex/_generated/api.js";
 import ConfirmDialog from "./ConfirmDialog.svelte";
 import PageHeader from "./PageHeader.svelte";
 import TemplateToggle from "./TemplateToggle.svelte";

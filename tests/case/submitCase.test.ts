@@ -1,8 +1,8 @@
 import type { GenericId } from "convex/values";
 import { HttpResponse, http } from "msw";
 import { describe, expect, it } from "vitest";
-import { api } from "../../convex/_generated/api.js";
-import type { Id } from "../../convex/_generated/dataModel.js";
+import { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import {
 	type SubmitCaseInput,
 	submitCase,

@@ -7,9 +7,8 @@ import {
 	uniqueAccessCode,
 } from "../../tests/support/factories";
 import { api } from "../_generated/api";
-import { validateGraph } from "../lib/caseStructure";
-import { GRACE_PERIOD_MINUTES, MAX_MESSAGE_CHARS } from "../lib/constants";
-import { STUDENT_ERROR } from "../lib/studentErrors";
+import { MAX_MESSAGE_CHARS } from "../shared/rules";
+import { STUDENT_ERROR } from "../shared/studentErrors";
 import {
 	casePayload,
 	lastReply,
@@ -22,7 +21,9 @@ import {
 	withAdmin,
 	withGoogleIdentity,
 } from "../test.setup";
+import { validateGraph } from "./caseStructure";
 import { createCase } from "./cases";
+import { GRACE_PERIOD_MINUTES } from "./runs";
 
 type T = ReturnType<typeof newTestConvex>;
 

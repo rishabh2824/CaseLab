@@ -1,10 +1,10 @@
 import type { FunctionReturnType } from "convex/server";
-import type { api } from "../../../convex/_generated/api.js";
-import { getCaseInfoErrors } from "../../../convex/lib/caseRules.js";
+import type { api } from "#convex/api.js";
+import { getCaseInfoErrors } from "#shared/rules.js";
 import type {
 	CollaboratorPayload,
 	FileRefPayload,
-} from "../../../convex/models/cases.js";
+} from "#shared/validators.js";
 import type { CaseInfo } from "../types.js";
 import { hasFieldErrors } from "./draft.js";
 import type { BuildHTMLFormInput } from "./exportCase.js";

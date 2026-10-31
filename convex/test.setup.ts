@@ -10,10 +10,10 @@ import {
 } from "../tests/support/factories";
 import { api, components } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { studentErrorData } from "./lib/studentErrors";
-import type { CaseStructure } from "./models/cases";
+import type { CasePayload } from "./model/cases";
 import schema from "./schema";
-import type { CasePayload } from "./services/cases";
+import { studentErrorData } from "./shared/studentErrors";
+import type { CaseStructure } from "./shared/validators";
 
 const modules = import.meta.glob(["./**/*.*s", "!./**/*.test.*s"]);
 

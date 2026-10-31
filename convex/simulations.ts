@@ -8,32 +8,21 @@ import {
 	type QueryCtx,
 	query,
 } from "./_generated/server";
-import { GRACE_PERIOD_MINUTES, RUN_LIFETIME_MINUTES } from "./lib/constants";
-import { STUDENT_ERROR, studentError } from "./lib/studentErrors";
-import { isChatEnded } from "./lib/turnState";
-import type { PersonaPayload } from "./models/cases";
-import { listCaseAuthors } from "./services/cases";
+import { listCaseAuthors } from "./model/cases";
 import {
+	computeExpiresAt,
 	flaggedCounts,
 	flattenPersonas,
+	isChatEnded,
+	loadRun,
 	referredContactIds,
-} from "./services/simulationReads";
+} from "./model/runs";
+import { STUDENT_ERROR, studentError } from "./shared/studentErrors";
+import type { PersonaPayload } from "./shared/validators";
 
 // Trims and lower-cases a student's access code.
 function normalizeAccessCode(raw: string): string {
 	return raw.trim().toLowerCase();
-}
-
-// Computes when a run expires: duration plus grace period, capped at the run lifetime.
-function computeExpiresAt(
-	startTime: number,
-	durationMinutes: number | undefined,
-): number {
-	const capMs = RUN_LIFETIME_MINUTES * 60_000;
-	const ttlMs = durationMinutes
-		? Math.min((durationMinutes + GRACE_PERIOD_MINUTES) * 60_000, capMs)
-		: capMs;
-	return startTime + ttlMs;
 }
 
 // Builds the student-facing contact for a persona, without exposing its secret fields.
@@ -131,29 +120,6 @@ function toChatMessages(turns: Doc<"turns">[]): ChatMessageOut[] {
 			{ role: "user", content: turn.studentMessage },
 			{ role: "assistant", content: turn.reply },
 		]);
-}
-
-// Loads a run and its case, throwing student errors if the run or its case is missing. Reads no clock, so it is safe in queries: the scheduled destroy is what ends a run.
-export async function loadRun(
-	ctx: QueryCtx,
-	runId: Id<"runs">,
-): Promise<{ run: Doc<"runs">; c: Doc<"cases"> }> {
-	const run = await ctx.db.get("runs", runId);
-	if (!run) throw studentError(STUDENT_ERROR.RUN_NOT_FOUND, "Run not found.");
-	const c = await ctx.db.get("cases", run.caseId);
-	if (!c) throw studentError(STUDENT_ERROR.CASE_NOT_FOUND, "Case not found.");
-	return { run, c };
-}
-
-// Like loadRun, but also rejects a run past its expiry, covering the gap before the scheduled destroy fires. Mutations only.
-export async function loadLiveRun(
-	ctx: MutationCtx,
-	runId: Id<"runs">,
-): Promise<{ run: Doc<"runs">; c: Doc<"cases"> }> {
-	const loaded = await loadRun(ctx, runId);
-	if (Date.now() > loaded.run.expiresAt)
-		throw studentError(STUDENT_ERROR.RUN_EXPIRED, "Run expired.");
-	return loaded;
 }
 
 // Starts a simulation run for an access code, schedules its destruction and returns its id.

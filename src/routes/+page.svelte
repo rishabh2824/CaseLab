@@ -1,9 +1,9 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
+import { api } from "#convex/api.js";
 import { session } from "#lib/session.svelte.js";
+import { studentErrorData } from "#shared/studentErrors.js";
 import { goto } from "$app/navigation";
-import { api } from "../../convex/_generated/api.js";
-import { studentErrorData } from "../../convex/lib/studentErrors.js";
 
 let accessCode = $state("");
 let error = $state("");

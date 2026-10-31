@@ -1,6 +1,6 @@
 // Temporary: strips the legacy shapes from stored cases. Delete this file (and its test) once it has run on every deployment.
 import { internalMutation, internalQuery } from "./_generated/server";
-import type { CaseStructure } from "./models/cases";
+import type { CaseStructure } from "./shared/validators";
 
 type LegacyPersona = Record<string, unknown> & {
 	files: Record<string, unknown>[];

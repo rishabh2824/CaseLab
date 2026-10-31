@@ -6,6 +6,8 @@ export const fileRefValidator = v.object({
 	contentType: v.optional(v.string()),
 });
 
+export const adminRole = v.union(v.literal("super"), v.literal("admin"));
+
 export const collaboratorAccessValidator = v.union(
 	v.literal("edit"),
 	v.literal("view"),
@@ -50,5 +52,6 @@ export type PersonaPayload = Infer<typeof personaPayloadValidator>;
 export type ReferralEdgePayload = Infer<typeof referralEdgeValidator>;
 export type CaseStructure = Infer<typeof caseStructureValidator>;
 
+export type AdminRole = Infer<typeof adminRole>;
 export type CollaboratorAccess = Infer<typeof collaboratorAccessValidator>;
 export type CollaboratorPayload = Infer<typeof collaboratorValidator>;

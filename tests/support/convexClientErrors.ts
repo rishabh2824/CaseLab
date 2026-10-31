@@ -3,7 +3,7 @@ import {
 	type StudentErrorCode,
 	type StudentErrorData,
 	studentError,
-} from "../../convex/lib/studentErrors.js";
+} from "#shared/studentErrors.js";
 
 type Source = "M" | "Q" | "A";
 

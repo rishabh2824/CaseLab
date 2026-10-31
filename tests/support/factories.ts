@@ -1,15 +1,15 @@
 // Test builders shared by the backend tests (branded Convex ids, server payload shapes) and the frontend tests (plain string ids, client shapes).
 
 import type { FunctionReturnType } from "convex/server";
-import type { api } from "../../convex/_generated/api.js";
-import type { Id } from "../../convex/_generated/dataModel";
+import type { api } from "#convex/api.js";
+import type { Id } from "#convex/dataModel.js";
 import type {
 	CaseStructure,
 	FileEntryPayload,
 	FileRefPayload,
 	ReferralEdgePayload,
 	PersonaPayload as ServerPersonaPayload,
-} from "../../convex/models/cases";
+} from "#shared/validators.js";
 import type {
 	ChatMessage,
 	Contact,
