@@ -21,37 +21,8 @@ export type DisplayContact = Contact & {
 // Shows a short toast with the message.
 const notify = (message: string) => toast(message, { duration: 4000 });
 
-const NOTES_SAVE_DEBOUNCE_MS = 800;
-
-const NOTES_STORAGE_PREFIX = "caselab:notes:";
-
-// Returns the sessionStorage key for a run's notes.
-function notesStorageKey(runId: string): string {
-	return `${NOTES_STORAGE_PREFIX}${runId}`;
-}
-
-// Loads a run's notes from sessionStorage, or an empty string if unavailable.
-function loadNotes(runId: string): string {
-	try {
-		return sessionStorage.getItem(notesStorageKey(runId)) ?? "";
-	} catch {
-		return "";
-	}
-}
-
-// Saves a run's notes to sessionStorage, ignoring storage errors.
-function saveNotes(runId: string, notes: string): void {
-	try {
-		sessionStorage.setItem(notesStorageKey(runId), notes);
-	} catch {}
-}
-
-// Removes a run's notes from sessionStorage, ignoring storage errors.
-function clearNotes(runId: string): void {
-	try {
-		sessionStorage.removeItem(notesStorageKey(runId));
-	} catch {}
-}
+// The sessionStorage key a run's notes are kept under, so they survive a reload of the tab.
+const notesKey = (runId: string) => `caselab:notes:${runId}`;
 
 export class RunStore {
 	loadError = $state("");
@@ -59,11 +30,9 @@ export class RunStore {
 	notes = $state("");
 
 	#notesInitialized = false;
-	#notesSaveTimer: number | null = null;
 	#seenContacts = new Set<string>();
 	#seenFiles = new Set<string>();
 	#seenInitialized = false;
-	#clockInterval: number | null = null;
 	// The one clock everything time-based derives from, ticking once a second.
 	#now = $state(Date.now());
 	// The reply started by the last send, until the server reports it done or failed.
@@ -162,7 +131,14 @@ export class RunStore {
 					"Something went wrong generating a reply. Please resend your message.",
 				);
 		});
-		$effect(() => () => this.#stopClock());
+		// The one-second clock that drives elapsed time, expiry and persona availability.
+		$effect(() => {
+			this.#now = Date.now();
+			const interval = window.setInterval(() => {
+				this.#now = Date.now();
+			}, 1000);
+			return () => window.clearInterval(interval);
+		});
 	}
 
 	// Goes home if there is no run to resume. Never starts a new run itself: a simulation that has
@@ -174,7 +150,7 @@ export class RunStore {
 	// Restores notes and the selected contact after the run loads, then updates notifications and timers.
 	#afterLoad(): void {
 		if (!this.#notesInitialized && session.runId) {
-			this.notes = loadNotes(session.runId);
+			this.notes = sessionStorage.getItem(notesKey(session.runId)) ?? "";
 			this.#notesInitialized = true;
 		}
 		if (this.activeContactId == null) {
@@ -184,7 +160,6 @@ export class RunStore {
 			if (first) this.activeContactId = first.id;
 		}
 		this.#diffAndNotify();
-		this.#ensureClock();
 	}
 
 	// Toasts about contacts and files that appeared since the last update, skipping the initial load.
@@ -206,63 +181,23 @@ export class RunStore {
 		this.#seenInitialized = true;
 	}
 
-	// Starts the one-second clock that drives elapsed time, expiry and persona availability.
-	#ensureClock(): void {
-		if (this.#clockInterval) return;
-		this.#now = Date.now();
-		this.#clockInterval = window.setInterval(() => {
-			this.#now = Date.now();
-		}, 1000);
-	}
-
 	// Selects a contact and remembers the choice in the session.
 	selectContact(contactId: string): void {
 		this.activeContactId = contactId;
 		session.setActivePersona(contactId);
 	}
 
-	// Updates the notes and schedules a debounced save.
+	// Updates the notes and saves them to the tab's storage.
 	setNotes(value: string): void {
 		this.notes = value;
-		if (this.#notesSaveTimer) window.clearTimeout(this.#notesSaveTimer);
-		this.#notesSaveTimer = window.setTimeout(() => {
-			this.#notesSaveTimer = null;
-			this.#saveNotesNow();
-		}, NOTES_SAVE_DEBOUNCE_MS);
+		if (session.runId) sessionStorage.setItem(notesKey(session.runId), value);
 	}
 
-	// Saves the notes immediately and cancels any pending debounced save.
-	flushNotes(): void {
-		if (this.#notesSaveTimer) {
-			window.clearTimeout(this.#notesSaveTimer);
-			this.#notesSaveTimer = null;
-		}
-		this.#saveNotesNow();
-	}
-
-	// Writes the current notes to storage for the active run.
-	#saveNotesNow(): void {
-		const id = session.runId;
-		if (!id) return;
-		saveNotes(id, this.notes);
-	}
-
-	// Stops timers, clears notes and the run, and navigates home.
+	// Clears the notes and the run, and navigates home.
 	endSimulation(): void {
-		if (this.#notesSaveTimer) {
-			window.clearTimeout(this.#notesSaveTimer);
-			this.#notesSaveTimer = null;
-		}
-		this.#stopClock();
-		if (session.runId) clearNotes(session.runId);
+		if (session.runId) sessionStorage.removeItem(notesKey(session.runId));
 		session.clearRun();
 		goto("/");
-	}
-
-	// Stops the clock interval.
-	#stopClock(): void {
-		if (this.#clockInterval) window.clearInterval(this.#clockInterval);
-		this.#clockInterval = null;
 	}
 
 	// Sends a trimmed message to the active contact, returning whether it was sent. The composer handles every other check.

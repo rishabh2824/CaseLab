@@ -5,6 +5,7 @@ import type {
 	CollaboratorPayload,
 	FileRefPayload,
 } from "../../../convex/models/cases.js";
+import type { CaseInfo } from "../types.js";
 import { hasFieldErrors } from "./draft.js";
 import type { BuildHTMLFormInput } from "./exportCase.js";
 import { CaseGraph } from "./graph.svelte.js";
@@ -64,7 +65,7 @@ export class CaseDraft {
 	);
 
 	// The five case information fields, listed once for the snapshot, the export and the submit.
-	#fields() {
+	#fields(): CaseInfo {
 		return {
 			caseName: this.caseName,
 			initialBrief: this.initialBrief,

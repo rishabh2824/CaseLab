@@ -1,5 +1,5 @@
 import { validateStructure } from "../../../convex/lib/caseGraph.js";
-import type { Persona, ReferralEdge } from "../types.js";
+import type { CaseInfo, GraphData, Persona, ReferralEdge } from "../types.js";
 
 export class CaseImportError extends Error {}
 
@@ -29,13 +29,8 @@ function parseNumberField(text: string, label: string): number | null {
 	return Math.round(parsed);
 }
 
-type CaseGraph = {
-	personas: Persona[];
-	referrals: ReferralEdge[];
-};
-
 // Reads personas and referral edges from the form DOM, in document order.
-function readCaseGraphFromDom(doc: Document): CaseGraph {
+function readCaseGraphFromDom(doc: Document): GraphData {
 	const personas: Persona[] = [];
 
 	for (const card of doc.querySelectorAll(".persona-card[data-persona-id]")) {
@@ -85,7 +80,7 @@ function readCaseGraphFromDom(doc: Document): CaseGraph {
 }
 
 // Gives every persona a new UUID and rewrites referrals to match.
-function mintFreshPersonaIds(graph: CaseGraph): CaseGraph {
+function mintFreshPersonaIds(graph: GraphData): GraphData {
 	const idMap = new Map(
 		graph.personas.map((persona) => [persona.id, crypto.randomUUID()]),
 	);
@@ -102,15 +97,7 @@ function mintFreshPersonaIds(graph: CaseGraph): CaseGraph {
 	};
 }
 
-export type ImportedCaseData = {
-	caseName: string;
-	accessCode: string;
-	simulationDurationMinutes: number | null;
-	initialBrief: string;
-	commonInformation: string;
-	personas: Persona[];
-	referrals: ReferralEdge[];
-};
+export type ImportedCaseData = CaseInfo & GraphData;
 
 // Parses an exported case form into case data, throwing CaseImportError for anything that isn't a clean export.
 export function parseHTMLForm(htmlText: string): ImportedCaseData {

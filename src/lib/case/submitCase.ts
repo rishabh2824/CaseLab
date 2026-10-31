@@ -3,11 +3,12 @@ import { getConvexClient } from "convex-svelte";
 import { api } from "../../../convex/_generated/api.js";
 import type { Id } from "../../../convex/_generated/dataModel.js";
 import type {
+	CaseInfo,
 	CollaboratorPayload,
 	FileRefPayload,
+	GraphData,
 	Persona,
 	PersonaPayload,
-	ReferralEdge,
 } from "../types.js";
 
 // Requests the given number of upload URLs from Convex.
@@ -118,18 +119,12 @@ async function discardNewUploads(
 	} catch {}
 }
 
-export type SubmitCaseInput = {
-	editCaseId: string | null;
-	caseName: string;
-	initialBrief: string;
-	commonInformation: string;
-	simulationDurationMinutes: number | null;
-	accessCode: string;
-	personas: Persona[];
-	referrals: ReferralEdge[];
-	teachingNotes?: File | FileRefPayload | null;
-	collaborators: CollaboratorPayload[];
-};
+export type SubmitCaseInput = CaseInfo &
+	GraphData & {
+		editCaseId: string | null;
+		teachingNotes?: File | FileRefPayload | null;
+		collaborators: CollaboratorPayload[];
+	};
 
 // Uploads new files then creates or updates the case, discarding the uploads if the save fails.
 export async function submitCase({

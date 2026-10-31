@@ -684,84 +684,31 @@ describe("notification diffing (#diffAndNotify, observed via the live query)", (
 const notesKey = (runId: string) => `caselab:notes:${runId}`;
 
 describe("notes", () => {
-	// Tests that setNotes debounces its write to storage.
-	it("setNotes debounces: no write before the debounce elapses, written after", async () => {
-		vi.useFakeTimers();
-		try {
-			const { run, session } = await freshRun();
-			session.startRun({ runId: "run-1" });
-
-			run.setNotes("draft text");
-			await vi.advanceTimersByTimeAsync(700);
-			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
-			await vi.advanceTimersByTimeAsync(150);
-			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft text");
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	// Tests that flushNotes writes immediately and cancels the pending debounce timer.
-	it("flushNotes bypasses the debounce and cancels the pending timer so it does not fire again later", async () => {
-		vi.useFakeTimers();
-		try {
-			const { run, session } = await freshRun();
-			session.startRun({ runId: "run-1" });
-
-			run.setNotes("draft 1");
-			run.setNotes("draft 2");
-			run.flushNotes();
-			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft 2");
-
-			run.notes = "mutated after flush";
-			await vi.advanceTimersByTimeAsync(1000);
-			expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft 2");
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	// Tests that a storage write failure neither throws nor shows a toast.
-	it("a storage write failure does not throw or show a toast", async () => {
-		const { run, session, toast } = await freshRun();
+	// Tests that setNotes keeps the text and writes it to storage straight away.
+	it("setNotes writes to sessionStorage immediately", async () => {
+		const { run, session } = await freshRun();
 		session.startRun({ runId: "run-1" });
-		vi.stubGlobal("sessionStorage", {
-			setItem: () => {
-				throw new DOMException("Quota exceeded.");
-			},
-			getItem: () => null,
-			removeItem: () => {},
-		});
 
 		run.setNotes("draft text");
-		expect(() => run.flushNotes()).not.toThrow();
-		expect(toast).not.toHaveBeenCalled();
 
-		vi.unstubAllGlobals();
+		expect(run.notes).toBe("draft text");
+		expect(sessionStorage.getItem(notesKey("run-1"))).toBe("draft text");
 	});
 });
 
 describe("endSimulation", () => {
-	// Tests that endSimulation cancels the pending save, clears notes and the run, and navigates home.
-	it("cancels any pending save, clears stored notes, clears the run, and navigates home", async () => {
-		vi.useFakeTimers();
-		try {
-			const { run, session, goto } = await freshRun();
-			session.startRun({ runId: "run-1" });
-			sessionStorage.setItem(notesKey("run-1"), "earlier session");
+	// Tests that endSimulation clears the stored notes and the run, and navigates home.
+	it("clears stored notes, clears the run, and navigates home", async () => {
+		const { run, session, goto } = await freshRun();
+		session.startRun({ runId: "run-1" });
+		sessionStorage.setItem(notesKey("run-1"), "earlier session");
 
-			run.setNotes("final thoughts");
-			run.endSimulation();
+		run.setNotes("final thoughts");
+		run.endSimulation();
 
-			expect(session.runId).toBe("");
-			expect(goto).toHaveBeenCalledWith("/");
-			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
-
-			await vi.advanceTimersByTimeAsync(1000);
-			expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
-		} finally {
-			vi.useRealTimers();
-		}
+		expect(session.runId).toBe("");
+		expect(goto).toHaveBeenCalledWith("/");
+		expect(sessionStorage.getItem(notesKey("run-1"))).toBeNull();
 	});
 });
 

@@ -43,7 +43,6 @@ type PageRunStore = Pick<
 	| "selectContact"
 	| "sendMessage"
 	| "setNotes"
-	| "flushNotes"
 	| "endSimulation"
 >;
 
@@ -79,7 +78,6 @@ class FakeRun implements PageRunStore {
 	setNotes = vi.fn((value: string) => {
 		this.notes = value;
 	});
-	flushNotes = vi.fn();
 	endSimulation = vi.fn();
 }
 
@@ -363,16 +361,14 @@ describe("composer", () => {
 });
 
 describe("notes and ending", () => {
-	// Tests that typing notes goes to the store and leaving the box flushes them.
-	it("passes notes to the store and flushes on blur", async () => {
+	// Tests that typing notes goes to the store.
+	it("passes notes to the store", async () => {
 		run.activePersonaAvailable = false;
 		const user = userEvent.setup();
 		render(StudentPage);
 		const notes = screen.getByPlaceholderText("Write your notes here...");
 		await user.type(notes, "key fact");
 		expect(run.setNotes).toHaveBeenLastCalledWith("key fact");
-		await user.tab();
-		expect(run.flushNotes).toHaveBeenCalled();
 	});
 
 	// Tests that the end button ends the simulation.

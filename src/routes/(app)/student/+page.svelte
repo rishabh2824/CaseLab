@@ -1,6 +1,6 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
-import { onMount, untrack } from "svelte";
+import { onMount, tick } from "svelte";
 import { toast } from "svelte-sonner";
 import SimulationClock from "#lib/components/SimulationClock.svelte";
 import { downloadBlob } from "#lib/download.js";
@@ -27,30 +27,18 @@ const wordCount = $derived(countWords(inputValue));
 const overWordLimit = $derived(wordCount > MAX_MESSAGE_WORDS);
 const activeMessages = $derived(run.activeMessages);
 
+// Focuses the composer whenever it becomes usable, once the DOM has enabled it.
 $effect(() => {
-	if (run.activeContactId && run.activePersonaAvailable && !run.isSending) {
-		const el = chatInputEl;
-		requestAnimationFrame(() => el?.focus());
-	}
+	if (run.activeContactId && run.activePersonaAvailable && !run.isSending)
+		tick().then(() => chatInputEl?.focus());
 });
 
-let scrollScheduled = false;
-let lastScrollKey = "";
+// Changes only when the student switches contact or a message is added.
+const scrollKey = $derived(`${run.activeContactId}:${activeMessages.length}`);
 $effect(() => {
-	if (!run.activeContactId) return;
-	const key = `${run.activeContactId}:${activeMessages.length}`;
-	const changed = untrack(() => {
-		if (key === lastScrollKey) return false;
-		lastScrollKey = key;
-		return true;
-	});
-	if (!changed || scrollScheduled) return;
-	scrollScheduled = true;
-	requestAnimationFrame(() => {
-		scrollScheduled = false;
-		// Scroll the chat box itself; scrollIntoView would also move the page, which jumps on narrow screens where the chat sits above the composer.
-		messagesEl?.scrollTo({ top: messagesEl.scrollHeight });
-	});
+	void scrollKey;
+	// Scroll the chat box itself; scrollIntoView would also move the page, which jumps on narrow screens where the chat sits above the composer.
+	messagesEl?.scrollTo({ top: messagesEl.scrollHeight });
 });
 
 // Sends the typed message unless it is over the word limit, clearing the input if it was accepted.
@@ -325,7 +313,6 @@ async function handleExportPdf(): Promise<void> {
 					placeholder="Write your notes here..."
 					value={run.notes}
 					oninput={(event) => run.setNotes(event.currentTarget.value)}
-					onblur={() => run.flushNotes()}
 				></textarea>
 			</div>
 		</aside>

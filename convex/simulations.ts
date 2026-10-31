@@ -16,8 +16,6 @@ import { listCaseAuthors } from "./services/cases";
 import {
 	flaggedCounts,
 	flattenPersonas,
-	graphPersonas,
-	graphRootPersonas,
 	referredContactIds,
 } from "./services/simulationReads";
 
@@ -207,10 +205,9 @@ export const get = query({
 			ctx,
 			await flaggedCounts(ctx, runId),
 			run.unlockedAt,
-			graphRootPersonas(graph),
-			graphPersonas(
-				graph,
-				referredContactIds(graph, Object.keys(run.unlockedAt)),
+			graph.roots.map((id) => graph.personas.get(id)!),
+			referredContactIds(graph, Object.keys(run.unlockedAt)).flatMap(
+				(id) => graph.personas.get(id) ?? [],
 			),
 		);
 		const fileNames = new Map(

@@ -1,17 +1,12 @@
 import { reachableFrom, rootIds } from "../../../convex/lib/caseGraph.js";
 import { getPersonaFieldErrors } from "../../../convex/lib/caseRules.js";
-import type { Persona, ReferralEdge } from "../types.js";
+import type { GraphData, Persona, ReferralEdge } from "../types.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
 	hasFieldErrors,
 	personasById,
 } from "./draft.js";
-
-export type GraphInput = {
-	personas: Persona[];
-	referrals: ReferralEdge[];
-};
 
 export type GraphValidation = {
 	rootsError: string | null;
@@ -44,7 +39,7 @@ export class CaseGraph {
 	});
 
 	// Replaces the graph's personas and referrals.
-	load(input: GraphInput): void {
+	load(input: GraphData): void {
 		this.personas = input.personas;
 		this.referrals = input.referrals;
 	}

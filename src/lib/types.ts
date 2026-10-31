@@ -14,6 +14,7 @@ import type {
 	FileEntryPayload,
 	FileRefPayload,
 	PersonaPayload,
+	ReferralEdgePayload,
 } from "../../convex/models/cases.js";
 
 export type DraftFileEntry = Omit<FileEntryPayload, "file"> & {
@@ -28,6 +29,21 @@ export type Persona = Omit<
 	profilePhoto: File | FileRefPayload | null;
 	availabilityMinutes: number | null;
 	files: DraftFileEntry[];
+};
+
+// The personas and referrals that make up a case, as the form edits them.
+export type GraphData = {
+	personas: Persona[];
+	referrals: ReferralEdgePayload[];
+};
+
+// The case information the form edits besides its personas.
+export type CaseInfo = {
+	caseName: string;
+	initialBrief: string;
+	commonInformation: string;
+	simulationDurationMinutes: number | null;
+	accessCode: string;
 };
 
 // What the backend returns to the client, derived from the functions themselves.

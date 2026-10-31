@@ -14,7 +14,7 @@ import {
 	systemPrompt,
 } from "../lib/prompt";
 import type { PersonaPayload } from "../models/cases";
-import { graphReferrals, type PersonaGraph } from "./simulationReads";
+import type { PersonaGraph } from "./simulationReads";
 
 type PendingReferral = {
 	referredPersonaId: string;
@@ -56,9 +56,10 @@ export async function buildTurnContext(
 	persona: PersonaPayload,
 	beforeCreationTime: number,
 ): Promise<TurnContext> {
-	const pendingReferrals: PendingReferral[] = graphReferrals(graph, persona.id)
+	const pendingReferrals: PendingReferral[] = graph.referrals
 		.filter(
 			(referral) =>
+				referral.fromId === persona.id &&
 				!Object.hasOwn(run.unlockedAt, referral.toId) &&
 				referral.conditions.trim(),
 		)

@@ -1,6 +1,6 @@
 import { reachableFrom } from "../../../convex/lib/caseGraph.js";
 import { downloadBlob } from "../download.js";
-import type { Persona, ReferralEdge } from "../types.js";
+import type { CaseInfo, GraphData, Persona, ReferralEdge } from "../types.js";
 import { createEmptyPersona, createEmptyReferral } from "./draft.js";
 
 // Escapes a value for safe use in HTML text and attributes.
@@ -13,13 +13,8 @@ const escapeHtml = (value: unknown): string =>
 
 const REACHABLE_FROM_SOURCE = reachableFrom.toString();
 
-type Graph = {
-	personas: Persona[];
-	referrals: ReferralEdge[];
-};
-
 // Builds a starter graph with one root persona referring to one referred persona.
-function scaffoldGraph(): Graph {
+function scaffoldGraph(): GraphData {
 	const root = createEmptyPersona();
 	const referred = createEmptyPersona();
 	return {
@@ -225,12 +220,7 @@ const STYLES = `
   @media (max-width: 560px) { .sheet { padding: 28px 16px 40px; } }
 `;
 
-export type BuildHTMLFormInput = {
-	caseName: string;
-	accessCode: string;
-	simulationDurationMinutes: number | null;
-	initialBrief: string;
-	commonInformation: string;
+export type BuildHTMLFormInput = CaseInfo & {
 	personas?: Persona[] | null;
 	referrals?: ReferralEdge[] | null;
 };
@@ -245,7 +235,7 @@ export function buildHTMLForm({
 	personas,
 	referrals,
 }: BuildHTMLFormInput): string {
-	const graph: Graph =
+	const graph: GraphData =
 		Array.isArray(personas) && personas.length > 0
 			? { personas, referrals: referrals ?? [] }
 			: scaffoldGraph();

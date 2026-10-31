@@ -4,14 +4,7 @@ import {
 	personaPayload,
 	referralEdge,
 } from "../../tests/support/factories";
-import type { Id } from "../_generated/dataModel";
-import type { PersonaGraph } from "./simulationReads";
-import {
-	flattenPersonas,
-	graphPersonas,
-	graphReferrals,
-	graphRootPersonas,
-} from "./simulationReads";
+import { flattenPersonas } from "./simulationReads";
 
 describe("flattenPersonas", () => {
 	// Tests that persona secrets are carried through unchanged.
@@ -87,63 +80,5 @@ describe("flattenPersonas", () => {
 		expect([...graph.roots].sort()).toEqual(["A", "C"]);
 		expect([...graph.personas.keys()].sort()).toEqual(["A", "B", "C"]);
 		expect(graph.referrals).toHaveLength(1);
-	});
-});
-
-// Builds a small persona graph with a photo on one persona for the read tests.
-function buildGraph(): PersonaGraph {
-	const structure = caseStructure({
-		personas: [
-			personaPayload("A"),
-			personaPayload("B"),
-			personaPayload("C", {
-				profilePhoto: {
-					storageId: "kg2test00000000000000001" as Id<"_storage">,
-					fileName: "c.png",
-					contentType: "image/png",
-				},
-			}),
-			personaPayload("D"),
-		],
-		referrals: [
-			referralEdge("A", "C"),
-			referralEdge("B", "C"),
-			referralEdge("A", "D"),
-		],
-	});
-	return flattenPersonas(structure);
-}
-
-describe("graphReferrals", () => {
-	// Tests that edges are filtered by the persona that authored them.
-	it("filters edges by the persona that authored them", () => {
-		const graph = buildGraph();
-		const referredIds = new Set(graphReferrals(graph, "A").map((e) => e.toId));
-		expect(referredIds).toEqual(new Set(["C", "D"]));
-	});
-});
-
-describe("graphPersonas", () => {
-	// Tests that a set of referred ids is resolved to persona details.
-	it("resolves a referred-id set (already deduped by the caller) to persona details", () => {
-		const graph = buildGraph();
-		const personas = graphPersonas(graph, new Set(["C", "D"]));
-		expect(personas.map((p) => p.id).sort()).toEqual(["C", "D"]);
-	});
-
-	// Tests that the stored persona is returned as is.
-	it("returns the stored persona as is", () => {
-		const graph = buildGraph();
-		expect(graphPersonas(graph, ["C"])[0]!.profilePhoto?.storageId).toBe(
-			"kg2test00000000000000001",
-		);
-	});
-});
-
-describe("graphRootPersonas", () => {
-	// Tests that full details are returned for every root, in roots order.
-	it("returns full details for every root, in roots order", () => {
-		const graph = buildGraph();
-		expect(graphRootPersonas(graph).map((p) => p.id)).toEqual(graph.roots);
 	});
 });
