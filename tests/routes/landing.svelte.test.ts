@@ -4,18 +4,18 @@ import { getFunctionName } from "convex/server";
 import { beforeEach, describe, expect, it } from "vitest";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
-import { STUDENT_ERROR } from "#shared/studentErrors.js";
+import { ERROR_CODE } from "#shared/errors.js";
 import { goto } from "$app/navigation";
 import { session } from "../../src/lib/session.svelte.js";
 import Landing from "../../src/routes/+page.svelte";
 import {
+	clientAppError,
 	clientServerError,
-	clientStudentError,
 } from "../support/convexClientErrors.js";
 import { convexFake } from "../support/convexFake.svelte.js";
 
-const start = convexFake.mutation(api.simulations.start);
-const START = getFunctionName(api.simulations.start);
+const start = convexFake.mutation(api.runs.start);
+const START = getFunctionName(api.runs.start);
 const run = (runId: string) => ({ runId: runId as Id<"runs"> });
 
 // Types a code into the access-code box and submits the form.
@@ -50,11 +50,11 @@ describe("landing page access-code form", () => {
 	});
 
 	// Tests that a real-shaped student error shows the server's own message.
-	it("shows the message from a student error", async () => {
+	it("shows the message from an app error", async () => {
 		start.mockRejectedValue(
-			clientStudentError(
+			clientAppError(
 				START,
-				STUDENT_ERROR.INVALID_ACCESS_CODE,
+				ERROR_CODE.INVALID_ACCESS_CODE,
 				"That access code was not recognised.",
 			),
 		);

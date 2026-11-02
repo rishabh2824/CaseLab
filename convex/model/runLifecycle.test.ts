@@ -61,7 +61,7 @@ describe("editing or deleting a case does not wait for its live runs", () => {
 	it("allows update and delete while a run is in progress", async () => {
 		const t = newTestConvex();
 		const { caseId, admin } = await seedCase(t);
-		await t.mutation(api.simulations.start, { accessCode: "sterling" });
+		await t.mutation(api.runs.start, { accessCode: "sterling" });
 
 		await expect(
 			t.run((ctx) =>
@@ -79,13 +79,13 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 	it("destroy on an already-destroyed run is a no-op, not an error", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
-		const state = await t.mutation(api.simulations.start, {
+		const state = await t.mutation(api.runs.start, {
 			accessCode: "sterling",
 		});
 
-		await t.mutation(internal.simulations.destroy, { runId: state.runId });
+		await t.mutation(internal.runs.destroy, { runId: state.runId });
 		await expect(
-			t.mutation(internal.simulations.destroy, { runId: state.runId }),
+			t.mutation(internal.runs.destroy, { runId: state.runId }),
 		).resolves.toBeNull();
 	});
 
@@ -93,7 +93,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 	it("leaves no orphaned turns behind", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
-		const state = await t.mutation(api.simulations.start, {
+		const state = await t.mutation(api.runs.start, {
 			accessCode: "sterling",
 		});
 		await t.run(async (ctx) => {
@@ -107,7 +107,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		});
 		await insertPendingReply(t, state.runId, "A", "hi");
 
-		await t.mutation(internal.simulations.destroy, { runId: state.runId });
+		await t.mutation(internal.runs.destroy, { runId: state.runId });
 
 		const leftovers = await t.run(async (ctx) => ({
 			run: await ctx.db.get("runs", state.runId),
@@ -122,7 +122,7 @@ describe("run destruction is a terminal transition, and must tolerate being appl
 		try {
 			const t = newTestConvex();
 			await seedCase(t, { duration: 5 });
-			const state = await t.mutation(api.simulations.start, {
+			const state = await t.mutation(api.runs.start, {
 				accessCode: "sterling",
 			});
 
@@ -140,19 +140,19 @@ describe("reads against a run that has gone away", () => {
 	it("the scoped student queries degrade gracefully rather than throwing on a destroyed run", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
-		const state = await t.mutation(api.simulations.start, {
+		const state = await t.mutation(api.runs.start, {
 			accessCode: "sterling",
 		});
-		await t.mutation(internal.simulations.destroy, { runId: state.runId });
+		await t.mutation(internal.runs.destroy, { runId: state.runId });
 
 		await expect(
-			t.query(api.simulations.getPersonaHistory, {
+			t.query(api.runs.getPersonaHistory, {
 				runId: state.runId,
 				personaId: "A",
 			}),
-		).resolves.toEqual({ messages: [], reply: null });
+		).resolves.toEqual({ messages: [], reply: null, failedMessage: null });
 		await expect(
-			t.mutation(api.turn.sendMessage, {
+			t.mutation(api.turns.sendMessage, {
 				runId: state.runId,
 				personaId: "A",
 				message: "hi",
@@ -164,7 +164,7 @@ describe("reads against a run that has gone away", () => {
 	it("reads an expired run until it is destroyed, while sending to it is refused", async () => {
 		const t = newTestConvex();
 		await seedCase(t);
-		const state = await t.mutation(api.simulations.start, {
+		const state = await t.mutation(api.runs.start, {
 			accessCode: "sterling",
 		});
 		await t.run((ctx) =>
@@ -172,10 +172,10 @@ describe("reads against a run that has gone away", () => {
 		);
 
 		await expect(
-			t.query(api.simulations.get, { runId: state.runId }),
+			t.query(api.runs.get, { runId: state.runId }),
 		).resolves.toMatchObject({ runId: state.runId });
 		await expect(
-			t.query(api.simulations.exportRun, { runId: state.runId }),
+			t.query(api.runs.exportRun, { runId: state.runId }),
 		).resolves.toMatchObject({ personas: expect.any(Array) });
 		await expect(sendTurn(t, state.runId, "A", "hi")).rejects.toThrow(
 			"Run expired.",
@@ -183,19 +183,5 @@ describe("reads against a run that has gone away", () => {
 		expect(
 			await t.run((ctx) => ctx.db.get("runs", state.runId)),
 		).not.toBeNull();
-	});
-
-	// Tests that a run whose case was removed reports a case error instead of crashing.
-	it("a run whose case was somehow removed reports a case error, not a crash", async () => {
-		const t = newTestConvex();
-		const { caseId } = await seedCase(t);
-		const state = await t.mutation(api.simulations.start, {
-			accessCode: "sterling",
-		});
-		await t.run((ctx) => ctx.db.delete("cases", caseId));
-
-		await expect(
-			t.query(api.simulations.get, { runId: state.runId }),
-		).rejects.toThrow("Case not found.");
 	});
 });

@@ -13,10 +13,10 @@ describe("buildHTMLForm", () => {
 	it("scaffolds a root and a referred persona joined by one referral when no personas are given", () => {
 		const doc = parseForm(
 			buildHTMLForm({
-				caseName: "",
+				name: "",
 				accessCode: "",
-				simulationDurationMinutes: null,
-				initialBrief: "",
+				duration: null,
+				brief: "",
 				commonInformation: "",
 			}),
 		);
@@ -31,10 +31,10 @@ describe("buildHTMLForm", () => {
 		const referred = makePersona();
 		const doc = parseForm(
 			buildHTMLForm({
-				caseName: "Case",
+				name: "Case",
 				accessCode: "ABC",
-				simulationDurationMinutes: null,
-				initialBrief: "Brief",
+				duration: null,
+				brief: "Brief",
 				commonInformation: "",
 				personas: [root, referred],
 				referrals: [makeReferral(root.id, referred.id)],
@@ -68,10 +68,10 @@ describe("buildHTMLForm", () => {
 				const persona = makePersona(personaOverrides ?? {});
 				const doc = parseForm(
 					buildHTMLForm({
-						caseName: personaOverrides ? "Case" : dangerous,
+						name: personaOverrides ? "Case" : dangerous,
 						accessCode: "ABC",
-						simulationDurationMinutes: null,
-						initialBrief: "Brief",
+						duration: null,
+						brief: "Brief",
 						commonInformation: "",
 						personas: [persona],
 						referrals: [],
@@ -92,10 +92,10 @@ describe("buildHTMLForm", () => {
 			const persona = makePersona({ id: dangerousId });
 			const doc = parseForm(
 				buildHTMLForm({
-					caseName: "Case",
+					name: "Case",
 					accessCode: "ABC",
-					simulationDurationMinutes: null,
-					initialBrief: "Brief",
+					duration: null,
+					brief: "Brief",
 					commonInformation: "",
 					personas: [persona],
 					referrals: [],
@@ -133,10 +133,10 @@ describe("buildHTMLForm's embedded script", () => {
 	it("mints a UUID for a newly-added persona, not a sequential id", () => {
 		const dom = loadInteractive(
 			buildHTMLForm({
-				caseName: "Case",
+				name: "Case",
 				accessCode: "ABC",
-				simulationDurationMinutes: null,
-				initialBrief: "Brief",
+				duration: null,
+				brief: "Brief",
 				commonInformation: "",
 			}),
 		);
@@ -164,10 +164,10 @@ describe("buildHTMLForm's embedded script", () => {
 		const c = makePersona();
 		const dom = loadInteractive(
 			buildHTMLForm({
-				caseName: "Case",
+				name: "Case",
 				accessCode: "ABC",
-				simulationDurationMinutes: null,
-				initialBrief: "Brief",
+				duration: null,
+				brief: "Brief",
 				commonInformation: "",
 				personas: [a, b, c],
 				referrals: [makeReferral(a.id, b.id), makeReferral(b.id, c.id)],
@@ -194,10 +194,10 @@ describe("buildHTMLForm's embedded script", () => {
 		const c = makePersona();
 		const dom = loadInteractive(
 			buildHTMLForm({
-				caseName: "Case",
+				name: "Case",
 				accessCode: "ABC",
-				simulationDurationMinutes: null,
-				initialBrief: "Brief",
+				duration: null,
+				brief: "Brief",
 				commonInformation: "",
 				personas: [a, d, c],
 				referrals: [makeReferral(a.id, c.id), makeReferral(d.id, c.id)],
@@ -222,10 +222,10 @@ describe("buildHTMLForm's embedded script", () => {
 		const persona = makePersona({ id: dangerousId });
 		const dom = loadInteractive(
 			buildHTMLForm({
-				caseName: "Case",
+				name: "Case",
 				accessCode: "ABC",
-				simulationDurationMinutes: null,
-				initialBrief: "Brief",
+				duration: null,
+				brief: "Brief",
 				commonInformation: "",
 				personas: [persona],
 				referrals: [],
@@ -240,10 +240,10 @@ describe("buildHTMLForm's embedded script", () => {
 	it("refreshes referral dropdown options after a persona is added", () => {
 		const dom = loadInteractive(
 			buildHTMLForm({
-				caseName: "Case",
+				name: "Case",
 				accessCode: "ABC",
-				simulationDurationMinutes: null,
-				initialBrief: "Brief",
+				duration: null,
+				brief: "Brief",
 				commonInformation: "",
 			}),
 		);

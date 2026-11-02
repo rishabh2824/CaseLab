@@ -14,13 +14,13 @@ import StudentPage from "../../src/routes/(app)/student/+page.svelte";
 import { convexFake } from "../support/convexFake.svelte.js";
 import { makeContact, makeSharedFile } from "../support/factories.js";
 
-const exportRun = convexFake.clientQuery(api.simulations.exportRun);
+const exportRun = convexFake.clientQuery(api.runs.exportRun);
 
 // Builds the export result the page turns into a PDF.
 const exportOf = (
-	personas: FunctionReturnType<typeof api.simulations.exportRun>["personas"],
+	personas: FunctionReturnType<typeof api.runs.exportRun>["personas"],
 ) => ({
-	case: { id: "case-1" as Id<"cases">, caseName: "Sterling Industries" },
+	case: { id: "case-1" as Id<"cases">, name: "Sterling Industries" },
 	personas,
 });
 
@@ -38,6 +38,7 @@ type PageRunStore = Pick<
 	| "contacts"
 	| "sharedFiles"
 	| "activePersonaAvailable"
+	| "failedMessage"
 	| "activeContact"
 	| "init"
 	| "selectContact"
@@ -55,9 +56,9 @@ class FakeRun implements PageRunStore {
 	notes = $state("");
 	caseData = $state<RunStore["caseData"]>({
 		id: "case-1" as Id<"cases">,
-		caseName: "Sterling Industries",
+		name: "Sterling Industries",
 		brief: "Reduce costs.",
-		simulationDuration: null,
+		duration: null,
 		authors: ["Olive Owner", "Edith Editor"],
 	});
 	totalDurationSeconds = $state<number | null>(null);
@@ -65,6 +66,7 @@ class FakeRun implements PageRunStore {
 	contacts = $state<RunStore["contacts"]>([]);
 	sharedFiles = $state<RunStore["sharedFiles"]>([]);
 	activePersonaAvailable = $state(true);
+	failedMessage = $state<string | null>(null);
 
 	get activeContact() {
 		return this.contacts.find((c) => c.id === this.activeContactId) ?? null;
@@ -74,7 +76,7 @@ class FakeRun implements PageRunStore {
 	selectContact = vi.fn((id: string) => {
 		this.activeContactId = id;
 	});
-	sendMessage = vi.fn((_message: string) => true);
+	sendMessage = vi.fn(async (_message: string) => true);
 	setNotes = vi.fn((value: string) => {
 		this.notes = value;
 	});
@@ -87,14 +89,12 @@ let run: FakeRun;
 function makeDisplayContact(
 	overrides: Partial<ReturnType<typeof makeContact>> & {
 		available?: boolean;
-		availableIn?: number | null;
 		expiresIn?: number | null;
 	} = {},
 ) {
 	return {
 		...makeContact(),
 		available: true,
-		availableIn: null,
 		expiresIn: null,
 		...overrides,
 	};
@@ -110,16 +110,9 @@ beforeEach(() => {
 	run = new FakeRun();
 	run.contacts = [
 		makeDisplayContact({ id: "mary", name: "Mary Chen", role: "CFO" }),
-		makeDisplayContact({
-			id: "bob",
-			name: "Bob Ray",
-			role: "Analyst",
-			available: false,
-			availableIn: 5,
-		}),
 	];
 	vi.mocked(downloadBlob).mockReset();
-	session.startRun({ runId: "run-1" });
+	session.startRun({ runId: "run-1", startTime: Date.now() });
 	Element.prototype.scrollIntoView = vi.fn();
 	Element.prototype.scrollTo = vi.fn();
 });
@@ -156,15 +149,6 @@ describe("student page lifecycle", () => {
 });
 
 describe("contacts and files", () => {
-	// Tests that unavailable contacts are disabled and say when they arrive.
-	it("disables an unavailable contact and shows when they will be available", () => {
-		render(StudentPage);
-		expect(screen.getByRole("button", { name: /Mary Chen/ })).toBeEnabled();
-		const bob = screen.getByRole("button", { name: /Bob Ray/ });
-		expect(bob).toBeDisabled();
-		expect(bob).toHaveTextContent("Available in 5 min");
-	});
-
 	// Tests that clicking an available contact selects them.
 	it("selects a contact when clicked", async () => {
 		run.contacts.push(makeDisplayContact({ id: "zed", name: "Zed Ito" }));
@@ -172,6 +156,29 @@ describe("contacts and files", () => {
 		render(StudentPage);
 		await user.click(screen.getByRole("button", { name: /Zed Ito/ }));
 		expect(run.selectContact).toHaveBeenCalledWith("zed");
+	});
+
+	// Tests that a contact whose window has closed can still be opened to review the chat.
+	it("lets the student open an expired contact and says it is unavailable", async () => {
+		run.contacts = [
+			makeDisplayContact({
+				id: "mary",
+				name: "Mary Chen",
+				available: false,
+				expiresIn: 0,
+			}),
+		];
+		run.activePersonaAvailable = false;
+		const user = userEvent.setup();
+		render(StudentPage);
+
+		await user.click(screen.getByRole("button", { name: /Mary Chen/ }));
+
+		expect(run.selectContact).toHaveBeenCalledWith("mary");
+		expect(screen.queryByText("Available", { exact: true })).toBeNull();
+		expect(
+			screen.getByPlaceholderText("This contact is no longer available."),
+		).toBeDisabled();
 	});
 
 	// Tests that the contact card badges reflect availability windows and referral state.
@@ -324,12 +331,37 @@ describe("composer", () => {
 
 	// Tests that a rejected send keeps what the student typed.
 	it("keeps the text when the store declines the message", async () => {
-		run.sendMessage.mockReturnValue(false);
+		run.sendMessage.mockResolvedValue(false);
 		const user = userEvent.setup();
 		render(StudentPage);
 		const box = screen.getByPlaceholderText("Type your message...");
 		await user.type(box, "hello{Enter}");
-		expect(box).toHaveValue("hello");
+		await vi.waitFor(() => expect(box).toHaveValue("hello"));
+	});
+
+	// Tests that a failed reply shows a banner that puts the message back in the box, ahead of anything typed since.
+	it("offers to put a failed message back in the box", async () => {
+		run.failedMessage = "What is the budget?";
+		const user = userEvent.setup();
+		render(StudentPage);
+		const box = screen.getByPlaceholderText("Type your message...");
+		expect(screen.getByRole("alert")).toHaveTextContent("What is the budget?");
+
+		await user.type(box, "Also the timeline.");
+		const restore = screen.getByRole("button", {
+			name: "Put it back in the box",
+		});
+		await user.click(restore);
+		expect(box).toHaveValue("What is the budget?\nAlso the timeline.");
+
+		await user.click(restore);
+		expect(box).toHaveValue("What is the budget?\nAlso the timeline.");
+	});
+
+	// Tests that there is no banner while nothing has failed.
+	it("shows no failure banner when nothing failed", () => {
+		render(StudentPage);
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
 
 	// Tests that over-long messages are blocked and the counter warns.

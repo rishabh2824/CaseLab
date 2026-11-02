@@ -1,11 +1,10 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
-import { authComponent } from "./auth";
 import {
 	createAdmin,
 	deleteAdminWithCascade,
-	getAdminByEmail,
 	listAdmins,
+	viewerProfile,
 } from "./model/admins";
 import { adminQuery, superAdminMutation } from "./model/functions";
 import { adminRole } from "./shared/validators";
@@ -13,20 +12,7 @@ import { adminRole } from "./shared/validators";
 // Returns the signed-in admin's basic profile, or null for anonymous and non-admin callers.
 export const viewer = query({
 	args: {},
-	handler: async (ctx) => {
-		const user = await authComponent.safeGetAuthUser(ctx);
-		if (!user?.email) return null;
-
-		const admin = await getAdminByEmail(ctx, user.email);
-		if (!admin) return null;
-
-		return {
-			_id: admin._id,
-			email: admin.email,
-			name: admin.name,
-			role: admin.role,
-		};
-	},
+	handler: async (ctx) => viewerProfile(ctx),
 });
 
 // Lists every admin on the roster.

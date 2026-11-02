@@ -66,14 +66,13 @@ function fileRowMarkup(
     </div>
     ${fields({
 			field: "share_conditions",
-			label:
-				"Describe the conditions under which the persona will share the file",
+			label: "When to share it",
 			value: file.shareConditions,
 			rows: 2,
 		})}
     ${fields({
 			field: "perceived_contents",
-			label: "What does the persona think is in this file?",
+			label: "What the persona believes it contains",
 			value: file.perceivedContents,
 			rows: 2,
 		})}
@@ -115,7 +114,7 @@ function personaCardMarkup(persona: Persona): string {
 		})}
     ${fields({
 			field: "known_facts",
-			label: "Persona Related Information",
+			label: "What this persona knows",
 			hint: "Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.",
 			value: persona.knownFacts,
 			rows: 5,
@@ -224,10 +223,10 @@ export type BuildHTMLFormInput = CaseInfo & {
 
 // Builds the standalone, editable HTML export of a case, including its embedded script.
 export function buildHTMLForm({
-	caseName,
+	name,
 	accessCode,
-	simulationDurationMinutes,
-	initialBrief,
+	duration,
+	brief,
 	commonInformation,
 	personas,
 	referrals,
@@ -242,8 +241,8 @@ export function buildHTMLForm({
 		.map((referral) => referralRowMarkup(referral, graph.personas))
 		.join("\n");
 
-	const title = caseName
-		? `${escapeHtml(caseName)} — Case Lab Import Form`
+	const title = name
+		? `${escapeHtml(name)} — Case Lab Import Form`
 		: "Case Lab Import Form";
 
 	return `<!DOCTYPE html>
@@ -267,7 +266,7 @@ export function buildHTMLForm({
                         ${fields({
 													field: "case_name",
 													label: "Case Name",
-													value: caseName,
+													value: name,
 													required: true,
 												})}
                         ${fields({
@@ -279,21 +278,21 @@ export function buildHTMLForm({
 												})}
                         ${fields({
 													field: "simulation_duration_minutes",
-													label: "Simulation Duration (minutes)",
+													label: "Time Limit (minutes)",
 													hint: "Leave blank for unlimited.",
-													value: simulationDurationMinutes,
+													value: duration,
 												})}
                         ${fields({
 													field: "initial_brief",
-													label: "Initial Brief",
+													label: "Student Brief",
 													hint: "What the student reads before the simulation begins — sets up the scenario and their objective.",
-													value: initialBrief,
+													value: brief,
 													rows: 5,
 													required: true,
 												})}
                         ${fields({
 													field: "common_information",
-													label: "Case Background",
+													label: "Background for Personas",
 													hint: "Shared context every persona in this case implicitly knows.",
 													value: commonInformation,
 													rows: 5,

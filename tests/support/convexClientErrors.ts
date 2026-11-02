@@ -1,9 +1,5 @@
 import { ConvexError } from "convex/values";
-import {
-	type StudentErrorCode,
-	type StudentErrorData,
-	studentError,
-} from "#shared/studentErrors.js";
+import { type AppErrorData, appError, type ErrorCode } from "#shared/errors.js";
 
 type Source = "M" | "Q" | "A";
 
@@ -11,17 +7,17 @@ type Source = "M" | "Q" | "A";
 const wrapped = (source: Source, udfPath: string) =>
 	`[CONVEX ${source}(${udfPath})] [Request ID: test] Server Error\n  Called by client`;
 
-// Builds the error a Convex client sees for a student error, with the details on its data.
-export function clientStudentError(
+// Builds the error a Convex client sees for an app error, with the details on its data.
+export function clientAppError(
 	udfPath: string,
-	code: StudentErrorCode,
+	code: ErrorCode,
 	message: string,
 	source: Source = "M",
-): ConvexError<string | StudentErrorData> {
-	const error = new ConvexError<string | StudentErrorData>(
+): ConvexError<string | AppErrorData> {
+	const error = new ConvexError<string | AppErrorData>(
 		wrapped(source, udfPath),
 	);
-	error.data = studentError(code, message).data;
+	error.data = appError(code, message).data;
 	return error;
 }
 

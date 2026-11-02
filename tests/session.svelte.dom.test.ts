@@ -8,14 +8,6 @@ describe("session restore (observed through a fresh module load)", () => {
 		vi.resetModules();
 	});
 
-	// Tests that invalid stored JSON falls back to the default session state.
-	it("falls back to defaults on invalid JSON", async () => {
-		sessionStorage.setItem(STORAGE_KEY, "not valid json {{{");
-		const { session: fresh } = await import("../src/lib/session.svelte.js");
-		expect(fresh.runId).toBe("");
-		expect(fresh.startTime).toBeNull();
-	});
-
 	// Tests that a stored session is restored.
 	it("restores the session this tab stored", async () => {
 		sessionStorage.setItem(
@@ -44,18 +36,6 @@ describe("SessionStore mutators", () => {
 			unknown
 		>;
 
-	// Tests that a storage failure (private mode, quota) does not break starting a run.
-	it("keeps the run in memory when sessionStorage throws", () => {
-		vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-			throw new Error("QuotaExceededError");
-		});
-
-		expect(() =>
-			session.startRun({ runId: "run-9", startTime: 1 }),
-		).not.toThrow();
-		expect(session.runId).toBe("run-9");
-	});
-
 	// Tests that startRun persists the run id and start time.
 	it("startRun persists runId and startTime", () => {
 		session.startRun({ runId: "run-1", startTime: 555 });
@@ -68,19 +48,9 @@ describe("SessionStore mutators", () => {
 		});
 	});
 
-	// Tests that startRun defaults the start time to now when omitted.
-	it("startRun defaults startTime to now when omitted", () => {
-		vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
-
-		session.startRun({ runId: "run-2" });
-
-		expect(session.startTime).toBe(1_700_000_000_000);
-		expect(readRaw().startTime).toBe(1_700_000_000_000);
-	});
-
 	// Tests that clearRun resets the run fields.
 	it("clearRun clears the run fields", () => {
-		session.startRun({ runId: "run-3" });
+		session.startRun({ runId: "run-3", startTime: Date.now() });
 
 		session.clearRun();
 

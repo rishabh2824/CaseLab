@@ -22,7 +22,6 @@ type SentStructure = {
 };
 
 const generateUploadUrls = convexFake.mutation(api.uploads.generateUploadUrls);
-const discardUploads = convexFake.mutation(api.uploads.discardUploads);
 const createCase = convexFake.mutation(api.cases.create);
 const updateCase = convexFake.mutation(api.cases.update);
 
@@ -47,7 +46,6 @@ function stubMutations({
 	const postRequests: { url: string; contentType: string | null }[] = [];
 	const createRequests: Record<string, unknown>[] = [];
 	const updateRequests: Record<string, unknown>[] = [];
-	const discardRequests: unknown[][] = [];
 	let counter = 0;
 
 	generateUploadUrls.mockImplementation(async ({ count }) => {
@@ -56,10 +54,6 @@ function stubMutations({
 			counter += 1;
 			return `${UPLOAD_ORIGIN}/upload/${counter}`;
 		});
-	});
-	discardUploads.mockImplementation(async ({ storageIds }) => {
-		discardRequests.push(storageIds);
-		return null;
 	});
 	createCase.mockImplementation(async (args) => {
 		if (failSave) throw failSave;
@@ -90,7 +84,6 @@ function stubMutations({
 		postRequests,
 		createRequests,
 		updateRequests,
-		discardRequests,
 	};
 }
 
@@ -98,10 +91,10 @@ function stubMutations({
 function baseInput(overrides: Partial<SubmitCaseInput> = {}): SubmitCaseInput {
 	return {
 		editCaseId: null,
-		caseName: "Sterling Industries",
-		initialBrief: "Reduce office supply costs.",
+		name: "Sterling Industries",
+		brief: "Reduce office supply costs.",
 		commonInformation: "Background context.",
-		simulationDurationMinutes: 45,
+		duration: 45,
 		accessCode: "abc",
 		personas: [],
 		referrals: [],
@@ -239,21 +232,6 @@ describe("submitCase — file attachments", () => {
 		expect(sentFile?.shareConditions).toBe("always");
 		expect(sentFile?.perceivedContents).toBe("budget");
 	});
-
-	// Tests that an attachment row with no file is dropped from the payload without an upload.
-	it("drops a file:null attachment entry, uploading nothing for it", async () => {
-		const { uploadCountRequests, createRequests } = stubMutations();
-		const persona = makePersona({
-			files: [{ file: null, shareConditions: "never", perceivedContents: "" }],
-		});
-
-		await submitCase(baseInput({ personas: [persona] }));
-
-		expect(uploadCountRequests).toEqual([]);
-		expect(createRequests).toHaveLength(1);
-		const personas = (createRequests[0]!.structure as SentStructure).personas;
-		expect(personas[0]?.files).toEqual([]);
-	});
 });
 
 describe("submitCase — content type handling", () => {
@@ -358,61 +336,16 @@ describe("submitCase — upload failures", () => {
 		expect((err as Error).message).toBe("Upload URL request failed.");
 	});
 
-	// Tests that uploads are discarded when the save itself fails.
-	it("cleans up its own uploads via discardUploads when the save itself fails", async () => {
-		const { createRequests, discardRequests } = stubMutations({
-			failSave: new Error(
-				"An access code with this value already exists on another case.",
-			),
-		});
-		const persona = makePersona({
-			profilePhoto: new File(["a"], "photo.png", { type: "image/png" }),
-		});
-
-		await expect(
-			submitCase(baseInput({ personas: [persona] })),
-		).rejects.toThrow(
-			"An access code with this value already exists on another case.",
-		);
-		expect(createRequests).toHaveLength(0);
-		expect(discardRequests).toEqual([["storage-1"]]);
-	});
-
-	// Tests that discardUploads is not called when the save fails but nothing was uploaded.
-	it("does not call discardUploads when the save fails but nothing was uploaded", async () => {
-		const { discardRequests } = stubMutations({
+	// Tests that a failed save rejects with the server's error and creates nothing.
+	it("rejects with the server's error when the save itself fails", async () => {
+		const { createRequests } = stubMutations({
 			failSave: new Error("Case name is required."),
 		});
 
 		await expect(submitCase(baseInput())).rejects.toThrow(
 			"Case name is required.",
 		);
-		expect(discardRequests).toEqual([]);
-	});
-
-	// Tests that only the uploads that already succeeded are discarded when a later upload fails.
-	it("discards only the uploads that already succeeded when a later upload in the same batch fails", async () => {
-		const { createRequests, discardRequests } = stubMutations();
-		server.use(
-			http.post(`${UPLOAD_ORIGIN}/upload/2`, () => {
-				return new HttpResponse(null, { status: 500 });
-			}),
-		);
-		const persona1 = makePersona({
-			id: "p1",
-			profilePhoto: new File(["a"], "p1-photo.png", { type: "image/png" }),
-		});
-		const persona2 = makePersona({
-			id: "p2",
-			profilePhoto: new File(["b"], "p2-photo.png", { type: "image/png" }),
-		});
-
-		await expect(
-			submitCase(baseInput({ personas: [persona1, persona2] })),
-		).rejects.toThrow("Failed to upload file.");
-
 		expect(createRequests).toHaveLength(0);
-		expect(discardRequests).toEqual([["storage-1"]]);
 	});
 });
 
@@ -423,8 +356,8 @@ describe("submitCase — payload shaping", () => {
 
 		await submitCase(
 			baseInput({
-				caseName: "  Sterling Industries  ",
-				initialBrief: "  Reduce office supply costs.  ",
+				name: "  Sterling Industries  ",
+				brief: "  Reduce office supply costs.  ",
 				commonInformation: "  Background context.  ",
 				accessCode: "  abc  ",
 				referrals: [{ fromId: "p1", toId: "p2", conditions: "  when asked  " }],
@@ -453,14 +386,13 @@ describe("submitCase — payload shaping", () => {
 });
 
 describe("submitCase — empty values", () => {
-	// Tests that a missing photo, a missing availability limit and a file row without a file are left out of the payload.
-	it("omits the photo, the availability limit and file rows that have no file", async () => {
+	// Tests that a missing photo and a missing availability limit are left out of the payload.
+	it("omits the photo and the availability limit when they are empty", async () => {
 		const { createRequests } = stubMutations();
 		const kept = makePersona({
 			id: "p1",
 			availabilityMinutes: 15,
 			files: [
-				{ file: null, shareConditions: "x", perceivedContents: "y" },
 				{
 					file: { storageId: "s1" as Id<"_storage">, fileName: "a.pdf" },
 					shareConditions: "x",

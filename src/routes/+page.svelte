@@ -2,7 +2,7 @@
 import { getConvexClient } from "convex-svelte";
 import { api } from "#convex/api.js";
 import { session } from "#lib/session.svelte.js";
-import { studentErrorData } from "#shared/studentErrors.js";
+import { appErrorData } from "#shared/errors.js";
 import { goto } from "$app/navigation";
 
 let accessCode = $state("");
@@ -13,7 +13,7 @@ let isSubmitting = $state(false);
 async function submit(code: string): Promise<void> {
 	isSubmitting = true;
 	try {
-		const fresh = await getConvexClient().mutation(api.simulations.start, {
+		const fresh = await getConvexClient().mutation(api.runs.start, {
 			accessCode: code,
 		});
 		session.startRun({
@@ -24,7 +24,7 @@ async function submit(code: string): Promise<void> {
 		await goto("/student");
 	} catch (err) {
 		error =
-			studentErrorData(err)?.message ??
+			appErrorData(err)?.message ??
 			"Something went wrong starting the simulation. Please try again.";
 	} finally {
 		isSubmitting = false;

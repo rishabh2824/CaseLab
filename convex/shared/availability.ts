@@ -5,32 +5,18 @@ export function elapsedMinutes(startTime: number, now: number): number {
 
 export type Availability = {
 	available: boolean;
-	availableIn: number | null;
 	expiresIn: number | null;
 };
 
-// Computes whether a persona is available at the elapsed time, and how long until it is or expires.
+// Computes whether a persona is still available at the elapsed time, and how long until it expires. Personas only exist once unlocked, so the only way to become unavailable is to expire.
 export function personaAvailability(
 	availabilityDuration: number | null,
 	availableAtMinutes: number,
 	elapsed: number,
 ): Availability {
-	if (elapsed < availableAtMinutes) {
-		return {
-			available: false,
-			availableIn: availableAtMinutes - elapsed,
-			expiresIn: null,
-		};
-	}
-	if (availabilityDuration !== null) {
-		const expiresAt = availableAtMinutes + availabilityDuration;
-		if (elapsed > expiresAt)
-			return { available: false, availableIn: null, expiresIn: 0 };
-		return {
-			available: true,
-			availableIn: 0,
-			expiresIn: Math.max(0, expiresAt - elapsed),
-		};
-	}
-	return { available: true, availableIn: 0, expiresIn: null };
+	if (availabilityDuration === null)
+		return { available: true, expiresIn: null };
+	const expiresAt = availableAtMinutes + availabilityDuration;
+	if (elapsed > expiresAt) return { available: false, expiresIn: 0 };
+	return { available: true, expiresIn: expiresAt - elapsed };
 }

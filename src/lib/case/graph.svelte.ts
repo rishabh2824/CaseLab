@@ -1,17 +1,10 @@
 import { reachableFrom, rootIds } from "#shared/caseGraph.js";
-import { getPersonaFieldErrors } from "#shared/rules.js";
 import type { GraphData, Persona, ReferralEdge } from "../types.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
-	hasFieldErrors,
 	personasById,
 } from "./draft.js";
-
-export type GraphValidation = {
-	rootsError: string | null;
-	hasErrors: boolean;
-};
 
 export class CaseGraph {
 	personas = $state<Persona[]>([]);
@@ -25,18 +18,6 @@ export class CaseGraph {
 			this.referrals,
 		),
 	);
-
-	validation: GraphValidation = $derived.by(() => {
-		const rootsError =
-			this.personas.length < 1 ? "At least 1 persona is required" : null;
-		const hasAnyPersonaError = this.personas.some((persona) =>
-			hasFieldErrors(getPersonaFieldErrors(persona)),
-		);
-		return {
-			rootsError,
-			hasErrors: Boolean(rootsError) || hasAnyPersonaError,
-		};
-	});
 
 	// Replaces the graph's personas and referrals.
 	load(input: GraphData): void {

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminHome from "../../src/routes/(app)/admin/+page.svelte";
-import NewCase from "../../src/routes/(app)/admin/new/+page.svelte";
+import NewCase from "../../src/routes/(app)/admin/cases/new/+page.svelte";
 
 let viewer: { data?: { role: string }; isLoading: boolean } = {
 	data: undefined,
@@ -22,10 +22,10 @@ describe("admin home", () => {
 		render(AdminHome);
 		expect(
 			screen.getByRole("link", { name: /Create New Case/ }),
-		).toHaveAttribute("href", "/admin/new");
+		).toHaveAttribute("href", "/admin/cases/new");
 		expect(
 			screen.getByRole("link", { name: /Edit Existing Case/ }),
-		).toHaveAttribute("href", "/admin/edit");
+		).toHaveAttribute("href", "/admin/cases");
 	});
 
 	// Tests that only a super admin is offered the roster page.
@@ -57,9 +57,9 @@ describe("new case chooser", () => {
 		render(NewCase);
 		expect(
 			screen.getByRole("link", { name: /Start From Scratch/ }),
-		).toHaveAttribute("href", "/admin/cases/new");
+		).toHaveAttribute("href", "/admin/cases/new/blank");
 		expect(
 			screen.getByRole("link", { name: /Use Existing Case As Template/ }),
-		).toHaveAttribute("href", "/admin/new/template");
+		).toHaveAttribute("href", "/admin/cases/new/template");
 	});
 });

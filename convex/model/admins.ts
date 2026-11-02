@@ -1,25 +1,25 @@
-import { ConvexError } from "convex/values";
-import { components } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { authComponent } from "../auth";
+import { authComponent, deleteAuthUser } from "../auth";
+import { appError, ERROR_CODE } from "../shared/errors";
 import type { AdminRole } from "../shared/validators";
+import { getAdminByEmail, normalizeEmail } from "./adminLookup";
 import { deleteCaseUnchecked } from "./cases";
 
-// Trims and lower-cases an email so lookups ignore casing and padding.
-export function normalizeEmail(email: string): string {
-	return email.trim().toLowerCase();
-}
+// Returns the signed-in admin's basic profile, or null for anonymous and non-admin callers.
+export async function viewerProfile(ctx: QueryCtx) {
+	const user = await authComponent.safeGetAuthUser(ctx);
+	if (!user?.email) return null;
 
-// Finds an admin by email, ignoring casing and padding.
-export async function getAdminByEmail(
-	ctx: QueryCtx | MutationCtx,
-	email: string,
-) {
-	return ctx.db
-		.query("admins")
-		.withIndex("by_email", (q) => q.eq("email", normalizeEmail(email)))
-		.unique();
+	const admin = await getAdminByEmail(ctx, user.email);
+	if (!admin) return null;
+
+	return {
+		_id: admin._id,
+		email: admin.email,
+		name: admin.name,
+		role: admin.role,
+	};
 }
 
 // Returns the signed-in admin, throwing if the caller is anonymous or not on the roster.
@@ -27,9 +27,13 @@ export async function requireCurrentAdmin(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<Doc<"admins">> {
 	const user = await authComponent.safeGetAuthUser(ctx);
-	if (!user?.email) throw new ConvexError("Not signed in.");
+	if (!user?.email) throw appError(ERROR_CODE.NOT_SIGNED_IN, "Not signed in.");
 	const admin = await getAdminByEmail(ctx, user.email);
-	if (!admin) throw new ConvexError("Your account is not authorized.");
+	if (!admin)
+		throw appError(
+			ERROR_CODE.NOT_AUTHORIZED,
+			"Your account is not authorized.",
+		);
 	return admin;
 }
 
@@ -39,7 +43,10 @@ export async function requireSuperAdmin(
 ): Promise<Doc<"admins">> {
 	const admin = await requireCurrentAdmin(ctx);
 	if (admin.role !== "super")
-		throw new ConvexError("Only a super admin can do this.");
+		throw appError(
+			ERROR_CODE.SUPER_ADMIN_ONLY,
+			"Only a super admin can do this.",
+		);
 	return admin;
 }
 
@@ -55,11 +62,16 @@ export async function createAdmin(
 	args: { email: string; name: string; role: AdminRole },
 ): Promise<Doc<"admins">> {
 	const email = normalizeEmail(args.email);
-	if (!email) throw new ConvexError("An admin email is required.");
+	if (!email)
+		throw appError(ERROR_CODE.INVALID_ADMIN, "An admin email is required.");
 	const name = args.name.trim();
-	if (!name) throw new ConvexError("An admin name is required.");
+	if (!name)
+		throw appError(ERROR_CODE.INVALID_ADMIN, "An admin name is required.");
 	if (await getAdminByEmail(ctx, email)) {
-		throw new ConvexError("An admin with this email already exists.");
+		throw appError(
+			ERROR_CODE.INVALID_ADMIN,
+			"An admin with this email already exists.",
+		);
 	}
 	const id = await ctx.db.insert("admins", { email, name, role: args.role });
 	return (await ctx.db.get("admins", id))!;
@@ -71,9 +83,9 @@ export async function deleteAdminWithCascade(
 	adminId: Id<"admins">,
 ): Promise<{ casesDeleted: number }> {
 	const admin = await ctx.db.get("admins", adminId);
-	if (!admin) throw new ConvexError("Admin not found.");
+	if (!admin) throw appError(ERROR_CODE.ADMIN_NOT_FOUND, "Admin not found.");
 	if (admin.role === "super")
-		throw new ConvexError("Super admins cannot be deleted.");
+		throw appError(ERROR_CODE.INVALID_ADMIN, "Super admins cannot be deleted.");
 
 	const ownedCases = await ctx.db
 		.query("cases")
@@ -92,31 +104,4 @@ export async function deleteAdminWithCascade(
 	await deleteAuthUser(ctx, admin.email);
 
 	return { casesDeleted: ownedCases.length };
-}
-
-// Deletes every Better Auth session, account and the user itself for the given email, so no trace of the admin's sign-in remains.
-async function deleteAuthUser(ctx: MutationCtx, email: string): Promise<void> {
-	const users = await ctx.runQuery(components.betterAuth.adapter.findMany, {
-		model: "user",
-		where: [{ field: "email", value: normalizeEmail(email) }],
-		paginationOpts: { numItems: 1, cursor: null },
-	});
-	const user = users.page[0];
-	if (!user) return;
-
-	for (const model of ["session", "account"] as const) {
-		let cursor: string | null = null;
-		for (;;) {
-			const result: { isDone: boolean; continueCursor: string } =
-				await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
-					input: { model, where: [{ field: "userId", value: user._id }] },
-					paginationOpts: { numItems: 200, cursor },
-				});
-			if (result.isDone) break;
-			cursor = result.continueCursor;
-		}
-	}
-	await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
-		input: { model: "user", where: [{ field: "_id", value: user._id }] },
-	});
 }

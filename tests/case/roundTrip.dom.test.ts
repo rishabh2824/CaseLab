@@ -49,10 +49,10 @@ const personaFieldsArb = fc.record({
 });
 
 type GeneratedCase = {
-	caseName: string;
+	name: string;
 	accessCode: string;
-	simulationDurationMinutes: number | null;
-	initialBrief: string;
+	duration: number | null;
+	brief: string;
 	commonInformation: string;
 	personas: Array<Persona & { knownFacts: string; personalityTraits: string }>;
 	referrals: ReferralEdge[];
@@ -93,11 +93,11 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 					parents,
 					extraFlags,
 					conditionTexts,
-					caseName,
+					name,
 					accessCode,
-					initialBrief,
+					brief,
 					commonInformation,
-					simulationDurationMinutes,
+					duration,
 				]) => {
 					const personas: Array<
 						Persona & { knownFacts: string; personalityTraits: string }
@@ -132,10 +132,10 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 					});
 
 					return {
-						caseName,
+						name,
 						accessCode,
-						simulationDurationMinutes,
-						initialBrief,
+						duration,
+						brief,
 						commonInformation,
 						personas,
 						referrals,
@@ -156,13 +156,11 @@ describe("buildHTMLForm / parseHTMLForm round trip", () => {
 				const html = buildHTMLForm(generated);
 				const data = parseHTMLForm(html);
 
-				expect(data.caseName).toBe(generated.caseName.trim());
+				expect(data.name).toBe(generated.name.trim());
 				expect(data.accessCode).toBe(generated.accessCode.trim());
-				expect(data.initialBrief).toBe(generated.initialBrief.trim());
+				expect(data.brief).toBe(generated.brief.trim());
 				expect(data.commonInformation).toBe(generated.commonInformation.trim());
-				expect(data.simulationDurationMinutes).toBe(
-					generated.simulationDurationMinutes,
-				);
+				expect(data.duration).toBe(generated.duration);
 
 				expect(data.personas).toHaveLength(generated.personas.length);
 				const idMap = new Map(

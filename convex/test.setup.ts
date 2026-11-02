@@ -12,7 +12,7 @@ import { api, components } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { CasePayload } from "./model/cases";
 import schema from "./schema";
-import { studentErrorData } from "./shared/studentErrors";
+import { appErrorData } from "./shared/errors";
 import type { CaseStructure } from "./shared/validators";
 
 const modules = import.meta.glob(["./**/*.*s", "!./**/*.test.*s"]);
@@ -45,7 +45,7 @@ export async function sendTurn(
 	personaId: string,
 	message: string,
 ): Promise<Id<"turns">> {
-	const { turnId } = await t.mutation(api.turn.sendMessage, {
+	const { turnId } = await t.mutation(api.turns.sendMessage, {
 		runId,
 		personaId,
 		message,
@@ -60,9 +60,8 @@ export async function visibleMessages(
 	runId: Id<"runs">,
 	personaId: string,
 ) {
-	return (
-		await t.query(api.simulations.getPersonaHistory, { runId, personaId })
-	).messages;
+	return (await t.query(api.runs.getPersonaHistory, { runId, personaId }))
+		.messages;
 }
 
 // Returns the state of the latest reply for a persona, or null if there is none.
@@ -71,7 +70,7 @@ export async function lastReply(
 	runId: Id<"runs">,
 	personaId: string,
 ) {
-	const history = await t.query(api.simulations.getPersonaHistory, {
+	const history = await t.query(api.runs.getPersonaHistory, {
 		runId,
 		personaId,
 	});
@@ -210,7 +209,7 @@ export async function startRun(
 			structure,
 		}),
 	);
-	return await t.mutation(api.simulations.start, { accessCode });
+	return await t.mutation(api.runs.start, { accessCode });
 }
 
 // Returns a signed-in test client whose email is not on the admin roster.
@@ -230,7 +229,7 @@ export type LlmStub = {
 	replyBody?: string;
 	replyStatus?: number;
 	replyThrows?: Error;
-	harassment?: string;
+	label?: string;
 	classifierThrows?: Error;
 	classifierBody?: string;
 };
@@ -247,7 +246,7 @@ export function makeLlmFetch(options: LlmStub = {}): {
 		replyText = "OK",
 		introduce = [],
 		sendFiles = [],
-		harassment = "NORMAL",
+		label = "ok",
 	} = options;
 	const calls: LlmCall[] = [];
 
@@ -277,7 +276,7 @@ export function makeLlmFetch(options: LlmStub = {}): {
 					choices: [
 						{
 							message: {
-								content: JSON.stringify({ label: harassment.toLowerCase() }),
+								content: JSON.stringify({ label: label.toLowerCase() }),
 							},
 						},
 					],
@@ -308,11 +307,11 @@ export function makeLlmFetch(options: LlmStub = {}): {
 // Awaits a promise and returns the student error it rejects with, or 'resolved' if it succeeds.
 export async function studentRejection(
 	promise: Promise<unknown>,
-): Promise<ReturnType<typeof studentErrorData> | "resolved"> {
+): Promise<ReturnType<typeof appErrorData> | "resolved"> {
 	try {
 		await promise;
 	} catch (err) {
-		return studentErrorData(err);
+		return appErrorData(err);
 	}
 	return "resolved";
 }

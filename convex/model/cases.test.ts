@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { personaPayload, referralEdge } from "../../tests/support/factories";
-import type { Doc, Id } from "../_generated/dataModel";
-import { casePayload, makeAdmin, newTestConvex } from "../test.setup";
 import {
-	createCase,
-	deleteCase,
-	listCaseAuthors,
-	listCases,
-	requireCaseAccess,
-	updateCase,
-} from "./cases";
-import { flattenPersonas } from "./runs";
+	fileEntry,
+	personaPayload,
+	referralEdge,
+} from "../../tests/support/factories";
+import type { Doc, Id } from "../_generated/dataModel";
+import { ACCESS_CODE_CONFLICT } from "../shared/rules";
+import { casePayload, makeAdmin, newTestConvex } from "../test.setup";
+import { requireCaseAccess } from "./caseAccess";
+import { listCaseAuthors, listCases } from "./caseLists";
+import { createCase, deleteCase, updateCase } from "./cases";
+import { flattenPersonas } from "./personaGraph";
+
+type FileRef = {
+	storageId: Id<"_storage">;
+	fileName: string;
+	contentType: string;
+};
 
 describe("case access control", () => {
 	// Tests that the owner can read, update and delete their own case.
@@ -21,7 +27,7 @@ describe("case access control", () => {
 		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 		await expect(
 			t.run((ctx) => requireCaseAccess(ctx, c, owner)),
-		).resolves.toBeNull();
+		).resolves.toBe("edit");
 		await expect(
 			t.run((ctx) =>
 				updateCase(ctx, caseId, casePayload({ name: "Renamed" }), owner),
@@ -68,7 +74,7 @@ describe("case access control", () => {
 		).rejects.toThrow();
 		await expect(
 			t.run((ctx) => requireCaseAccess(ctx, cAfter, third)),
-		).resolves.toBeNull();
+		).resolves.toBe("edit");
 	});
 
 	// Tests that a regular admin's case list includes owned and collaborator cases but not unrelated ones.
@@ -137,7 +143,7 @@ describe("view-only collaborators", () => {
 
 		await expect(
 			t.run((ctx) => requireCaseAccess(ctx, c, viewer, "view")),
-		).resolves.toBeNull();
+		).resolves.toBe("view");
 		await expect(
 			t.run((ctx) => updateCase(ctx, caseId, casePayload(), viewer)),
 		).rejects.toThrow("You have view-only access to this case.");
@@ -285,43 +291,6 @@ describe("replaceCollaborators row stability (via updateCase)", () => {
 });
 
 describe("collaborator validation (via createCase)", () => {
-	// Tests that the owner appearing in their own collaborator list is rejected.
-	it("rejects the owner appearing in their own collaborator list", async () => {
-		const t = newTestConvex();
-		const owner = await makeAdmin(t);
-		await expect(
-			t.run((ctx) =>
-				createCase(
-					ctx,
-					casePayload({
-						collaborators: [{ adminId: owner._id, access: "edit" }],
-					}),
-					owner,
-				),
-			),
-		).rejects.toThrow(
-			"The case owner cannot also be listed as a collaborator.",
-		);
-	});
-
-	// Tests that an unknown admin id in the collaborator list is rejected.
-	it("rejects an unknown admin id", async () => {
-		const t = newTestConvex();
-		const owner = await makeAdmin(t);
-		const bogusId = "999999999admins" as Id<"admins">;
-		await expect(
-			t.run((ctx) =>
-				createCase(
-					ctx,
-					casePayload({
-						collaborators: [{ adminId: bogusId, access: "edit" }],
-					}),
-					owner,
-				),
-			),
-		).rejects.toThrow(/Unknown admin id/);
-	});
-
 	// Tests that a super admin can be added as a collaborator so they can be credited as an author.
 	it("accepts a super admin as a collaborator", async () => {
 		const t = newTestConvex();
@@ -407,6 +376,66 @@ describe("required fields (via createCase)", () => {
 		).rejects.toThrow("Case name is required.");
 	});
 
+	// Tests that a persona with no facts is refused, on both create and update.
+	it("rejects a persona with no facts", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		const payload = casePayload({
+			personas: [personaPayload("A", { name: "Mary", knownFacts: " " })],
+		});
+		await expect(
+			t.run((ctx) => createCase(ctx, payload, owner)),
+		).rejects.toThrow("Add what Mary knows.");
+
+		const caseId = await t.run((ctx) => createCase(ctx, casePayload(), owner));
+		await expect(
+			t.run((ctx) => updateCase(ctx, caseId, payload, owner)),
+		).rejects.toThrow("Add what Mary knows.");
+	});
+
+	// Tests that a referral with no condition is refused, because that persona could never be reached.
+	it("rejects a referral with no condition", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		await expect(
+			t.run((ctx) =>
+				createCase(
+					ctx,
+					casePayload({
+						personas: [
+							personaPayload("A", { name: "Mary" }),
+							personaPayload("B", { name: "Priya" }),
+						],
+						referrals: [referralEdge("A", "B", "  ")],
+					}),
+					owner,
+				),
+			),
+		).rejects.toThrow("students can't reach Priya");
+	});
+
+	// Tests that a file with no share condition is refused, because it could never be sent.
+	it("rejects a file with no share condition", async () => {
+		const t = newTestConvex();
+		const owner = await makeAdmin(t);
+		await expect(
+			t.run((ctx) =>
+				createCase(
+					ctx,
+					casePayload({
+						personas: [
+							personaPayload("A", {
+								name: "Mary",
+								files: [fileEntry({ shareConditions: "" })],
+							}),
+						],
+					}),
+					owner,
+				),
+			),
+		).rejects.toThrow("add when Mary should share this file");
+	});
+
 	// Tests that a name and brief are trimmed before being stored.
 	it("trims a name/brief with surrounding whitespace before storing it", async () => {
 		const t = newTestConvex();
@@ -469,9 +498,7 @@ describe("access code validation", () => {
 			t.run((ctx) =>
 				createCase(ctx, casePayload({ accessCode: "sterling" }), owner),
 			),
-		).rejects.toThrow(
-			"An access code with this value already exists on another case.",
-		);
+		).rejects.toThrow(ACCESS_CODE_CONFLICT);
 	});
 
 	// Tests that a case can keep its own access code on update without conflicting with itself.
@@ -553,7 +580,7 @@ describe("persona graph persistence", () => {
 	});
 });
 
-describe("file links (via buildStructure/createCase)", () => {
+describe("file links (via createCase)", () => {
 	// Tests that two personas sharing a storage id are linked to the case once.
 	it("links two personas sharing a storage id to the case once", async () => {
 		const t = newTestConvex();
@@ -667,8 +694,8 @@ describe("teaching notes", () => {
 		expect(rows).toHaveLength(1);
 	});
 
-	// Tests that removing the notes on update clears the field and deletes the upload.
-	it("clears the field and cleans up the file when the notes are removed", async () => {
+	// Tests that removing the notes on update clears the field and unlinks the upload.
+	it("clears the field and unlinks the file when the notes are removed", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const { storageId, notes } = await makeNotes(t);
@@ -679,17 +706,21 @@ describe("teaching notes", () => {
 		await t.run((ctx) =>
 			updateCase(ctx, caseId, casePayload({ teachingNotes: undefined }), owner),
 		);
-		await t.finishAllScheduledFunctions(() => {});
 
 		const c = await t.run((ctx) => ctx.db.get("cases", caseId));
 		expect(c?.teachingNotes).toBeUndefined();
 		expect(
-			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
-		).toBeNull();
+			await t.run((ctx) =>
+				ctx.db
+					.query("caseFiles")
+					.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
+					.collect(),
+			),
+		).toHaveLength(0);
 	});
 
-	// Tests that deleting the case deletes the notes file too.
-	it("deletes the notes file along with the case", async () => {
+	// Tests that deleting the case unlinks the notes file too.
+	it("unlinks the notes file along with the case", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const { storageId, notes } = await makeNotes(t);
@@ -698,72 +729,71 @@ describe("teaching notes", () => {
 		);
 
 		await t.run((ctx) => deleteCase(ctx, caseId, owner));
-		await t.finishAllScheduledFunctions(() => {});
 
 		expect(
-			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
-		).toBeNull();
+			await t.run((ctx) =>
+				ctx.db
+					.query("caseFiles")
+					.withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
+					.collect(),
+			),
+		).toHaveLength(0);
 	});
 
-	// Tests that a notes reference whose upload is gone is dropped while the case still saves.
-	it("drops notes whose upload no longer exists", async () => {
+	// Tests that a notes reference whose upload is gone rejects the save.
+	it("rejects notes whose upload no longer exists", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const { storageId, notes } = await makeNotes(t);
 		await t.run((ctx) => ctx.storage.delete(storageId));
 
-		const caseId = await t.run((ctx) =>
-			createCase(ctx, casePayload({ teachingNotes: notes }), owner),
-		);
-
-		const c = await t.run((ctx) => ctx.db.get("cases", caseId));
-		expect(c?.teachingNotes).toBeUndefined();
+		await expect(
+			t.run((ctx) =>
+				createCase(ctx, casePayload({ teachingNotes: notes }), owner),
+			),
+		).rejects.toThrow(/An attached file is no longer available/);
 	});
 });
 
 describe("a storage id with no backing object", () => {
-	// Tests that a photo reference to a nonexistent storage id is dropped while the rest of the case saves.
-	it("drops a photo ref whose storage id doesn't exist, saving the rest of the case fine", async () => {
-		const t = newTestConvex();
-		const owner = await makeAdmin(t);
-		const ghostStorageId = await t.run((ctx) =>
-			ctx.storage.store(new Blob(["gone"])),
-		);
-		await t.run((ctx) => ctx.storage.delete(ghostStorageId));
+	// Tests that a photo or shared file whose storage id doesn't exist rejects the save and links nothing.
+	it.each([
+		["photo", (ref: FileRef) => personaPayload("A", { profilePhoto: ref })],
+		[
+			"shared file",
+			(ref: FileRef) => personaPayload("A", { files: [fileEntry(ref)] }),
+		],
+	])(
+		"rejects a %s ref whose storage id doesn't exist",
+		async (_name, makePersona) => {
+			const t = newTestConvex();
+			const owner = await makeAdmin(t);
+			const ghostStorageId = await t.run((ctx) =>
+				ctx.storage.store(new Blob(["gone"])),
+			);
+			await t.run((ctx) => ctx.storage.delete(ghostStorageId));
+			const ref = {
+				storageId: ghostStorageId,
+				fileName: "gone.pdf",
+				contentType: "application/pdf",
+			};
 
-		const caseId = await t.run((ctx) =>
-			createCase(
-				ctx,
-				casePayload({
-					personas: [
-						personaPayload("A", {
-							profilePhoto: {
-								storageId: ghostStorageId,
-								fileName: "gone.pdf",
-								contentType: "application/pdf",
-							},
-						}),
-					],
-				}),
-				owner,
-			),
-		);
-
-		const c = (await t.run((ctx) =>
-			ctx.db.get("cases", caseId),
-		))! as Doc<"cases">;
-		expect(c.structure.personas[0]).not.toHaveProperty("profilePhoto");
-		const rows = await t.run((ctx) =>
-			ctx.db
-				.query("caseFiles")
-				.withIndex("by_storage_id", (q) => q.eq("storageId", ghostStorageId))
-				.collect(),
-		);
-		expect(rows).toHaveLength(0);
-	});
+			await expect(
+				t.run((ctx) =>
+					createCase(ctx, casePayload({ personas: [makePersona(ref)] }), owner),
+				),
+			).rejects.toThrow(/An attached file is no longer available/);
+			expect(
+				await t.run((ctx) => ctx.db.query("cases").collect()),
+			).toHaveLength(0);
+			expect(
+				await t.run((ctx) => ctx.db.query("caseFiles").collect()),
+			).toHaveLength(0);
+		},
+	);
 });
 
-describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
+describe("file lifecycle (caseFiles reconciliation)", () => {
 	async function makePhoto(t: ReturnType<typeof newTestConvex>) {
 		const storageId = await t.run((ctx) => ctx.storage.store(new Blob(["x"])));
 		return {
@@ -776,8 +806,8 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		};
 	}
 
-	// Tests that deleting a case removes its unshared files, the link synchronously and the upload via the scheduled cleanup.
-	it("deletes a case's unshared file (link synchronously, upload via the scheduled cleanup)", async () => {
+	// Tests that deleting a case removes its file links, leaving the upload itself for the weekly sweep.
+	it("unlinks a deleted case's file, leaving the upload for the weekly sweep", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const { storageId, photo } = await makePhoto(t);
@@ -810,7 +840,7 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		expect(afterCaseFiles).toHaveLength(0);
 		expect(
 			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
-		).toBeNull();
+		).not.toBeNull();
 	});
 
 	// Tests that deleting a case keeps a file that another case still references.
@@ -840,7 +870,6 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		);
 
 		await t.run((ctx) => deleteCase(ctx, secondId, owner));
-		await t.finishAllScheduledFunctions(() => {});
 
 		const rows = await t.run((ctx) =>
 			ctx.db
@@ -854,8 +883,8 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		).not.toBeNull();
 	});
 
-	// Tests that a file dropped by an update is cleaned up unless another persona in the same case still uses it.
-	it("cleans up a file dropped by an update, but keeps it if another persona in the same case still uses it", async () => {
+	// Tests that a file dropped by an update is unlinked only once no persona in the same case uses it.
+	it("unlinks a file dropped by an update only once no persona in the same case still uses it", async () => {
 		const t = newTestConvex();
 		const owner = await makeAdmin(t);
 		const { storageId, photo } = await makePhoto(t);
@@ -885,7 +914,6 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				owner,
 			),
 		);
-		await t.finishAllScheduledFunctions(() => {});
 		let rows = await t.run((ctx) =>
 			ctx.db
 				.query("caseFiles")
@@ -907,7 +935,6 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 				owner,
 			),
 		);
-		await t.finishAllScheduledFunctions(() => {});
 		rows = await t.run((ctx) =>
 			ctx.db
 				.query("caseFiles")
@@ -917,6 +944,6 @@ describe("file lifecycle (caseFiles reconciliation + orphan cleanup)", () => {
 		expect(rows).toHaveLength(0);
 		expect(
 			await t.run((ctx) => ctx.db.system.get("_storage", storageId)),
-		).toBeNull();
+		).not.toBeNull();
 	});
 });

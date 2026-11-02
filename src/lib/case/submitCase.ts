@@ -1,7 +1,8 @@
-import { ConvexError, type GenericId } from "convex/values";
+import type { GenericId } from "convex/values";
 import { getConvexClient } from "convex-svelte";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
+import { UserError } from "#lib/errors.js";
 import type {
 	CaseInfo,
 	CollaboratorPayload,
@@ -29,7 +30,7 @@ async function putToConvexStorage(
 		headers: { "Content-Type": file.type || "application/octet-stream" },
 		body: file,
 	});
-	if (!response.ok) throw new ConvexError("Failed to upload file.");
+	if (!response.ok) throw new UserError("Failed to upload file.");
 	const { storageId } = (await response.json()) as {
 		storageId: GenericId<"_storage">;
 	};
@@ -57,36 +58,26 @@ function collectPendingUploads(
 	return files;
 }
 
-// Uploads all pending files, discarding the successful ones and throwing if any upload fails.
+// Uploads all pending files and throws if any upload fails. Files uploaded before a failure are left for the weekly sweep.
 async function uploadAll(
 	personas: Persona[],
 	teachingNotes: File | FileRefPayload | null,
 ): Promise<Map<File, FileRefPayload>> {
 	const pending = collectPendingUploads(personas, teachingNotes);
 	const uploadUrls = await generateUploadUrls(pending.length);
-	const settled = await Promise.allSettled(
-		pending.map((file, i) => putToConvexStorage(file, uploadUrls[i] as string)),
-	);
-	const succeeded = new Map<File, FileRefPayload>();
-	const failures: unknown[] = [];
-	settled.forEach((result, i) => {
-		if (result.status === "fulfilled") {
-			succeeded.set(pending[i] as File, result.value);
-		} else {
-			failures.push(result.reason);
-		}
-	});
-	if (failures.length > 0) {
-		await discardNewUploads(succeeded);
-		const firstFailure = failures[0];
-		throw firstFailure instanceof ConvexError
-			? firstFailure
-			: new ConvexError("Failed to upload one or more files.");
+	try {
+		const refs = await Promise.all(
+			pending.map((file, i) => putToConvexStorage(file, uploadUrls[i]!)),
+		);
+		return new Map(pending.map((file, i) => [file, refs[i]!]));
+	} catch (err) {
+		throw err instanceof UserError
+			? err
+			: new UserError("Failed to upload one or more files.");
 	}
-	return succeeded;
 }
 
-// Swaps a persona's new File objects for their uploaded references, and leaves out whatever is empty: no photo, no availability limit, and file rows without a file.
+// Swaps a persona's new File objects for their uploaded references, and leaves out whatever is empty: no photo and no availability limit. Every file row has a file by now, because a case with an empty row cannot be saved.
 function buildPersonaPayload(
 	persona: Persona,
 	uploaded: Map<File, FileRefPayload>,
@@ -98,25 +89,12 @@ function buildPersonaPayload(
 		...rest,
 		...(photo ? { profilePhoto: photo } : {}),
 		...(availabilityMinutes !== null ? { availabilityMinutes } : {}),
-		files: files.flatMap((entry) => {
-			const file =
-				entry.file instanceof File ? uploaded.get(entry.file) : entry.file;
-			return file ? [{ ...entry, file }] : [];
-		}),
+		files: files.map((entry) => ({
+			...entry,
+			file:
+				entry.file instanceof File ? uploaded.get(entry.file)! : entry.file!,
+		})),
 	};
-}
-
-// Deletes freshly uploaded files from storage, ignoring any errors.
-async function discardNewUploads(
-	uploaded: Map<File, FileRefPayload>,
-): Promise<void> {
-	if (uploaded.size === 0) return;
-	const storageIds = [...uploaded.values()].map((ref) => ref.storageId);
-	try {
-		await getConvexClient().mutation(api.uploads.discardUploads, {
-			storageIds,
-		});
-	} catch {}
 }
 
 export type SubmitCaseInput = CaseInfo &
@@ -126,29 +104,23 @@ export type SubmitCaseInput = CaseInfo &
 		collaborators: CollaboratorPayload[];
 	};
 
-// Uploads new files then creates or updates the case, discarding the uploads if the save fails.
+// Uploads new files then creates or updates the case.
 export async function submitCase({
 	editCaseId,
-	caseName,
-	initialBrief,
-	commonInformation,
-	simulationDurationMinutes,
-	accessCode,
+	duration,
 	personas,
 	referrals,
 	teachingNotes = null,
 	collaborators,
+	...info
 }: SubmitCaseInput): Promise<{ caseId: Id<"cases"> }> {
 	const uploaded = await uploadAll(personas, teachingNotes);
 	const personasPayload = personas.map((persona) =>
 		buildPersonaPayload(persona, uploaded),
 	);
 	const scalars = {
-		name: caseName,
-		brief: initialBrief,
-		commonInformation,
-		duration: simulationDurationMinutes ?? undefined,
-		accessCode,
+		...info,
+		duration: duration ?? undefined,
 		structure: { personas: personasPayload, referrals },
 		teachingNotes:
 			(teachingNotes instanceof File
@@ -157,17 +129,12 @@ export async function submitCase({
 		collaborators,
 	};
 
-	try {
-		if (editCaseId !== null) {
-			return await getConvexClient().mutation(api.cases.update, {
-				caseId: editCaseId as Id<"cases">,
-				...scalars,
-			});
-		}
-
-		return await getConvexClient().mutation(api.cases.create, scalars);
-	} catch (err) {
-		await discardNewUploads(uploaded);
-		throw err;
+	if (editCaseId !== null) {
+		return await getConvexClient().mutation(api.cases.update, {
+			caseId: editCaseId as Id<"cases">,
+			...scalars,
+		});
 	}
+
+	return await getConvexClient().mutation(api.cases.create, scalars);
 }

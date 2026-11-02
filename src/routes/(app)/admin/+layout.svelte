@@ -8,7 +8,7 @@ import type { Snippet } from "svelte";
 import { api } from "#convex/api.js";
 import { setViewerContext } from "#lib/adminViewer.js";
 import { authClient } from "#lib/auth-client.js";
-import AdminTopBar from "#lib/components/AdminTopBar.svelte";
+import AdminTopBar from "#lib/components/ui/AdminTopBar.svelte";
 import { getErrorMessage } from "#lib/errors.js";
 import { goto } from "$app/navigation";
 
@@ -108,7 +108,8 @@ async function signOutNotAuthorized(): Promise<void> {
 			</button>
 		</div>
 	{:else}
-		<div class="relative min-h-screen overflow-hidden bg-parchment">
+		<!-- overflow-clip rather than overflow-hidden, which would stop the case editor's save bar from sticking. -->
+		<div class="relative min-h-screen overflow-clip bg-parchment">
 			<div class="absolute inset-x-0 top-0 h-1 bg-brand" aria-hidden="true"></div>
 			<AdminTopBar />
 			{@render children()}

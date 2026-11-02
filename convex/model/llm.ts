@@ -8,13 +8,6 @@ export const LLM_ATTEMPT_TIMEOUT_MS = 10_000;
 const CLASSIFIER_TIMEOUT_MS = 6_000;
 export const PERSONA_REPLY_RETRIES = 2;
 
-// Returns the LLM API key from the environment, throwing if it is missing.
-function requireLlmKey(): string {
-	const key = env.LLM_KEY;
-	if (!key) throw new Error("Missing required environment variable: LLM_KEY");
-	return key;
-}
-
 export type TranscriptMessage = {
 	role: "user" | "assistant";
 	content: string;
@@ -35,7 +28,7 @@ async function chatCompletion(
 		method: "POST",
 		headers: {
 			"Content-Type": "application/json",
-			Authorization: `Bearer ${requireLlmKey()}`,
+			Authorization: `Bearer ${env.LLM_KEY}`,
 		},
 		body: JSON.stringify({
 			...body,
@@ -138,29 +131,29 @@ function formatTranscript(conversation: TranscriptMessage[]): string {
 	return lines.length > 0 ? lines.join("\n") : "No conversation yet.";
 }
 
-export type HarassmentLabel = "normal" | "nonsense";
+export type MessageLabel = "ok" | "flagged";
 
 const CLASSIFIER_SCHEMA = {
 	type: "object",
-	properties: { label: { type: "string", enum: ["normal", "nonsense"] } },
+	properties: { label: { type: "string", enum: ["ok", "flagged"] } },
 	required: ["label"],
 	additionalProperties: false,
 };
 
-// Classifies the latest student message as normal or nonsense, defaulting to normal if the call fails.
-export async function classifyHarassment(
+// Classifies the latest student message as ok or flagged (spam, gibberish or abuse), defaulting to ok if the call fails.
+export async function classifyMessage(
 	userMessage: string,
 	conversation: TranscriptMessage[],
-): Promise<HarassmentLabel> {
+): Promise<MessageLabel> {
 	const transcript = formatTranscript(conversation);
 	const systemPrompt =
 		"You are a strict conversation safety classifier for a case simulation. " +
-		"Classify the latest user message in context as normal or nonsense.\n" +
-		"Use nonsense for spam, gibberish, or repeatedly incoherent case-irrelevant " +
+		"Classify the latest user message in context as ok or flagged.\n" +
+		"Use flagged for spam, gibberish, or repeatedly incoherent case-irrelevant " +
 		"input, AND for rude, insulting, harassing, or abusive messages, including " +
 		"explicit threats or severe abuse — anything that isn't a normal, coherent, " +
 		"case-related message.\n" +
-		"Otherwise use normal.";
+		"Otherwise use ok.";
 	const userPrompt = `Recent conversation:\n${transcript}\n\nLatest user message:\n${userMessage}`;
 
 	try {
@@ -184,15 +177,12 @@ export async function classifyHarassment(
 			},
 			CLASSIFIER_TIMEOUT_MS,
 		);
-		// Anything but an explicit "nonsense" counts as normal, so a malformed answer can never flag a student.
-		return (JSON.parse(raw) as { label?: string }).label === "nonsense"
-			? "nonsense"
-			: "normal";
+		// Anything but an explicit "flagged" counts as ok, so a malformed answer can never flag a student.
+		return (JSON.parse(raw) as { label?: string }).label === "flagged"
+			? "flagged"
+			: "ok";
 	} catch (err) {
-		console.warn(
-			"Harassment classifier failed; treating the message as normal",
-			err,
-		);
-		return "normal";
+		console.warn("Message classifier failed; treating the message as ok", err);
+		return "ok";
 	}
 }

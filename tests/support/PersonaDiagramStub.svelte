@@ -1,6 +1,6 @@
 <script lang="ts">
 import type { ComponentProps } from "svelte";
-import type PersonaDiagram from "../../src/lib/components/PersonaDiagram.svelte";
+import type PersonaDiagram from "../../src/lib/components/case/PersonaDiagram.svelte";
 
 // Stands in for the Svelte Flow diagram, which needs browser layout APIs jsdom lacks: a button per persona and per referral, wired to the same callbacks.
 let {

@@ -35,10 +35,10 @@ function idsByName(
 }
 
 const baseCaseFields = {
-	caseName: "Case",
+	name: "Case",
 	accessCode: "ABC123",
-	simulationDurationMinutes: null as number | null,
-	initialBrief: "Brief",
+	duration: null as number | null,
+	brief: "Brief",
 	commonInformation: "Shared context",
 };
 
@@ -77,20 +77,20 @@ describe("parseHTMLForm — field extraction", () => {
 	it("reads and trims case name, access code, brief, common information, and duration", () => {
 		const persona = makePersona();
 		const html = buildHTMLForm({
-			caseName: "  Acme Corp  ",
+			name: "  Acme Corp  ",
 			accessCode: "  ABC-123  ",
-			simulationDurationMinutes: 45,
-			initialBrief: "  Read this first.  ",
+			duration: 45,
+			brief: "  Read this first.  ",
 			commonInformation: "  Shared budget context.  ",
 			personas: [persona],
 			referrals: [],
 		});
 		const data = parseHTMLForm(html);
-		expect(data.caseName).toBe("Acme Corp");
+		expect(data.name).toBe("Acme Corp");
 		expect(data.accessCode).toBe("ABC-123");
-		expect(data.initialBrief).toBe("Read this first.");
+		expect(data.brief).toBe("Read this first.");
 		expect(data.commonInformation).toBe("Shared budget context.");
-		expect(data.simulationDurationMinutes).toBe(45);
+		expect(data.duration).toBe(45);
 	});
 });
 
@@ -104,7 +104,7 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 			referrals: [],
 		});
 		setField(doc, "simulation_duration_minutes", "not-a-number");
-		expect(() => parseHTMLForm(serialize(doc))).toThrow(/Simulation duration/);
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(/Time limit/);
 	});
 
 	// Tests that a decimal duration is rounded.
@@ -116,7 +116,7 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 			referrals: [],
 		});
 		setField(doc, "simulation_duration_minutes", "12.6");
-		expect(parseHTMLForm(serialize(doc)).simulationDurationMinutes).toBe(13);
+		expect(parseHTMLForm(serialize(doc)).duration).toBe(13);
 	});
 
 	// Tests that a blank duration becomes null.
@@ -124,11 +124,11 @@ describe("parseHTMLForm — parseNumberField (via simulation duration)", () => {
 		const persona = makePersona();
 		const html = buildHTMLForm({
 			...baseCaseFields,
-			simulationDurationMinutes: null,
+			duration: null,
 			personas: [persona],
 			referrals: [],
 		});
-		expect(parseHTMLForm(html).simulationDurationMinutes).toBeNull();
+		expect(parseHTMLForm(html).duration).toBeNull();
 	});
 });
 
@@ -181,12 +181,12 @@ describe("parseHTMLForm — persona graph validation", () => {
 				{
 					fromId: byName(parentA.name),
 					toId: byName(shared.name),
-					conditions: "",
+					conditions: "the student asks",
 				},
 				{
 					fromId: byName(parentB.name),
 					toId: byName(shared.name),
-					conditions: "",
+					conditions: "the student asks",
 				},
 			]),
 		);

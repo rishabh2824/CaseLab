@@ -1,20 +1,24 @@
-import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { appError, ERROR_CODE } from "../shared/errors";
 import type { FileRefPayload } from "../shared/validators";
 
-// Returns the storage ids among the given references whose uploads still exist.
-export async function existingStorageIds(
+// Returns the storage ids of the given references, throwing if any upload is gone.
+export async function requireStoredFiles(
 	ctx: QueryCtx,
 	refs: (FileRefPayload | undefined)[],
 ): Promise<Set<Id<"_storage">>> {
 	const ids = new Set(refs.flatMap((ref) => (ref ? [ref.storageId] : [])));
 	const found = await Promise.all(
-		[...ids].map(async (id) =>
-			(await ctx.db.system.get("_storage", id)) ? id : null,
-		),
+		[...ids].map((id) => ctx.db.system.get("_storage", id)),
 	);
-	return new Set(found.filter((id): id is Id<"_storage"> => id !== null));
+	if (found.includes(null)) {
+		throw appError(
+			ERROR_CODE.FILE_MISSING,
+			"An attached file is no longer available. Remove it and upload it again.",
+		);
+	}
+	return ids;
 }
 
 // Returns whether any case still references the stored file.
@@ -29,7 +33,7 @@ export async function storageHasReferences(
 	return referencing !== null;
 }
 
-// Syncs a case's file links to the desired set and schedules cleanup for files it no longer uses.
+// Syncs a case's file links to the desired set. A file no case links to any more is deleted later by the weekly sweep.
 export async function syncCaseFiles(
 	ctx: MutationCtx,
 	caseId: Id<"cases">,
@@ -50,9 +54,6 @@ export async function syncCaseFiles(
 	for (const row of existingRows) {
 		if (!desiredStorageIds.has(row.storageId)) {
 			await ctx.db.delete("caseFiles", row._id);
-			await ctx.scheduler.runAfter(0, internal.files.cleanupOrphanedFile, {
-				storageId: row.storageId,
-			});
 		}
 	}
 }

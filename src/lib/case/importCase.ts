@@ -115,13 +115,13 @@ export function parseHTMLForm(htmlText: string): ImportedCaseData {
 	const { personas, referrals } = mintFreshPersonaIds(graph);
 
 	return {
-		caseName: fieldValue(doc, "case_name").trim(),
+		name: fieldValue(doc, "case_name").trim(),
 		accessCode: fieldValue(doc, "access_code").trim(),
-		simulationDurationMinutes: parseNumberField(
+		duration: parseNumberField(
 			fieldValue(doc, "simulation_duration_minutes"),
-			"Simulation duration",
+			"Time limit",
 		),
-		initialBrief: fieldValue(doc, "initial_brief").trim(),
+		brief: fieldValue(doc, "initial_brief").trim(),
 		commonInformation: fieldValue(doc, "common_information").trim(),
 		personas,
 		referrals,

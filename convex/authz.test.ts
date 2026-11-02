@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 
-import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
 import { caseStructure, personaPayload } from "../tests/support/factories";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { appErrorData } from "./shared/errors";
 import type { CaseStructure } from "./shared/validators";
 import { newTestConvex, withAdmin, withStranger } from "./test.setup";
 
@@ -49,7 +49,7 @@ function casePayloadArgs(overrides: Record<string, unknown> = {}) {
 	};
 }
 
-// Runs each call and maps its name to the ConvexError message it threw, or "resolved" if it succeeded.
+// Runs each call and maps its name to the app error message it threw, or "resolved" if it succeeded.
 async function outcomesOf(
 	calls: readonly (readonly [string, () => Promise<unknown>])[],
 ): Promise<Record<string, string>> {
@@ -60,9 +60,7 @@ async function outcomesOf(
 			outcomes[name] = "resolved";
 		} catch (err) {
 			outcomes[name] =
-				err instanceof ConvexError && typeof err.data === "string"
-					? err.data
-					: `unexpected: ${String(err)}`;
+				appErrorData(err)?.message ?? `unexpected: ${String(err)}`;
 		}
 	}
 	return outcomes;
@@ -110,10 +108,6 @@ describe("admin-only surface rejects anonymous callers", () => {
 			[
 				"uploads.generateUploadUrls",
 				() => t.mutation(api.uploads.generateUploadUrls, { count: 2 }),
-			],
-			[
-				"uploads.discardUploads",
-				() => t.mutation(api.uploads.discardUploads, { storageIds: [] }),
 			],
 		] as const;
 	}
@@ -195,11 +189,6 @@ describe("admin-only surface rejects anonymous callers", () => {
 			[
 				"uploads.generateUploadUrls",
 				() => asStranger.mutation(api.uploads.generateUploadUrls, { count: 2 }),
-			],
-			[
-				"uploads.discardUploads",
-				() =>
-					asStranger.mutation(api.uploads.discardUploads, { storageIds: [] }),
 			],
 		];
 		expect(await outcomesOf(calls)).toEqual(
@@ -396,7 +385,7 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 			}),
 		);
 		await seedCase(t, adminId, { accessCode });
-		return await t.mutation(api.simulations.start, { accessCode });
+		return await t.mutation(api.runs.start, { accessCode });
 	}
 
 	// Tests that the student-facing functions work without any identity.
@@ -406,19 +395,19 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 		expect(state.runId).toBeDefined();
 
 		await expect(
-			t.query(api.simulations.get, { runId: state.runId }),
+			t.query(api.runs.get, { runId: state.runId }),
 		).resolves.toMatchObject({ runId: state.runId });
 		await expect(
-			t.query(api.simulations.getPersonaHistory, {
+			t.query(api.runs.getPersonaHistory, {
 				runId: state.runId,
 				personaId: "A",
 			}),
-		).resolves.toEqual({ messages: [], reply: null });
+		).resolves.toEqual({ messages: [], reply: null, failedMessage: null });
 		await expect(
-			t.query(api.simulations.exportRun, { runId: state.runId }),
-		).resolves.toMatchObject({ case: { caseName: "Owned Case" } });
+			t.query(api.runs.exportRun, { runId: state.runId }),
+		).resolves.toMatchObject({ case: { name: "Owned Case" } });
 		await expect(
-			t.mutation(api.turn.sendMessage, {
+			t.mutation(api.turns.sendMessage, {
 				runId: state.runId,
 				personaId: "no-such-persona",
 				message: "hi",
@@ -442,13 +431,13 @@ describe("student-facing surface is deliberately unauthenticated -- pinned so a 
 			}),
 		);
 
-		const bHistory = await t.query(api.simulations.getPersonaHistory, {
+		const bHistory = await t.query(api.runs.getPersonaHistory, {
 			runId: b.runId,
 			personaId: "A",
 		});
 		expect(bHistory.messages).toEqual([]);
 
-		const bExport = await t.query(api.simulations.exportRun, {
+		const bExport = await t.query(api.runs.exportRun, {
 			runId: b.runId,
 		});
 		expect(JSON.stringify(bExport)).not.toContain("run A private message");
@@ -480,11 +469,11 @@ describe("the registered-function surface", () => {
 	// The only functions anyone can call without being an admin: the student flow and the sign-in check.
 	const ANONYMOUS_SURFACE = [
 		"admins.viewer",
-		"simulations.exportRun",
-		"simulations.get",
-		"simulations.getPersonaHistory",
-		"simulations.start",
-		"turn.sendMessage",
+		"runs.exportRun",
+		"runs.get",
+		"runs.getPersonaHistory",
+		"runs.start",
+		"turns.sendMessage",
 	];
 
 	// Lists every `export const name = wrapper(` in the top-level modules as module.name plus its wrapper.

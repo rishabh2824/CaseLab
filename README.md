@@ -41,9 +41,9 @@ templates to every admin. A template is copied without its access code.
 
 | Path | What lives there |
 |---|---|
-| `convex/*.ts` | The public Convex functions, one file per area: `admins`, `cases`, `simulations`, `turn`, `files`, `uploads`. Also `schema.ts`, `auth.ts` and `http.ts`. |
-| `convex/model/` | Server-only logic behind those functions, as plain functions that take a `ctx` or call the LLM and never register a Convex function (`cases`, `admins`, `runs`, `reply`, `llm`, `prompt`, and the others). |
-| `convex/shared/` | Pure code the browser imports too, with no `ctx` and no schema: `rules` (limits and field rules), `caseGraph`, `availability`, `studentErrors` and `validators`. The browser reaches it as `#shared/*`, and the generated API as `#convex/*`. |
+| `convex/*.ts` | The public Convex functions, one file per area: `admins`, `cases`, `runs`, `turns`, `files`, `uploads`. Also `schema.ts`, `auth.ts` and `http.ts`. |
+| `convex/model/` | Server-only logic behind those functions, as plain functions that take a `ctx` or call the LLM and never register a Convex function (`cases`, `admins`, `runs`, `runView`, `turns`, `flags`, `personaGraph`, `reply`, `llm`, `prompt`, and the others). |
+| `convex/shared/` | Pure code the browser imports too, with no `ctx` and no schema: `rules` (limits and field rules), `caseGraph`, `availability`, `errors` and `validators`. The browser reaches it as `#shared/*`, and the generated API as `#convex/*`. |
 | `convex/migrations.ts` | Temporary one-off data migrations. Delete them once every deployment has run them. |
 | `src/routes/` | SvelteKit routes: the landing page, `/student`, and `/admin/...`. |
 | `src/lib/` | Components, the student run store, and the case form code (`case/`). |
@@ -125,7 +125,7 @@ A few cautions:
 
 ## Design notes
 
-**Chat turns are database rows.** Sending a message calls the `turn.sendMessage`
+**Chat turns are database rows.** Sending a message calls the `turns.sendMessage`
 mutation. It checks the message (50 words at most), saves it, adds a pending
 reply row, and schedules the reply. The student's screen is subscribed to that
 persona's history, so the reply appears when it is saved, and the send box is

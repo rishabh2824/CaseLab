@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { importsOf, type SourceImport } from "../tests/support/imports";
 
-// What a file in shared/ may import: files in shared/, convex/values (validators.ts needs `v`, studentErrors.ts needs ConvexError), and only types from convex/server. Anything else would drag server code or the schema into the browser bundle.
+// What a file in shared/ may import: files in shared/, convex/values (validators.ts needs `v`, errors.ts needs ConvexError), and only types from convex/server. Anything else would drag server code or the schema into the browser bundle.
 function sharedViolations(imports: SourceImport[]): string[] {
 	return imports
 		.filter(({ spec, isType }) => {

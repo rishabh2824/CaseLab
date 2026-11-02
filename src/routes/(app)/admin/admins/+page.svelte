@@ -4,8 +4,9 @@ import { toast } from "svelte-sonner";
 import { api } from "#convex/api.js";
 import type { Doc } from "#convex/dataModel.js";
 import { getViewerContext } from "#lib/adminViewer.js";
-import ConfirmDialog from "#lib/components/ConfirmDialog.svelte";
-import PageHeader from "#lib/components/PageHeader.svelte";
+import Button from "#lib/components/ui/Button.svelte";
+import DeleteDialog from "#lib/components/ui/DeleteDialog.svelte";
+import PageHeader from "#lib/components/ui/PageHeader.svelte";
 import { getErrorMessage } from "#lib/errors.js";
 import type { AdminRole } from "#lib/types.js";
 import { goto } from "$app/navigation";
@@ -32,7 +33,6 @@ let name = $state("");
 let role = $state<AdminRole>("admin");
 let isAdding = $state(false);
 let pendingDelete = $state<Doc<"admins"> | null>(null);
-let isDeleting = $state(false);
 
 // Submits the add-admin form, showing a toast for the result. The server validates the fields.
 async function handleAdd(event: SubmitEvent): Promise<void> {
@@ -51,30 +51,15 @@ async function handleAdd(event: SubmitEvent): Promise<void> {
 	}
 }
 
-// Marks an admin as pending deletion so the confirm dialog opens.
-function requestDelete(admin: Doc<"admins">): void {
-	pendingDelete = admin;
-}
-
-// Deletes the pending admin and toasts how many of their cases were deleted.
-async function confirmDelete(): Promise<void> {
-	const admin = pendingDelete;
-	if (!admin) return;
-	isDeleting = true;
-	try {
-		const result = await deleteAdmin({ adminId: admin._id });
-		toast(
-			result.casesDeleted > 0
-				? `Deleted ${admin.email} — ${result.casesDeleted} case${result.casesDeleted === 1 ? "" : "s"} deleted.`
-				: `Deleted ${admin.email}.`,
-			{ duration: 4000 },
-		);
-		pendingDelete = null;
-	} catch (err) {
-		toast(getErrorMessage(err, "Failed to delete admin."));
-	} finally {
-		isDeleting = false;
-	}
+// Deletes an admin and toasts how many of their cases were deleted.
+async function handleDelete(admin: Doc<"admins">): Promise<void> {
+	const result = await deleteAdmin({ adminId: admin._id });
+	toast(
+		result.casesDeleted > 0
+			? `Deleted ${admin.email} — ${result.casesDeleted} case${result.casesDeleted === 1 ? "" : "s"} deleted.`
+			: `Deleted ${admin.email}.`,
+		{ duration: 4000 },
+	);
 }
 </script>
 
@@ -124,13 +109,9 @@ async function confirmDelete(): Promise<void> {
 					<option value="super">Super Admin</option>
 				</select>
 			</div>
-			<button
-				type="submit"
-				disabled={isAdding}
-				class="rounded-lg bg-brand px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-			>
+			<Button type="submit" variant="primary" disabled={isAdding}>
 				{isAdding ? 'Adding…' : 'Add admin'}
-			</button>
+			</Button>
 		</form>
 
 		<div class="mt-8 overflow-hidden rounded-2xl border border-line bg-white shadow-soft">
@@ -166,9 +147,8 @@ async function confirmDelete(): Promise<void> {
 									{:else}
 										<button
 											type="button"
-											onclick={() => requestDelete(admin)}
-											disabled={isDeleting && pendingDelete?._id === admin._id}
-											class="text-sm font-semibold text-brand transition hover:text-brand-dark disabled:opacity-60"
+											onclick={() => (pendingDelete = admin)}
+											class="text-sm font-semibold text-brand transition hover:text-brand-dark"
 										>
 											Delete
 										</button>
@@ -184,11 +164,10 @@ async function confirmDelete(): Promise<void> {
 </div>
 {/if}
 
-<ConfirmDialog
-	open={pendingDelete !== null}
-	onClose={() => (pendingDelete = null)}
-	title={pendingDelete ? `Delete ${pendingDelete.email}?` : ""}
+<DeleteDialog
+	bind:item={pendingDelete}
+	title={(admin) => `Delete ${admin.email}?`}
 	description="This cannot be undone. Every case they own is deleted, including cases shared with collaborators."
-	confirming={isDeleting}
-	onConfirm={confirmDelete}
+	failureMessage="Failed to delete admin."
+	onDelete={handleDelete}
 />

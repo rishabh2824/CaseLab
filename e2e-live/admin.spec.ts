@@ -7,15 +7,19 @@ test("an admin creates a case in the form and a student can then open it", async
 }) => {
 	const accessCode = uniqueCode();
 	await signInAs(page, "admin");
-	await page.goto("/admin/cases/new");
+	await page.goto("/admin/cases/new/blank");
 
 	await page.getByLabel("Case name").fill("Riverside Manufacturing");
-	await page.getByLabel("Initial brief").fill("Cut logistics costs by 10%.");
+	await page.getByLabel("Student brief").fill("Cut logistics costs by 10%.");
 	await page.getByLabel("Access code").fill(accessCode);
-	await page.getByRole("button", { name: "+ Add root persona" }).click();
+	await page.getByRole("tab", { name: "AI Personas" }).click();
+	await page.getByRole("button", { name: "+ Add starting persona" }).click();
 	await page.getByLabel("Persona name").fill("Sam Rivera");
 	await page.getByLabel("Title/Role").fill("Operations Lead");
-	await page.getByRole("button", { name: "Submit" }).click();
+	await page
+		.getByLabel("What this persona knows")
+		.fill("Runs the Riverside plant.");
+	await page.getByRole("button", { name: "Save case" }).click();
 	await expect(page.getByText("Case saved successfully.")).toBeVisible();
 
 	const student = await browser.newPage({ baseURL: "http://localhost:4173" });
@@ -38,18 +42,19 @@ test("an admin edits a case and then deletes it", async ({
 }) => {
 	const { caseId, name, accessCode } = await seedCase({ role: "admin" });
 	await signInAs(page, "admin");
-	await page.goto(`/admin/cases/${caseId}/edit`);
+	await page.goto(`/admin/cases/${caseId}`);
 
+	await page.getByRole("tab", { name: "Case Information" }).click();
 	await expect(page.getByLabel("Case name")).toHaveValue(name);
 	await page.getByLabel("Case name").fill("Renamed by the admin");
-	await page.getByRole("button", { name: "Submit" }).click();
+	await page.getByRole("button", { name: "Save case" }).click();
 	await expect(page.getByText("Case updated successfully.")).toBeVisible();
 
 	const admin = await apiAs("admin");
 	const afterEdit = await admin.query(api.cases.listAll, {});
 	expect(afterEdit.map((c) => c.name)).toContain("Renamed by the admin");
 
-	await page.goto("/admin/edit");
+	await page.goto("/admin/cases");
 	await expect(page.getByText("Renamed by the admin")).toBeVisible();
 	const row = page
 		.locator("div")
@@ -85,6 +90,7 @@ test("a super admin adds and removes an admin", async ({ page, signInAs }) => {
 	await page.goto("/admin/admins");
 
 	await page.getByLabel("Email").fill(email);
+	await page.getByLabel("Name").fill("New Admin");
 	await page.getByRole("button", { name: "Add admin" }).click();
 	await expect(page.getByText(`Added ${email}.`)).toBeVisible();
 	await expect(page.getByText(email, { exact: true })).toBeVisible();

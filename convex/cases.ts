@@ -1,12 +1,12 @@
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
+import { listCases, listTemplateChoices } from "./model/caseLists";
 import {
 	casePayloadArgs,
 	createCase,
 	deleteCase as deleteCaseWithAccess,
-	listCases,
-	listTemplateChoices,
-	loadCaseForAccess,
-	requireCaseAccess,
+	getCaseForEdit,
+	getTemplateView,
+	setTemplateFlag,
 	updateCase,
 } from "./model/cases";
 import {
@@ -23,20 +23,11 @@ export const listTemplates = adminQuery({
 	},
 });
 
-// Loads a case to copy as a template, without its access code, owner or teaching notes. Allowed for flagged templates and for cases the caller can access.
+// Loads a case to copy as a template, without its access code, owner or teaching notes.
 export const getTemplate = adminQuery({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
-		const c = await ctx.db.get("cases", args.caseId);
-		if (!c) throw new ConvexError("Case not found.");
-		if (!c.isTemplate) await requireCaseAccess(ctx, c, ctx.admin, "view");
-		const {
-			accessCode: _accessCode,
-			ownerAdminId: _ownerAdminId,
-			teachingNotes: _teachingNotes,
-			...template
-		} = c;
-		return template;
+		return await getTemplateView(ctx, args.caseId, ctx.admin);
 	},
 });
 
@@ -44,9 +35,7 @@ export const getTemplate = adminQuery({
 export const setTemplate = superAdminMutation({
 	args: { caseId: v.id("cases"), isTemplate: v.boolean() },
 	handler: async (ctx, args) => {
-		if (!(await ctx.db.get("cases", args.caseId)))
-			throw new ConvexError("Case not found.");
-		await ctx.db.patch("cases", args.caseId, { isTemplate: args.isTemplate });
+		await setTemplateFlag(ctx, args.caseId, args.isTemplate);
 	},
 });
 
@@ -54,28 +43,7 @@ export const setTemplate = superAdminMutation({
 export const getForEdit = adminQuery({
 	args: { caseId: v.id("cases") },
 	handler: async (ctx, args) => {
-		const c = await loadCaseForAccess(ctx, args.caseId, ctx.admin, "view");
-		const collaboratorRows = await ctx.db
-			.query("collaborators")
-			.withIndex("by_case_and_admin", (q) => q.eq("caseId", c._id))
-			.collect();
-		const canEdit =
-			ctx.admin.role === "super" ||
-			c.ownerAdminId === ctx.admin._id ||
-			collaboratorRows.some(
-				(row) => row.adminId === ctx.admin._id && row.access === "edit",
-			);
-		return {
-			...c,
-			collaborators: collaboratorRows.map(({ adminId, access }) => ({
-				adminId,
-				access,
-			})),
-			canEdit,
-			teachingNotesUrl: c.teachingNotes
-				? await ctx.storage.getUrl(c.teachingNotes.storageId)
-				: null,
-		};
+		return await getCaseForEdit(ctx, args.caseId, ctx.admin);
 	},
 });
 

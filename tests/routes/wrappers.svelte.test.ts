@@ -1,14 +1,12 @@
 import { render, screen } from "@testing-library/svelte";
 import { createRawSnippet } from "svelte";
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
-import CaseForm from "../../src/lib/components/CaseForm.svelte";
-import TemplatePicker from "../../src/lib/components/TemplatePicker.svelte";
+import CaseForm from "../../src/lib/components/case/CaseForm.svelte";
 import RootLayout from "../../src/routes/+layout.svelte";
 import AppLayout from "../../src/routes/(app)/+layout.svelte";
-import EditCase from "../../src/routes/(app)/admin/cases/[id]/edit/+page.svelte";
-import NewCase from "../../src/routes/(app)/admin/cases/new/+page.svelte";
-import EditList from "../../src/routes/(app)/admin/edit/+page.svelte";
-import Template from "../../src/routes/(app)/admin/new/template/+page.svelte";
+import EditCase from "../../src/routes/(app)/admin/cases/[id]/+page.svelte";
+import BlankCase from "../../src/routes/(app)/admin/cases/new/blank/+page.svelte";
+import TemplateCase from "../../src/routes/(app)/admin/cases/new/template/[id]/+page.svelte";
 import { convexFake } from "../support/convexFake.svelte.js";
 
 let pageState: { url: URL; params: Record<string, string> };
@@ -24,10 +22,7 @@ vi.mock("svelte-sonner", async (importOriginal) => ({
 	toast: vi.fn(),
 }));
 
-vi.mock("../../src/lib/components/CaseForm.svelte", () => ({
-	default: vi.fn(),
-}));
-vi.mock("../../src/lib/components/TemplatePicker.svelte", () => ({
+vi.mock("../../src/lib/components/case/CaseForm.svelte", () => ({
 	default: vi.fn(),
 }));
 
@@ -42,28 +37,24 @@ function propsOf(component: unknown): Record<string, unknown> {
 
 beforeEach(() => {
 	pageState = {
-		url: new URL("http://localhost/admin/cases/new"),
+		url: new URL("http://localhost/admin/cases/new/blank"),
 		params: {},
 	};
 });
 
 describe("admin case pages", () => {
-	// Tests that a plain new case opens the blank form.
-	it("opens the blank create form when there is no template", () => {
-		render(NewCase);
-		expect(propsOf(CaseForm)).toMatchObject({
-			mode: "create",
-			templateId: null,
-		});
+	// Tests that the blank page opens an empty form.
+	it("opens the blank create form", () => {
+		render(BlankCase);
+		expect(propsOf(CaseForm)).toMatchObject({ source: { kind: "new" } });
 	});
 
-	// Tests that the template query parameter seeds the new case.
-	it("passes the template id from the query string", () => {
-		pageState.url = new URL("http://localhost/admin/cases/new?template=abc");
-		render(NewCase);
+	// Tests that the template page seeds the new case from the template named in the route.
+	it("copies the template named in the route", () => {
+		pageState.params = { id: "abc" };
+		render(TemplateCase);
 		expect(propsOf(CaseForm)).toMatchObject({
-			mode: "create",
-			templateId: "abc",
+			source: { kind: "template", id: "abc" },
 		});
 	});
 
@@ -71,16 +62,9 @@ describe("admin case pages", () => {
 	it("edits the case named in the route", () => {
 		pageState.params = { id: "case-9" };
 		render(EditCase);
-		expect(propsOf(CaseForm)).toMatchObject({ mode: "edit", caseId: "case-9" });
-	});
-
-	// Tests that each list page renders the picker in its own mode.
-	it("renders the picker in edit and template modes", () => {
-		render(EditList);
-		expect(propsOf(TemplatePicker)).toMatchObject({ mode: "edit" });
-		(TemplatePicker as unknown as Mock).mockClear();
-		render(Template);
-		expect(propsOf(TemplatePicker)).toMatchObject({ mode: "template" });
+		expect(propsOf(CaseForm)).toMatchObject({
+			source: { kind: "edit", id: "case-9" },
+		});
 	});
 });
 

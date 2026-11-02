@@ -3,10 +3,11 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, QueryCtx } from "../_generated/server";
 import type { PersonaPayload } from "../shared/validators";
 import {
-	classifyHarassment,
+	classifyMessage,
 	generatePersonaReply,
 	RECENT_HISTORY_LIMIT,
 } from "./llm";
+import type { PersonaGraph } from "./personaGraph";
 import {
 	type CandidateFile,
 	type CandidateReferral,
@@ -14,7 +15,6 @@ import {
 	replyInstructions,
 	systemPrompt,
 } from "./prompt";
-import type { PersonaGraph } from "./runs";
 
 type PendingReferral = {
 	referredPersonaId: string;
@@ -41,8 +41,6 @@ export type TurnContext = {
 
 export type ReplyJob = {
 	turnId: Id<"turns">;
-	runId: Id<"runs">;
-	personaId: string;
 	message: string;
 	context: TurnContext;
 };
@@ -60,8 +58,7 @@ export async function buildTurnContext(
 		.filter(
 			(referral) =>
 				referral.fromId === persona.id &&
-				!Object.hasOwn(run.unlockedAt, referral.toId) &&
-				referral.conditions.trim(),
+				run.unlockedAt[referral.toId] === undefined,
 		)
 		.map((referral) => {
 			const referred = graph.personas.get(referral.toId)!;
@@ -73,23 +70,14 @@ export async function buildTurnContext(
 			};
 		});
 
-	const pendingFiles: PendingFile[] = persona.files.flatMap((entry) => {
-		const file = entry.file;
-		if (
-			!file ||
-			!entry.shareConditions.trim() ||
-			run.sharedFiles.includes(file.storageId)
-		)
-			return [];
-		return [
-			{
-				storageId: file.storageId,
-				fileName: file.fileName,
-				shareConditions: entry.shareConditions,
-				perceivedContents: entry.perceivedContents,
-			},
-		];
-	});
+	const pendingFiles: PendingFile[] = persona.files
+		.filter((entry) => !run.sharedFiles.includes(entry.file.storageId))
+		.map((entry) => ({
+			storageId: entry.file.storageId,
+			fileName: entry.file.fileName,
+			shareConditions: entry.shareConditions,
+			perceivedContents: entry.perceivedContents,
+		}));
 
 	const turns = await ctx.db
 		.query("turns")
@@ -117,15 +105,12 @@ export async function buildTurnContext(
 	};
 }
 
-// Generates the persona reply for a job and saves it, or saves a boundary reply if the message was flagged.
+// Generates the persona reply for a job and saves it, or flags the turn if the message was flagged.
 export async function generateReply(
 	ctx: ActionCtx,
 	{ turnId, message, context }: ReplyJob,
 ): Promise<void> {
-	const harassmentPromise = classifyHarassment(
-		message,
-		context.decisionHistory,
-	);
+	const labelPromise = classifyMessage(message, context.decisionHistory);
 
 	const referralByHandle = new Map<string, PendingReferral>();
 	const candidateReferrals: CandidateReferral[] = context.pendingReferrals.map(
@@ -169,9 +154,8 @@ export async function generateReply(
 		[...context.decisionHistory, { role: "user", content: message }],
 	);
 
-	const label = await harassmentPromise;
-	if (label !== "normal") {
-		await ctx.runMutation(internal.turn.applyBoundary, {
+	if ((await labelPromise) === "flagged") {
+		await ctx.runMutation(internal.turns.applyFlag, {
 			turnId,
 			personaName: context.persona.name,
 		});
@@ -195,7 +179,7 @@ export async function generateReply(
 		.filter((f): f is PendingFile => f !== undefined)
 		.map((f) => ({ storageId: f.storageId }));
 
-	await ctx.runMutation(internal.turn.applyDecisions, {
+	await ctx.runMutation(internal.turns.applyDecisions, {
 		turnId,
 		reply,
 		unlockedReferrals,

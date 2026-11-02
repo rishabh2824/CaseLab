@@ -1,6 +1,6 @@
 <script lang="ts">
 import { getViewerContext } from "#lib/adminViewer.js";
-import PageHeader from "#lib/components/PageHeader.svelte";
+import PageHeader from "#lib/components/ui/PageHeader.svelte";
 
 const viewer = getViewerContext();
 const isSuperAdmin = $derived(viewer.data?.role === "super");
@@ -32,7 +32,7 @@ const isSuperAdmin = $derived(viewer.data?.role === "super");
 
 		<div class="mt-12 grid gap-6 md:grid-cols-2">
 			<a
-				href="/admin/new"
+				href="/admin/cases/new"
 				class="group rounded-3xl border border-line bg-white p-8 text-left shadow-soft transition hover:-translate-y-1 hover:border-brand hover:shadow-premium"
 			>
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-brand">
@@ -51,7 +51,7 @@ const isSuperAdmin = $derived(viewer.data?.role === "super");
 			</a>
 
 			<a
-				href="/admin/edit"
+				href="/admin/cases"
 				class="group rounded-3xl border border-line bg-cream p-8 text-left shadow-soft transition hover:-translate-y-1 hover:border-brand hover:shadow-premium"
 			>
 				<p class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">

@@ -28,7 +28,7 @@ export function personaPayload(
 		id,
 		name: `Persona ${id}`,
 		role: "Role",
-		knownFacts: "",
+		knownFacts: "Knows the budget.",
 		personalityTraits: "",
 		files: [],
 		...overrides,
@@ -53,7 +53,7 @@ export function uniqueAccessCode(): string {
 export function referralEdge(
 	fromId: string,
 	toId: string,
-	conditions = "",
+	conditions = "the student asks",
 ): ReferralEdgePayload {
 	return { fromId, toId, conditions };
 }
@@ -92,7 +92,7 @@ export function caseStructure(
 	};
 }
 
-type RunState = FunctionReturnType<typeof api.simulations.get>;
+type RunState = FunctionReturnType<typeof api.runs.get>;
 // A run state with plain string ids, so tests don't have to mint branded Convex ids.
 export type StartedRun = Omit<RunState, "runId" | "case"> & {
 	runId: string;
@@ -121,7 +121,7 @@ export function makePersona(overrides: Partial<Persona> = {}): Persona {
 export function makeReferral(
 	fromId: string,
 	toId: string,
-	conditions = "",
+	conditions = "the student asks",
 ): ReferralEdge {
 	return { fromId, toId, conditions };
 }
@@ -160,9 +160,9 @@ export function makeRunState(overrides: Partial<StartedRun> = {}): StartedRun {
 		runId: "run-1",
 		case: {
 			id: "case-1",
-			caseName: "Sterling Industries",
+			name: "Sterling Industries",
 			brief: "Reduce office supply costs.",
-			simulationDuration: 45,
+			duration: 45,
 			authors: ["Olive Owner"],
 		},
 		contacts: [makeContact()],
@@ -177,7 +177,7 @@ export const message = (
 	content: string,
 ): ChatMessage => ({ role, content });
 
-// Builds a persona payload with blank defaults.
+// Builds a persona payload with defaults.
 export function makePersonaPayload(
 	overrides: Partial<PersonaPayload> = {},
 ): PersonaPayload {
@@ -185,7 +185,7 @@ export function makePersonaPayload(
 		id: "p1",
 		name: "Persona",
 		role: "Role",
-		knownFacts: "",
+		knownFacts: "Knows the budget.",
 		personalityTraits: "",
 		files: [],
 		...overrides,

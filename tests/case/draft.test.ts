@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { getPersonaFieldErrors } from "#shared/rules.js";
 import {
 	createEmptyPersona,
 	createEmptyReferral,
 	getPersonaLabel,
-	hasFieldErrors,
 	numberInputValue,
 	referralsTo,
 } from "../../src/lib/case/draft.js";
@@ -53,20 +51,6 @@ describe("getPersonaLabel", () => {
 	// Tests that getPersonaLabel uses the fallback for an empty name.
 	it("falls back when the name is empty", () => {
 		expect(getPersonaLabel({ name: "" }, "fallback")).toBe("fallback");
-	});
-});
-
-describe("hasFieldErrors", () => {
-	// Tests that field errors from an incomplete persona are reported as errors.
-	it("is true for a persona with a field error", () => {
-		const persona = createEmptyPersona({ name: "  ", role: "CFO" });
-		expect(hasFieldErrors(getPersonaFieldErrors(persona))).toBe(true);
-	});
-
-	// Tests that a valid persona has no field errors.
-	it("is false for a fully valid persona", () => {
-		const persona = createEmptyPersona({ name: "Mary", role: "CFO" });
-		expect(hasFieldErrors(getPersonaFieldErrors(persona))).toBe(false);
 	});
 });
 

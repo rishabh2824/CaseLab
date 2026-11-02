@@ -40,11 +40,6 @@ export const getPersonaLabel = (
 	return trimmed.length > 0 ? trimmed : fallback;
 };
 
-// Returns whether any field in an error map has a message.
-export const hasFieldErrors = (
-	errors: Record<string, string | undefined>,
-): boolean => Object.values(errors).some(Boolean);
-
 // Returns the referrals that point at the given persona.
 export const referralsTo = (
 	referrals: ReferralEdge[],

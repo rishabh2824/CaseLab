@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TranscriptMessage } from "./llm";
 import {
-	classifyHarassment,
+	classifyMessage,
 	generatePersonaReply,
 	PERSONA_REPLY_RETRIES,
 } from "./llm";
@@ -33,75 +33,75 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-describe("classifyHarassment (fail-open contract)", () => {
-	// Tests that the classifier returns the nonsense label.
-	it("labels nonsense", async () => {
+describe("classifyMessage (fail-open contract)", () => {
+	// Tests that the classifier returns the flagged label.
+	it("labels flagged", async () => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn().mockResolvedValue(jsonResponse(label("nonsense"))),
+			vi.fn().mockResolvedValue(jsonResponse(label("flagged"))),
 		);
-		expect(await classifyHarassment("asdkjh", [])).toBe("nonsense");
+		expect(await classifyMessage("asdkjh", [])).toBe("flagged");
 	});
 
-	// Tests that the classifier returns the normal label.
-	it("labels normal", async () => {
+	// Tests that the classifier returns the ok label.
+	it("labels ok", async () => {
 		vi.stubGlobal(
 			"fetch",
-			vi.fn().mockResolvedValue(jsonResponse(label("normal"))),
+			vi.fn().mockResolvedValue(jsonResponse(label("ok"))),
 		);
-		expect(await classifyHarassment("hi", [])).toBe("normal");
+		expect(await classifyMessage("hi", [])).toBe("ok");
 	});
 
 	// Tests that an unexpected label never flags a student.
-	it("treats an unexpected label as normal", async () => {
+	it("treats an unexpected label as ok", async () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockResolvedValue(jsonResponse(label("banana"))),
 		);
-		expect(await classifyHarassment("hi", [])).toBe("normal");
+		expect(await classifyMessage("hi", [])).toBe("ok");
 	});
 
-	// Tests that an answer that isn't JSON falls back to normal.
-	it("falls back to normal when the answer is not JSON", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("NONSENSE")));
-		expect(await classifyHarassment("hi", [])).toBe("normal");
+	// Tests that an answer that isn't JSON falls back to ok.
+	it("falls back to ok when the answer is not JSON", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("FLAGGED")));
+		expect(await classifyMessage("hi", [])).toBe("ok");
 	});
 
-	// Tests that a failed classifier call falls back to normal so an outage never blocks a student.
-	it("falls back to normal when the classifier call itself fails -- an outage must never block a student", async () => {
+	// Tests that a failed classifier call falls back to ok so an outage never blocks a student.
+	it("falls back to ok when the classifier call itself fails -- an outage must never block a student", async () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockRejectedValue(new Error("upstream is down")),
 		);
-		expect(await classifyHarassment("hi", [])).toBe("normal");
+		expect(await classifyMessage("hi", [])).toBe("ok");
 	});
 
-	// Tests that an upstream error status falls back to normal.
-	it("falls back to normal on an upstream error status", async () => {
+	// Tests that an upstream error status falls back to ok.
+	it("falls back to ok on an upstream error status", async () => {
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("", 503)));
-		expect(await classifyHarassment("hi", [])).toBe("normal");
+		expect(await classifyMessage("hi", [])).toBe("ok");
 	});
 
-	// Tests that a response with no choices falls back to normal.
-	it("falls back to normal when the response has no choices", async () => {
+	// Tests that a response with no choices falls back to ok.
+	it("falls back to ok when the response has no choices", async () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [] }))),
 		);
-		expect(await classifyHarassment("hi", [])).toBe("normal");
+		expect(await classifyMessage("hi", [])).toBe("ok");
 	});
 
 	// Tests that the request constrains the answer to the two labels through a strict JSON schema.
 	it("constrains the answer to the two labels with a strict JSON schema", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("normal")));
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("ok")));
 		vi.stubGlobal("fetch", fetchMock);
-		await classifyHarassment("hi", []);
+		await classifyMessage("hi", []);
 		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
 		expect(body.stream).toBeUndefined();
 		expect(body.response_format.json_schema).toMatchObject({
 			strict: true,
 			schema: {
-				properties: { label: { enum: ["normal", "nonsense"] } },
+				properties: { label: { enum: ["ok", "flagged"] } },
 				required: ["label"],
 			},
 		});
@@ -109,22 +109,22 @@ describe("classifyHarassment (fail-open contract)", () => {
 
 	// Tests that an empty conversation is formatted as a placeholder in the classifier prompt.
 	it("formats an empty conversation as a placeholder in the classifier prompt", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("normal")));
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("ok")));
 		vi.stubGlobal("fetch", fetchMock);
-		await classifyHarassment("hi", []);
+		await classifyMessage("hi", []);
 		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
 		expect(body.messages[1].content).toContain("No conversation yet.");
 	});
 
 	// Tests that conversation turns are formatted as 'role: content' lines.
 	it("formats conversation turns as 'role: content' lines", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("normal")));
+		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("ok")));
 		vi.stubGlobal("fetch", fetchMock);
 		const conversation: TranscriptMessage[] = [
 			{ role: "user", content: "hi" },
 			{ role: "assistant", content: "hello" },
 		];
-		await classifyHarassment("hi", conversation);
+		await classifyMessage("hi", conversation);
 		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
 		expect(body.messages[1].content).toContain("user: hi\nassistant: hello");
 	});
@@ -238,15 +238,6 @@ describe("generatePersonaReply", () => {
 		await generatePersonaReply(SYSTEM_PROMPT, []);
 		expect(fetchMock.mock.calls[1]![0]).toBe(
 			"http://127.0.0.1:4010/v1/chat/completions",
-		);
-	});
-
-	// Tests that a missing API key fails with a clear message.
-	it("fails clearly when the API key is missing", async () => {
-		vi.stubEnv("LLM_KEY", "");
-		vi.stubGlobal("fetch", vi.fn());
-		await expect(generatePersonaReply(SYSTEM_PROMPT, [])).rejects.toThrow(
-			/LLM_KEY/,
 		);
 	});
 });

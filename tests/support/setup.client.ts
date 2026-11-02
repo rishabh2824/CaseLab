@@ -31,6 +31,11 @@ vi.mock("svelte-sonner", () => {
 	return { toast };
 });
 
+// jsdom has no layout, so it leaves this out.
+Element.prototype.scrollIntoView = vi.fn();
+// jsdom also reports no boxes for any element, which makes floating content (popovers, tooltips) count as detached from its trigger and hide itself.
+Element.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
+
 if (!globalThis.crypto?.randomUUID) {
 	let counter = 0;
 	Object.defineProperty(globalThis.crypto, "randomUUID", {

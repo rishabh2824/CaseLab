@@ -267,31 +267,6 @@ describe("systemPrompt", () => {
 				"Persona information: [undisclosed contact], ([undisclosed contact]) and [undisclosed contact]'s boss [undisclosed contact]: [undisclosed contact].",
 			);
 		});
-
-		// Tests that a blank candidate name is skipped without error while a real one is still redacted.
-		it("skips a blank/whitespace candidate name without erroring, and still redacts a real one", () => {
-			const prompt = systemPrompt(
-				BRIEF,
-				COMMON_INFO,
-				personaDetail({
-					knownFacts: "Karen handles all complaint escalations.",
-				}),
-				[
-					{ handle: "R1", name: "", role: "Unknown", conditionTrigger: "cond" },
-					{
-						handle: "R2",
-						name: "Karen",
-						role: "Support Lead",
-						conditionTrigger: "cond",
-					},
-				],
-				[],
-			);
-			expect(prompt).toContain(
-				"Persona information: [undisclosed contact] handles all complaint escalations.",
-			);
-			expect(prompt.match(/\[undisclosed contact\]/g)).toHaveLength(1);
-		});
 	});
 });
 
@@ -307,10 +282,8 @@ describe("cleanReply", () => {
 		expect(cleanReply(text)).toBe(text);
 	});
 
-	// Tests that cleanReply handles empty and missing input.
-	it("handles empty and missing input", () => {
-		expect(cleanReply(null)).toBe("");
-		expect(cleanReply(undefined)).toBe("");
+	// Tests that cleanReply handles empty input.
+	it("handles empty input", () => {
 		expect(cleanReply("")).toBe("");
 		expect(cleanReply("   ")).toBe("");
 	});

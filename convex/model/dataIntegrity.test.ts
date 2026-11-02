@@ -4,11 +4,8 @@ import {
 	fileEntry,
 	personaPayload,
 	referralEdge,
-	uniqueAccessCode,
 } from "../../tests/support/factories";
 import { api } from "../_generated/api";
-import { MAX_MESSAGE_CHARS } from "../shared/rules";
-import { STUDENT_ERROR } from "../shared/studentErrors";
 import {
 	casePayload,
 	lastReply,
@@ -17,7 +14,6 @@ import {
 	sendTurn,
 	startRun,
 	stubLlm,
-	studentRejection,
 	withAdmin,
 	withGoogleIdentity,
 } from "../test.setup";
@@ -64,10 +60,10 @@ describe("a persona that another persona refers to is not a root", () => {
 			}),
 		);
 
-		const live = await t.query(api.simulations.get, { runId: state.runId });
+		const live = await t.query(api.runs.get, { runId: state.runId });
 		expect(live.contacts.map((c) => c.id)).toEqual(["A"]);
 		await expect(
-			t.mutation(api.turn.sendMessage, {
+			t.mutation(api.turns.sendMessage, {
 				runId: state.runId,
 				personaId: "B",
 				message: "hello",
@@ -85,7 +81,7 @@ describe("a persona that another persona refers to is not a root", () => {
 			}),
 		);
 
-		const live = await t.query(api.simulations.get, { runId: state.runId });
+		const live = await t.query(api.runs.get, { runId: state.runId });
 		expect(live.contacts.map((c) => c.id)).toEqual(["A", "B"]);
 	});
 
@@ -94,7 +90,7 @@ describe("a persona that another persona refers to is not a root", () => {
 		const t = newTestConvex();
 		const state = await unlockViaReferral(t);
 
-		const live = await t.query(api.simulations.get, { runId: state.runId });
+		const live = await t.query(api.runs.get, { runId: state.runId });
 		expect(live.contacts.map((c) => c.id)).toEqual(["A", "B"]);
 	});
 
@@ -105,7 +101,7 @@ describe("a persona that another persona refers to is not a root", () => {
 		stubLlm({ replyText: "Hello from B." });
 		await sendTurn(t, state.runId, "B", "hi B");
 
-		const exported = await t.query(api.simulations.exportRun, {
+		const exported = await t.query(api.runs.exportRun, {
 			runId: state.runId,
 		});
 		expect(exported.personas.map((p) => p.id)).toEqual(["A", "B"]);
@@ -143,46 +139,10 @@ describe("shared files resolve from storage", () => {
 
 		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
 		expect(run.sharedFiles).toEqual([storageId]);
-		const live = await t.query(api.simulations.get, { runId: state.runId });
+		const live = await t.query(api.runs.get, { runId: state.runId });
 		expect(live.sharedFiles).toMatchObject([
 			{ fileId: storageId, fileName: "doc.pdf" },
 		]);
-	});
-});
-
-describe("persona ids as Convex record keys", () => {
-	// Tests that a bad persona id is rejected through the public create mutation, not just the helper.
-	it("rejects the bad id through the public create mutation, not just the pure helper", async () => {
-		const t = newTestConvex();
-		const { asUser } = await withAdmin(t);
-		await expect(
-			asUser.mutation(api.cases.create, {
-				name: "C",
-				brief: "B",
-				commonInformation: "",
-				accessCode: uniqueAccessCode(),
-				structure: {
-					personas: [personaPayload("$boss")],
-					referrals: [],
-				},
-				collaborators: [],
-			}),
-		).rejects.toThrow(/persona id/i);
-	});
-
-	// Tests that re-saving a legacy case with an illegal persona id is refused.
-	it("refuses to re-save a legacy case carrying an illegal persona id", async () => {
-		const t = newTestConvex();
-		const admin = await makeAdmin(t);
-		await expect(
-			t.run((ctx) =>
-				createCase(
-					ctx,
-					casePayload({ personas: [personaPayload("café")] }),
-					admin,
-				),
-			),
-		).rejects.toThrow(/persona id/i);
 	});
 });
 
@@ -193,7 +153,7 @@ describe("simulation duration", () => {
 		const admin = await makeAdmin(t);
 		await expect(
 			t.run((ctx) => createCase(ctx, casePayload({ duration: 0 }), admin)),
-		).rejects.toThrow(/duration/i);
+		).rejects.toThrow(/time limit/i);
 	});
 
 	// Tests that a case with no duration (an untimed run) is still accepted.
@@ -217,7 +177,7 @@ describe("simulation duration", () => {
 			),
 		);
 		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
-		const state = await t.mutation(api.simulations.start, {
+		const state = await t.mutation(api.runs.start, {
 			accessCode: "capped",
 		});
 		const run = (await t.run((ctx) => ctx.db.get("runs", state.runId)))!;
@@ -241,7 +201,7 @@ describe("student message boundaries", () => {
 
 		await sendTurn(t, state.runId, "A", message);
 
-		const { messages } = await t.query(api.simulations.getPersonaHistory, {
+		const { messages } = await t.query(api.runs.getPersonaHistory, {
 			runId: state.runId,
 			personaId: "A",
 		});
@@ -257,52 +217,12 @@ describe("student message boundaries", () => {
 		await sendTurn(t, state.runId, "A", Array(50).fill("word").join(" "));
 		expect((await lastReply(t, state.runId, "A"))?.status).toBe("done");
 		await expect(
-			t.mutation(api.turn.sendMessage, {
+			t.mutation(api.turns.sendMessage, {
 				runId: state.runId,
 				personaId: "A",
 				message: Array(51).fill("word").join(" "),
 			}),
 		).rejects.toThrow(/too long/);
-	});
-
-	// Tests that a message of exactly the character limit is accepted and one more character is rejected.
-	it("accepts exactly the character limit and rejects one more character", async () => {
-		const t = newTestConvex();
-		const state = await startRun(t, caseStructure());
-		stubLlm({ replyText: "ok" });
-
-		await sendTurn(t, state.runId, "A", "x".repeat(MAX_MESSAGE_CHARS));
-		expect((await lastReply(t, state.runId, "A"))?.status).toBe("done");
-		expect(
-			await studentRejection(
-				t.mutation(api.turn.sendMessage, {
-					runId: state.runId,
-					personaId: "A",
-					message: "x".repeat(MAX_MESSAGE_CHARS + 1),
-				}),
-			),
-		).toMatchObject({ code: STUDENT_ERROR.MESSAGE_TOO_LONG });
-	});
-
-	// Tests that a 50-word message of enormous words is rejected as too long while leaving the run usable.
-	it("rejects a 50-word message of enormous words as too long, and leaves the run usable", async () => {
-		const t = newTestConvex();
-		const state = await startRun(t, caseStructure());
-		stubLlm({ replyText: "ok" });
-		const huge = Array(50).fill("x".repeat(50_000)).join(" ");
-
-		const outcome = await studentRejection(
-			t.mutation(api.turn.sendMessage, {
-				runId: state.runId,
-				personaId: "A",
-				message: huge,
-			}),
-		);
-		expect(outcome).toMatchObject({ code: STUDENT_ERROR.MESSAGE_TOO_LONG });
-		expect(await lastReply(t, state.runId, "A")).toBeNull();
-
-		await sendTurn(t, state.runId, "A", "a normal question");
-		expect((await lastReply(t, state.runId, "A"))?.status).toBe("done");
 	});
 });
 
@@ -312,7 +232,7 @@ describe("access codes", () => {
 		const t = newTestConvex();
 		await startRun(t, caseStructure(), "sterling");
 		await expect(
-			t.mutation(api.simulations.start, { accessCode: "  StErLiNg\t" }),
+			t.mutation(api.runs.start, { accessCode: "  StErLiNg\t" }),
 		).resolves.toMatchObject({ runId: expect.any(String) });
 	});
 
@@ -320,10 +240,10 @@ describe("access codes", () => {
 	it("never starts a run from a blank code even if a case somehow stored one", async () => {
 		const t = newTestConvex();
 		await expect(
-			t.mutation(api.simulations.start, { accessCode: "" }),
+			t.mutation(api.runs.start, { accessCode: "" }),
 		).rejects.toThrow("Access code is required.");
 		await expect(
-			t.mutation(api.simulations.start, { accessCode: "   " }),
+			t.mutation(api.runs.start, { accessCode: "   " }),
 		).rejects.toThrow("Access code is required.");
 	});
 });

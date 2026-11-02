@@ -38,24 +38,6 @@ export function validateStructure({
 	if (personas.length === 0) return "A case needs at least one persona.";
 
 	const ids = personas.map((persona) => persona.id);
-	const known = new Set<string>();
-	const duplicates = new Set<string>();
-	for (const id of ids) (known.has(id) ? duplicates : known).add(id);
-	if (duplicates.size > 0)
-		return `Duplicate persona id(s): ${[...duplicates].sort().join(", ")}`;
-
-	const seenReferrals = new Set<string>();
-	for (const referral of referrals) {
-		if (!known.has(referral.fromId))
-			return `Unknown referral fromId: ${referral.fromId}`;
-		if (!known.has(referral.toId))
-			return `Unknown referral toId: ${referral.toId}`;
-		const key = JSON.stringify([referral.fromId, referral.toId]);
-		if (seenReferrals.has(key))
-			return `Duplicate referral: ${referral.fromId} -> ${referral.toId}`;
-		seenReferrals.add(key);
-	}
-
 	if (hasCycle(ids, referrals)) return "Referrals can't form a cycle.";
 	return null;
 }

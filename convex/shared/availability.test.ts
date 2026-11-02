@@ -3,71 +3,46 @@ import { describe, expect, it } from "vitest";
 import { elapsedMinutes, personaAvailability } from "./availability";
 
 describe("personaAvailability", () => {
-	// Tests that a persona is reported as not yet available before its availableAt time.
-	it("reports not yet available when elapsed is before availableAt", () => {
-		expect(personaAvailability(null, 10, 5)).toEqual({
-			available: false,
-			availableIn: 5,
-			expiresIn: null,
-		});
-	});
-
 	// Tests that a persona with a null availability duration never expires.
 	it("never expires when availabilityDuration is null", () => {
 		expect(personaAvailability(null, 10, 50)).toEqual({
 			available: true,
-			availableIn: 0,
 			expiresIn: null,
 		});
 	});
 
-	// Tests that the remaining time is reported when a duration is set.
-	it("reports remaining time when a duration is set", () => {
+	// Tests that a persona inside its window reports the minutes left.
+	it("reports the minutes left inside the window", () => {
 		expect(personaAvailability(20, 10, 15)).toEqual({
 			available: true,
-			availableIn: 0,
 			expiresIn: 15,
 		});
 	});
 
-	// Tests that a persona is still available exactly at its expiry boundary.
-	it("is still available exactly at the expiry boundary (elapsed === expiresAt)", () => {
+	// Tests that the last minute of the window is still available.
+	it("stays available at exactly the expiry minute", () => {
 		expect(personaAvailability(20, 10, 30)).toEqual({
 			available: true,
-			availableIn: 0,
 			expiresIn: 0,
 		});
 	});
 
-	// Tests that a persona is expired one minute past its boundary.
-	it("is expired one minute past the boundary", () => {
+	// Tests that a persona is unavailable once the window has passed.
+	it("is unavailable after the window passes", () => {
 		expect(personaAvailability(20, 10, 31)).toEqual({
 			available: false,
-			availableIn: null,
 			expiresIn: 0,
 		});
 	});
 
-	// Tests that a zero duration expires the persona immediately.
-	it("expires immediately with a zero duration", () => {
-		expect(personaAvailability(0, 10, 1000)).toEqual({
-			available: false,
-			availableIn: null,
-			expiresIn: 0,
-		});
+	// Tests that a zero-length window is available only at the minute the persona unlocked.
+	it("treats a zero-length window as that single minute", () => {
+		expect(personaAvailability(0, 10, 10).available).toBe(true);
+		expect(personaAvailability(0, 10, 11).available).toBe(false);
 	});
 
-	// Tests that a zero-duration persona is available at the instant of its availableAt time.
-	it("is available for the instant elapsed === availableAt with a zero duration", () => {
-		expect(personaAvailability(0, 10, 10)).toEqual({
-			available: true,
-			availableIn: 0,
-			expiresIn: 0,
-		});
-	});
-
-	// Tests that availability times are never negative and available implies availableIn is 0, for arbitrary inputs.
-	it("invariants: availableIn/expiresIn are never negative, and available implies availableIn===0", () => {
+	// Tests that expiresIn is never negative and an unavailable persona has none left, for arbitrary inputs.
+	it("invariants: expiresIn is never negative, and unavailable means expired", () => {
 		fc.assert(
 			fc.property(
 				fc.integer({ min: 0, max: 500 }),
@@ -75,15 +50,9 @@ describe("personaAvailability", () => {
 				fc.integer({ min: 0, max: 1000 }),
 				(availableAt, duration, elapsed) => {
 					const result = personaAvailability(duration, availableAt, elapsed);
-					if (result.availableIn !== null)
-						expect(result.availableIn).toBeGreaterThanOrEqual(0);
 					if (result.expiresIn !== null)
 						expect(result.expiresIn).toBeGreaterThanOrEqual(0);
-					if (result.available) expect(result.availableIn).toBe(0);
-					if (!result.available)
-						expect(result.availableIn === null || result.availableIn > 0).toBe(
-							true,
-						);
+					if (!result.available) expect(result.expiresIn).toBe(0);
 				},
 			),
 		);

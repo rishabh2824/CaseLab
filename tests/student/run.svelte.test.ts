@@ -1,16 +1,15 @@
 import { getFunctionName } from "convex/server";
-import { flushSync, tick } from "svelte";
 import { toast } from "svelte-sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
-import { STUDENT_ERROR } from "#shared/studentErrors.js";
+import { ERROR_CODE } from "#shared/errors.js";
 import { goto } from "$app/navigation";
 import { session } from "../../src/lib/session.svelte.js";
 import { RunStore } from "../../src/lib/student/run.svelte.js";
 import {
+	clientAppError,
 	clientServerError,
-	clientStudentError,
 } from "../support/convexClientErrors.js";
 import { convexFake, type QueryState } from "../support/convexFake.svelte.js";
 import {
@@ -20,11 +19,11 @@ import {
 	message,
 } from "../support/factories.js";
 
-const sendMessage = convexFake.mutation(api.turn.sendMessage);
-const GET_STATE = getFunctionName(api.simulations.get);
-const SEND_MESSAGE = getFunctionName(api.turn.sendMessage);
+const sendMessage = convexFake.mutation(api.turns.sendMessage);
+const GET_STATE = getFunctionName(api.runs.get);
+const SEND_MESSAGE = getFunctionName(api.turns.sendMessage);
 
-type RunStateQuery = QueryState<typeof api.simulations.get>;
+type RunStateQuery = QueryState<typeof api.runs.get>;
 
 // Sets the state query for a run. The fixture uses plain string ids, so its data is branded here.
 function setRunQuery(
@@ -32,30 +31,26 @@ function setRunQuery(
 	entry: { data?: ReturnType<typeof makeRunState>; error?: Error },
 ): void {
 	convexFake.setQuery(
-		api.simulations.get,
+		api.runs.get,
 		args as { runId: Id<"runs"> },
 		entry as RunStateQuery,
 	);
-}
-
-// Lets pending reactive effects run, so a "nothing happened" assertion is made after they had the chance to.
-async function settle(): Promise<void> {
-	await tick();
-	flushSync();
 }
 
 function setHistory(
 	personaId: string,
 	messages: ReturnType<typeof message>[] = [],
 	reply: { id: string; status: "pending" | "done" | "failed" } | null = null,
+	failedMessage: string | null = null,
 ): void {
 	convexFake.setQuery(
-		api.simulations.getPersonaHistory,
+		api.runs.getPersonaHistory,
 		{ runId: "run-1" as Id<"runs">, personaId },
 		{
 			data: {
 				messages,
 				reply: reply && { ...reply, id: reply.id as Id<"turns"> },
+				failedMessage,
 			},
 		},
 	);
@@ -63,9 +58,9 @@ function setHistory(
 
 const caseData = {
 	id: "case-1",
-	caseName: "Sterling Industries",
+	name: "Sterling Industries",
 	brief: "Reduce office supply costs.",
-	simulationDuration: null as number | null,
+	duration: null as number | null,
 	authors: ["Olive Owner"],
 };
 
@@ -91,8 +86,9 @@ async function primeRun(
 	run: Awaited<ReturnType<typeof freshRun>>["run"],
 	session: Awaited<ReturnType<typeof freshRun>>["session"],
 	overrides: Parameters<typeof makeRunState>[0] = {},
+	startTime = Date.now(),
 ) {
-	session.startRun({ runId: "run-1" });
+	session.startRun({ runId: "run-1", startTime });
 	setRunQuery(
 		{ runId: "run-1" },
 		{
@@ -119,7 +115,7 @@ describe("init", () => {
 	// Tests that a run already in the session is left alone.
 	it("resumes a persisted run without starting anything", async () => {
 		const { run, session, goto } = await freshRun();
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 
 		run.init();
 
@@ -141,15 +137,24 @@ describe("init", () => {
 });
 
 describe("which persona is selected", () => {
-	// Tests that the default selection skips a contact who is not yet available.
-	it("defaults to the first contact that's actually available, skipping one that isn't yet", async () => {
+	// Tests that the default selection skips a contact whose availability window has closed.
+	it("defaults to the first contact that's still available, skipping an expired one", async () => {
 		const { run, session } = await freshRun();
-		await primeRun(run, session, {
-			contacts: [
-				makeContact({ id: "later", availableAt: 999 }),
-				makeContact({ id: "mary" }),
-			],
-		});
+		await primeRun(
+			run,
+			session,
+			{
+				contacts: [
+					makeContact({
+						id: "expired",
+						availableAt: 0,
+						availabilityDuration: 5,
+					}),
+					makeContact({ id: "mary" }),
+				],
+			},
+			Date.now() - 30 * 60_000,
+		);
 
 		await vi.waitFor(() => expect(run.activeContactId).toBe("mary"));
 	});
@@ -157,7 +162,7 @@ describe("which persona is selected", () => {
 	// Tests that the last selected persona is restored, e.g. after a reload.
 	it("restores the persona the student last selected, e.g. after a reload", async () => {
 		const { run, session } = await freshRun();
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 		session.setActivePersona("bob");
 		setRunQuery(
 			{ runId: "run-1" },
@@ -175,7 +180,7 @@ describe("which persona is selected", () => {
 	// Tests that a remembered persona no longer in the run is ignored.
 	it("ignores a remembered persona that's no longer in the run", async () => {
 		const { run, session } = await freshRun();
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 		session.setActivePersona("gone");
 		setRunQuery(
 			{ runId: "run-1" },
@@ -214,14 +219,14 @@ describe("session resume / live-query errors", () => {
 	// Tests that a run-not-found error sends the student home without starting a new run.
 	it("a run-not-found error sends the student home without starting a new run", async () => {
 		const { session, goto } = await freshRun();
-		session.startRun({ runId: "stale-run" });
+		session.startRun({ runId: "stale-run", startTime: Date.now() });
 		sessionStorage.setItem(notesKey("stale-run"), "my notes");
 		setRunQuery(
 			{ runId: "stale-run" },
 			{
-				error: clientStudentError(
+				error: clientAppError(
 					GET_STATE,
-					STUDENT_ERROR.RUN_NOT_FOUND,
+					ERROR_CODE.RUN_NOT_FOUND,
 					"Run not found.",
 					"Q",
 				),
@@ -237,7 +242,7 @@ describe("session resume / live-query errors", () => {
 	// Tests that an unrelated error sets loadError instead of clearing the run.
 	it("a non-expiry error sets loadError instead of clearing the run", async () => {
 		const { run, session, goto } = await freshRun();
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 		setRunQuery(
 			{ runId: "run-1" },
 			{ error: clientServerError(GET_STATE, "Q") },
@@ -253,13 +258,13 @@ describe("session resume / live-query errors", () => {
 	// Tests that a deliberate student error's own message is shown as loadError.
 	it("shows a deliberate student error's own message as loadError", async () => {
 		const { run, session, goto } = await freshRun();
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 		setRunQuery(
 			{ runId: "run-1" },
 			{
-				error: clientStudentError(
+				error: clientAppError(
 					GET_STATE,
-					STUDENT_ERROR.CASE_NOT_FOUND,
+					ERROR_CODE.CASE_NOT_FOUND,
 					"Case not found.",
 					"Q",
 				),
@@ -273,7 +278,7 @@ describe("session resume / live-query errors", () => {
 	// Tests that loadError clears once the live subscription recovers.
 	it("clears loadError once the live subscription recovers", async () => {
 		const { run, session } = await freshRun();
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 		setRunQuery(
 			{ runId: "run-1" },
 			{ error: clientServerError(GET_STATE, "Q") },
@@ -293,7 +298,7 @@ describe("sendMessage guards", () => {
 		await primeRun(run, session);
 		run.activeContactId = null;
 
-		expect(run.sendMessage("hello")).toBe(false);
+		await expect(run.sendMessage("hello")).resolves.toBe(false);
 		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
@@ -303,8 +308,8 @@ describe("sendMessage guards", () => {
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 
-		expect(run.sendMessage("")).toBe(false);
-		expect(run.sendMessage("   \n\t ")).toBe(false);
+		await expect(run.sendMessage("")).resolves.toBe(false);
+		await expect(run.sendMessage("   \n\t ")).resolves.toBe(false);
 		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
@@ -315,7 +320,7 @@ describe("sendMessage guards", () => {
 		run.activeContactId = "mary";
 		session.clearRun();
 
-		expect(run.sendMessage("hello")).toBe(false);
+		await expect(run.sendMessage("hello")).resolves.toBe(false);
 		expect(sendMessage).not.toHaveBeenCalled();
 	});
 
@@ -331,7 +336,7 @@ describe("sendMessage guards", () => {
 
 		run.activeContactId = "bob";
 		expect(run.isSending).toBe(false);
-		expect(run.sendMessage("second")).toBe(true);
+		await expect(run.sendMessage("second")).resolves.toBe(true);
 		expect(sendMessage).toHaveBeenCalledTimes(1);
 	});
 
@@ -341,7 +346,7 @@ describe("sendMessage guards", () => {
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 
-		expect(run.sendMessage("hello")).toBe(true);
+		await expect(run.sendMessage("hello")).resolves.toBe(true);
 
 		expect(sendMessage).toHaveBeenCalledWith({
 			runId: "run-1",
@@ -388,8 +393,8 @@ describe("sendMessage lifecycle", () => {
 		expect(run.activeMessages).toHaveLength(4);
 	});
 
-	// Tests that a boundary reply, which replaces the flagged message, unlocks the composer without a toast.
-	it("unlocks after a boundary reply that replaces the flagged message, without a toast", async () => {
+	// Tests that a flag reply, which replaces the flagged message, unlocks the composer without a toast.
+	it("unlocks after a flag reply that replaces the flagged message, without a toast", async () => {
 		const { run, session, toast } = await freshRun();
 		await primeRun(run, session);
 		setHistory("mary", []);
@@ -410,7 +415,7 @@ describe("sendMessage lifecycle", () => {
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
 		expect(toast).not.toHaveBeenCalled();
-		expect(run.sendMessage("a real question")).toBe(true);
+		await expect(run.sendMessage("a real question")).resolves.toBe(true);
 	});
 
 	// Tests that a rejected message shows the server message and leaves the composer unlocked.
@@ -419,9 +424,9 @@ describe("sendMessage lifecycle", () => {
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 		sendMessage.mockRejectedValue(
-			clientStudentError(
+			clientAppError(
 				SEND_MESSAGE,
-				STUDENT_ERROR.CONVERSATION_ENDED,
+				ERROR_CODE.CONVERSATION_ENDED,
 				"This conversation has ended.",
 			),
 		);
@@ -442,11 +447,7 @@ describe("sendMessage lifecycle", () => {
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 		sendMessage.mockRejectedValue(
-			clientStudentError(
-				SEND_MESSAGE,
-				STUDENT_ERROR.RUN_EXPIRED,
-				"Run expired.",
-			),
+			clientAppError(SEND_MESSAGE, ERROR_CODE.RUN_EXPIRED, "Run expired."),
 		);
 
 		run.sendMessage("hello");
@@ -466,52 +467,39 @@ describe("sendMessage lifecycle", () => {
 		run.activeContactId = "mary";
 		sendMessage.mockRejectedValue(makeError());
 
-		run.sendMessage("hello");
+		await expect(run.sendMessage("hello")).resolves.toBe(false);
 
-		await vi.waitFor(() =>
-			expect(toast).toHaveBeenCalledWith("Message failed. Please try again.", {
-				duration: 4000,
-			}),
-		);
+		expect(toast).toHaveBeenCalledWith("Message failed. Please try again.", {
+			duration: 4000,
+		});
 		expect(run.isSending).toBe(false);
 	});
 });
 
-describe("failed and stuck replies", () => {
-	const FAILED_TOAST =
-		"Something went wrong generating a reply. Please resend your message.";
-
-	// Tests that a reply the server marks failed unlocks the composer and shows the toast once.
-	it("a failed reply unlocks the composer and toasts once", async () => {
-		const { run, session, toast } = await freshRun();
+describe("failed replies", () => {
+	// Tests that a reply the server marks failed unlocks the composer and keeps the student's message for the banner.
+	it("a failed reply unlocks the composer and keeps the student's message", async () => {
+		const { run, session } = await freshRun();
 		await primeRun(run, session);
-		setHistory("mary", []);
 		run.activeContactId = "mary";
-
-		run.sendMessage("hello");
 		setHistory("mary", [message("user", "hello")], {
 			id: "r1",
 			status: "pending",
 		});
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
+		expect(run.failedMessage).toBeNull();
 
-		setHistory("mary", [], { id: "r1", status: "failed" });
+		setHistory("mary", [], { id: "r1", status: "failed" }, "hello");
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(toast).toHaveBeenCalledWith(FAILED_TOAST, { duration: 4000 });
-		setHistory("mary", [], { id: "r1", status: "failed" });
-		await settle();
-		expect(toast).toHaveBeenCalledTimes(1);
+		expect(run.failedMessage).toBe("hello");
 	});
 
-	// Tests that a reply that finishes normally does not toast.
-	it("a finished reply does not toast", async () => {
-		const { run, session, toast } = await freshRun();
+	// Tests that a reply that finishes normally leaves no failed message.
+	it("a finished reply leaves no failed message", async () => {
+		const { run, session } = await freshRun();
 		await primeRun(run, session);
-		setHistory("mary", []);
 		run.activeContactId = "mary";
-
-		run.sendMessage("hello");
 		setHistory("mary", [message("user", "hello")], {
 			id: "r1",
 			status: "pending",
@@ -523,26 +511,12 @@ describe("failed and stuck replies", () => {
 		});
 
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
-		expect(toast).not.toHaveBeenCalled();
+		expect(run.failedMessage).toBeNull();
 	});
 
-	// Tests that an older failed reply is not mistaken for the new send failing.
-	it("does not mistake an older failed reply for the new send failing", async () => {
-		const { run, session, toast } = await freshRun();
-		await primeRun(run, session);
-		setHistory("mary", [], { id: "old", status: "failed" });
-		run.activeContactId = "mary";
-
-		run.sendMessage("hello again");
-		await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
-		await settle();
-
-		expect(toast).not.toHaveBeenCalled();
-	});
-
-	// Tests that the composer stays locked while the server says the reply is pending, with no toast.
+	// Tests that the composer stays locked while the server says the reply is pending.
 	it("stays locked while the reply is pending", async () => {
-		const { run, session, toast } = await freshRun();
+		const { run, session } = await freshRun();
 		await primeRun(run, session);
 		setHistory("mary", [message("user", "hello")], {
 			id: "r1",
@@ -551,74 +525,36 @@ describe("failed and stuck replies", () => {
 		run.activeContactId = "mary";
 
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
-		expect(toast).not.toHaveBeenCalled();
+		expect(run.failedMessage).toBeNull();
 	});
 
 	// Tests that after a failure the student can immediately resend.
 	it("lets the student resend right after a failed reply", async () => {
 		const { run, session } = await freshRun();
 		await primeRun(run, session);
-		setHistory("mary", []);
 		run.activeContactId = "mary";
+		setHistory("mary", [], { id: "r1", status: "failed" }, "hello");
+		await vi.waitFor(() => expect(run.failedMessage).toBe("hello"));
 
-		run.sendMessage("hello");
-		setHistory("mary", [message("user", "hello")], {
-			id: "r1",
-			status: "pending",
+		await expect(run.sendMessage("hello again")).resolves.toBe(true);
+		expect(sendMessage).toHaveBeenCalledTimes(1);
+	});
+
+	// Tests that a failure on another persona does not show for the persona being viewed, and shows when the student goes there.
+	it("keeps each contact's failed message with that contact", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session, {
+			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
 		});
-		await vi.waitFor(() => expect(run.isSending).toBe(true));
-		setHistory("mary", [], { id: "r1", status: "failed" });
+		setHistory("mary", []);
+		setHistory("bob", [], { id: "b1", status: "failed" }, "question for Bob");
+		run.activeContactId = "mary";
 		await vi.waitFor(() => expect(run.isSending).toBe(false));
-
-		expect(run.sendMessage("hello again")).toBe(true);
-		expect(sendMessage).toHaveBeenCalledTimes(2);
-	});
-
-	// Tests that a failure on another persona neither unlocks nor toasts for the persona being viewed.
-	it("ignores a failed reply on a persona other than the one being viewed", async () => {
-		const { run, session, toast } = await freshRun();
-		await primeRun(run, session, {
-			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
-		});
-		setHistory("mary", [], { id: "r1", status: "pending" });
-		run.activeContactId = "mary";
-		run.sendMessage("hello");
-		await vi.waitFor(() => expect(run.isSending).toBe(true));
+		expect(run.failedMessage).toBeNull();
 
 		run.selectContact("bob");
-		setHistory("bob", [], { id: "b1", status: "failed" });
-		await settle();
 
-		expect(run.isSending).toBe(false);
-		expect(toast).not.toHaveBeenCalled();
-		run.selectContact("mary");
-		expect(run.isSending).toBe(true);
-	});
-
-	// Tests that a reply that failed while the student was viewing someone else is reported on return.
-	it("reports a reply that failed while the student was viewing someone else", async () => {
-		const { run, session, toast } = await freshRun();
-		await primeRun(run, session, {
-			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
-		});
-		setHistory("mary", []);
-		run.activeContactId = "mary";
-		run.sendMessage("hello");
-		await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
-		setHistory("mary", [message("user", "hello")], {
-			id: "r1",
-			status: "pending",
-		});
-		await vi.waitFor(() => expect(run.isSending).toBe(true));
-		run.selectContact("bob");
-
-		setHistory("mary", [], { id: "r1", status: "failed" });
-		run.selectContact("mary");
-
-		await vi.waitFor(() =>
-			expect(toast).toHaveBeenCalledWith(FAILED_TOAST, { duration: 4000 }),
-		);
-		expect(run.isSending).toBe(false);
+		await vi.waitFor(() => expect(run.failedMessage).toBe("question for Bob"));
 	});
 
 	// Tests that a reply already in progress on the server is reported and does not lock the composer.
@@ -627,9 +563,9 @@ describe("failed and stuck replies", () => {
 		await primeRun(run, session);
 		run.activeContactId = "mary";
 		sendMessage.mockRejectedValue(
-			clientStudentError(
+			clientAppError(
 				SEND_MESSAGE,
-				STUDENT_ERROR.REPLY_IN_PROGRESS,
+				ERROR_CODE.REPLY_IN_PROGRESS,
 				"Please wait for the current reply to finish.",
 			),
 		);
@@ -687,7 +623,7 @@ describe("notes", () => {
 	// Tests that a store created for a run that already has stored notes starts with them.
 	it("starts with the notes stored for the run", async () => {
 		sessionStorage.setItem(notesKey("run-1"), "saved earlier");
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 		const { run } = freshRun();
 
 		expect(run.notes).toBe("saved earlier");
@@ -696,7 +632,7 @@ describe("notes", () => {
 	// Tests that setNotes keeps the text and writes it to storage straight away.
 	it("setNotes writes to sessionStorage immediately", async () => {
 		const { run, session } = await freshRun();
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 
 		run.setNotes("draft text");
 
@@ -709,7 +645,7 @@ describe("endSimulation", () => {
 	// Tests that endSimulation clears the stored notes and the run, and navigates home.
 	it("clears stored notes, clears the run, and navigates home", async () => {
 		const { run, session, goto } = await freshRun();
-		session.startRun({ runId: "run-1" });
+		session.startRun({ runId: "run-1", startTime: Date.now() });
 		sessionStorage.setItem(notesKey("run-1"), "earlier session");
 
 		run.setNotes("final thoughts");
@@ -728,15 +664,15 @@ describe("a run that expires while a message is in flight", () => {
 		await primeRun(run, session);
 		setHistory("mary", [], { id: "r1", status: "pending" });
 
-		expect(run.sendMessage("are you there?")).toBe(true);
+		await expect(run.sendMessage("are you there?")).resolves.toBe(true);
 		await vi.waitFor(() => expect(run.isSending).toBe(true));
 
 		setRunQuery(
 			{ runId: "run-1" },
 			{
-				error: clientStudentError(
+				error: clientAppError(
 					GET_STATE,
-					STUDENT_ERROR.RUN_NOT_FOUND,
+					ERROR_CODE.RUN_NOT_FOUND,
 					"Run not found.",
 					"Q",
 				),
@@ -772,7 +708,7 @@ describe("run-level time expiry", () => {
 		try {
 			const { run, session, goto } = await freshRun();
 			await primeRun(run, session, {
-				case: { ...caseData, simulationDuration: 1 },
+				case: { ...caseData, duration: 1 },
 			});
 
 			expect(run.timeExpired).toBe(false);
@@ -795,7 +731,7 @@ describe("run-level time expiry", () => {
 		try {
 			const { run, session, goto } = await freshRun();
 			await primeRun(run, session, {
-				case: { ...caseData, simulationDuration: 1 },
+				case: { ...caseData, duration: 1 },
 			});
 			await vi.advanceTimersByTimeAsync(60_000);
 			expect(run.timeExpired).toBe(true);
@@ -804,9 +740,9 @@ describe("run-level time expiry", () => {
 			setRunQuery(
 				{ runId: "run-1" },
 				{
-					error: clientStudentError(
+					error: clientAppError(
 						GET_STATE,
-						STUDENT_ERROR.RUN_NOT_FOUND,
+						ERROR_CODE.RUN_NOT_FOUND,
 						"Run not found.",
 						"Q",
 					),
@@ -829,7 +765,7 @@ describe("hostile and degenerate client-side send guards", () => {
 		await primeRun(run, session);
 		const typed = "  Café ☕\nQ3 — 40 % ↑ 🙂  ";
 
-		expect(run.sendMessage(typed)).toBe(true);
+		await expect(run.sendMessage(typed)).resolves.toBe(true);
 
 		expect(sendMessage.mock.calls[0]?.[0]).toEqual({
 			runId: "run-1",

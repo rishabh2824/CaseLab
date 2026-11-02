@@ -2,6 +2,7 @@ import type { FunctionReturnType } from "convex/server";
 import { describe, expect, it } from "vitest";
 import type { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
+import { ACCESS_CODE_CONFLICT, casePath } from "#shared/rules.js";
 import {
 	CaseDraft,
 	type LoadableCase,
@@ -45,7 +46,7 @@ describe("CaseDraft", () => {
 		draft.markSaved();
 		expect(draft.isDirty).toBe(false);
 
-		draft.caseName = "Changed";
+		draft.name = "Changed";
 		expect(draft.isDirty).toBe(true);
 
 		draft.markSaved();
@@ -55,14 +56,14 @@ describe("CaseDraft", () => {
 	// Tests that a draft that was never marked saved (a case still loading) is never dirty.
 	it("is not dirty before it has a baseline", () => {
 		const draft = new CaseDraft();
-		draft.caseName = "Typed while loading";
+		draft.name = "Typed while loading";
 		expect(draft.isDirty).toBe(false);
 	});
 
 	// Tests that every kind of edit counts: fields, collaborators and the persona graph.
 	it.each([
-		["a case field", (d: CaseDraft) => (d.initialBrief = "New brief")],
-		["the duration", (d: CaseDraft) => (d.simulationDurationMinutes = 45)],
+		["a case field", (d: CaseDraft) => (d.brief = "New brief")],
+		["the duration", (d: CaseDraft) => (d.duration = 45)],
 		[
 			"a collaborator",
 			(d: CaseDraft) =>
@@ -87,9 +88,9 @@ describe("CaseDraft", () => {
 		const draft = new CaseDraft();
 		draft.load(loadable(), { isEditMode: true });
 
-		expect(draft.caseName).toBe("Sterling");
+		expect(draft.name).toBe("Sterling");
 		expect(draft.accessCode).toBe("sterling");
-		expect(draft.simulationDurationMinutes).toBe(30);
+		expect(draft.duration).toBe(30);
 		expect(draft.collaborators).toEqual([ADMIN_2]);
 		expect(draft.graph.personas).toHaveLength(1);
 		expect(draft.showErrors).toBe(true);
@@ -131,7 +132,7 @@ describe("CaseDraft", () => {
 		const draft = new CaseDraft();
 		draft.load(loadable(), { isEditMode: false });
 
-		expect(draft.caseName).toBe("Sterling");
+		expect(draft.name).toBe("Sterling");
 		expect(draft.accessCode).toBe("");
 		expect(draft.collaborators).toEqual([]);
 	});
@@ -142,16 +143,16 @@ describe("CaseDraft", () => {
 		draft.markSaved();
 
 		draft.applyImport({
-			caseName: "Imported",
+			name: "Imported",
 			accessCode: "imported",
-			simulationDurationMinutes: null,
-			initialBrief: "Brief",
+			duration: null,
+			brief: "Brief",
 			commonInformation: "",
 			personas: [],
 			referrals: [],
 		});
 
-		expect(draft.caseName).toBe("Imported");
+		expect(draft.name).toBe("Imported");
 		expect(draft.showErrors).toBe(true);
 		expect(draft.isDirty).toBe(true);
 	});
@@ -161,7 +162,7 @@ describe("CaseDraft", () => {
 		const draft = new CaseDraft();
 		expect(draft.hasContent).toBe(false);
 
-		draft.caseName = "   ";
+		draft.name = "   ";
 		expect(draft.hasContent).toBe(false);
 
 		draft.accessCode = "code";
@@ -169,16 +170,60 @@ describe("CaseDraft", () => {
 	});
 
 	// Tests that validation covers the case fields and the persona graph together.
-	it("has errors until the case fields and the persona graph are valid", () => {
+	it("has issues until the case fields and the persona graph are valid", () => {
 		const draft = new CaseDraft();
-		expect(draft.hasErrors).toBe(true);
+		expect(draft.issues.length).toBeGreaterThan(0);
 
 		draft.load(loadable(), { isEditMode: true });
-		expect(draft.hasErrors).toBe(false);
+		expect(draft.issues).toEqual([]);
 
 		draft.accessCode = "Not Valid 1";
-		expect(draft.errors.accessCode).toBeTruthy();
-		expect(draft.hasErrors).toBe(true);
+		expect(draft.errorFor(casePath("accessCode"))).toBeTruthy();
+		expect(draft.issues).toHaveLength(1);
+	});
+
+	// Tests that a field's error only shows once it has been edited or errors have been revealed.
+	it("holds a field's error back until it is touched or revealed", () => {
+		const draft = new CaseDraft();
+		expect(draft.errorFor(casePath("name"))).toBeUndefined();
+
+		draft.touch(casePath("name"));
+		expect(draft.errorFor(casePath("name"))).toBe("Case name is required.");
+		expect(draft.errorFor(casePath("accessCode"))).toBeUndefined();
+
+		draft.revealErrors();
+		expect(draft.errorFor(casePath("accessCode"))).toBe(
+			"Access code is required.",
+		);
+	});
+
+	// Tests that a code the server refused stays an issue until it is changed.
+	it("keeps a taken access code as an issue until the code changes", () => {
+		const draft = new CaseDraft();
+		draft.load(loadable(), { isEditMode: true });
+
+		draft.takenAccessCode = draft.accessCode.trim();
+		expect(draft.issues.map((issue) => issue.message)).toEqual([
+			ACCESS_CODE_CONFLICT,
+		]);
+
+		draft.accessCode = "different";
+		expect(draft.issues).toEqual([]);
+	});
+
+	// Tests that only someone who can fix a case sees its problems as soon as it opens.
+	it("reveals errors on load only for an editable case", () => {
+		const editable = new CaseDraft();
+		editable.load(loadable(), { isEditMode: true });
+		expect(editable.showErrors).toBe(true);
+
+		const viewOnly = new CaseDraft();
+		viewOnly.load(loadable({ canEdit: false }), { isEditMode: true });
+		expect(viewOnly.showErrors).toBe(false);
+
+		const templateCopy = new CaseDraft();
+		templateCopy.load(loadable(), { isEditMode: false });
+		expect(templateCopy.showErrors).toBe(false);
 	});
 
 	// Tests that the submit and export inputs carry the same field values.
@@ -191,17 +236,17 @@ describe("CaseDraft", () => {
 
 		expect(submit).toMatchObject({
 			editCaseId: "case-1",
-			caseName: "Sterling",
-			initialBrief: "Cut costs.",
+			name: "Sterling",
+			brief: "Cut costs.",
 			commonInformation: "Background.",
-			simulationDurationMinutes: 30,
+			duration: 30,
 			accessCode: "sterling",
 			collaborators: [ADMIN_2],
 		});
 		expect(exported).toMatchObject({
-			caseName: submit.caseName,
+			name: submit.name,
 			accessCode: submit.accessCode,
-			simulationDurationMinutes: submit.simulationDurationMinutes,
+			duration: submit.duration,
 		});
 	});
 });

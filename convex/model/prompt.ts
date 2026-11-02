@@ -69,17 +69,14 @@ export function systemPrompt(
 				'any file; keep "sendFiles" empty.';
 
 	let knownFacts = persona.knownFacts;
-	if (candidateReferrals.length > 0) {
-		for (const c of candidateReferrals) {
-			if (!c.name.trim()) continue;
-			knownFacts = knownFacts.replace(
-				new RegExp(
-					`(?<![\\p{L}\\p{N}_])${escapeRegExp(c.name)}(?![\\p{L}\\p{N}_])`,
-					"gu",
-				),
-				"[undisclosed contact]",
-			);
-		}
+	for (const c of candidateReferrals) {
+		knownFacts = knownFacts.replace(
+			new RegExp(
+				`(?<![\\p{L}\\p{N}_])${escapeRegExp(c.name)}(?![\\p{L}\\p{N}_])`,
+				"gu",
+			),
+			"[undisclosed contact]",
+		);
 	}
 
 	const stable =
@@ -121,7 +118,9 @@ export function replyInstructions(): string {
 }
 
 // Trims a reply and strips any leading speaker tag.
-export function cleanReply(text: string | null | undefined): string {
-	const reply = (text ?? "").trim();
-	return reply.replace(/^\s*\[[^\]]+\]\s*/, "").trim();
+export function cleanReply(text: string): string {
+	return text
+		.trim()
+		.replace(/^\s*\[[^\]]+\]\s*/, "")
+		.trim();
 }

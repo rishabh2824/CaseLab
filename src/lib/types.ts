@@ -39,22 +39,28 @@ export type GraphData = {
 
 // The case information the form edits besides its personas.
 export type CaseInfo = {
-	caseName: string;
-	initialBrief: string;
+	name: string;
+	brief: string;
 	commonInformation: string;
-	simulationDurationMinutes: number | null;
+	duration: number | null;
 	accessCode: string;
 };
 
 // What the backend returns to the client, derived from the functions themselves.
 export type AdminRow = FunctionReturnType<typeof api.admins.listAll>[number];
-type RunState = FunctionReturnType<typeof api.simulations.get>;
+type RunState = FunctionReturnType<typeof api.runs.get>;
 export type Contact = RunState["contacts"][number];
 export type SharedFile = RunState["sharedFiles"][number];
 export type ChatMessage = FunctionReturnType<
-	typeof api.simulations.getPersonaHistory
+	typeof api.runs.getPersonaHistory
 >["messages"][number];
 export type ExportPersonaOut = FunctionReturnType<
-	typeof api.simulations.exportRun
+	typeof api.runs.exportRun
 >["personas"][number];
 export type CaseSummary = FunctionReturnType<typeof api.cases.listAll>[number];
+
+// Where the case form starts: blank, a copy of a template, or a saved case being edited.
+export type CaseSource =
+	| { kind: "new" }
+	| { kind: "template"; id: string }
+	| { kind: "edit"; id: string };

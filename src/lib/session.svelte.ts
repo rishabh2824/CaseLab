@@ -12,15 +12,10 @@ const defaults: PersistedSession = Object.freeze({
 	activePersonaId: "",
 });
 
-// Reads the session this tab wrote to sessionStorage, falling back to defaults if it's missing or unparseable.
+// Reads the session this tab wrote to sessionStorage, falling back to defaults if there is none.
 function readPersisted(): PersistedSession {
-	try {
-		const raw = sessionStorage.getItem(STORAGE_KEY);
-		if (!raw) return defaults;
-		return (JSON.parse(raw) as PersistedSession | null) ?? defaults;
-	} catch {
-		return defaults;
-	}
+	const raw = sessionStorage.getItem(STORAGE_KEY);
+	return raw ? (JSON.parse(raw) as PersistedSession) : defaults;
 }
 
 const initial = readPersisted();
@@ -37,17 +32,13 @@ class SessionStore {
 			startTime: this.startTime,
 			activePersonaId: this.activePersonaId,
 		};
-		try {
-			sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
-		} catch {
-			// Storage can be unavailable (private mode, quota); the run still works until the tab reloads.
-		}
+		sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
 	}
 
-	// Begins a run in the session, defaulting the start time to now and clearing the active persona.
-	startRun({ runId, startTime }: { runId: string; startTime?: number | null }) {
-		this.runId = runId ?? "";
-		this.startTime = startTime ?? Date.now();
+	// Begins a run in the session, clearing the active persona.
+	startRun({ runId, startTime }: { runId: string; startTime: number }) {
+		this.runId = runId;
+		this.startTime = startTime;
 		this.activePersonaId = "";
 		this.#persist();
 	}

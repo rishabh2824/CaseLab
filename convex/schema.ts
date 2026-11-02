@@ -53,7 +53,7 @@ export default defineSchema(
 			sharedFiles: v.array(v.id("_storage")),
 		}),
 
-		// One row per student message and its reply. A flagged turn holds the boundary text as its reply.
+		// One row per student message and its reply. A flagged turn holds the warning text as its reply.
 		turns: defineTable({
 			runId: v.id("runs"),
 			personaId: v.string(),

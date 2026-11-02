@@ -109,30 +109,6 @@ describe("validateStructure", () => {
 	it.each([
 		["no personas", [], [], /at least one persona/],
 		[
-			"duplicate persona ids",
-			[persona("A"), persona("A")],
-			[],
-			/Duplicate persona id/,
-		],
-		[
-			"an unknown referral source",
-			[persona("A")],
-			[edge("X", "A")],
-			/Unknown referral fromId/,
-		],
-		[
-			"an unknown referral target",
-			[persona("A")],
-			[edge("A", "X")],
-			/Unknown referral toId/,
-		],
-		[
-			"a duplicate referral",
-			[persona("A"), persona("B")],
-			[edge("A", "B"), edge("A", "B")],
-			/Duplicate referral/,
-		],
-		[
 			"a cycle, which leaves no root",
 			[persona("A"), persona("B")],
 			[edge("A", "B"), edge("B", "A")],

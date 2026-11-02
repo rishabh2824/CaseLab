@@ -1,15 +1,15 @@
 <script lang="ts">
 import { getConvexClient } from "convex-svelte";
-import { onMount, tick } from "svelte";
+import { onMount } from "svelte";
 import { toast } from "svelte-sonner";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
-import SimulationClock from "#lib/components/SimulationClock.svelte";
+import ChatPanel from "#lib/components/student/ChatPanel.svelte";
+import ContactList from "#lib/components/student/ContactList.svelte";
+import SidePanel from "#lib/components/student/SidePanel.svelte";
 import { downloadBlob } from "#lib/download.js";
-import { getPersonaInitials } from "#lib/format.js";
 import { session } from "#lib/session.svelte.js";
 import { createRunStore } from "#lib/student/run.svelte.js";
-import { countWords, MAX_MESSAGE_WORDS } from "#shared/rules.js";
 
 const run = createRunStore();
 
@@ -17,34 +17,7 @@ onMount(() => {
 	run.init();
 });
 
-let inputValue = $state("");
 let isExporting = $state(false);
-let chatInputEl = $state<HTMLTextAreaElement | null>(null);
-let messagesEl = $state<HTMLDivElement | null>(null);
-
-const wordCount = $derived(countWords(inputValue));
-const overWordLimit = $derived(wordCount > MAX_MESSAGE_WORDS);
-const activeMessages = $derived(run.activeMessages);
-
-// Focuses the composer whenever it becomes usable, once the DOM has enabled it.
-$effect(() => {
-	if (run.activeContactId && run.activePersonaAvailable && !run.isSending)
-		tick().then(() => chatInputEl?.focus());
-});
-
-// Changes only when the student switches contact or a message is added.
-const scrollKey = $derived(`${run.activeContactId}:${activeMessages.length}`);
-$effect(() => {
-	void scrollKey;
-	// Scroll the chat box itself; scrollIntoView would also move the page, which jumps on narrow screens where the chat sits above the composer.
-	messagesEl?.scrollTo({ top: messagesEl.scrollHeight });
-});
-
-// Sends the typed message unless it is over the word limit, clearing the input if it was accepted.
-function handleSend(): void {
-	if (overWordLimit) return;
-	if (run.sendMessage(inputValue)) inputValue = "";
-}
 
 // Preloads the PDF module so exporting feels instant.
 function preloadPdfModule(): void {
@@ -56,7 +29,7 @@ async function handleExportPdf(): Promise<void> {
 	if (!session.runId || isExporting) return;
 	isExporting = true;
 	try {
-		const data = await getConvexClient().query(api.simulations.exportRun, {
+		const data = await getConvexClient().query(api.runs.exportRun, {
 			runId: session.runId as Id<"runs">,
 		});
 		const { buildChatPdfBlob } = await import("#lib/student/pdf.js");
@@ -80,7 +53,7 @@ async function handleExportPdf(): Promise<void> {
 				<span class="hidden h-9 w-px bg-line sm:block" aria-hidden="true"></span>
 				<div>
 					<h1 class="font-display text-base font-semibold tracking-tight text-ink">Wisconsin Case Lab</h1>
-					<p class="text-xs text-stone-soft">{run.caseData?.caseName ?? 'Loading case…'}</p>
+					<p class="text-xs text-stone-soft">{run.caseData?.name ?? 'Loading case…'}</p>
 				</div>
 			</div>
 			<button
@@ -114,64 +87,11 @@ async function handleExportPdf(): Promise<void> {
 
 	<div class="mx-auto grid max-w-7xl gap-6 px-6 py-6 lg:grid-cols-[240px_minmax(0,1fr)_340px]">
 		<aside class="space-y-6">
-			<div>
-				<h2 class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">
-					People &amp; Contacts
-				</h2>
-				<div class="mt-3 space-y-2">
-					{#each run.contacts as contact (contact.id)}
-						<button
-							type="button"
-							disabled={!contact.available}
-							onclick={() => contact.available && run.selectContact(contact.id)}
-							class="flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left text-sm transition {contact.id ===
-							run.activeContactId
-								? 'border-brand bg-white shadow-soft'
-								: 'border-line bg-white/70 hover:border-stone-soft hover:bg-white'}"
-						>
-							{#if contact.profilePhotoUrl}
-								<img
-									src={contact.profilePhotoUrl}
-									alt="{contact.name} profile"
-									class="h-9 w-9 rounded-full object-cover"
-								/>
-							{:else}
-								<div
-									class="grid h-9 w-9 place-items-center rounded-full text-xs font-semibold {contact.id ===
-									run.activeContactId
-										? 'bg-brand text-white'
-										: 'bg-line-soft text-stone'}"
-								>
-									{getPersonaInitials(contact.name)}
-								</div>
-							{/if}
-							<div class="flex-1">
-								<p class="font-semibold text-ink">{contact.name || 'Unnamed'}</p>
-								<p class="text-xs text-stone">{contact.role || 'Role'}</p>
-								<p class="text-[11px] font-medium {contact.available ? 'text-success' : 'text-stone-soft'}">
-									{contact.available
-										? 'Available'
-										: contact.availableIn
-											? `Available in ${contact.availableIn} min`
-											: 'Unavailable'}
-								</p>
-								{#if typeof contact.availabilityDuration === 'number'}
-									<p class="text-[11px] text-stone-soft">Available for {contact.availabilityDuration} min</p>
-								{/if}
-								{#if typeof contact.expiresIn === 'number' && contact.expiresIn > 0}
-									<p class="text-[11px] text-stone-soft">Expires in {contact.expiresIn} min</p>
-								{/if}
-								{#if contact.chatEnded}
-									<p class="text-[11px] text-brand">Conversation ended</p>
-								{/if}
-								{#if contact.isReferred}
-									<p class="text-[11px] text-stone-soft">Referred contact</p>
-								{/if}
-							</div>
-						</button>
-					{/each}
-				</div>
-			</div>
+			<ContactList
+				contacts={run.contacts}
+				activeContactId={run.activeContactId}
+				onSelect={(contactId) => run.selectContact(contactId)}
+			/>
 
 			<div>
 				<h2 class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">Shared files</h2>
@@ -196,125 +116,9 @@ async function handleExportPdf(): Promise<void> {
 			</div>
 		</aside>
 
-		<section class="rounded-2xl border border-line bg-white p-6 shadow-soft">
-			<div class="flex items-start justify-between">
-				<div>
-					<p class="font-display text-lg font-semibold tracking-tight text-ink">
-						{run.activeContact?.name ?? 'Select a contact'}
-					</p>
-					<p class="text-sm text-stone">{run.activeContact?.role ?? ''}</p>
-				</div>
-				{#if run.activeContact?.chatEnded}
-					<span class="inline-flex items-center gap-2 rounded-full bg-brand-tint px-3 py-1 text-xs font-medium text-brand">
-						<span class="h-2 w-2 rounded-full bg-brand"></span>
-						Conversation ended
-					</span>
-				{:else}
-					<span
-						class="inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1 text-xs font-medium text-success"
-					>
-						<span class="h-2 w-2 rounded-full bg-success"></span>
-						Available
-					</span>
-				{/if}
-			</div>
+		<ChatPanel {run} />
 
-			{#if run.activeContact?.chatEnded}
-				<div class="mt-4 rounded-xl border border-brand/20 bg-brand-tint px-4 py-3 text-sm text-brand">
-					This persona has ended the conversation for this chat.
-				</div>
-			{/if}
-
-			<div
-				bind:this={messagesEl}
-				class="mt-5 max-h-[55vh] min-h-72 overflow-y-auto rounded-2xl border border-dashed border-line bg-cream/40 p-6 text-center text-sm text-stone-soft"
-			>
-				{#if activeMessages.length === 0}
-					Chat history is empty.
-				{:else}
-					<div class="space-y-3 text-left" role="log" aria-live="polite" aria-label="Conversation">
-						{#each activeMessages as msg, index (index)}
-							<div
-								class="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm {msg.role === 'user'
-									? 'ml-auto bg-brand-tint text-ink-soft'
-									: 'mr-auto border border-line bg-white text-stone'}"
-							>
-								{msg.content}
-							</div>
-						{/each}
-					</div>
-				{/if}
-			</div>
-
-			<div class="mt-6 flex items-end gap-3 border-t border-line pt-4">
-				<div class="flex-1">
-					<textarea
-						bind:this={chatInputEl}
-						aria-label="Message"
-						placeholder={run.timeExpired
-							? "Time's up — messaging is disabled."
-							: run.activeContact?.chatEnded
-								? 'This conversation has ended.'
-								: 'Type your message...'}
-						disabled={!run.activePersonaAvailable || run.isSending}
-						class="w-full resize-none rounded-xl border px-4 py-3 text-sm transition focus:outline-none focus:ring-4 {overWordLimit
-							? 'border-brand focus:border-brand focus:ring-brand/12'
-							: 'border-line focus:border-brand focus:ring-brand/12'} {run.activePersonaAvailable
-							? 'bg-white text-ink-soft'
-							: 'bg-cream text-stone-soft'}"
-						rows="2"
-						bind:value={inputValue}
-						onkeydown={(event) => {
-							if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-								event.preventDefault()
-								handleSend()
-							}
-						}}
-					></textarea>
-					<p class="mt-1 text-right text-xs {overWordLimit ? 'text-brand' : 'text-stone-soft'}">
-						{wordCount}/{MAX_MESSAGE_WORDS} words
-					</p>
-				</div>
-				<button
-					type="button"
-					disabled={!run.activePersonaAvailable || run.isSending || !inputValue.trim() || overWordLimit}
-					onmousedown={(event) => event.preventDefault()}
-					onclick={handleSend}
-					class="rounded-xl px-5 py-3 text-sm font-semibold shadow-sm transition {!run.activePersonaAvailable ||
-					run.isSending ||
-					!inputValue.trim() ||
-					overWordLimit
-						? 'cursor-not-allowed bg-line-soft text-stone'
-						: 'bg-brand text-white hover:brightness-95'}"
-				>
-					{#if run.isSending}
-						<span class="inline-flex items-center gap-1" role="status" aria-label="Typing"><span class="size-1.5 animate-bounce rounded-full bg-current "></span><span class="size-1.5 animate-bounce rounded-full bg-current [animation-delay:150ms]"></span><span class="size-1.5 animate-bounce rounded-full bg-current [animation-delay:300ms]"></span></span>
-					{:else}
-						Send
-					{/if}
-				</button>
-			</div>
-		</section>
-
-		<aside class="space-y-4">
-			<div class="rounded-2xl border border-line bg-white p-4 shadow-soft">
-				<h3 class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">Case Brief</h3>
-				<p class="mt-2 text-sm leading-relaxed text-stone">{run.caseData?.brief ?? 'Loading brief...'}</p>
-			</div>
-
-			<SimulationClock elapsedSeconds={run.elapsedSeconds} totalDurationSeconds={run.totalDurationSeconds} />
-
-			<div class="rounded-2xl border border-line bg-white p-4 shadow-soft">
-				<h3 class="font-mono text-[11px] font-medium uppercase tracking-[0.18em] text-stone-soft">Your Notes</h3>
-				<textarea
-					aria-label="Your notes"
-					class="mt-3 h-40 w-full resize-none rounded-xl border border-line bg-white px-3 py-2 text-sm text-ink-soft transition focus:border-brand focus:outline-none focus:ring-4 focus:ring-brand/12"
-					placeholder="Write your notes here..."
-					value={run.notes}
-					oninput={(event) => run.setNotes(event.currentTarget.value)}
-				></textarea>
-			</div>
-		</aside>
+		<SidePanel {run} />
 	</div>
 
 	<button

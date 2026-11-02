@@ -1,17 +1,25 @@
 import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
-import { STUDENT_ERROR, studentErrorData } from "#shared/studentErrors.js";
-import { getErrorMessage } from "../src/lib/errors.js";
+import { appErrorData, ERROR_CODE } from "#shared/errors.js";
+import { getErrorMessage, UserError } from "../src/lib/errors.js";
 import {
+	clientAppError,
 	clientServerError,
-	clientStudentError,
 } from "./support/convexClientErrors.js";
 
 describe("getErrorMessage", () => {
-	// Tests that a ConvexError's data is used as the message instead of its wrapper text.
-	it("prefers a ConvexError's .data over its noisy .message wrapper", () => {
-		const err = new ConvexError("Access code is required.");
-		expect(getErrorMessage(err, "fallback")).toBe("Access code is required.");
+	// Tests that a browser-raised UserError shows its own message.
+	it("shows a UserError's message", () => {
+		expect(
+			getErrorMessage(new UserError("Failed to upload file."), "fallback"),
+		).toBe("Failed to upload file.");
+	});
+
+	// Tests that a ConvexError with a plain string is not shown, since the server only throws { code, message } errors.
+	it("falls back for a ConvexError carrying a plain string", () => {
+		expect(
+			getErrorMessage(new ConvexError("Case not found."), "fallback"),
+		).toBe("fallback");
 	});
 
 	// Tests that a plain Error never reaches the user, since only errors written for them carry a message to show.
@@ -44,28 +52,28 @@ describe("getErrorMessage", () => {
 describe("student-facing errors", () => {
 	// Tests that the student error message and code are read from the ConvexError data.
 	it("reads the message and code from .data, whatever the wrapper says", () => {
-		const err = clientStudentError(
-			"simulations:start",
-			STUDENT_ERROR.REPLY_IN_PROGRESS,
+		const err = clientAppError(
+			"runs:start",
+			ERROR_CODE.REPLY_IN_PROGRESS,
 			"Please wait for the current reply.",
 		);
-		expect(err.message).toContain("[CONVEX M(simulations:start)]");
+		expect(err.message).toContain("[CONVEX M(runs:start)]");
 		expect(getErrorMessage(err, "fallback")).toBe(
 			"Please wait for the current reply.",
 		);
-		expect(studentErrorData(err)).toEqual({
-			code: STUDENT_ERROR.REPLY_IN_PROGRESS,
+		expect(appErrorData(err)).toEqual({
+			code: ERROR_CODE.REPLY_IN_PROGRESS,
 			message: "Please wait for the current reply.",
 		});
 	});
 
 	// Tests that redacted server errors, plain string ConvexErrors and unknown codes are not student errors.
 	it("treats a redacted server error, an admin string ConvexError, and unknown codes as not student errors", () => {
-		expect(studentErrorData(clientServerError("simulations:start"))).toBeNull();
-		expect(studentErrorData(new ConvexError("Not signed in."))).toBeNull();
+		expect(appErrorData(clientServerError("runs:start"))).toBeNull();
+		expect(appErrorData(new ConvexError("Not signed in."))).toBeNull();
 		expect(
-			studentErrorData(new ConvexError({ code: "MADE_UP", message: "x" })),
+			appErrorData(new ConvexError({ code: "MADE_UP", message: "x" })),
 		).toBeNull();
-		expect(studentErrorData("nope")).toBeNull();
+		expect(appErrorData("nope")).toBeNull();
 	});
 });

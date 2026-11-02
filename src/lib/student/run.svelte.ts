@@ -3,7 +3,7 @@ import { toast } from "svelte-sonner";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
 import { personaAvailability } from "#shared/availability.js";
-import { STUDENT_ERROR, studentErrorData } from "#shared/studentErrors.js";
+import { appErrorData, ERROR_CODE } from "#shared/errors.js";
 import { goto } from "$app/navigation";
 import { getErrorMessage } from "../errors.js";
 import { session } from "../session.svelte.js";
@@ -11,7 +11,6 @@ import type { ChatMessage, Contact, SharedFile } from "../types.js";
 
 export type DisplayContact = Contact & {
 	available: boolean;
-	availableIn: number | null;
 	expiresIn: number | null;
 };
 
@@ -36,13 +35,11 @@ export class RunStore {
 	#seenInitialized = false;
 	// The one clock everything time-based derives from, ticking once a second.
 	#now = $state(Date.now());
-	// The reply started by the last send, until the server reports it done or failed.
-	#awaitedTurnId = $state<string | null>(null);
 
-	#runStateQuery = useQuery(api.simulations.get, () =>
+	#runStateQuery = useQuery(api.runs.get, () =>
 		session.runId ? { runId: session.runId as Id<"runs"> } : "skip",
 	);
-	#historyQuery = useQuery(api.simulations.getPersonaHistory, () =>
+	#historyQuery = useQuery(api.runs.getPersonaHistory, () =>
 		session.runId && this.activeContactId
 			? {
 					runId: session.runId as Id<"runs">,
@@ -53,6 +50,8 @@ export class RunStore {
 	#history = $derived(this.#historyQuery.data);
 	// Whether the active contact has a reply in flight; other contacts stay free to message.
 	isSending = $derived(this.#history?.reply?.status === "pending");
+	// The student's last message to the active contact, when generating its reply failed. It stays until they send again.
+	failedMessage = $derived(this.#history?.failedMessage ?? null);
 
 	raw = $derived(this.#runStateQuery.data ?? null);
 	caseData = $derived(this.raw?.case ?? null);
@@ -72,7 +71,6 @@ export class RunStore {
 			return {
 				...contact,
 				available: availability.available,
-				availableIn: availability.availableIn,
 				expiresIn: availability.expiresIn,
 			};
 		}),
@@ -80,16 +78,11 @@ export class RunStore {
 	sharedFiles = $derived<SharedFile[]>(this.raw?.sharedFiles ?? []);
 	activeMessages = $derived<ChatMessage[]>(this.#history?.messages ?? []);
 	activeContact = $derived(
-		this.contacts.find((c) => c.id === this.activeContactId) ??
-			this.contacts[0] ??
-			null,
-	);
-	selectedContact = $derived(
 		this.contacts.find((c) => c.id === this.activeContactId) ?? null,
 	);
 	totalDurationSeconds = $derived(
-		typeof this.caseData?.simulationDuration === "number"
-			? this.caseData.simulationDuration * 60
+		typeof this.caseData?.duration === "number"
+			? this.caseData.duration * 60
 			: null,
 	);
 	timeExpired = $derived(
@@ -97,11 +90,9 @@ export class RunStore {
 			this.elapsedSeconds >= this.totalDurationSeconds,
 	);
 	activePersonaAvailable = $derived(
-		Boolean(
-			!this.timeExpired &&
-				this.selectedContact?.available &&
-				!this.selectedContact?.chatEnded,
-		),
+		!this.timeExpired &&
+			this.activeContact?.available === true &&
+			!this.activeContact.chatEnded,
 	);
 
 	// The store is built while the component initialises, so these effects live and die with it.
@@ -113,7 +104,7 @@ export class RunStore {
 				return;
 			}
 			// Reads never look at the clock, so an expired run only shows up as not found once it is destroyed.
-			if (studentErrorData(err)?.code === STUDENT_ERROR.RUN_NOT_FOUND) {
+			if (appErrorData(err)?.code === ERROR_CODE.RUN_NOT_FOUND) {
 				this.endSimulation();
 			} else {
 				this.loadError = getErrorMessage(err, "Failed to load the simulation.");
@@ -121,16 +112,6 @@ export class RunStore {
 		});
 		$effect(() => {
 			if (this.raw) this.#afterLoad();
-		});
-		$effect(() => {
-			const reply = this.#history?.reply;
-			if (!this.#awaitedTurnId || reply?.id !== this.#awaitedTurnId) return;
-			if (reply.status === "pending") return;
-			this.#awaitedTurnId = null;
-			if (reply.status === "failed")
-				notify(
-					"Something went wrong generating a reply. Please resend your message.",
-				);
 		});
 		// The one-second clock that drives elapsed time, expiry and persona availability.
 		$effect(() => {
@@ -197,41 +178,29 @@ export class RunStore {
 		goto("/");
 	}
 
-	// Sends a trimmed message to the active contact, returning whether it was sent. The composer handles every other check.
-	sendMessage(rawMessage: string): boolean {
+	// Sends a trimmed message to the active contact and resolves to whether the server accepted it, toasting if it did not. The composer handles every other check.
+	async sendMessage(rawMessage: string): Promise<boolean> {
 		const message = rawMessage.trim();
 		const personaId = this.activeContactId;
 		if (!message || !personaId || !session.runId) return false;
-		this.#runSend(session.runId as Id<"runs">, personaId, message);
-		return true;
-	}
-
-	// Saves the message and starts its reply on the server, toasting if it is rejected.
-	async #runSend(
-		runId: Id<"runs">,
-		personaId: string,
-		message: string,
-	): Promise<void> {
 		try {
-			const { turnId } = await getConvexClient().mutation(
-				api.turn.sendMessage,
-				{
-					runId,
-					personaId,
-					message,
-				},
-			);
-			this.#awaitedTurnId = turnId;
+			await getConvexClient().mutation(api.turns.sendMessage, {
+				runId: session.runId as Id<"runs">,
+				personaId,
+				message,
+			});
+			return true;
 		} catch (err) {
-			const error = studentErrorData(err);
+			const error = appErrorData(err);
 			if (
-				error?.code === STUDENT_ERROR.RUN_EXPIRED ||
-				error?.code === STUDENT_ERROR.RUN_NOT_FOUND
+				error?.code === ERROR_CODE.RUN_EXPIRED ||
+				error?.code === ERROR_CODE.RUN_NOT_FOUND
 			) {
 				this.endSimulation();
-				return;
+			} else {
+				notify(error?.message ?? "Message failed. Please try again.");
 			}
-			notify(error?.message ?? "Message failed. Please try again.");
+			return false;
 		}
 	}
 }
