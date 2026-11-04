@@ -14,7 +14,6 @@ import type * as cases from "../cases.js";
 import type * as crons from "../crons.js";
 import type * as files from "../files.js";
 import type * as http from "../http.js";
-import type * as migrations from "../migrations.js";
 import type * as model_adminLookup from "../model/adminLookup.js";
 import type * as model_admins from "../model/admins.js";
 import type * as model_caseAccess from "../model/caseAccess.js";
@@ -53,7 +52,6 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   files: typeof files;
   http: typeof http;
-  migrations: typeof migrations;
   "model/adminLookup": typeof model_adminLookup;
   "model/admins": typeof model_admins;
   "model/caseAccess": typeof model_caseAccess;

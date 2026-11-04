@@ -44,7 +44,6 @@ templates to every admin. A template is copied without its access code.
 | `convex/*.ts` | The public Convex functions, one file per area: `admins`, `cases`, `runs`, `turns`, `files`, `uploads`. Also `schema.ts`, `auth.ts` and `http.ts`. |
 | `convex/model/` | Server-only logic behind those functions, as plain functions that take a `ctx` or call the LLM and never register a Convex function (`cases`, `admins`, `runs`, `runView`, `turns`, `flags`, `personaGraph`, `reply`, `llm`, `prompt`, and the others). |
 | `convex/shared/` | Pure code the browser imports too, with no `ctx` and no schema: `rules` (limits and field rules), `caseGraph`, `availability`, `errors` and `validators`. The browser reaches it as `#shared/*`, and the generated API as `#convex/*`. |
-| `convex/migrations.ts` | Temporary one-off data migrations. Delete them once every deployment has run them. |
 | `src/routes/` | SvelteKit routes: the landing page, `/student`, and `/admin/...`. |
 | `src/lib/` | Components, the student run store, and the case form code (`case/`). |
 | `tests/`, `e2e-live/` | Frontend unit tests, and Playwright tests against a real local Convex backend. Backend tests sit next to the code in `convex/`. |
@@ -120,8 +119,9 @@ A few cautions:
 - Deploy when no student is in the middle of a run. A reply that is being
   generated is dropped, and scheduled cleanup jobs refer to function names.
 - Schema changes that rewrite existing data are done in three steps: widen the
-  schema, run the matching function in `convex/migrations.ts`, then tighten the
-  schema again.
+  schema (and pass `{ schemaValidation: false }` to `defineSchema`), run a
+  temporary migration in `convex/migrations.ts` on every deployment, then delete
+  it, remove the flag and tighten the schema again.
 
 ## Design notes
 
