@@ -37,3 +37,8 @@ skills-lock.json
 
 # Local prod data backups
 prod-backup*.zip
+
+# Local agent instructions and planning docs
+AGENTS.md
+CLAUDE.md
+docs/
