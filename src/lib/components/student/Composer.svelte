@@ -20,6 +20,18 @@ $effect(() => {
 	if (canType) tick().then(() => chatInputEl?.focus());
 });
 
+// Starts the sending ring empty and fills it to 90% in the few seconds most replies take, then crawls to 97% so it never looks finished before the reply lands.
+function creep(ring: SVGCircleElement): () => void {
+	ring.getBoundingClientRect();
+	ring.style.strokeDashoffset = "10";
+	const crawl = setTimeout(() => {
+		ring.style.transitionDuration = "30000ms";
+		ring.style.transitionTimingFunction = "linear";
+		ring.style.strokeDashoffset = "3";
+	}, 4000);
+	return () => clearTimeout(crawl);
+}
+
 // Puts a message back in the box, ahead of anything typed since.
 function restore(text: string): void {
 	if (inputValue.includes(text)) return;
@@ -88,7 +100,20 @@ async function handleSend(): Promise<void> {
 			: 'bg-brand text-white hover:brightness-95'}"
 	>
 		{#if run.isSending}
-			<span class="inline-flex items-center gap-1" role="status" aria-label="Typing"><span class="size-1.5 animate-bounce rounded-full bg-current "></span><span class="size-1.5 animate-bounce rounded-full bg-current [animation-delay:150ms]"></span><span class="size-1.5 animate-bounce rounded-full bg-current [animation-delay:300ms]"></span></span>
+			<svg viewBox="0 0 24 24" class="size-5 -rotate-90" fill="none" stroke="currentColor" stroke-width="3" role="status" aria-label="Sending">
+				<circle cx="12" cy="12" r="9" stroke-opacity="0.25" />
+				<circle
+					{@attach creep}
+					cx="12"
+					cy="12"
+					r="9"
+					pathLength="100"
+					stroke-dasharray="100"
+					stroke-dashoffset="100"
+					stroke-linecap="round"
+					class="transition-[stroke-dashoffset] duration-[4000ms] ease-out"
+				/>
+			</svg>
 		{:else}
 			Send
 		{/if}

@@ -78,11 +78,11 @@ export async function listTemplateChoices(
 	);
 }
 
-// Returns the names of a case's authors: the owner first, then collaborators with edit access.
+// Returns the name and email of each of a case's authors: the owner first, then collaborators with edit access.
 export async function listCaseAuthors(
 	ctx: QueryCtx,
 	c: Doc<"cases">,
-): Promise<string[]> {
+): Promise<{ name: string; email: string }[]> {
 	const rows = await ctx.db
 		.query("collaborators")
 		.withIndex("by_case_and_admin", (q) => q.eq("caseId", c._id))
@@ -94,5 +94,7 @@ export async function listCaseAuthors(
 	const admins = await Promise.all(
 		adminIds.map((id) => ctx.db.get("admins", id)),
 	);
-	return admins.flatMap((admin) => (admin ? [admin.name] : []));
+	return admins.flatMap((admin) =>
+		admin ? [{ name: admin.name, email: admin.email }] : [],
+	);
 }

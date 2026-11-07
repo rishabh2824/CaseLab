@@ -7,6 +7,7 @@ import type { Id } from "#convex/dataModel.js";
 import ChatPanel from "#lib/components/student/ChatPanel.svelte";
 import ContactList from "#lib/components/student/ContactList.svelte";
 import SidePanel from "#lib/components/student/SidePanel.svelte";
+import Hint, { HINT_CLASS } from "#lib/components/ui/Hint.svelte";
 import { downloadBlob } from "#lib/download.js";
 import { session } from "#lib/session.svelte.js";
 import { createRunStore } from "#lib/student/run.svelte.js";
@@ -53,7 +54,17 @@ async function handleExportPdf(): Promise<void> {
 				<span class="hidden h-9 w-px bg-line sm:block" aria-hidden="true"></span>
 				<div>
 					<h1 class="font-display text-base font-semibold tracking-tight text-ink">Wisconsin Case Lab</h1>
-					<p class="text-xs text-stone-soft">{run.caseData?.name ?? 'Loading case…'}</p>
+					<p class="flex flex-wrap items-center gap-x-2.5 text-xs text-stone-soft">
+						<span>{run.caseData?.name ?? 'Loading case…'}</span>
+						{#each run.caseData?.authors ?? [] as author, index (index)}
+							<span class="h-3 w-px bg-line" aria-hidden="true"></span>
+							<Hint text={author.email}>
+								{#snippet children(hintProps)}
+									<span {...hintProps} class={HINT_CLASS}>{author.name}</span>
+								{/snippet}
+							</Hint>
+						{/each}
+					</p>
 				</div>
 			</div>
 			<button
@@ -128,38 +139,4 @@ async function handleExportPdf(): Promise<void> {
 	>
 		End simulation
 	</button>
-
-	<div class="fixed bottom-6 right-6 flex gap-3">
-		{#if run.caseData?.authors.length}
-			<div class="group relative">
-				<button
-					type="button"
-					class="rounded-xl border border-line bg-white px-4 py-3 text-sm font-semibold text-ink shadow-lg transition group-hover:bg-cream"
-				>
-					Authors
-				</button>
-				<div class="invisible absolute bottom-full right-0 pb-2 opacity-0 transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
-					<ul aria-label="Authors" class="min-w-44 space-y-1 rounded-xl border border-line bg-white px-4 py-3 text-sm text-ink-soft shadow-lg">
-						{#each run.caseData.authors as author, index (index)}
-							<li>{author}</li>
-						{/each}
-					</ul>
-				</div>
-			</div>
-		{/if}
-
-		<div class="group relative">
-			<button
-				type="button"
-				class="rounded-xl border border-line bg-white px-4 py-3 text-sm font-semibold text-ink shadow-lg transition group-hover:bg-cream"
-			>
-				Contact
-			</button>
-			<div class="invisible absolute bottom-full right-0 pb-2 opacity-0 transition group-focus-within:visible group-focus-within:opacity-100 group-hover:visible group-hover:opacity-100">
-				<p class="whitespace-nowrap rounded-xl border border-line bg-white px-4 py-3 text-sm text-ink-soft shadow-lg">
-					<a href="mailto:jordan.tong@wisc.edu" class="underline decoration-ink/30 underline-offset-2 hover:decoration-ink">jordan.tong@wisc.edu</a>
-				</p>
-			</div>
-		</div>
-	</div>
 </div>

@@ -163,7 +163,7 @@ export function makeRunState(overrides: Partial<StartedRun> = {}): StartedRun {
 			name: "Sterling Industries",
 			brief: "Reduce office supply costs.",
 			duration: 45,
-			authors: ["Olive Owner"],
+			authors: [{ name: "Olive Owner", email: "olive@example.com" }],
 		},
 		contacts: [makeContact()],
 		sharedFiles: [],

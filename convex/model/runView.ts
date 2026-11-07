@@ -87,14 +87,21 @@ async function queryPersonaTurns(
 		.collect();
 }
 
-// Turns finished and flagged turns into student and persona messages, hiding pending and failed ones.
-function toChatMessages(turns: Doc<"turns">[]): ChatMessageOut[] {
-	return turns
-		.filter((turn) => turn.status === "done" || turn.status === "flagged")
-		.flatMap((turn): ChatMessageOut[] => [
-			{ role: "user", content: turn.studentMessage },
-			{ role: "assistant", content: turn.reply },
-		]);
+// Turns finished and flagged turns into student and persona messages. With showPending, a pending turn shows just the student's message so it appears the moment it is sent; failed turns are always hidden because the message goes back to the composer.
+function toChatMessages(
+	turns: Doc<"turns">[],
+	showPending: boolean,
+): ChatMessageOut[] {
+	return turns.flatMap((turn): ChatMessageOut[] => {
+		const student: ChatMessageOut = {
+			role: "user",
+			content: turn.studentMessage,
+		};
+		if (turn.status === "pending") return showPending ? [student] : [];
+		if (turn.status === "done" || turn.status === "flagged")
+			return [student, { role: "assistant", content: turn.reply }];
+		return [];
+	});
 }
 
 // Returns the current state of a run for the student view: its case summary, contacts and shared files.
@@ -142,7 +149,7 @@ export async function getPersonaHistoryView(
 	const turns = await queryPersonaTurns(ctx, runId, personaId);
 	const last = turns.at(-1);
 	return {
-		messages: toChatMessages(turns),
+		messages: toChatMessages(turns, true),
 		reply: last ? { id: last._id, status: last.status } : null,
 		failedMessage: last?.status === "failed" ? last.studentMessage : null,
 	};
@@ -165,7 +172,7 @@ export async function exportRunView(ctx: QueryCtx, runId: Id<"runs">) {
 				id: personaId,
 				name: persona.name,
 				role: persona.role,
-				messages: toChatMessages(turns),
+				messages: toChatMessages(turns, false),
 			};
 		}),
 	);

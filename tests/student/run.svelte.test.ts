@@ -61,7 +61,7 @@ const caseData = {
 	name: "Sterling Industries",
 	brief: "Reduce office supply costs.",
 	duration: null as number | null,
-	authors: ["Olive Owner"],
+	authors: [{ name: "Olive Owner", email: "olive@example.com" }],
 };
 
 const disposers: (() => void)[] = [];

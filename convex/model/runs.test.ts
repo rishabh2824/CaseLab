@@ -102,7 +102,12 @@ describe("startSimulation", () => {
 			name: "Acme Case",
 			brief: "Do the thing.",
 			duration: 30,
-			authors: ["Test Admin"],
+			authors: [
+				{
+					name: "Test Admin",
+					email: expect.stringContaining("@test.caselab.invalid"),
+				},
+			],
 		});
 		expect(state.contacts).toHaveLength(2);
 		expect(new Set(state.contacts.map((c) => c.id))).toEqual(
@@ -323,6 +328,34 @@ describe("exportSimulation with unfinished replies", () => {
 		expect(exported.personas[0]!.messages.map((m) => m.content)).toEqual([
 			"first",
 			"first reply",
+		]);
+	});
+});
+
+describe("getPersonaHistory with a pending reply", () => {
+	// Tests that a sent message shows in the history at once, before its reply exists, and is followed by the reply once done.
+	it("shows the student's message while its reply is pending", async () => {
+		const t = newTestConvex();
+		const state = await startRun(t, caseStructure());
+		const turnId = await insertPendingReply(t, state.runId, "A", "hello");
+
+		const pending = await t.query(api.runs.getPersonaHistory, {
+			runId: state.runId,
+			personaId: "A",
+		});
+		expect(pending.messages).toEqual([{ role: "user", content: "hello" }]);
+		expect(pending.reply?.status).toBe("pending");
+
+		await t.run((ctx) =>
+			ctx.db.patch("turns", turnId, { reply: "hi there", status: "done" }),
+		);
+		const done = await t.query(api.runs.getPersonaHistory, {
+			runId: state.runId,
+			personaId: "A",
+		});
+		expect(done.messages).toEqual([
+			{ role: "user", content: "hello" },
+			{ role: "assistant", content: "hi there" },
 		]);
 	});
 });

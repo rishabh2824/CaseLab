@@ -59,7 +59,10 @@ class FakeRun implements PageRunStore {
 		name: "Sterling Industries",
 		brief: "Reduce costs.",
 		duration: null,
-		authors: ["Olive Owner", "Edith Editor"],
+		authors: [
+			{ name: "Olive Owner", email: "olive@example.com" },
+			{ name: "Edith Editor", email: "edith@example.com" },
+		],
 	});
 	totalDurationSeconds = $state<number | null>(null);
 	activeMessages = $state<ChatMessage[]>([]);
@@ -384,11 +387,11 @@ describe("composer", () => {
 	});
 
 	// Tests that the composer is locked while a reply is being generated.
-	it("disables the box and shows typing dots while sending", () => {
+	it("disables the box and shows the sending ring while sending", () => {
 		run.isSending = true;
 		render(StudentPage);
 		expect(screen.getByPlaceholderText("Type your message...")).toBeDisabled();
-		expect(screen.getByLabelText("Typing")).toBeInTheDocument();
+		expect(screen.getByLabelText("Sending")).toBeInTheDocument();
 	});
 });
 
@@ -413,32 +416,35 @@ describe("notes and ending", () => {
 });
 
 describe("authors", () => {
-	// Tests that the footer lists the case's authors for the student to see on hover.
-	it("lists the authors under an Authors button", () => {
+	// Tests that the header shows each author's name beside the case name.
+	it("lists the authors beside the case name", () => {
 		render(StudentPage);
-		expect(screen.getByRole("button", { name: "Authors" })).toBeInTheDocument();
-		const list = screen.getByRole("list", { name: "Authors" });
-		expect(list).toHaveTextContent("Olive Owner");
-		expect(list).toHaveTextContent("Edith Editor");
+		const line = screen.getByText("Sterling Industries").parentElement!;
+		expect(line).toHaveTextContent("Olive Owner");
+		expect(line).toHaveTextContent("Edith Editor");
 	});
 
-	// Tests that nothing is shown when the case has no authors to credit.
-	it("hides the footer when there are no authors", () => {
+	// Tests that hovering an author's name shows that author's own email.
+	it("shows an author's email on hover", async () => {
+		render(StudentPage);
+		await userEvent.hover(screen.getByText("Edith Editor"));
+		expect((await screen.findAllByText("edith@example.com"))[0]).toBeVisible();
+		expect(screen.queryByText("olive@example.com")).toBeNull();
+	});
+
+	// Tests that only the case name is shown when the case has no authors to credit.
+	it("shows no authors when there are none", () => {
 		run.caseData = { ...run.caseData!, authors: [] };
+		render(StudentPage);
+		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
+		expect(screen.queryByText("Olive Owner")).toBeNull();
+	});
+
+	// Tests that the old floating Authors and Contact buttons are gone.
+	it("no longer shows the Authors and Contact buttons", () => {
 		render(StudentPage);
 		expect(screen.queryByRole("button", { name: "Authors" })).toBeNull();
-	});
-});
-
-describe("contact", () => {
-	// Tests that the footer offers a Contact box with the support email, even when there are no authors.
-	it("shows the contact email under a Contact button", () => {
-		run.caseData = { ...run.caseData!, authors: [] };
-		render(StudentPage);
-		expect(screen.getByRole("button", { name: "Contact" })).toBeInTheDocument();
-		expect(
-			screen.getByRole("link", { name: "jordan.tong@wisc.edu" }),
-		).toHaveAttribute("href", "mailto:jordan.tong@wisc.edu");
+		expect(screen.queryByRole("button", { name: "Contact" })).toBeNull();
 	});
 });
 

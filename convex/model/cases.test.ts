@@ -347,8 +347,8 @@ describe("listCaseAuthors", () => {
 		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 
 		await expect(t.run((ctx) => listCaseAuthors(ctx, c))).resolves.toEqual([
-			"Olive",
-			"Edith",
+			{ name: "Olive", email: "olive@test.caselab.invalid" },
+			{ name: "Edith", email: "edith@test.caselab.invalid" },
 		]);
 	});
 
@@ -361,7 +361,7 @@ describe("listCaseAuthors", () => {
 		const c = (await t.run((ctx) => ctx.db.get("cases", caseId)))!;
 
 		await expect(t.run((ctx) => listCaseAuthors(ctx, c))).resolves.toEqual([
-			"Olive",
+			{ name: "Olive", email: "olive@test.caselab.invalid" },
 		]);
 	});
 });
