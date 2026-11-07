@@ -17,6 +17,7 @@ export const createEmptyPersona = (
 	knownFacts: "",
 	personalityTraits: "",
 	availabilityMinutes: null,
+	responseDelaySeconds: null,
 	files: [],
 	...overrides,
 });

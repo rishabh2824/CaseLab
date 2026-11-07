@@ -50,6 +50,13 @@ export class RunStore {
 	#history = $derived(this.#historyQuery.data);
 	// Whether the active contact has a reply in flight; other contacts stay free to message.
 	isSending = $derived(this.#history?.reply?.status === "pending");
+	// When the in-flight reply was sent and when it may appear, null without a response delay. Kept as two numbers so they only change when the reply does.
+	replySentAt = $derived(
+		this.isSending ? (this.#history?.reply?.sentAt ?? null) : null,
+	);
+	replyDeliverAt = $derived(
+		this.isSending ? (this.#history?.reply?.deliverAt ?? null) : null,
+	);
 	// The student's last message to the active contact, when generating its reply failed. It stays until they send again.
 	failedMessage = $derived(this.#history?.failedMessage ?? null);
 

@@ -33,6 +33,7 @@ type CaseForIssues = {
 		role: string;
 		knownFacts: string;
 		availabilityMinutes?: number | null;
+		responseDelaySeconds?: number | null;
 		files: { file?: unknown; shareConditions: string }[];
 	}[];
 	referrals: { fromId: string; toId: string; conditions: string }[];
@@ -55,7 +56,8 @@ export const personaPath = (
 		| "profilePhoto"
 		| "knownFacts"
 		| "personalityTraits"
-		| "availabilityMinutes",
+		| "availabilityMinutes"
+		| "responseDelaySeconds",
 ): FieldPath => ["personas", personaId, field];
 
 // A field in one of a persona's file rows.
@@ -170,6 +172,16 @@ export function getCaseIssues({
 			add(
 				personaPath(persona.id, "availabilityMinutes"),
 				`${label}: availability must be a whole number of minutes, at least 1.`,
+			);
+		}
+		if (
+			typeof persona.responseDelaySeconds === "number" &&
+			(!Number.isInteger(persona.responseDelaySeconds) ||
+				persona.responseDelaySeconds < 1)
+		) {
+			add(
+				personaPath(persona.id, "responseDelaySeconds"),
+				`${label}: response delay must be a whole number of seconds, at least 1.`,
 			);
 		}
 

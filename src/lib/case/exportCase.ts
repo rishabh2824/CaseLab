@@ -113,6 +113,12 @@ function personaCardMarkup(persona: Persona): string {
 			value: persona.availabilityMinutes,
 		})}
     ${fields({
+			field: "response_delay_seconds",
+			label: "Response delay (seconds)",
+			hint: "Blank = replies as soon as they're ready. Otherwise the reply is held back this long.",
+			value: persona.responseDelaySeconds,
+		})}
+    ${fields({
 			field: "known_facts",
 			label: "What this persona knows",
 			hint: "Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.",

@@ -82,13 +82,20 @@ function buildPersonaPayload(
 	persona: Persona,
 	uploaded: Map<File, FileRefPayload>,
 ): PersonaPayload {
-	const { profilePhoto, availabilityMinutes, files, ...rest } = persona;
+	const {
+		profilePhoto,
+		availabilityMinutes,
+		responseDelaySeconds,
+		files,
+		...rest
+	} = persona;
 	const photo =
 		profilePhoto instanceof File ? uploaded.get(profilePhoto) : profilePhoto;
 	return {
 		...rest,
 		...(photo ? { profilePhoto: photo } : {}),
 		...(availabilityMinutes !== null ? { availabilityMinutes } : {}),
+		...(responseDelaySeconds !== null ? { responseDelaySeconds } : {}),
 		files: files.map((entry) => ({
 			...entry,
 			file:

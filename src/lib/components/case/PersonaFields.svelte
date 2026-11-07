@@ -20,6 +20,7 @@ const factsPath = $derived(personaPath(persona.id, "knownFacts"));
 const availabilityPath = $derived(
 	personaPath(persona.id, "availabilityMinutes"),
 );
+const delayPath = $derived(personaPath(persona.id, "responseDelaySeconds"));
 const nameId = $derived(fieldDomId(namePath));
 const roleId = $derived(fieldDomId(rolePath));
 const photoId = $derived(fieldDomId(personaPath(persona.id, "profilePhoto")));
@@ -28,6 +29,7 @@ const traitsId = $derived(
 	fieldDomId(personaPath(persona.id, "personalityTraits")),
 );
 const availabilityId = $derived(fieldDomId(availabilityPath));
+const delayId = $derived(fieldDomId(delayPath));
 </script>
 <div class="flex flex-col gap-4">
 	<div class="grid gap-4 sm:grid-cols-2">
@@ -83,6 +85,7 @@ const availabilityId = $derived(fieldDomId(availabilityPath));
 			existingLabel="Existing photo"
 		/>
 
+		<div class="grid gap-4">
 		<FormField
 			label="Available for (minutes)"
 			help="How long students can message this persona. Starting personas count from the start of the simulation, referred ones from when they unlock. Blank means no limit."
@@ -105,6 +108,30 @@ const availabilityId = $derived(fieldDomId(availabilityPath));
 				/>
 			{/snippet}
 		</FormField>
+
+		<FormField
+			label="Response delay (seconds)"
+			help="The least time this persona takes to reply. Use it to make students think before they ask, like a busy executive who isn't instantly available. Blank means no delay."
+			id={delayId}
+			error={errorFor(delayPath)}
+		>
+			{#snippet children(field)}
+				<input
+					{...field}
+					id={delayId}
+					type="number"
+					min="1"
+					step="1"
+					placeholder="No delay"
+					value={persona.responseDelaySeconds ?? ''}
+					oninput={(event) => {
+						persona.responseDelaySeconds = numberInputValue(event.currentTarget)
+					}}
+					class={INPUT_CLASS}
+				/>
+			{/snippet}
+		</FormField>
+		</div>
 	</div>
 
 	<FormField

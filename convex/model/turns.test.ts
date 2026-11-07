@@ -38,6 +38,50 @@ function advanceClock(minutes: number) {
 	vi.setSystemTime(Date.now() + minutes * 60_000);
 }
 
+describe("response delay", () => {
+	// Tests that a finished reply is held back until the persona's delay has passed, and that a persona with no delay stores no delivery time.
+	it("holds a finished reply back until the delay has passed", async () => {
+		const t = newTestConvex();
+		const state = await startRun(
+			t,
+			caseStructure({
+				personas: [
+					personaPayload("A", { responseDelaySeconds: 1 }),
+					personaPayload("B"),
+				],
+			}),
+		);
+		const { calls } = stubLlm({ replyText: "Hello." });
+		const startedAt = Date.now();
+
+		const { turnId } = await t.mutation(api.turns.sendMessage, {
+			runId: state.runId,
+			personaId: "A",
+			message: "hi",
+		});
+		await vi.waitFor(() =>
+			expect(calls.some((call) => call.kind === "reply")).toBe(true),
+		);
+		const history = await t.query(api.runs.getPersonaHistory, {
+			runId: state.runId,
+			personaId: "A",
+		});
+		expect(history.reply).toMatchObject({ status: "pending" });
+		expect(history.reply?.deliverAt).toBeGreaterThanOrEqual(startedAt + 1000);
+
+		await settleReply(t, turnId);
+		expect(Date.now() - startedAt).toBeGreaterThanOrEqual(950);
+		expect(await visibleMessages(t, state.runId, "A")).toEqual([
+			{ role: "user", content: "hi" },
+			{ role: "assistant", content: "Hello." },
+		]);
+
+		const instant = await send(t, state.runId, "B", "hi");
+		const row = await t.run((ctx) => ctx.db.get("turns", instant));
+		expect(row?.deliverAt).toBeUndefined();
+	});
+});
+
 describe("startTurn validation", () => {
 	// Tests that an empty or whitespace-only message is rejected.
 	it("rejects an empty/whitespace message", async () => {

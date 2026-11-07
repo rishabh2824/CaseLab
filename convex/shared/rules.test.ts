@@ -17,6 +17,7 @@ const persona = (id: string, name: string) => ({
 	role: "CFO",
 	knownFacts: "Approved the budget.",
 	availabilityMinutes: null as number | null,
+	responseDelaySeconds: null as number | null,
 	files: [] as { file: unknown; shareConditions: string }[],
 });
 
@@ -146,6 +147,21 @@ describe("getCaseIssues", () => {
 				}),
 			).toEqual([
 				"Mary Chen: availability must be a whole number of minutes, at least 1.",
+			]);
+		},
+	);
+
+	// Tests that the response delay must be a whole number of at least one second.
+	it.each([0, -1, 1.5, Number.NaN])(
+		"rejects a response delay of %s seconds",
+		(responseDelaySeconds) => {
+			expect(
+				messages({
+					personas: [{ ...persona("a", "Mary Chen"), responseDelaySeconds }],
+					referrals: [],
+				}),
+			).toEqual([
+				"Mary Chen: response delay must be a whole number of seconds, at least 1.",
 			]);
 		},
 	);

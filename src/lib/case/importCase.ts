@@ -53,6 +53,10 @@ function readCaseGraphFromDom(doc: Document): GraphData {
 				fieldValue(card, "availability_minutes"),
 				`${id} availability`,
 			),
+			responseDelaySeconds: parseNumberField(
+				fieldValue(card, "response_delay_seconds"),
+				`${id} response delay`,
+			),
 			profilePhoto: null,
 			files,
 		});

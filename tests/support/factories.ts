@@ -112,6 +112,7 @@ export function makePersona(overrides: Partial<Persona> = {}): Persona {
 		knownFacts: "",
 		personalityTraits: "",
 		availabilityMinutes: null,
+		responseDelaySeconds: null,
 		files: [],
 		...overrides,
 	};

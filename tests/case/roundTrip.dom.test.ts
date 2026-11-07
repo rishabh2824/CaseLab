@@ -45,6 +45,7 @@ const personaFieldsArb = fc.record({
 	knownFacts: textArb,
 	personalityTraits: textArb,
 	availabilityMinutes: availabilityArb,
+	responseDelaySeconds: availabilityArb,
 	files: filesArb,
 });
 
@@ -109,6 +110,7 @@ const caseArb: fc.Arbitrary<GeneratedCase> = fc
 						knownFacts: fields.knownFacts,
 						personalityTraits: fields.personalityTraits,
 						availabilityMinutes: fields.availabilityMinutes,
+						responseDelaySeconds: fields.responseDelaySeconds,
 						files: fields.files,
 					}));
 
@@ -192,6 +194,9 @@ describe("buildHTMLForm / parseHTMLForm round trip", () => {
 					);
 					expect(imported.availabilityMinutes).toBe(
 						original.availabilityMinutes,
+					);
+					expect(imported.responseDelaySeconds).toBe(
+						original.responseDelaySeconds,
 					);
 					expect(imported.files).toEqual(
 						original.files.map((file) => ({

@@ -150,7 +150,14 @@ export async function getPersonaHistoryView(
 	const last = turns.at(-1);
 	return {
 		messages: toChatMessages(turns, true),
-		reply: last ? { id: last._id, status: last.status } : null,
+		reply: last
+			? {
+					id: last._id,
+					status: last.status,
+					sentAt: last._creationTime,
+					deliverAt: last.deliverAt ?? null,
+				}
+			: null,
 		failedMessage: last?.status === "failed" ? last.studentMessage : null,
 	};
 }

@@ -100,17 +100,22 @@ export async function sendMessage(
 		);
 	}
 
+	// The reply is generated at once but held back until the persona's response delay has passed.
+	const delayMs = (persona.responseDelaySeconds ?? 0) * 1000;
 	const turnId = await ctx.db.insert("turns", {
 		runId,
 		personaId,
 		studentMessage: message,
 		reply: "",
+		...(delayMs > 0 ? { deliverAt: Date.now() + delayMs } : {}),
 		status: "pending",
 	});
 	await ctx.scheduler.runAfter(0, internal.turns.reply, { turnId });
-	await ctx.scheduler.runAfter(TURN_EXPIRY_MS, internal.turns.failTurn, {
-		turnId,
-	});
+	await ctx.scheduler.runAfter(
+		TURN_EXPIRY_MS + delayMs,
+		internal.turns.failTurn,
+		{ turnId },
+	);
 	return { turnId };
 }
 
@@ -132,7 +137,12 @@ export async function loadReplyJob(
 		graph.personas.get(turn.personaId)!,
 		turn._creationTime,
 	);
-	return { turnId, message: turn.studentMessage, context };
+	return {
+		turnId,
+		message: turn.studentMessage,
+		deliverAt: turn.deliverAt ?? null,
+		context,
+	};
 }
 
 // Runs a pending turn: classifies the message, generates the reply and applies its outcome, failing the turn on any error.

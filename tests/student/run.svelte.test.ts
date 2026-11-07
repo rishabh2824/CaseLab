@@ -42,6 +42,7 @@ function setHistory(
 	messages: ReturnType<typeof message>[] = [],
 	reply: { id: string; status: "pending" | "done" | "failed" } | null = null,
 	failedMessage: string | null = null,
+	deliverAt: number | null = null,
 ): void {
 	convexFake.setQuery(
 		api.runs.getPersonaHistory,
@@ -49,7 +50,12 @@ function setHistory(
 		{
 			data: {
 				messages,
-				reply: reply && { ...reply, id: reply.id as Id<"turns"> },
+				reply: reply && {
+					...reply,
+					id: reply.id as Id<"turns">,
+					sentAt: 1_000,
+					deliverAt,
+				},
 				failedMessage,
 			},
 		},
@@ -338,6 +344,22 @@ describe("sendMessage guards", () => {
 		expect(run.isSending).toBe(false);
 		await expect(run.sendMessage("second")).resolves.toBe(true);
 		expect(sendMessage).toHaveBeenCalledTimes(1);
+	});
+
+	// Tests that a reply held back by a response delay exposes its send and delivery times for the ring, and that they clear once it is done.
+	it("exposes the send and delivery times of a delayed reply while it is pending", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session);
+		run.activeContactId = "mary";
+		setHistory("mary", [], { id: "r1", status: "pending" }, null, 31_000);
+		await vi.waitFor(() => expect(run.isSending).toBe(true));
+		expect(run.replySentAt).toBe(1_000);
+		expect(run.replyDeliverAt).toBe(31_000);
+
+		setHistory("mary", [], { id: "r1", status: "done" }, null, 31_000);
+		await vi.waitFor(() => expect(run.isSending).toBe(false));
+		expect(run.replySentAt).toBeNull();
+		expect(run.replyDeliverAt).toBeNull();
 	});
 
 	// Tests that an accepted message returns true and is sent through the sendMessage mutation.

@@ -59,6 +59,8 @@ export default defineSchema({
 		studentMessage: v.string(),
 		// Empty while the turn is pending.
 		reply: v.string(),
+		// When the reply may appear, set only for a persona with a response delay.
+		deliverAt: v.optional(v.number()),
 		status: v.union(
 			v.literal("pending"),
 			v.literal("done"),

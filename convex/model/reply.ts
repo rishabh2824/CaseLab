@@ -42,6 +42,8 @@ export type TurnContext = {
 export type ReplyJob = {
 	turnId: Id<"turns">;
 	message: string;
+	// When the reply may appear, or null to show it as soon as it is ready.
+	deliverAt: number | null;
 	context: TurnContext;
 };
 
@@ -105,10 +107,10 @@ export async function buildTurnContext(
 	};
 }
 
-// Generates the persona reply for a job and saves it, or flags the turn if the message was flagged.
+// Generates the persona reply for a job and saves it once its delivery time has passed, or flags the turn if the message was flagged.
 export async function generateReply(
 	ctx: ActionCtx,
-	{ turnId, message, context }: ReplyJob,
+	{ turnId, message, deliverAt, context }: ReplyJob,
 ): Promise<void> {
 	const labelPromise = classifyMessage(message, context.decisionHistory);
 
@@ -179,10 +181,15 @@ export async function generateReply(
 		.filter((f): f is PendingFile => f !== undefined)
 		.map((f) => ({ storageId: f.storageId }));
 
-	await ctx.runMutation(internal.turns.applyDecisions, {
-		turnId,
-		reply,
-		unlockedReferrals,
-		sharedFiles,
-	});
+	const decisions = { turnId, reply, unlockedReferrals, sharedFiles };
+	const wait = deliverAt === null ? 0 : deliverAt - Date.now();
+	if (wait > 0) {
+		await ctx.scheduler.runAfter(
+			wait,
+			internal.turns.applyDecisions,
+			decisions,
+		);
+	} else {
+		await ctx.runMutation(internal.turns.applyDecisions, decisions);
+	}
 }

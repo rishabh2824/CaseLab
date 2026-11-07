@@ -24,10 +24,11 @@ export type DraftFileEntry = Omit<FileEntryPayload, "file"> & {
 // A persona as the form edits it: empty values are null, and the submit step omits them from the payload.
 export type Persona = Omit<
 	PersonaPayload,
-	"profilePhoto" | "availabilityMinutes" | "files"
+	"profilePhoto" | "availabilityMinutes" | "responseDelaySeconds" | "files"
 > & {
 	profilePhoto: File | FileRefPayload | null;
 	availabilityMinutes: number | null;
+	responseDelaySeconds: number | null;
 	files: DraftFileEntry[];
 };
 

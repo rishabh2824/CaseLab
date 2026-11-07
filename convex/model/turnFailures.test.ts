@@ -577,4 +577,32 @@ describe("a stuck reply is failed by expiry", () => {
 		expect((await lastReply(t, state.runId, "A"))?.status).toBe("failed");
 		expect(await visibleMessages(t, state.runId, "A")).toEqual([]);
 	});
+
+	// Tests that the expiry waits out the persona's response delay, so a deliberately slow reply is not failed for being late.
+	it("gives a delayed reply its delay on top of the expiry", async () => {
+		vi.useFakeTimers();
+		const t = newTestConvex();
+		const state = await startRun(
+			t,
+			caseStructure({
+				personas: [personaPayload("A", { responseDelaySeconds: 60 })],
+			}),
+		);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(() => new Promise(() => {})),
+		);
+
+		const { turnId } = await t.mutation(api.turns.sendMessage, {
+			runId: state.runId,
+			personaId: "A",
+			message: "hi",
+		});
+		await vi.advanceTimersByTimeAsync(TURN_EXPIRY_MS + 1);
+		expect((await lastReply(t, state.runId, "A"))?.status).toBe("pending");
+
+		await vi.advanceTimersByTimeAsync(60_000);
+		await settleReply(t, turnId);
+		expect((await lastReply(t, state.runId, "A"))?.status).toBe("failed");
+	});
 });

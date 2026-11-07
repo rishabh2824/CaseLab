@@ -32,6 +32,7 @@ export const personaPayloadValidator = v.object({
 	knownFacts: v.string(),
 	personalityTraits: v.string(),
 	availabilityMinutes: v.optional(v.number()),
+	responseDelaySeconds: v.optional(v.number()),
 	files: v.array(fileEntryValidator),
 });
 

@@ -392,6 +392,7 @@ describe("submitCase — empty values", () => {
 		const kept = makePersona({
 			id: "p1",
 			availabilityMinutes: 15,
+			responseDelaySeconds: 30,
 			files: [
 				{
 					file: { storageId: "s1" as Id<"_storage">, fileName: "a.pdf" },
@@ -408,9 +409,11 @@ describe("submitCase — empty values", () => {
 			.personas;
 		expect(sentKept).not.toHaveProperty("profilePhoto");
 		expect(sentKept?.availabilityMinutes).toBe(15);
+		expect(sentKept?.responseDelaySeconds).toBe(30);
 		expect(sentKept?.files).toHaveLength(1);
 		expect(sentBare).not.toHaveProperty("profilePhoto");
 		expect(sentBare).not.toHaveProperty("availabilityMinutes");
+		expect(sentBare).not.toHaveProperty("responseDelaySeconds");
 	});
 });
 

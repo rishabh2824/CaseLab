@@ -151,6 +151,7 @@ export class CaseDraft {
 				...persona,
 				profilePhoto: persona.profilePhoto ?? null,
 				availabilityMinutes: persona.availabilityMinutes ?? null,
+				responseDelaySeconds: persona.responseDelaySeconds ?? null,
 			})),
 			referrals: loaded.structure.referrals,
 		});

@@ -20,16 +20,36 @@ $effect(() => {
 	if (canType) tick().then(() => chatInputEl?.focus());
 });
 
-// Starts the sending ring empty and fills it to 90% in the few seconds most replies take, then crawls to 97% so it never looks finished before the reply lands.
-function creep(ring: SVGCircleElement): () => void {
-	ring.getBoundingClientRect();
-	ring.style.strokeDashoffset = "10";
-	const crawl = setTimeout(() => {
-		ring.style.transitionDuration = "30000ms";
-		ring.style.transitionTimingFunction = "linear";
-		ring.style.strokeDashoffset = "3";
-	}, 4000);
-	return () => clearTimeout(crawl);
+// How long the ring takes to reach 90% when the reply has no response delay.
+const QUICK_FILL_MS = 4000;
+
+// Starts the sending ring empty and fills it to 90% in the few seconds most replies take, then crawls to 97% so it never looks finished before the reply lands. A reply held back by a response delay instead fills evenly to 97% by the time it is due, resuming part-way if the page was reloaded.
+function creep(
+	sentAt: number | null,
+	deliverAt: number | null,
+): (ring: SVGCircleElement) => () => void {
+	return (ring) => {
+		const delayMs =
+			sentAt !== null && deliverAt !== null ? deliverAt - sentAt : 0;
+		if (deliverAt !== null && delayMs > QUICK_FILL_MS) {
+			const remainingMs = Math.max(0, deliverAt - Date.now());
+			const filled = Math.min(1, Math.max(0, 1 - remainingMs / delayMs));
+			ring.style.transition = "none";
+			ring.style.strokeDashoffset = String(100 - 97 * filled);
+			ring.getBoundingClientRect();
+			ring.style.transition = `stroke-dashoffset ${remainingMs}ms linear`;
+			ring.style.strokeDashoffset = "3";
+			return () => {};
+		}
+		ring.getBoundingClientRect();
+		ring.style.strokeDashoffset = "10";
+		const crawl = setTimeout(() => {
+			ring.style.transitionDuration = "30000ms";
+			ring.style.transitionTimingFunction = "linear";
+			ring.style.strokeDashoffset = "3";
+		}, QUICK_FILL_MS);
+		return () => clearTimeout(crawl);
+	};
 }
 
 // Puts a message back in the box, ahead of anything typed since.
@@ -103,7 +123,7 @@ async function handleSend(): Promise<void> {
 			<svg viewBox="0 0 24 24" class="size-5 -rotate-90" fill="none" stroke="currentColor" stroke-width="3" role="status" aria-label="Sending">
 				<circle cx="12" cy="12" r="9" stroke-opacity="0.25" />
 				<circle
-					{@attach creep}
+					{@attach creep(run.replySentAt, run.replyDeliverAt)}
 					cx="12"
 					cy="12"
 					r="9"
