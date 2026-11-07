@@ -234,3 +234,90 @@ describe("parseHTMLForm — file sharing", () => {
 		expect(data.personas[0]?.files).toEqual([]);
 	});
 });
+
+describe("parseHTMLForm — persona number fields", () => {
+	// Tests that a persona's response delay and availability are read and rounded like the time limit.
+	it("reads and rounds a persona's response delay and availability", () => {
+		const persona = makePersona({ name: "Mary" });
+		const doc = buildDoc({
+			...baseCaseFields,
+			personas: [persona],
+			referrals: [],
+		});
+		setField(doc, "response_delay_seconds", "29.6");
+		setField(doc, "availability_minutes", " 15 ");
+
+		const [imported] = parseHTMLForm(serialize(doc)).personas;
+		expect(imported).toMatchObject({
+			name: "Mary",
+			responseDelaySeconds: 30,
+			availabilityMinutes: 15,
+		});
+	});
+
+	// Tests that a non-numeric response delay is refused with an error naming the persona's delay.
+	it("throws CaseImportError naming the response delay for a non-numeric value", () => {
+		const persona = makePersona({ id: "mary-id" });
+		const doc = buildDoc({
+			...baseCaseFields,
+			personas: [persona],
+			referrals: [],
+		});
+		setField(doc, "response_delay_seconds", "a while");
+
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(CaseImportError);
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(
+			'Couldn\'t read "mary-id response delay" as a number (was "a while").',
+		);
+	});
+
+	// Tests that a non-numeric availability is refused with an error naming the persona's availability.
+	it("throws CaseImportError naming the availability for a non-numeric value", () => {
+		const persona = makePersona({ id: "mary-id" });
+		const doc = buildDoc({
+			...baseCaseFields,
+			personas: [persona],
+			referrals: [],
+		});
+		setField(doc, "availability_minutes", "forever");
+
+		expect(() => parseHTMLForm(serialize(doc))).toThrow(
+			'Couldn\'t read "mary-id availability" as a number (was "forever").',
+		);
+	});
+});
+
+describe("parseHTMLForm — damaged rows", () => {
+	// Tests that a referral row with one end missing is dropped, leaving its target as a starting persona.
+	it("drops a referral row that is missing one end", () => {
+		const a = makePersona({ name: "Mary" });
+		const b = makePersona({ name: "Bob" });
+		const doc = buildDoc({
+			...baseCaseFields,
+			personas: [a, b],
+			referrals: [makeReferral(a.id, b.id)],
+		});
+		doc.querySelector('select[data-role="to"]')!.replaceChildren();
+
+		const imported = parseHTMLForm(serialize(doc));
+		expect(imported.referrals).toEqual([]);
+		expect(imported.personas.map((p) => p.name)).toEqual(["Mary", "Bob"]);
+	});
+
+	// Tests that a persona card whose id was blanked out is skipped rather than imported without an id.
+	it("skips a persona card with a blank id", () => {
+		const a = makePersona({ name: "Mary" });
+		const b = makePersona({ name: "Bob" });
+		const doc = buildDoc({
+			...baseCaseFields,
+			personas: [a, b],
+			referrals: [],
+		});
+		doc
+			.querySelectorAll(".persona-card")[1]!
+			.setAttribute("data-persona-id", "");
+
+		const imported = parseHTMLForm(serialize(doc));
+		expect(imported.personas.map((p) => p.name)).toEqual(["Mary"]);
+	});
+});

@@ -131,7 +131,7 @@ describe("getCaseIssues", () => {
 			{
 				path: personaPath("a", "knownFacts"),
 				message:
-					"Add what Mary Chen knows. Personas can only answer from these facts.",
+					"Add instructions for Mary Chen. Personas can only answer from these, the brief and the background.",
 			},
 		]);
 	});

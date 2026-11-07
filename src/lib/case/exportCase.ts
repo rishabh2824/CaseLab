@@ -120,8 +120,8 @@ function personaCardMarkup(persona: Persona): string {
 		})}
     ${fields({
 			field: "known_facts",
-			label: "What this persona knows",
-			hint: "Everything this persona knows and can draw on — background, facts, figures, opinions. Be specific; this grounds every reply they give.",
+			label: "Persona instructions",
+			hint: "Who this persona is, what they know, what they reveal and when, and how they respond. Be specific; this grounds every reply they give.",
 			value: persona.knownFacts,
 			rows: 5,
 		})}

@@ -93,7 +93,7 @@ pnpm run dev:web    # frontend: http://localhost:5173
 pnpm run lint          # biome
 pnpm run typecheck     # tsc over convex/
 pnpm run check         # svelte-check over src/
-pnpm test              # vitest: backend (convex-test) and frontend (node + jsdom)
+pnpm test              # vitest: backend (convex-test), frontend logic (node) and components (real Chromium)
 pnpm run test:e2e      # Playwright, against a real local Convex backend (see below)
 pnpm run test:all      # check, typecheck, test and test:e2e in one go
 ```

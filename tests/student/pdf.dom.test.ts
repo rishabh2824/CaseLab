@@ -1,5 +1,3 @@
-import { Buffer } from "node:buffer";
-import { inflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { buildChatPdfBlob } from "../../src/lib/student/pdf.js";
 import type { ExportPersonaOut } from "../../src/lib/types.js";
@@ -16,27 +14,43 @@ const persona = (
 	...overrides,
 });
 
+// Reads a blob as one character per byte, so binary PDF streams survive being searched as text. (TextDecoder's "latin1" is really windows-1252 and would change some bytes.)
+async function byteString(blob: Blob): Promise<string> {
+	const bytes = new Uint8Array(await blob.arrayBuffer());
+	let text = "";
+	for (let i = 0; i < bytes.length; i += 0x8000) {
+		text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	}
+	return text;
+}
+
+// Inflates a zlib-compressed PDF stream given as one character per byte, or returns null if it is not compressed that way.
+async function inflate(stream: string): Promise<string | null> {
+	const bytes = Uint8Array.from(stream, (char) => char.charCodeAt(0));
+	try {
+		const inflated = new Blob([bytes])
+			.stream()
+			.pipeThrough(new DecompressionStream("deflate"));
+		return await new Response(inflated).text();
+	} catch {
+		return null;
+	}
+}
+
 // Counts the pages in a PDF blob.
 async function pageCountOf(blob: Blob): Promise<number> {
-	const raw = Buffer.from(await blob.arrayBuffer()).toString("latin1");
+	const raw = await byteString(blob);
 	return (raw.match(/\/Type\s*\/Page\b/g) ?? []).length;
 }
 
 // Returns whether any of the PDF's compressed streams contains the given text.
 async function pdfContainsText(blob: Blob, needle: string): Promise<boolean> {
-	const raw = Buffer.from(await blob.arrayBuffer()).toString("latin1");
-	const streamRe = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-	let match: RegExpExecArray | null;
-	// biome-ignore lint/suspicious/noAssignInExpressions: standard RegExp.exec loop idiom
-	while ((match = streamRe.exec(raw))) {
-		const streamContent = match[1];
-		if (streamContent === undefined) continue;
-		try {
-			const inflated = inflateSync(
-				Buffer.from(streamContent, "latin1"),
-			).toString("latin1");
-			if (inflated.includes(`(${needle})`)) return true;
-		} catch {}
+	const raw = await byteString(blob);
+	for (const [, stream] of raw.matchAll(
+		/stream\r?\n([\s\S]*?)\r?\nendstream/g,
+	)) {
+		const inflated = stream === undefined ? null : await inflate(stream);
+		if (inflated?.includes(`(${needle})`)) return true;
 	}
 	return false;
 }

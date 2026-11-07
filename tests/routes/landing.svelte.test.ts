@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
-import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { page, userEvent } from "vitest/browser";
+import { render } from "vitest-browser-svelte";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
 import { ERROR_CODE } from "#shared/errors.js";
@@ -18,11 +18,16 @@ const start = convexFake.mutation(api.runs.start);
 const START = getFunctionName(api.runs.start);
 const run = (runId: string) => ({ runId: runId as Id<"runs"> });
 
+const GENERIC_ERROR =
+	"Something went wrong starting the simulation. Please try again.";
+
+const codeBox = () => page.getByLabelText("Access code");
+const openCase = () => page.getByRole("button", { name: "Open Case" });
+
 // Types a code into the access-code box and submits the form.
 async function submitCode(code: string) {
-	const user = userEvent.setup();
-	await user.type(screen.getByLabelText("Access code"), code);
-	await user.click(screen.getByRole("button", { name: "Open Case" }));
+	await codeBox().fill(code);
+	await openCase().click();
 }
 
 beforeEach(() => {
@@ -33,18 +38,18 @@ describe("landing page access-code form", () => {
 	// Tests that the code is sent as typed, since the server trims and lower-cases it and rejects a blank one.
 	it("sends the code as typed to the start mutation", async () => {
 		start.mockResolvedValue(run("run-1"));
-		render(Landing);
+		await render(Landing);
 		await submitCode("  Sterling-42 ");
-		await waitFor(() => expect(start).toHaveBeenCalledOnce());
+		await vi.waitFor(() => expect(start).toHaveBeenCalledOnce());
 		expect(start).toHaveBeenCalledWith({ accessCode: "  Sterling-42 " });
 	});
 
 	// Tests that a started run is stored in the session and the student goes to the simulation.
 	it("stores the run and goes to /student on success", async () => {
 		start.mockResolvedValue(run("run-7"));
-		render(Landing);
+		await render(Landing);
 		await submitCode("sterling");
-		await waitFor(() => expect(goto).toHaveBeenCalledWith("/student"));
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/student"));
 		expect(session.runId).toBe("run-7");
 		expect(session.startTime).not.toBeNull();
 	});
@@ -58,11 +63,11 @@ describe("landing page access-code form", () => {
 				"That access code was not recognised.",
 			),
 		);
-		render(Landing);
+		await render(Landing);
 		await submitCode("nope");
-		expect(
-			await screen.findByText("That access code was not recognised."),
-		).toBeInTheDocument();
+		await expect
+			.element(page.getByText("That access code was not recognised."))
+			.toBeVisible();
 		expect(goto).not.toHaveBeenCalled();
 		expect(session.runId).toBe("");
 	});
@@ -70,26 +75,18 @@ describe("landing page access-code form", () => {
 	// Tests that a redacted production error falls back to the generic message.
 	it("shows the generic message for a redacted server error", async () => {
 		start.mockRejectedValue(clientServerError(START));
-		render(Landing);
+		await render(Landing);
 		await submitCode("sterling");
-		expect(
-			await screen.findByText(
-				"Something went wrong starting the simulation. Please try again.",
-			),
-		).toBeInTheDocument();
+		await expect.element(page.getByText(GENERIC_ERROR)).toBeVisible();
 		expect(goto).not.toHaveBeenCalled();
 	});
 
 	// Tests that a network failure also falls back to the generic message.
 	it("shows the generic message when the request itself fails", async () => {
 		start.mockRejectedValue(new TypeError("Failed to fetch"));
-		render(Landing);
+		await render(Landing);
 		await submitCode("sterling");
-		expect(
-			await screen.findByText(
-				"Something went wrong starting the simulation. Please try again.",
-			),
-		).toBeInTheDocument();
+		await expect.element(page.getByText(GENERIC_ERROR)).toBeVisible();
 	});
 
 	// Tests that the button is locked while the request runs and freed afterwards.
@@ -100,23 +97,22 @@ describe("landing page access-code form", () => {
 				fail = reject;
 			}),
 		);
-		render(Landing);
+		await render(Landing);
 		await submitCode("sterling");
-		const busy = await screen.findByRole("button", { name: "Starting…" });
-		expect(busy).toBeDisabled();
+		await expect
+			.element(page.getByRole("button", { name: "Starting…" }))
+			.toBeDisabled();
 		fail(clientServerError(START));
-		expect(
-			await screen.findByRole("button", { name: "Open Case" }),
-		).toBeEnabled();
+		await expect.element(openCase()).toBeEnabled();
 	});
 
 	// Tests that pressing Enter in the box submits the form like the button does.
 	it("submits when Enter is pressed in the input", async () => {
 		start.mockResolvedValue(run("run-2"));
-		render(Landing);
-		const user = userEvent.setup();
-		await user.type(screen.getByLabelText("Access code"), "sterling{Enter}");
-		await waitFor(() => expect(start).toHaveBeenCalledOnce());
+		await render(Landing);
+		await codeBox().fill("sterling");
+		await userEvent.keyboard("{Enter}");
+		await vi.waitFor(() => expect(start).toHaveBeenCalledOnce());
 	});
 
 	// Tests that a later success clears the error left by an earlier failure.
@@ -124,22 +120,21 @@ describe("landing page access-code form", () => {
 		start
 			.mockRejectedValueOnce(clientServerError(START))
 			.mockResolvedValueOnce(run("run-3"));
-		render(Landing);
-		const user = userEvent.setup();
-		await user.type(screen.getByLabelText("Access code"), "sterling");
-		await user.click(screen.getByRole("button", { name: "Open Case" }));
-		await screen.findByText(/Something went wrong/);
-		await user.click(screen.getByRole("button", { name: "Open Case" }));
-		await waitFor(() => expect(goto).toHaveBeenCalledWith("/student"));
-		expect(screen.queryByText(/Something went wrong/)).toBeNull();
+		await render(Landing);
+		await submitCode("sterling");
+		await expect.element(page.getByText(/Something went wrong/)).toBeVisible();
+		await openCase().click();
+		await vi.waitFor(() => expect(goto).toHaveBeenCalledWith("/student"));
+		await expect
+			.element(page.getByText(/Something went wrong/))
+			.not.toBeInTheDocument();
 	});
 
 	// Tests that the admin login link points at the admin area.
-	it("links to the admin login", () => {
-		render(Landing);
-		expect(screen.getByRole("link", { name: "Admin Login" })).toHaveAttribute(
-			"href",
-			"/admin",
-		);
+	it("links to the admin login", async () => {
+		await render(Landing);
+		await expect
+			.element(page.getByRole("link", { name: "Admin Login" }))
+			.toHaveAttribute("href", "/admin");
 	});
 });

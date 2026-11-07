@@ -22,8 +22,8 @@ describe("flagReply", () => {
 	// Tests that flagReply gives a fixed warning regardless of name when not ending.
 	it("is a fixed warning regardless of name when not ending", () => {
 		expect(flagReply("Mary", false)).toBe(
-			"I am not able to follow that. Please send a clear, respectful, case-related " +
-				"question if you want to continue.",
+			"I can't respond to that. Please send a clear, respectful message if you want " +
+				"to continue.",
 		);
 	});
 });

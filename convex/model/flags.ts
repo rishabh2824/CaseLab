@@ -8,7 +8,7 @@ export function isChatEnded(flagCount: number): boolean {
 	return flagCount >= FLAG_LIMIT;
 }
 
-// Counts the flagged turns of each persona in a run. A persona flags at most FLAG_LIMIT messages before its chat ends, so this stays small.
+// Counts each persona's flagged turns in a run that count toward ending its chat, which is every flag but gibberish. Flagged turns are rare and only exist within one run, so this stays small.
 export async function flaggedCounts(
 	ctx: QueryCtx,
 	runId: Id<"runs">,
@@ -20,8 +20,10 @@ export async function flaggedCounts(
 		)
 		.collect();
 	const counts = new Map<string, number>();
-	for (const turn of flagged)
+	for (const turn of flagged) {
+		if (turn.flagReason === "gibberish") continue;
 		counts.set(turn.personaId, (counts.get(turn.personaId) ?? 0) + 1);
+	}
 	return counts;
 }
 
@@ -29,13 +31,13 @@ export async function flaggedCounts(
 export function flagReply(personaName: string, shouldEnd: boolean): string {
 	if (shouldEnd) {
 		return (
-			`${personaName} is ending this conversation because the messages are not coherent or ` +
-			"respectful enough to continue. Please send clear, respectful case-related " +
-			"questions to another contact."
+			`${personaName} is ending this conversation after repeated messages that were ` +
+			"unclear, disrespectful or not part of the simulation. Please keep your " +
+			"messages to other contacts clear and respectful."
 		);
 	}
 	return (
-		"I am not able to follow that. Please send a clear, respectful, case-related " +
-		"question if you want to continue."
+		"I can't respond to that. Please send a clear, respectful message if you want " +
+		"to continue."
 	);
 }

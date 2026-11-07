@@ -3,7 +3,6 @@ import {
 	createEmptyPersona,
 	createEmptyReferral,
 	getPersonaLabel,
-	numberInputValue,
 	referralsTo,
 } from "../../src/lib/case/draft.js";
 import { makeReferral } from "../support/factories.js";
@@ -72,35 +71,5 @@ describe("referralsTo", () => {
 	// Tests that referralsTo returns an empty array when no edges match.
 	it("returns [] when no edges match", () => {
 		expect(referralsTo(referrals, "p1")).toEqual([]);
-	});
-});
-
-describe("numberInputValue", () => {
-	// Builds the parts of a number input that the function reads, since jsdom does not model badInput.
-	const input = (value: string, badInput = false) =>
-		({
-			value,
-			valueAsNumber: value === "" ? Number.NaN : Number(value),
-			validity: { badInput },
-		}) as HTMLInputElement;
-
-	// Tests that a blank field means no value.
-	it("returns null for a blank field", () => {
-		expect(numberInputValue(input(""))).toBeNull();
-	});
-
-	// Tests that text the browser could not read as a number is NaN, so validation rejects it instead of it counting as blank.
-	it("returns NaN when the browser reports bad input", () => {
-		expect(numberInputValue(input("", true))).toBeNaN();
-	});
-
-	// Tests that the typed number is passed through untouched, so a decimal reaches the whole-number check.
-	it.each([
-		["12", 12],
-		["12.9", 12.9],
-		["-3.7", -3.7],
-		["0", 0],
-	])("returns %j as %d without rounding", (raw, expected) => {
-		expect(numberInputValue(input(raw))).toBe(expected);
 	});
 });

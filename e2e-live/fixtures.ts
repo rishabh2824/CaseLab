@@ -31,6 +31,8 @@ type LiveFixtures = {
 		role?: Role;
 		name?: string;
 		personaName?: string;
+		// The first persona's response delay, in seconds.
+		responseDelaySeconds?: number;
 		extraPersonas?: { id: string; name: string; role: string }[];
 		referrals?: { fromId: string; toId: string; conditions: string }[];
 	}) => Promise<{ accessCode: string; caseId: string; name: string }>;
@@ -87,7 +89,12 @@ export const test = base.extend<LiveFixtures>({
 				accessCode,
 				structure: {
 					personas: [
-						persona("A", options.personaName ?? "Mary", "CFO"),
+						{
+							...persona("A", options.personaName ?? "Mary", "CFO"),
+							...(options.responseDelaySeconds !== undefined
+								? { responseDelaySeconds: options.responseDelaySeconds }
+								: {}),
+						},
 						...(options.extraPersonas ?? []).map((p) =>
 							persona(p.id, p.name, p.role),
 						),

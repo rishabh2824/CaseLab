@@ -2,17 +2,11 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx, QueryCtx } from "../_generated/server";
 import type { PersonaPayload } from "../shared/validators";
-import {
-	classifyMessage,
-	generatePersonaReply,
-	RECENT_HISTORY_LIMIT,
-} from "./llm";
+import { generatePersonaReply, RECENT_HISTORY_LIMIT } from "./llm";
 import type { PersonaGraph } from "./personaGraph";
 import {
 	type CandidateFile,
 	type CandidateReferral,
-	cleanReply,
-	replyInstructions,
 	systemPrompt,
 } from "./prompt";
 
@@ -107,13 +101,11 @@ export async function buildTurnContext(
 	};
 }
 
-// Generates the persona reply for a job and saves it once its delivery time has passed, or flags the turn if the message was flagged.
+// Generates the persona reply for a job and saves it once its delivery time has passed, or flags the turn if the model flagged the message.
 export async function generateReply(
 	ctx: ActionCtx,
 	{ turnId, message, deliverAt, context }: ReplyJob,
 ): Promise<void> {
-	const labelPromise = classifyMessage(message, context.decisionHistory);
-
 	const referralByHandle = new Map<string, PendingReferral>();
 	const candidateReferrals: CandidateReferral[] = context.pendingReferrals.map(
 		(referral, i) => {
@@ -149,22 +141,21 @@ export async function generateReply(
 		candidateReferrals,
 		candidateFiles,
 	);
-	const cacheableSystemPrompt = `${replyInstructions()}\n\n---\n\n${stable}`;
+	const generated = await generatePersonaReply({ cacheable: stable, dynamic }, [
+		...context.decisionHistory,
+		{ role: "user", content: message },
+	]);
 
-	const generated = await generatePersonaReply(
-		{ cacheable: cacheableSystemPrompt, dynamic },
-		[...context.decisionHistory, { role: "user", content: message }],
-	);
-
-	if ((await labelPromise) === "flagged") {
+	if (generated.flag === "abuse" || generated.flag === "gibberish") {
 		await ctx.runMutation(internal.turns.applyFlag, {
 			turnId,
 			personaName: context.persona.name,
+			reason: generated.flag,
 		});
 		return;
 	}
 
-	const reply = cleanReply(generated.reply);
+	const reply = generated.reply.trim();
 	if (!reply) throw new Error("The reply came back empty.");
 
 	// Handles are matched case-insensitively and each at most once.

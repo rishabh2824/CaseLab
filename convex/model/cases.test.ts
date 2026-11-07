@@ -385,12 +385,12 @@ describe("required fields (via createCase)", () => {
 		});
 		await expect(
 			t.run((ctx) => createCase(ctx, payload, owner)),
-		).rejects.toThrow("Add what Mary knows.");
+		).rejects.toThrow("Add instructions for Mary.");
 
 		const caseId = await t.run((ctx) => createCase(ctx, casePayload(), owner));
 		await expect(
 			t.run((ctx) => updateCase(ctx, caseId, payload, owner)),
-		).rejects.toThrow("Add what Mary knows.");
+		).rejects.toThrow("Add instructions for Mary.");
 	});
 
 	// Tests that a referral with no condition is refused, because that persona could never be reached.

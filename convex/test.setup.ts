@@ -221,23 +221,21 @@ export async function withStranger(
 }
 
 export type LlmStub = {
-	// The raw JSON text the model returns, instead of one built from replyText, introduce and sendFiles.
+	// The raw JSON text the model returns, instead of one built from replyText, introduce, sendFiles and flag.
 	replyContent?: string;
 	replyText?: string;
 	introduce?: string[];
 	sendFiles?: string[];
+	flag?: "none" | "abuse" | "gibberish";
 	replyBody?: string;
 	replyStatus?: number;
 	replyThrows?: Error;
-	label?: string;
-	classifierThrows?: Error;
-	classifierBody?: string;
 };
 
-// biome-ignore lint/suspicious/noExplicitAny: captured request bodies differ in shape (classify vs. reply) and tests read them freely by property
-export type LlmCall = { kind: "classify" | "reply"; body: any };
+// biome-ignore lint/suspicious/noExplicitAny: tests read captured request bodies freely by property
+export type LlmCall = { body: any };
 
-// Builds a stub fetch that records LLM calls and returns configurable classifier and reply responses.
+// Builds a stub fetch that records LLM calls and returns a configurable reply.
 export function makeLlmFetch(options: LlmStub = {}): {
 	calls: LlmCall[];
 	fetch: (url: string, init: RequestInit) => Promise<Response>;
@@ -246,7 +244,7 @@ export function makeLlmFetch(options: LlmStub = {}): {
 		replyText = "OK",
 		introduce = [],
 		sendFiles = [],
-		label = "ok",
+		flag = "none",
 	} = options;
 	const calls: LlmCall[] = [];
 
@@ -255,35 +253,12 @@ export function makeLlmFetch(options: LlmStub = {}): {
 		init: RequestInit,
 	): Promise<Response> {
 		const body = JSON.parse(init.body as string);
-		const kind: "classify" | "reply" =
-			body.response_format?.json_schema?.name === "persona_reply"
-				? "reply"
-				: "classify";
 		if (Array.isArray(body.messages[0].content)) {
 			body.messages[0].content = body.messages[0].content
 				.map((block: { text: string }) => block.text)
 				.join("\n\n");
 		}
-		calls.push({ kind, body });
-
-		if (kind === "classify") {
-			if (options.classifierThrows) throw options.classifierThrows;
-			if (options.classifierBody !== undefined) {
-				return new Response(options.classifierBody, { status: 200 });
-			}
-			return new Response(
-				JSON.stringify({
-					choices: [
-						{
-							message: {
-								content: JSON.stringify({ label: label.toLowerCase() }),
-							},
-						},
-					],
-				}),
-				{ status: 200 },
-			);
-		}
+		calls.push({ body });
 
 		if (options.replyThrows) throw options.replyThrows;
 		if (options.replyStatus && options.replyStatus !== 200) {
@@ -294,7 +269,7 @@ export function makeLlmFetch(options: LlmStub = {}): {
 		}
 		const content =
 			options.replyContent ??
-			JSON.stringify({ reply: replyText, introduce, sendFiles });
+			JSON.stringify({ reply: replyText, introduce, sendFiles, flag });
 		return new Response(
 			JSON.stringify({ choices: [{ message: { content } }] }),
 			{ status: 200 },

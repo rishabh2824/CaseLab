@@ -135,8 +135,8 @@ const delayId = $derived(fieldDomId(delayPath));
 	</div>
 
 	<FormField
-		label="What this persona knows"
-		help="Private to this persona. It can only answer from this and the case brief and background; for anything else it says it doesn't know."
+		label="Persona instructions"
+		help="Private to this persona. Write who they are, what they know, what they reveal and when, and how they respond. They can only answer from this and the case brief and background; for anything else they say they don't know."
 		id={factsId}
 		required
 		error={errorFor(factsPath)}
@@ -147,7 +147,7 @@ const delayId = $derived(fieldDomId(delayPath));
 				id={factsId}
 				rows="3"
 				required
-				placeholder="e.g. Approved the Q3 budget. Thinks the vendor contract is overpriced."
+				placeholder="e.g. You are Mary Chen, the CFO. You approved the Q3 budget and think the vendor contract is overpriced. Mention the contract only if asked about vendors."
 				bind:value={persona.knownFacts}
 				class={INPUT_CLASS}
 			></textarea>

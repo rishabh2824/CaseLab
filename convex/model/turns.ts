@@ -4,6 +4,7 @@ import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
 import { elapsedMinutes, personaAvailability } from "../shared/availability";
 import { appError, ERROR_CODE } from "../shared/errors";
 import { countWords, MAX_MESSAGE_WORDS } from "../shared/rules";
+import type { FlagReason } from "../shared/validators";
 import { flaggedCounts, flagReply, isChatEnded } from "./flags";
 import { LLM_ATTEMPT_TIMEOUT_MS, PERSONA_REPLY_RETRIES } from "./llm";
 import { flattenPersonas } from "./personaGraph";
@@ -168,20 +169,23 @@ export async function failPendingTurn(
 	await ctx.db.patch("turns", turnId, { status: "failed" });
 }
 
-// Flags a pending turn and answers it with a warning, or a chat-ending reply once the persona has flagged enough messages.
+// Flags a pending turn and answers it with a warning, or a chat-ending reply once the persona has flagged enough abusive messages.
 export async function flagPendingTurn(
 	ctx: MutationCtx,
 	turnId: Id<"turns">,
 	personaName: string,
+	reason: FlagReason,
 ): Promise<void> {
 	const turn = await pendingTurn(ctx, turnId);
 	if (!turn) return;
 
 	const previous =
 		(await flaggedCounts(ctx, turn.runId)).get(turn.personaId) ?? 0;
+	const ends = reason === "abuse" && isChatEnded(previous + 1);
 	await ctx.db.patch("turns", turnId, {
-		reply: flagReply(personaName, isChatEnded(previous + 1)),
+		reply: flagReply(personaName, ends),
 		status: "flagged",
+		flagReason: reason,
 	});
 }
 

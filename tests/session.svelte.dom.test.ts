@@ -3,18 +3,23 @@ import { session } from "../src/lib/session.svelte.js";
 
 const STORAGE_KEY = "caseLabSession";
 
-describe("session restore (observed through a fresh module load)", () => {
-	beforeEach(() => {
-		vi.resetModules();
-	});
+// The session module as a new instance: the browser caches modules by URL, so a different fragment makes it load (and read sessionStorage) again.
+async function freshSessionModule(): Promise<
+	typeof import("../src/lib/session.svelte.js")
+> {
+	const url = new URL("../src/lib/session.svelte.ts", import.meta.url);
+	url.hash = `fresh-${Math.random()}`;
+	return await import(/* @vite-ignore */ url.href);
+}
 
+describe("session restore (observed through a fresh module load)", () => {
 	// Tests that a stored session is restored.
 	it("restores the session this tab stored", async () => {
 		sessionStorage.setItem(
 			STORAGE_KEY,
 			JSON.stringify({ runId: "r", startTime: 555, activePersonaId: "bob" }),
 		);
-		const { session: fresh } = await import("../src/lib/session.svelte.js");
+		const { session: fresh } = await freshSessionModule();
 		expect(fresh.runId).toBe("r");
 		expect(fresh.startTime).toBe(555);
 		expect(fresh.activePersonaId).toBe("bob");

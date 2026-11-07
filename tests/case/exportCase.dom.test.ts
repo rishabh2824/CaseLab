@@ -1,5 +1,4 @@
-import { JSDOM } from "jsdom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildHTMLForm, downloadForm } from "../../src/lib/case/exportCase.js";
 import { makePersona, makeReferral } from "../support/factories.js";
 
@@ -110,28 +109,39 @@ describe("buildHTMLForm", () => {
 });
 
 describe("buildHTMLForm's embedded script", () => {
-	function loadInteractive(html: string): JSDOM {
-		const dom = new JSDOM(html, { runScripts: "dangerously" });
-		let counter = 0;
-		Object.defineProperty(dom.window.crypto, "randomUUID", {
-			configurable: true,
-			value: () =>
-				`00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`,
-		});
-		return dom;
+	const frames: HTMLIFrameElement[] = [];
+
+	afterEach(() => {
+		for (const frame of frames.splice(0)) frame.remove();
+	});
+
+	// Opens the exported form the way a user would, as a page of its own whose scripts run, and waits for it to load. The sandbox keeps it from touching anything outside its frame.
+	async function loadInteractive(
+		html: string,
+	): Promise<{ doc: Document; win: Window & { __pwned?: number } }> {
+		const frame = document.createElement("iframe");
+		frame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+		frames.push(frame);
+		const loaded = new Promise<void>((resolve) =>
+			frame.addEventListener("load", () => resolve(), { once: true }),
+		);
+		frame.srcdoc = html;
+		document.body.append(frame);
+		await loaded;
+		return {
+			doc: frame.contentDocument as Document,
+			win: frame.contentWindow as Window & { __pwned?: number },
+		};
 	}
 
+	// Clicks like a user would, running the page's own handlers.
 	function click(el: Element | null): void {
-		el?.dispatchEvent(
-			new (el.ownerDocument.defaultView as typeof window).MouseEvent("click", {
-				bubbles: true,
-			}),
-		);
+		(el as HTMLElement | null)?.click();
 	}
 
 	// Tests that a persona added in the exported form's script gets a UUID id.
-	it("mints a UUID for a newly-added persona, not a sequential id", () => {
-		const dom = loadInteractive(
+	it("mints a UUID for a newly-added persona, not a sequential id", async () => {
+		const { doc } = await loadInteractive(
 			buildHTMLForm({
 				name: "Case",
 				accessCode: "ABC",
@@ -140,7 +150,6 @@ describe("buildHTMLForm's embedded script", () => {
 				commonInformation: "",
 			}),
 		);
-		const doc = dom.window.document;
 		const before = new Set(
 			Array.from(doc.querySelectorAll("[data-persona-id]")).map((el) =>
 				el.getAttribute("data-persona-id"),
@@ -154,15 +163,21 @@ describe("buildHTMLForm's embedded script", () => {
 		);
 		expect(after).toHaveLength(before.size + 1);
 		const newId = after.find((id) => id && !before.has(id));
-		expect(newId).toMatch(/^[0-9a-f-]{36}$/i);
+		expect(newId).toMatch(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i);
+
+		click(doc.getElementById("add-persona-btn"));
+		const ids = Array.from(doc.querySelectorAll("[data-persona-id]")).map(
+			(el) => el.getAttribute("data-persona-id"),
+		);
+		expect(new Set(ids).size).toBe(ids.length);
 	});
 
 	// Tests that removing a persona in the exported form also removes its exclusive descendants.
-	it("cascade-removes a persona's exclusive descendants, matching graph.svelte.ts's removeSubtree", () => {
+	it("cascade-removes a persona's exclusive descendants, matching graph.svelte.ts's removeSubtree", async () => {
 		const a = makePersona();
 		const b = makePersona();
 		const c = makePersona();
-		const dom = loadInteractive(
+		const { doc } = await loadInteractive(
 			buildHTMLForm({
 				name: "Case",
 				accessCode: "ABC",
@@ -173,7 +188,6 @@ describe("buildHTMLForm's embedded script", () => {
 				referrals: [makeReferral(a.id, b.id), makeReferral(b.id, c.id)],
 			}),
 		);
-		const doc = dom.window.document;
 
 		click(
 			doc.querySelector(
@@ -188,11 +202,11 @@ describe("buildHTMLForm's embedded script", () => {
 	});
 
 	// Tests that removing a referral removes the target persona only once no other path reaches it.
-	it("removing a referral cascade-removes the target only once it has no other path from a root", () => {
+	it("removing a referral cascade-removes the target only once it has no other path from a root", async () => {
 		const a = makePersona();
 		const d = makePersona();
 		const c = makePersona();
-		const dom = loadInteractive(
+		const { doc } = await loadInteractive(
 			buildHTMLForm({
 				name: "Case",
 				accessCode: "ABC",
@@ -203,7 +217,6 @@ describe("buildHTMLForm's embedded script", () => {
 				referrals: [makeReferral(a.id, c.id), makeReferral(d.id, c.id)],
 			}),
 		);
-		const doc = dom.window.document;
 		const rows = () => doc.querySelectorAll(".referral-row");
 
 		click(rows()[0]?.querySelector('[data-action="remove-referral"]') ?? null);
@@ -217,10 +230,10 @@ describe("buildHTMLForm's embedded script", () => {
 	});
 
 	// Tests that a malicious fixed-root persona id stays inert data inside the inline script.
-	it("keeps a dangerous fixed-root persona id inert as string data, not markup, in the inline script", () => {
+	it("keeps a dangerous fixed-root persona id inert as string data, not markup, in the inline script", async () => {
 		const dangerousId = "</script><script>window.__pwned=1</script>";
 		const persona = makePersona({ id: dangerousId });
-		const dom = loadInteractive(
+		const { doc, win } = await loadInteractive(
 			buildHTMLForm({
 				name: "Case",
 				accessCode: "ABC",
@@ -231,14 +244,15 @@ describe("buildHTMLForm's embedded script", () => {
 				referrals: [],
 			}),
 		);
-		expect(
-			(dom.window as unknown as { __pwned?: number }).__pwned,
-		).toBeUndefined();
+		expect(win.__pwned).toBeUndefined();
+		// Positive control: the page's own script did run, so the check above means something.
+		click(doc.getElementById("add-persona-btn"));
+		expect(doc.querySelectorAll(".persona-card")).toHaveLength(2);
 	});
 
 	// Tests that the referral dropdowns list the new persona after one is added.
-	it("refreshes referral dropdown options after a persona is added", () => {
-		const dom = loadInteractive(
+	it("refreshes referral dropdown options after a persona is added", async () => {
+		const { doc } = await loadInteractive(
 			buildHTMLForm({
 				name: "Case",
 				accessCode: "ABC",
@@ -247,7 +261,6 @@ describe("buildHTMLForm's embedded script", () => {
 				commonInformation: "",
 			}),
 		);
-		const doc = dom.window.document;
 
 		click(doc.getElementById("add-persona-btn"));
 
@@ -258,13 +271,21 @@ describe("buildHTMLForm's embedded script", () => {
 		const personaIds = Array.from(
 			doc.querySelectorAll("[data-persona-id]"),
 		).map((el) => el.getAttribute("data-persona-id"));
+		// The scaffold has two personas, so a third proves the click ran the page's script.
+		expect(personaIds).toHaveLength(3);
 		expect(optionValues.sort()).toEqual([...personaIds].sort());
 	});
 });
 
 describe("downloadForm", () => {
+	beforeEach(() => {
+		// A real click on the link would start a download in the test browser.
+		vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+	});
+
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
 	// Tests that downloadForm always names the file 'export case.html'.

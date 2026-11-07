@@ -17,7 +17,7 @@ test("an admin creates a case in the form and a student can then open it", async
 	await page.getByLabel("Persona name").fill("Sam Rivera");
 	await page.getByLabel("Title/Role").fill("Operations Lead");
 	await page
-		.getByLabel("What this persona knows")
+		.getByLabel("Persona instructions")
 		.fill("Runs the Riverside plant.");
 	await page.getByRole("button", { name: "Save case" }).click();
 	await expect(page.getByText("Case saved successfully.")).toBeVisible();

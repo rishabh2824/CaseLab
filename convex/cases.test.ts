@@ -344,3 +344,32 @@ describe("cases.listAll", () => {
 		]);
 	});
 });
+
+describe("a case that no longer exists", () => {
+	// Tests that opening, saving over or deleting a deleted case each fail with a clear message instead of a crash.
+	it("is refused by getForEdit, update and deleteCase with 'Case not found.'", async () => {
+		const t = newTestConvex();
+		const { asUser, adminId } = await withAdmin(t);
+		const caseId = await seedCase(t, adminId);
+		await t.run((ctx) => ctx.db.delete("cases", caseId));
+
+		await expect(
+			asUser.query(api.cases.getForEdit, { caseId }),
+		).rejects.toThrow("Case not found.");
+		await expect(
+			asUser.mutation(api.cases.update, {
+				caseId,
+				name: "Renamed",
+				brief: "Brief",
+				commonInformation: "",
+				accessCode: uniqueAccessCode(),
+				structure: { personas: [personaPayload("A")], referrals: [] },
+				collaborators: [],
+			}),
+		).rejects.toThrow("Case not found.");
+		await expect(
+			asUser.mutation(api.cases.deleteCase, { caseId }),
+		).rejects.toThrow("Case not found.");
+		expect(await t.run((ctx) => ctx.db.get("cases", caseId))).toBeNull();
+	});
+});

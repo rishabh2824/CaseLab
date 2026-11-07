@@ -47,6 +47,12 @@ export const caseStructureValidator = v.object({
 	referrals: v.array(referralEdgeValidator),
 });
 
+export const flagReasonValidator = v.union(
+	v.literal("abuse"),
+	v.literal("gibberish"),
+);
+
+export type FlagReason = Infer<typeof flagReasonValidator>;
 export type FileRefPayload = Infer<typeof fileRefValidator>;
 export type FileEntryPayload = Infer<typeof fileEntryValidator>;
 export type PersonaPayload = Infer<typeof personaPayloadValidator>;

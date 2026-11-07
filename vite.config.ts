@@ -1,6 +1,7 @@
 import adapter from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
+import { playwright } from "@vitest/browser-playwright";
 import { defineConfig } from "vitest/config";
 
 // The live end-to-end build must not overwrite build/, the folder that gets deployed.
@@ -70,16 +71,27 @@ export default defineConfig({
 			},
 			{
 				extends: "./vite.config.ts",
-				resolve: { conditions: ["browser"] },
+				// Scanned up front: if Vite finds a dependency mid-run it re-bundles and reloads the page, and the test file being imported fails. Scanning every test and component finds them all before the first test runs.
+				optimizeDeps: {
+					entries: ["tests/**/*.{svelte,dom}.test.ts", "src/**/*.svelte"],
+					include: ["fast-check"],
+				},
 				test: {
-					name: "client",
-					environment: "jsdom",
+					name: "browser",
 					clearMocks: true,
 					include: [
 						"tests/**/*.svelte.{test,spec}.{js,ts}",
 						"tests/**/*.dom.{test,spec}.{js,ts}",
 					],
-					setupFiles: ["./tests/support/setup.client.ts"],
+					setupFiles: ["./tests/support/setup.browser.ts"],
+					browser: {
+						enabled: true,
+						headless: true,
+						// A desktop-sized page: the default is phone-sized, which would show the mobile layout.
+						viewport: { width: 1280, height: 800 },
+						provider: playwright(),
+						instances: [{ browser: "chromium" }],
+					},
 				},
 			},
 			"./convex/vitest.config.ts",

@@ -2,16 +2,9 @@ import { env } from "../_generated/server";
 
 const DEFAULT_LLM_BASE_URL = "https://openrouter.ai/api/v1";
 const LLM_MODEL = "anthropic/claude-sonnet-5.5";
-const LLM_CLASSIFIER_MODEL = "anthropic/claude-haiku-5.5";
 
 export const LLM_ATTEMPT_TIMEOUT_MS = 10_000;
-const CLASSIFIER_TIMEOUT_MS = 6_000;
 export const PERSONA_REPLY_RETRIES = 2;
-
-export type TranscriptMessage = {
-	role: "user" | "assistant";
-	content: string;
-};
 
 export type ChatMessage = {
 	role: "system" | "user" | "assistant";
@@ -63,8 +56,14 @@ export const PERSONA_REPLY_SCHEMA = {
 			items: { type: "string" },
 			description: "File handles sent with this reply.",
 		},
+		flag: {
+			type: "string",
+			enum: ["none", "abuse", "gibberish"],
+			description:
+				"Whether the student's latest message is abuse or gibberish.",
+		},
 	},
-	required: ["reply", "introduce", "sendFiles"],
+	required: ["reply", "introduce", "sendFiles", "flag"],
 	additionalProperties: false,
 };
 
@@ -72,6 +71,7 @@ export type PersonaReply = {
 	reply: string;
 	introduce: string[];
 	sendFiles: string[];
+	flag: "none" | "abuse" | "gibberish";
 };
 
 // Generates a persona's reply as strict JSON, retrying a failed or truncated attempt.
@@ -96,7 +96,6 @@ export async function generatePersonaReply(
 			...history,
 		],
 		max_tokens: 1000,
-		temperature: 0.4,
 		response_format: {
 			type: "json_schema",
 			json_schema: {
@@ -121,68 +120,4 @@ export async function generatePersonaReply(
 }
 
 // How many recent turns (a student message and its reply) reach the model.
-export const RECENT_HISTORY_LIMIT = 5;
-
-// Formats the conversation, already limited to the recent turns, as 'role: content' lines.
-function formatTranscript(conversation: TranscriptMessage[]): string {
-	const lines = conversation.map(
-		(message) => `${message.role}: ${message.content}`,
-	);
-	return lines.length > 0 ? lines.join("\n") : "No conversation yet.";
-}
-
-export type MessageLabel = "ok" | "flagged";
-
-const CLASSIFIER_SCHEMA = {
-	type: "object",
-	properties: { label: { type: "string", enum: ["ok", "flagged"] } },
-	required: ["label"],
-	additionalProperties: false,
-};
-
-// Classifies the latest student message as ok or flagged (spam, gibberish or abuse), defaulting to ok if the call fails.
-export async function classifyMessage(
-	userMessage: string,
-	conversation: TranscriptMessage[],
-): Promise<MessageLabel> {
-	const transcript = formatTranscript(conversation);
-	const systemPrompt =
-		"You are a strict conversation safety classifier for a case simulation. " +
-		"Classify the latest user message in context as ok or flagged.\n" +
-		"Use flagged for spam, gibberish, or repeatedly incoherent case-irrelevant " +
-		"input, AND for rude, insulting, harassing, or abusive messages, including " +
-		"explicit threats or severe abuse — anything that isn't a normal, coherent, " +
-		"case-related message.\n" +
-		"Otherwise use ok.";
-	const userPrompt = `Recent conversation:\n${transcript}\n\nLatest user message:\n${userMessage}`;
-
-	try {
-		const raw = await chatCompletion(
-			{
-				model: LLM_CLASSIFIER_MODEL,
-				messages: [
-					{ role: "system", content: systemPrompt },
-					{ role: "user", content: userPrompt },
-				],
-				temperature: 0,
-				max_tokens: 50,
-				response_format: {
-					type: "json_schema",
-					json_schema: {
-						name: "classification",
-						strict: true,
-						schema: CLASSIFIER_SCHEMA,
-					},
-				},
-			},
-			CLASSIFIER_TIMEOUT_MS,
-		);
-		// Anything but an explicit "flagged" counts as ok, so a malformed answer can never flag a student.
-		return (JSON.parse(raw) as { label?: string }).label === "flagged"
-			? "flagged"
-			: "ok";
-	} catch (err) {
-		console.warn("Message classifier failed; treating the message as ok", err);
-		return "ok";
-	}
-}
+export const RECENT_HISTORY_LIMIT = 10;

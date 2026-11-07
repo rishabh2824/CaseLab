@@ -14,6 +14,7 @@ import {
 	replyToTurn,
 	sendMessage as sendStudentMessage,
 } from "./model/turns";
+import { flagReasonValidator } from "./shared/validators";
 
 // Saves a student message as a pending turn and starts generating the reply.
 export const sendMessage = mutation({
@@ -44,9 +45,13 @@ export const failTurn = internalMutation({
 
 // Flags a pending turn and answers it with a warning or a chat-ending reply.
 export const applyFlag = internalMutation({
-	args: { turnId: v.id("turns"), personaName: v.string() },
-	handler: async (ctx, { turnId, personaName }): Promise<void> =>
-		flagPendingTurn(ctx, turnId, personaName),
+	args: {
+		turnId: v.id("turns"),
+		personaName: v.string(),
+		reason: flagReasonValidator,
+	},
+	handler: async (ctx, { turnId, personaName, reason }): Promise<void> =>
+		flagPendingTurn(ctx, turnId, personaName, reason),
 });
 
 // Saves the finished reply, unlocks the introduced personas and records shared files.

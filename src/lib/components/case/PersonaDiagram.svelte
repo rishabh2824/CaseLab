@@ -88,6 +88,7 @@ const shapeKey = $derived(`${graph.personas.length}:${graph.referrals.length}`);
 			{nodeTypes}
 			fitView
 			fitViewOptions={{ maxZoom: 1 }}
+			proOptions={{ hideAttribution: true }}
 			zoomOnScroll={false}
 			preventScrolling={false}
 			nodesDraggable={false}

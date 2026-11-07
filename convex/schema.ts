@@ -5,6 +5,7 @@ import {
 	caseStructureValidator,
 	collaboratorAccessValidator,
 	fileRefValidator,
+	flagReasonValidator,
 } from "./shared/validators";
 
 export default defineSchema({
@@ -67,6 +68,8 @@ export default defineSchema({
 			v.literal("failed"),
 			v.literal("flagged"),
 		),
+		// Why a flagged turn was flagged. Only abuse counts toward ending the chat; older flagged turns without it count as abuse.
+		flagReason: v.optional(flagReasonValidator),
 	})
 		.index("by_run_persona", ["runId", "personaId"])
 		.index("by_run_status", ["runId", "status"]),

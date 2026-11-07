@@ -161,7 +161,7 @@ export function getCaseIssues({
 		if (!persona.knownFacts.trim()) {
 			add(
 				personaPath(persona.id, "knownFacts"),
-				`Add what ${label} knows. Personas can only answer from these facts.`,
+				`Add instructions for ${label}. Personas can only answer from these, the brief and the background.`,
 			);
 		}
 		if (

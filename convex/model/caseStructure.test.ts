@@ -16,6 +16,17 @@ describe("trimStructure", () => {
 		);
 		expect(structure.personas[0]).toMatchObject({ name: "Mary", role: "CFO" });
 	});
+
+	// Tests that referral conditions are trimmed.
+	it("trims referral conditions", () => {
+		const structure = trimStructure(
+			caseStructure({
+				personas: [personaPayload("A"), personaPayload("B")],
+				referrals: [referralEdge("A", "B", "  after 2 responses \n ")],
+			}),
+		);
+		expect(structure.referrals[0]!.conditions).toBe("after 2 responses");
+	});
 });
 
 describe("validateGraph", () => {

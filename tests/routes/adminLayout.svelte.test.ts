@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
-import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
 import { createRawSnippet } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
+import { render } from "vitest-browser-svelte";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
 import { goto } from "$app/navigation";
@@ -45,6 +45,9 @@ const children = createRawSnippet(() => ({
 	render: () => "<p>admin content</p>",
 }));
 
+// The address the test page started on, put back after every test because these tests change it.
+const originalUrl = window.location.href;
+
 // Sets the query string the layout reads once when it is created.
 function setSearch(search: string) {
 	window.history.replaceState({}, "", `/admin${search}`);
@@ -60,55 +63,57 @@ beforeEach(() => {
 
 afterEach(() => {
 	vi.useRealTimers();
-	setSearch("");
+	window.history.replaceState({}, "", originalUrl);
 });
 
 describe("admin layout sign-in", () => {
 	// Tests that an anonymous visitor is sent straight into the Google flow with the right callbacks.
-	it("starts Google sign-in for an anonymous visitor", () => {
-		render(AdminLayout, { props: { children } });
+	it("starts Google sign-in for an anonymous visitor", async () => {
+		await render(AdminLayout, { children });
 		expect(mockSocial).toHaveBeenCalledOnce();
 		expect(mockSocial).toHaveBeenCalledWith({
 			provider: "google",
 			callbackURL: "/admin",
 			errorCallbackURL: "/admin?error=unauthorized",
 		});
-		expect(screen.queryByText("admin content")).toBeNull();
+		await expect
+			.element(page.getByText("admin content"))
+			.not.toBeInTheDocument();
 	});
 
 	// Tests that sign-in waits until the auth state has loaded.
-	it("does not sign in while auth is still loading", () => {
+	it("does not sign in while auth is still loading", async () => {
 		auth.isLoading = true;
-		render(AdminLayout, { props: { children } });
+		await render(AdminLayout, { children });
 		expect(mockSocial).not.toHaveBeenCalled();
 	});
 
 	// Tests that an already signed-in visitor is not sent through Google again.
-	it("does not sign in when already authenticated", () => {
+	it("does not sign in when already authenticated", async () => {
 		auth.isAuthenticated = true;
 		setViewer({ data: viewerAs("admin") });
-		render(AdminLayout, { props: { children } });
+		await render(AdminLayout, { children });
 		expect(mockSocial).not.toHaveBeenCalled();
 	});
 
 	// Tests that a rejected account sees the refusal instead of looping back into Google.
-	it("shows the unauthorized message and does not retry sign-in", () => {
+	it("shows the unauthorized message and does not retry sign-in", async () => {
 		setSearch("?error=unauthorized");
-		render(AdminLayout, { props: { children } });
-		expect(
-			screen.getByText("Your account is not authorized."),
-		).toBeInTheDocument();
-		expect(
-			screen.getByRole("link", { name: "Back to the landing page" }),
-		).toHaveAttribute("href", "/");
+		await render(AdminLayout, { children });
+		await expect
+			.element(page.getByText("Your account is not authorized."))
+			.toBeVisible();
+		await expect
+			.element(page.getByRole("link", { name: "Back to the landing page" }))
+			.toHaveAttribute("href", "/");
 		expect(mockSocial).not.toHaveBeenCalled();
 	});
 
 	// Tests that a one-time-token redirect gets a grace period before sign-in restarts.
 	it("waits out the one-time-token exchange before signing in", async () => {
-		vi.useFakeTimers();
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
 		setSearch("?ott=abc");
-		render(AdminLayout, { props: { children } });
+		await render(AdminLayout, { children });
 		expect(mockSocial).not.toHaveBeenCalled();
 		await vi.advanceTimersByTimeAsync(4000);
 		expect(mockSocial).toHaveBeenCalledOnce();
@@ -117,23 +122,22 @@ describe("admin layout sign-in", () => {
 	// Tests that a failed sign-in shows its message and can be retried.
 	it("shows a sign-in failure and retries on demand", async () => {
 		mockSocial.mockRejectedValueOnce(new Error("Popup blocked."));
-		const user = userEvent.setup();
-		render(AdminLayout, { props: { children } });
-		expect(await screen.findByText("Popup blocked.")).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Try again" }));
+		await render(AdminLayout, { children });
+		await expect.element(page.getByText("Popup blocked.")).toBeVisible();
+		await page.getByRole("button", { name: "Try again" }).click();
 		expect(mockSocial).toHaveBeenCalledTimes(2);
-		await waitFor(() =>
-			expect(screen.queryByText("Popup blocked.")).toBeNull(),
-		);
+		await expect
+			.element(page.getByText("Popup blocked."))
+			.not.toBeInTheDocument();
 	});
 
 	// Tests that a non-Error rejection still shows a readable message.
 	it("falls back to a generic message for a non-Error failure", async () => {
 		mockSocial.mockRejectedValueOnce("nope");
-		render(AdminLayout, { props: { children } });
-		expect(
-			await screen.findByText("Sign-in failed. Try again."),
-		).toBeInTheDocument();
+		await render(AdminLayout, { children });
+		await expect
+			.element(page.getByText("Sign-in failed. Try again."))
+			.toBeVisible();
 	});
 });
 
@@ -143,33 +147,40 @@ describe("admin layout viewer gate", () => {
 	});
 
 	// Tests that a loading placeholder shows, and no admin content, while the viewer query is loading.
-	it("shows a loading placeholder while the viewer is loading", () => {
+	it("shows a loading placeholder while the viewer is loading", async () => {
 		setViewer({ isLoading: true });
-		render(AdminLayout, { props: { children } });
-		expect(screen.getByRole("status")).toHaveTextContent("Loading");
-		expect(screen.queryByText("admin content")).toBeNull();
-		expect(screen.queryByText("Not authorized.")).toBeNull();
+		await render(AdminLayout, { children });
+		await expect
+			.element(page.getByRole("status"))
+			.toHaveTextContent("Loading…");
+		await expect
+			.element(page.getByText("admin content"))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByText("Not authorized."))
+			.not.toBeInTheDocument();
 	});
 
 	// Tests that a rostered admin gets the top bar and the page.
-	it("renders the top bar and the page for an admin", () => {
+	it("renders the top bar and the page for an admin", async () => {
 		setViewer({ data: viewerAs("admin") });
-		render(AdminLayout, { props: { children } });
-		expect(screen.getByText("admin content")).toBeInTheDocument();
-		expect(
-			screen.getByRole("link", { name: "Go to admin home" }),
-		).toBeInTheDocument();
+		await render(AdminLayout, { children });
+		await expect.element(page.getByText("admin content")).toBeVisible();
+		await expect
+			.element(page.getByRole("link", { name: "Go to admin home" }))
+			.toBeVisible();
 	});
 
 	// Tests that a signed-in user missing from the roster never sees admin content.
 	it("blocks a signed-in user who is not on the roster", async () => {
 		setViewer({ data: null });
-		const user = userEvent.setup();
-		render(AdminLayout, { props: { children } });
-		expect(screen.getByText("Not authorized.")).toBeInTheDocument();
-		expect(screen.queryByText("admin content")).toBeNull();
-		await user.click(screen.getByRole("button", { name: "Sign out" }));
-		await waitFor(() => expect(mockSignOut).toHaveBeenCalledOnce());
+		await render(AdminLayout, { children });
+		await expect.element(page.getByText("Not authorized.")).toBeVisible();
+		await expect
+			.element(page.getByText("admin content"))
+			.not.toBeInTheDocument();
+		await page.getByRole("button", { name: "Sign out" }).click();
+		await vi.waitFor(() => expect(mockSignOut).toHaveBeenCalledOnce());
 		expect(goto).toHaveBeenCalledWith("/");
 		expect(vi.mocked(goto).mock.invocationCallOrder[0]).toBeLessThan(
 			mockSignOut.mock.invocationCallOrder[0] as number,
@@ -177,15 +188,21 @@ describe("admin layout viewer gate", () => {
 	});
 
 	// Tests that a viewer query failure shows a safe message and a reload button.
-	it("shows a friendly error with a reload button when the viewer query fails", () => {
+	it("shows a friendly error with a reload button when the viewer query fails", async () => {
 		setViewer({
 			error: clientServerError(getFunctionName(api.admins.viewer), "Q"),
 		});
-		render(AdminLayout, { props: { children } });
-		expect(
-			screen.getByText("Something went wrong loading your admin account."),
-		).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Reload" })).toBeInTheDocument();
-		expect(screen.queryByText("admin content")).toBeNull();
+		await render(AdminLayout, { children });
+		await expect
+			.element(
+				page.getByText("Something went wrong loading your admin account."),
+			)
+			.toBeVisible();
+		await expect
+			.element(page.getByRole("button", { name: "Reload" }))
+			.toBeVisible();
+		await expect
+			.element(page.getByText("admin content"))
+			.not.toBeInTheDocument();
 	});
 });

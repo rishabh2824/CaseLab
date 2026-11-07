@@ -77,3 +77,38 @@ test("a reloaded page resumes the same run", async ({ page, seedCase }) => {
 	await expect(page.getByText("What vendor do we use?")).toBeVisible();
 	await expect(page.getByText("Our vendor is Acme Supplies.")).toBeVisible();
 });
+
+test("a persona with a response delay holds the reply back, even across a reload", async ({
+	page,
+	seedCase,
+}) => {
+	const delayMs = 4_000;
+	const { accessCode } = await seedCase({
+		responseDelaySeconds: delayMs / 1000,
+	});
+
+	await page.goto("/");
+	await page.getByPlaceholder("Enter access code").fill(accessCode);
+	await page.getByRole("button", { name: "Open Case" }).click();
+	await expect(page).toHaveURL(/\/student$/);
+
+	await page
+		.getByPlaceholder("Type your message...")
+		.fill("What vendor do we use?");
+	const sentAt = Date.now();
+	await page.getByRole("button", { name: "Send" }).click();
+
+	const reply = page.getByText("Our vendor is Acme Supplies.");
+	await expect(page.getByRole("status", { name: "Sending" })).toBeVisible();
+	await expect(reply).toBeHidden();
+
+	// The wait survives a reload: the ring comes back and the reply still lands on time.
+	await page.reload();
+	await expect(page.getByText("What vendor do we use?")).toBeVisible();
+	await expect(page.getByRole("status", { name: "Sending" })).toBeVisible();
+
+	await expect(reply).toBeVisible({ timeout: delayMs + 10_000 });
+	expect(Date.now() - sentAt).toBeGreaterThanOrEqual(delayMs);
+	await expect(page.getByRole("status", { name: "Sending" })).toBeHidden();
+	await expect(page.getByPlaceholder("Type your message...")).toBeEnabled();
+});

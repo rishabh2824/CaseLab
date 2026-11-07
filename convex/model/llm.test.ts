@@ -1,10 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TranscriptMessage } from "./llm";
-import {
-	classifyMessage,
-	generatePersonaReply,
-	PERSONA_REPLY_RETRIES,
-} from "./llm";
+import { generatePersonaReply, PERSONA_REPLY_RETRIES } from "./llm";
 
 // Builds a non-streaming chat-completions Response carrying the given content.
 function jsonResponse(content: string, status = 200): Response {
@@ -13,121 +8,23 @@ function jsonResponse(content: string, status = 200): Response {
 	});
 }
 
-// Builds the JSON text the classifier is constrained to return.
-function label(value: string): string {
-	return JSON.stringify({ label: value });
-}
-
-const REPLY = { reply: "Hi", introduce: ["R1"], sendFiles: [] as string[] };
+const REPLY = {
+	reply: "Hi",
+	introduce: ["R1"],
+	sendFiles: [] as string[],
+	flag: "none",
+};
 const REPLY_JSON = JSON.stringify(REPLY);
 const SYSTEM_PROMPT = { cacheable: "cacheable part", dynamic: "dynamic part" };
 
 beforeEach(() => {
 	vi.stubEnv("LLM_KEY", "test-key");
-	vi.spyOn(console, "warn").mockImplementation(() => {});
 });
 
 afterEach(() => {
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
-});
-
-describe("classifyMessage (fail-open contract)", () => {
-	// Tests that the classifier returns the flagged label.
-	it("labels flagged", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(jsonResponse(label("flagged"))),
-		);
-		expect(await classifyMessage("asdkjh", [])).toBe("flagged");
-	});
-
-	// Tests that the classifier returns the ok label.
-	it("labels ok", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(jsonResponse(label("ok"))),
-		);
-		expect(await classifyMessage("hi", [])).toBe("ok");
-	});
-
-	// Tests that an unexpected label never flags a student.
-	it("treats an unexpected label as ok", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(jsonResponse(label("banana"))),
-		);
-		expect(await classifyMessage("hi", [])).toBe("ok");
-	});
-
-	// Tests that an answer that isn't JSON falls back to ok.
-	it("falls back to ok when the answer is not JSON", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("FLAGGED")));
-		expect(await classifyMessage("hi", [])).toBe("ok");
-	});
-
-	// Tests that a failed classifier call falls back to ok so an outage never blocks a student.
-	it("falls back to ok when the classifier call itself fails -- an outage must never block a student", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockRejectedValue(new Error("upstream is down")),
-		);
-		expect(await classifyMessage("hi", [])).toBe("ok");
-	});
-
-	// Tests that an upstream error status falls back to ok.
-	it("falls back to ok on an upstream error status", async () => {
-		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse("", 503)));
-		expect(await classifyMessage("hi", [])).toBe("ok");
-	});
-
-	// Tests that a response with no choices falls back to ok.
-	it("falls back to ok when the response has no choices", async () => {
-		vi.stubGlobal(
-			"fetch",
-			vi.fn().mockResolvedValue(new Response(JSON.stringify({ choices: [] }))),
-		);
-		expect(await classifyMessage("hi", [])).toBe("ok");
-	});
-
-	// Tests that the request constrains the answer to the two labels through a strict JSON schema.
-	it("constrains the answer to the two labels with a strict JSON schema", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("ok")));
-		vi.stubGlobal("fetch", fetchMock);
-		await classifyMessage("hi", []);
-		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
-		expect(body.stream).toBeUndefined();
-		expect(body.response_format.json_schema).toMatchObject({
-			strict: true,
-			schema: {
-				properties: { label: { enum: ["ok", "flagged"] } },
-				required: ["label"],
-			},
-		});
-	});
-
-	// Tests that an empty conversation is formatted as a placeholder in the classifier prompt.
-	it("formats an empty conversation as a placeholder in the classifier prompt", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("ok")));
-		vi.stubGlobal("fetch", fetchMock);
-		await classifyMessage("hi", []);
-		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
-		expect(body.messages[1].content).toContain("No conversation yet.");
-	});
-
-	// Tests that conversation turns are formatted as 'role: content' lines.
-	it("formats conversation turns as 'role: content' lines", async () => {
-		const fetchMock = vi.fn().mockResolvedValue(jsonResponse(label("ok")));
-		vi.stubGlobal("fetch", fetchMock);
-		const conversation: TranscriptMessage[] = [
-			{ role: "user", content: "hi" },
-			{ role: "assistant", content: "hello" },
-		];
-		await classifyMessage("hi", conversation);
-		const body = JSON.parse(fetchMock.mock.calls[0]![1].body as string);
-		expect(body.messages[1].content).toContain("user: hi\nassistant: hello");
-	});
 });
 
 describe("generatePersonaReply", () => {

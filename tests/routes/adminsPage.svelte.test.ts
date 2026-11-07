@@ -1,8 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
-import userEvent from "@testing-library/user-event";
 import { getFunctionName } from "convex/server";
 import { toast } from "svelte-sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
+import { render } from "vitest-browser-svelte";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
 import { goto } from "$app/navigation";
@@ -34,10 +34,17 @@ const SUPER = {
 	role: "super" as const,
 };
 
-// Clicks the confirm button in the delete dialog, which comes after the row's own Delete button.
-async function confirmDialog(user: ReturnType<typeof userEvent.setup>) {
-	const buttons = await screen.findAllByRole("button", { name: "Delete" });
-	await user.click(buttons.at(-1) as HTMLElement);
+const emailBox = () => page.getByLabelText("Email");
+const nameBox = () => page.getByLabelText("Name");
+const roleBox = () => page.getByLabelText("Role");
+const addAdmin = () => page.getByRole("button", { name: "Add admin" });
+const rowDelete = () => page.getByRole("button", { name: "Delete" });
+
+// Opens the delete dialog for Ada and clicks its confirm button, the last Delete button on the page.
+async function confirmDelete() {
+	await rowDelete().click();
+	await expect.element(page.getByText("Delete a@wisc.edu?")).toBeVisible();
+	await rowDelete().last().click();
 }
 
 beforeEach(() => {
@@ -47,62 +54,66 @@ beforeEach(() => {
 
 describe("admins page access", () => {
 	// Tests that a non-super admin is bounced back to the admin home and sees nothing.
-	it("redirects a non-super admin to /admin", () => {
+	it("redirects a non-super admin to /admin", async () => {
 		viewer = { data: { role: "admin" }, isLoading: false };
-		render(AdminsPage);
+		await render(AdminsPage);
 		expect(goto).toHaveBeenCalledWith("/admin", { replaceState: true });
-		expect(screen.queryByText("Manage admins")).toBeNull();
+		await expect
+			.element(page.getByText("Manage admins"))
+			.not.toBeInTheDocument();
 	});
 
 	// Tests that nobody is redirected before the viewer has loaded.
-	it("does not redirect while the viewer is still loading", () => {
+	it("does not redirect while the viewer is still loading", async () => {
 		viewer = { data: undefined, isLoading: true };
-		render(AdminsPage);
+		await render(AdminsPage);
 		expect(goto).not.toHaveBeenCalled();
 	});
 
 	// Tests that a super admin sees the page.
-	it("shows the page to a super admin", () => {
-		render(AdminsPage);
+	it("shows the page to a super admin", async () => {
+		await render(AdminsPage);
 		expect(goto).not.toHaveBeenCalled();
-		expect(
-			screen.getByRole("heading", { name: "Manage admins" }),
-		).toBeInTheDocument();
+		await expect
+			.element(page.getByRole("heading", { name: "Manage admins" }))
+			.toBeVisible();
 	});
 });
 
 describe("admins list", () => {
 	// Tests that each row shows its details and only non-super admins can be deleted.
-	it("lists admins and offers delete only for non-super admins", () => {
-		render(AdminsPage);
-		expect(screen.getByText("a@wisc.edu")).toBeInTheDocument();
-		expect(screen.getByText("Ada")).toBeInTheDocument();
-		expect(
-			screen.getByRole("cell", { name: "Super Admin" }),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText("Super admins can't be deleted"),
-		).toBeInTheDocument();
-		expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(1);
+	it("lists admins and offers delete only for non-super admins", async () => {
+		await render(AdminsPage);
+		await expect.element(page.getByText("a@wisc.edu")).toBeVisible();
+		await expect.element(page.getByText("Ada")).toBeVisible();
+		await expect
+			.element(page.getByRole("cell", { name: "Super Admin" }))
+			.toBeVisible();
+		await expect
+			.element(page.getByText("Super admins can't be deleted"))
+			.toBeVisible();
+		expect(rowDelete().elements()).toHaveLength(1);
 	});
 
 	// Tests that loading, error and empty states each get their own message.
-	it("shows loading, error and empty states", () => {
+	it("shows loading, error and empty states", async () => {
 		convexFake.setQuery(api.admins.listAll, undefined, { isLoading: true });
-		const loading = render(AdminsPage);
-		expect(screen.getByText("Loading admins…")).toBeInTheDocument();
+		const loading = await render(AdminsPage);
+		await expect.element(page.getByText("Loading admins…")).toBeVisible();
 		loading.unmount();
 
 		convexFake.setQuery(api.admins.listAll, undefined, {
 			error: clientServerError(getFunctionName(api.admins.listAll), "Q"),
 		});
-		const failed = render(AdminsPage);
-		expect(screen.getByText("Failed to load admins.")).toBeInTheDocument();
+		const failed = await render(AdminsPage);
+		await expect
+			.element(page.getByText("Failed to load admins."))
+			.toBeVisible();
 		failed.unmount();
 
 		convexFake.setQueryData(api.admins.listAll, []);
-		render(AdminsPage);
-		expect(screen.getByText("No admins yet.")).toBeInTheDocument();
+		await render(AdminsPage);
+		await expect.element(page.getByText("No admins yet.")).toBeVisible();
 	});
 });
 
@@ -110,26 +121,27 @@ describe("adding an admin", () => {
 	// Tests that the form sends the typed values, then resets and confirms with the saved admin's email.
 	it("creates the admin, resets the form and toasts", async () => {
 		createAdmin.mockResolvedValue({ ...ADMIN, email: "new@wisc.edu" });
-		const user = userEvent.setup();
-		render(AdminsPage);
-		await user.type(screen.getByLabelText("Email"), "new@wisc.edu");
-		await user.type(screen.getByLabelText("Name"), "New Person");
-		await user.selectOptions(screen.getByLabelText("Role"), "super");
-		await user.click(screen.getByRole("button", { name: "Add admin" }));
+		await render(AdminsPage);
+		await emailBox().fill("new@wisc.edu");
+		await nameBox().fill("New Person");
+		await roleBox().selectOptions("super");
+		await addAdmin().click();
 
-		await waitFor(() =>
+		await vi.waitFor(() =>
 			expect(createAdmin).toHaveBeenCalledWith({
 				email: "new@wisc.edu",
 				name: "New Person",
 				role: "super",
 			}),
 		);
-		expect(toast).toHaveBeenCalledWith("Added new@wisc.edu.", {
-			duration: 4000,
-		});
-		expect(screen.getByLabelText("Email")).toHaveValue("");
-		expect(screen.getByLabelText("Name")).toHaveValue("");
-		expect(screen.getByLabelText("Role")).toHaveValue("admin");
+		await vi.waitFor(() =>
+			expect(toast).toHaveBeenCalledWith("Added new@wisc.edu.", {
+				duration: 4000,
+			}),
+		);
+		await expect.element(emailBox()).toHaveValue("");
+		await expect.element(nameBox()).toHaveValue("");
+		await expect.element(roleBox()).toHaveValue("admin");
 	});
 
 	// Tests that a server failure toasts a safe message and keeps the typed values.
@@ -137,61 +149,51 @@ describe("adding an admin", () => {
 		createAdmin.mockRejectedValue(
 			clientServerError(getFunctionName(api.admins.create)),
 		);
-		const user = userEvent.setup();
-		render(AdminsPage);
-		await user.type(screen.getByLabelText("Email"), "new@wisc.edu");
-		await user.type(screen.getByLabelText("Name"), "New Person");
-		await user.click(screen.getByRole("button", { name: "Add admin" }));
-		await waitFor(() =>
+		await render(AdminsPage);
+		await emailBox().fill("new@wisc.edu");
+		await nameBox().fill("New Person");
+		await addAdmin().click();
+		await vi.waitFor(() =>
 			expect(toast).toHaveBeenCalledWith("Failed to add admin."),
 		);
-		expect(screen.getByLabelText("Email")).toHaveValue("new@wisc.edu");
-		expect(screen.getByRole("button", { name: "Add admin" })).toBeEnabled();
+		await expect.element(emailBox()).toHaveValue("new@wisc.edu");
+		await expect.element(addAdmin()).toBeEnabled();
 	});
 });
 
 describe("deleting an admin", () => {
 	// Tests that delete asks for confirmation before calling the server.
 	it("confirms first, and cancelling deletes nothing", async () => {
-		const user = userEvent.setup();
-		render(AdminsPage);
-		await user.click(screen.getByRole("button", { name: "Delete" }));
-		expect(await screen.findByText("Delete a@wisc.edu?")).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: "Cancel" }));
-		await waitFor(() =>
-			expect(screen.queryByText("Delete a@wisc.edu?")).toBeNull(),
-		);
+		await render(AdminsPage);
+		await rowDelete().click();
+		await expect.element(page.getByText("Delete a@wisc.edu?")).toBeVisible();
+		await page.getByRole("button", { name: "Cancel" }).click();
+		await expect
+			.element(page.getByText("Delete a@wisc.edu?"))
+			.not.toBeInTheDocument();
 		expect(deleteAdmin).not.toHaveBeenCalled();
 	});
 
 	// Tests that the toast says how many cases were deleted along with the admin.
 	it("deletes and summarises the deleted cases", async () => {
 		deleteAdmin.mockResolvedValue({ casesDeleted: 2 });
-		const user = userEvent.setup();
-		render(AdminsPage);
-		await user.click(screen.getByRole("button", { name: "Delete" }));
-		await confirmDialog(user);
-		await waitFor(() =>
+		await render(AdminsPage);
+		await confirmDelete();
+		await vi.waitFor(() =>
 			expect(toast).toHaveBeenCalledWith(
 				"Deleted a@wisc.edu — 2 cases deleted.",
 				{ duration: 4000 },
 			),
 		);
-		expect(deleteAdmin).toHaveBeenCalledWith({
-			adminId: "a1",
-		});
+		expect(deleteAdmin).toHaveBeenCalledWith({ adminId: "a1" });
 	});
 
 	// Tests that a plain delete says only that the admin was deleted.
 	it("toasts a plain message when no cases were affected", async () => {
-		deleteAdmin.mockResolvedValue({
-			casesDeleted: 0,
-		});
-		const user = userEvent.setup();
-		render(AdminsPage);
-		await user.click(screen.getByRole("button", { name: "Delete" }));
-		await confirmDialog(user);
-		await waitFor(() =>
+		deleteAdmin.mockResolvedValue({ casesDeleted: 0 });
+		await render(AdminsPage);
+		await confirmDelete();
+		await vi.waitFor(() =>
 			expect(toast).toHaveBeenCalledWith("Deleted a@wisc.edu.", {
 				duration: 4000,
 			}),
@@ -203,13 +205,11 @@ describe("deleting an admin", () => {
 		deleteAdmin.mockRejectedValue(
 			clientServerError(getFunctionName(api.admins.deleteWithCascade)),
 		);
-		const user = userEvent.setup();
-		render(AdminsPage);
-		await user.click(screen.getByRole("button", { name: "Delete" }));
-		await confirmDialog(user);
-		await waitFor(() =>
+		await render(AdminsPage);
+		await confirmDelete();
+		await vi.waitFor(() =>
 			expect(toast).toHaveBeenCalledWith("Failed to delete admin."),
 		);
-		expect(screen.getByText("Delete a@wisc.edu?")).toBeInTheDocument();
+		await expect.element(page.getByText("Delete a@wisc.edu?")).toBeVisible();
 	});
 });

@@ -15,7 +15,7 @@ export function validateGraph(
 	if (problem) throw appError(ERROR_CODE.INVALID_CASE, problem);
 }
 
-// Trims the text a persona is shown by.
+// Trims the text a persona is shown by and each referral's condition.
 export function trimStructure({
 	personas,
 	referrals,
@@ -26,6 +26,9 @@ export function trimStructure({
 			name: persona.name.trim(),
 			role: persona.role.trim(),
 		})),
-		referrals,
+		referrals: referrals.map((referral) => ({
+			...referral,
+			conditions: referral.conditions.trim(),
+		})),
 	};
 }

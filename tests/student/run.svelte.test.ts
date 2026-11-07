@@ -796,3 +796,86 @@ describe("hostile and degenerate client-side send guards", () => {
 		});
 	});
 });
+
+describe("selection and notes fallbacks", () => {
+	// Tests that when every contact's window has closed, the first one is still opened so the student sees why they can't message.
+	it("opens the first contact when none is available any more", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(
+			run,
+			session,
+			{
+				contacts: [
+					makeContact({ id: "mary", availableAt: 0, availabilityDuration: 5 }),
+					makeContact({ id: "bob", availableAt: 0, availabilityDuration: 5 }),
+				],
+			},
+			Date.now() - 30 * 60_000,
+		);
+
+		await vi.waitFor(() => expect(run.activeContactId).toBe("mary"));
+		expect(run.activePersonaAvailable).toBe(false);
+	});
+
+	// Tests that a run with no contacts selects nothing and cannot send.
+	it("selects nothing when the run has no contacts", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session, { contacts: [] });
+
+		expect(run.activeContactId).toBeNull();
+		expect(run.activeContact).toBeNull();
+		await expect(run.sendMessage("hello")).resolves.toBe(false);
+		expect(sendMessage).not.toHaveBeenCalled();
+	});
+
+	// Tests that a later roster update keeps the contact the student is talking to.
+	it("keeps the open contact when the roster changes", async () => {
+		const { run, session } = await freshRun();
+		await primeRun(run, session, {
+			contacts: [makeContact({ id: "mary" }), makeContact({ id: "bob" })],
+		});
+		run.selectContact("bob");
+
+		setRunQuery(
+			{ runId: "run-1" },
+			{
+				data: makeRunState({
+					case: caseData,
+					contacts: [
+						makeContact({ id: "mary" }),
+						makeContact({ id: "bob" }),
+						makeContact({ id: "cy" }),
+					],
+				}),
+			},
+		);
+
+		await vi.waitFor(() => expect(run.contacts).toHaveLength(3));
+		expect(run.activeContactId).toBe("bob");
+	});
+
+	// Tests that without a run the notes start empty and are kept only in memory.
+	it("keeps notes in memory only when there is no run", () => {
+		const { run } = freshRun();
+
+		expect(run.notes).toBe("");
+		run.setNotes("scratch");
+
+		expect(run.notes).toBe("scratch");
+		const keys = Array.from({ length: sessionStorage.length }, (_, i) =>
+			sessionStorage.key(i),
+		);
+		expect(keys.filter((key) => key?.startsWith("caselab:notes:"))).toEqual([]);
+	});
+
+	// Tests that ending with no run still goes home without touching storage.
+	it("ends cleanly when there is no run", () => {
+		sessionStorage.setItem("unrelated", "kept");
+		const { run, goto } = freshRun();
+
+		run.endSimulation();
+
+		expect(goto).toHaveBeenCalledWith("/");
+		expect(sessionStorage.getItem("unrelated")).toBe("kept");
+	});
+});

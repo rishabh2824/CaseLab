@@ -24,11 +24,6 @@ import { TURN_EXPIRY_MS } from "./turns";
 const completion = (content: string) =>
 	JSON.stringify({ choices: [{ message: { content } }] });
 
-// Whether a fetch call is the persona reply request (as opposed to the classifier).
-const isReplyRequest = (init: RequestInit) =>
-	JSON.parse(init.body as string).response_format?.json_schema?.name ===
-	"persona_reply";
-
 type T = ReturnType<typeof newTestConvex>;
 
 beforeEach(() => {
@@ -258,7 +253,7 @@ describe("transport-level provider failures", () => {
 
 		await send(t, state.runId, "A", "hi");
 
-		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(2);
+		expect(calls).toHaveLength(2);
 		await expectTurnFailedCleanly(t, state.runId);
 	});
 
@@ -300,28 +295,13 @@ describe("transport-level provider failures", () => {
 	});
 });
 
-describe("the message classifier is a separate, fail-open dependency", () => {
-	// Tests that a normal reply is still produced when the classifier call fails.
-	it("still produces a normal reply when the classifier call itself fails", async () => {
-		const t = newTestConvex();
-		const { state } = await startRunWithCandidates(t);
-		stubLlm({
-			classifierThrows: new Error("classifier down"),
-			replyText: "All good.",
-		});
-
-		await send(t, state.runId, "A", "a perfectly normal question");
-
-		const history = await visibleMessages(t, state.runId, "A");
-		expect(history.at(-1)).toEqual({ role: "assistant", content: "All good." });
-	});
-
+describe("flagged turns", () => {
 	// Tests that a flagged turn's unlocks and shares are discarded along with its reply text.
 	it("discards a flagged turn's unlocks and shares, not just its reply text", async () => {
 		const t = newTestConvex();
 		const { state, storageId } = await startRunWithCandidates(t);
 		stubLlm({
-			label: "FLAGGED",
+			flag: "gibberish",
 			replyText: "Meet B and take the budget.",
 			introduce: ["R1"],
 			sendFiles: ["F1"],
@@ -360,10 +340,9 @@ describe("reply lifecycle", () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (url: string, init: RequestInit) => {
-				if (isReplyRequest(init))
-					await t.mutation(internal.runs.destroy, {
-						runId: state.runId,
-					});
+				await t.mutation(internal.runs.destroy, {
+					runId: state.runId,
+				});
 				return await fetch(url, init);
 			}),
 		);
@@ -379,8 +358,7 @@ describe("reply lifecycle", () => {
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (url: string, init: RequestInit) => {
-				const response = await fetch(url, init);
-				if (!isReplyRequest(init)) return response;
+				await fetch(url, init);
 				await new Promise((resolve) => setTimeout(resolve, 10));
 				return new Response(bodies[attempt++], { status: 200 });
 			}),
@@ -388,7 +366,9 @@ describe("reply lifecycle", () => {
 		return calls;
 	}
 	const envelope = (reply: string) =>
-		completion(JSON.stringify({ reply, introduce: [], sendFiles: [] }));
+		completion(
+			JSON.stringify({ reply, introduce: [], sendFiles: [], flag: "none" }),
+		);
 
 	// Tests that a failed attempt with no usable text is retried silently.
 	it("retries silently when the failed attempt produced no usable text", async () => {
@@ -401,7 +381,7 @@ describe("reply lifecycle", () => {
 
 		await send(t, state.runId, "A", "hi");
 
-		expect(calls.filter((c) => c.kind === "reply")).toHaveLength(2);
+		expect(calls).toHaveLength(2);
 		const history = await visibleMessages(t, state.runId, "A");
 		expect(history.map((m) => m.content)).toEqual(["hi", "Second try."]);
 	});
@@ -550,10 +530,52 @@ describe("a stuck reply is failed by expiry", () => {
 		await t.mutation(internal.turns.applyFlag, {
 			turnId,
 			personaName: "Persona A",
+			reason: "abuse",
 		});
 
 		const row = await t.run((ctx) => ctx.db.get("turns", turnId));
 		expect(row).toMatchObject({ status: "failed", reply: "" });
+	});
+
+	// Tests that an expiry firing just after the reply finished leaves the finished reply in the chat.
+	it("leaves a finished reply alone when the expiry fires after it", async () => {
+		const t = newTestConvex();
+		const state = await startRun(t);
+		stubLlm({ replyText: "made it" });
+		const turnId = await send(t, state.runId, "A", "first");
+
+		await t.mutation(internal.turns.failTurn, { turnId });
+
+		expect(await t.run((ctx) => ctx.db.get("turns", turnId))).toMatchObject({
+			status: "done",
+			reply: "made it",
+		});
+		expect(
+			(await visibleMessages(t, state.runId, "A")).map((m) => m.content),
+		).toEqual(["first", "made it"]);
+		const history = await t.query(api.runs.getPersonaHistory, {
+			runId: state.runId,
+			personaId: "A",
+		});
+		expect(history.failedMessage).toBeNull();
+	});
+
+	// Tests that an expiry firing after a flag leaves the flagged turn and its warning in place.
+	it("leaves a flagged turn alone when the expiry fires after it", async () => {
+		const t = newTestConvex();
+		const state = await startRun(t);
+		const turnId = await insertPendingReply(t, state.runId, "A", "first");
+		await t.mutation(internal.turns.applyFlag, {
+			turnId,
+			personaName: "Persona A",
+			reason: "abuse",
+		});
+		const flagged = await t.run((ctx) => ctx.db.get("turns", turnId));
+
+		await t.mutation(internal.turns.failTurn, { turnId });
+
+		expect(await t.run((ctx) => ctx.db.get("turns", turnId))).toEqual(flagged);
+		expect(flagged?.status).toBe("flagged");
 	});
 
 	// Tests that a reply that never finishes is failed on its own, so the composer cannot stay locked.

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { api, components } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { newTestConvex, withAdmin, withStranger } from "../test.setup";
+import {
+	makeAdmin,
+	newTestConvex,
+	withAdmin,
+	withStranger,
+} from "../test.setup";
 
 describe("requireCurrentAdmin / requireSuperAdmin (via api/admins.ts)", () => {
 	// Tests that an unauthenticated caller is rejected.
@@ -195,5 +200,33 @@ describe("deleteAdminWithCascade (via api/admins.ts:deleteWithCascade)", () => {
 			);
 			expect(rows.page).toHaveLength(0);
 		}
+	});
+
+	// Tests that an admin who was added to the roster but never signed in can still be deleted.
+	it("deletes an admin who never signed in", async () => {
+		const t = newTestConvex();
+		const { asUser } = await withAdmin(t, { role: "super" });
+		const neverSignedIn = await makeAdmin(t);
+
+		await expect(
+			asUser.mutation(api.admins.deleteWithCascade, {
+				adminId: neverSignedIn._id,
+			}),
+		).resolves.toEqual({ casesDeleted: 0 });
+		expect(
+			await t.run((ctx) => ctx.db.get("admins", neverSignedIn._id)),
+		).toBeNull();
+	});
+
+	// Tests that deleting an admin who is already gone fails clearly.
+	it("fails for an admin that no longer exists", async () => {
+		const t = newTestConvex();
+		const { asUser } = await withAdmin(t, { role: "super" });
+		const gone = await makeAdmin(t);
+		await t.run((ctx) => ctx.db.delete("admins", gone._id));
+
+		await expect(
+			asUser.mutation(api.admins.deleteWithCascade, { adminId: gone._id }),
+		).rejects.toThrow("Admin not found.");
 	});
 });

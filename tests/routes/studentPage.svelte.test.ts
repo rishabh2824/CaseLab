@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import userEvent from "@testing-library/user-event";
 import type { FunctionReturnType } from "convex/server";
 import { toast } from "svelte-sonner";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { page, userEvent } from "vitest/browser";
+import { render } from "vitest-browser-svelte";
 import { api } from "#convex/api.js";
 import type { Id } from "#convex/dataModel.js";
 import { MAX_MESSAGE_WORDS } from "#shared/rules.js";
@@ -109,6 +109,14 @@ vi.mock("../../src/lib/student/run.svelte.js", () => ({
 
 vi.mock("../../src/lib/download.js", () => ({ downloadBlob: vi.fn() }));
 
+const messageBox = () => page.getByPlaceholder("Type your message...");
+const sendButton = () => page.getByRole("button", { name: "Send" });
+const exportButton = () => page.getByRole("button", { name: "Export PDF" });
+
+// The page's own scroll calls, watched but left to run.
+let scrollTo: ReturnType<typeof vi.spyOn>;
+let scrollIntoView: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
 	run = new FakeRun();
 	run.contacts = [
@@ -116,38 +124,42 @@ beforeEach(() => {
 	];
 	vi.mocked(downloadBlob).mockReset();
 	session.startRun({ runId: "run-1", startTime: Date.now() });
-	Element.prototype.scrollIntoView = vi.fn();
-	Element.prototype.scrollTo = vi.fn();
+	scrollTo = vi.spyOn(Element.prototype, "scrollTo");
+	scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
+});
+
+afterEach(() => {
+	vi.restoreAllMocks();
 });
 
 describe("student page lifecycle", () => {
 	// Tests that the run store is initialised on mount.
-	it("initialises the run on mount", () => {
-		render(StudentPage);
+	it("initialises the run on mount", async () => {
+		await render(StudentPage);
 		expect(run.init).toHaveBeenCalledOnce();
 	});
 
 	// Tests that the case name and brief show once loaded, with placeholders before.
-	it("shows the case name and brief, or placeholders while loading", () => {
-		const loaded = render(StudentPage);
-		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
-		expect(screen.getByText("Reduce costs.")).toBeInTheDocument();
+	it("shows the case name and brief, or placeholders while loading", async () => {
+		const loaded = await render(StudentPage);
+		await expect.element(page.getByText("Sterling Industries")).toBeVisible();
+		await expect.element(page.getByText("Reduce costs.")).toBeVisible();
 		loaded.unmount();
 
 		run = new FakeRun();
 		run.caseData = null;
-		render(StudentPage);
-		expect(screen.getByText("Loading case…")).toBeInTheDocument();
-		expect(screen.getByText("Loading brief...")).toBeInTheDocument();
+		await render(StudentPage);
+		await expect.element(page.getByText("Loading case…")).toBeVisible();
+		await expect.element(page.getByText("Loading brief...")).toBeVisible();
 	});
 
 	// Tests that a load failure is announced.
-	it("shows a load error as an alert", () => {
+	it("shows a load error as an alert", async () => {
 		run.loadError = "Failed to load the simulation.";
-		render(StudentPage);
-		expect(screen.getByRole("alert")).toHaveTextContent(
-			"Failed to load the simulation.",
-		);
+		await render(StudentPage);
+		await expect
+			.element(page.getByRole("alert"))
+			.toHaveTextContent("Failed to load the simulation.");
 	});
 });
 
@@ -155,9 +167,8 @@ describe("contacts and files", () => {
 	// Tests that clicking an available contact selects them.
 	it("selects a contact when clicked", async () => {
 		run.contacts.push(makeDisplayContact({ id: "zed", name: "Zed Ito" }));
-		const user = userEvent.setup();
-		render(StudentPage);
-		await user.click(screen.getByRole("button", { name: /Zed Ito/ }));
+		await render(StudentPage);
+		await page.getByRole("button", { name: /Zed Ito/ }).click();
 		expect(run.selectContact).toHaveBeenCalledWith("zed");
 	});
 
@@ -172,20 +183,21 @@ describe("contacts and files", () => {
 			}),
 		];
 		run.activePersonaAvailable = false;
-		const user = userEvent.setup();
-		render(StudentPage);
+		await render(StudentPage);
 
-		await user.click(screen.getByRole("button", { name: /Mary Chen/ }));
+		await page.getByRole("button", { name: /Mary Chen/ }).click();
 
 		expect(run.selectContact).toHaveBeenCalledWith("mary");
-		expect(screen.queryByText("Available", { exact: true })).toBeNull();
-		expect(
-			screen.getByPlaceholderText("This contact is no longer available."),
-		).toBeDisabled();
+		await expect
+			.element(page.getByText("Available", { exact: true }))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByPlaceholder("This contact is no longer available."))
+			.toBeDisabled();
 	});
 
 	// Tests that the contact card badges reflect availability windows and referral state.
-	it("shows expiry, ended and referred badges", () => {
+	it("shows expiry, ended and referred badges", async () => {
 		run.contacts = [
 			makeDisplayContact({
 				id: "mary",
@@ -195,18 +207,18 @@ describe("contacts and files", () => {
 				isReferred: true,
 			}),
 		];
-		render(StudentPage);
-		const card = screen.getByRole("button", { name: /Mary|Persona/ });
-		expect(card).toHaveTextContent("Available for 20 min");
-		expect(card).toHaveTextContent("Expires in 4 min");
-		expect(card).toHaveTextContent("Conversation ended");
-		expect(card).toHaveTextContent("Referred contact");
+		await render(StudentPage);
+		const card = page.getByRole("button", { name: /Mary|Persona/ });
+		await expect.element(card.getByText("Available for 20 min")).toBeVisible();
+		await expect.element(card.getByText("Expires in 4 min")).toBeVisible();
+		await expect.element(card.getByText("Conversation ended")).toBeVisible();
+		await expect.element(card.getByText("Referred contact")).toBeVisible();
 	});
 
 	// Tests that shared files are linked, or a placeholder is shown when there are none.
-	it("lists shared files as links, with a placeholder when there are none", () => {
-		const empty = render(StudentPage);
-		expect(screen.getByText("No shared files yet.")).toBeInTheDocument();
+	it("lists shared files as links, with a placeholder when there are none", async () => {
+		const empty = await render(StudentPage);
+		await expect.element(page.getByText("No shared files yet.")).toBeVisible();
 		empty.unmount();
 
 		run = new FakeRun();
@@ -218,180 +230,201 @@ describe("contacts and files", () => {
 				url: "https://x.test/budget.pdf",
 			}),
 		];
-		render(StudentPage);
-		expect(screen.getByRole("link", { name: "budget.pdf" })).toHaveAttribute(
-			"href",
-			"https://x.test/budget.pdf",
-		);
+		await render(StudentPage);
+		await expect
+			.element(page.getByRole("link", { name: "budget.pdf" }))
+			.toHaveAttribute("href", "https://x.test/budget.pdf");
 	});
 });
 
 describe("chat pane", () => {
 	// Tests that an empty history shows the empty placeholder.
-	it("shows an empty-history message", () => {
-		render(StudentPage);
-		expect(screen.getByText("Chat history is empty.")).toBeInTheDocument();
+	it("shows an empty-history message", async () => {
+		await render(StudentPage);
+		await expect
+			.element(page.getByText("Chat history is empty."))
+			.toBeVisible();
 	});
 
 	// Tests that messages are rendered in order.
-	it("renders the history in order", () => {
+	it("renders the history in order", async () => {
 		run.activeMessages = [
 			{ role: "user", content: "Hi Mary" },
 			{ role: "assistant", content: "Hello." },
 		];
-		render(StudentPage);
-		expect(screen.getByText("Hi Mary")).toBeInTheDocument();
-		expect(screen.getByText("Hello.")).toBeInTheDocument();
+		await render(StudentPage);
+		await expect.element(page.getByText("Hi Mary")).toBeVisible();
+		await expect.element(page.getByText("Hello.")).toBeVisible();
+		const [first, second] = [
+			page.getByText("Hi Mary").element(),
+			page.getByText("Hello.").element(),
+		];
+		expect(
+			first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING,
+		).toBeTruthy();
 	});
 
 	// Tests that a new message scrolls only the chat box, never the page, which jumps on narrow screens.
 	it("scrolls the chat box to the newest message without scrolling the page", async () => {
 		run.activeMessages = [{ role: "user", content: "Hi Mary" }];
-		render(StudentPage);
+		await render(StudentPage);
 
-		await waitFor(() => expect(Element.prototype.scrollTo).toHaveBeenCalled());
-		const [scrolled] = vi.mocked(Element.prototype.scrollTo).mock.contexts;
-		expect(scrolled).toContain(screen.getByRole("log"));
-		expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(scrollTo).toHaveBeenCalled());
+		// The element scrolled is the chat box, which holds the conversation log.
+		const [scrolled] = scrollTo.mock.contexts as Element[];
+		expect(scrolled?.contains(page.getByRole("log").element())).toBe(true);
+		expect(scrollIntoView).not.toHaveBeenCalled();
 	});
 
 	// Tests that the student's message shows in an otherwise empty chat while its reply is pending.
-	it("shows the student's message while its reply is pending", () => {
+	it("shows the student's message while its reply is pending", async () => {
 		run.activeMessages = [{ role: "user", content: "What vendor do we use?" }];
 		run.isSending = true;
-		render(StudentPage);
-		expect(screen.getByText("What vendor do we use?")).toBeInTheDocument();
-		expect(
-			screen.queryByText("Chat history is empty."),
-		).not.toBeInTheDocument();
+		await render(StudentPage);
+		await expect
+			.element(page.getByText("What vendor do we use?"))
+			.toBeVisible();
+		await expect
+			.element(page.getByText("Chat history is empty."))
+			.not.toBeInTheDocument();
 	});
 
 	// Tests that an ended conversation is explained and the composer is locked.
-	it("explains an ended conversation and disables the composer", () => {
+	it("explains an ended conversation and disables the composer", async () => {
 		run.contacts = [makeDisplayContact({ id: "mary", chatEnded: true })];
 		run.activePersonaAvailable = false;
-		render(StudentPage);
-		expect(
-			screen.getByText(
-				"This persona has ended the conversation for this chat.",
-			),
-		).toBeInTheDocument();
-		expect(
-			screen.getByPlaceholderText("This conversation has ended."),
-		).toBeDisabled();
+		await render(StudentPage);
+		await expect
+			.element(
+				page.getByText(
+					"This persona has ended the conversation for this chat.",
+				),
+			)
+			.toBeVisible();
+		await expect
+			.element(page.getByPlaceholder("This conversation has ended."))
+			.toBeDisabled();
 	});
 
 	// Tests that once time is up the banner shows and messaging is disabled.
-	it("shows the time's-up banner and disables messaging", () => {
+	it("shows the time's-up banner and disables messaging", async () => {
 		run.timeExpired = true;
 		run.activePersonaAvailable = false;
-		render(StudentPage);
-		expect(screen.getByText(/Your time is up/)).toBeInTheDocument();
-		expect(
-			screen.getByPlaceholderText("Time's up — messaging is disabled."),
-		).toBeDisabled();
+		await render(StudentPage);
+		await expect.element(page.getByText(/Your time is up/)).toBeVisible();
+		await expect
+			.element(page.getByPlaceholder("Time's up — messaging is disabled."))
+			.toBeDisabled();
 	});
 });
 
 describe("composer", () => {
 	// Tests that the send button stays off until there is something to send.
-	it("disables Send for an empty message", () => {
-		render(StudentPage);
-		expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+	it("disables Send for an empty message", async () => {
+		await render(StudentPage);
+		await expect.element(sendButton()).toBeDisabled();
 	});
 
 	// Tests that the button sends the message and clears the box when accepted.
 	it("sends the typed message and clears the box", async () => {
-		const user = userEvent.setup();
-		render(StudentPage);
-		const box = screen.getByPlaceholderText("Type your message...");
-		await user.type(box, "What is the budget?");
-		await user.click(screen.getByRole("button", { name: "Send" }));
+		await render(StudentPage);
+		await messageBox().fill("What is the budget?");
+		await sendButton().click();
 		expect(run.sendMessage).toHaveBeenCalledWith("What is the budget?");
-		expect(box).toHaveValue("");
+		await expect.element(messageBox()).toHaveValue("");
 	});
 
 	// Tests that Enter sends but Shift+Enter adds a line.
 	it("sends on Enter and keeps the text on Shift+Enter", async () => {
-		const user = userEvent.setup();
-		render(StudentPage);
-		const box = screen.getByPlaceholderText("Type your message...");
-		await user.type(box, "line one{Shift>}{Enter}{/Shift}line two");
+		await render(StudentPage);
+		await messageBox().fill("line one");
+		await userEvent.keyboard("{Shift>}{Enter}{/Shift}line two");
 		expect(run.sendMessage).not.toHaveBeenCalled();
-		expect(box).toHaveValue("line one\nline two");
-		await user.type(box, "{Enter}");
+		await expect.element(messageBox()).toHaveValue("line one\nline two");
+		await userEvent.keyboard("{Enter}");
 		expect(run.sendMessage).toHaveBeenCalledWith("line one\nline two");
 	});
 
 	// Tests that Enter pressed while an IME composition is active does not send the message.
-	it("does not send on Enter during IME composition", () => {
-		render(StudentPage);
-		const box = screen.getByLabelText("Message");
-		fireEvent.input(box, { target: { value: "ni" } });
-		fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+	it("does not send on Enter during IME composition", async () => {
+		await render(StudentPage);
+		await page.getByLabelText("Message").fill("ni");
+		page
+			.getByLabelText("Message")
+			.element()
+			.dispatchEvent(
+				new KeyboardEvent("keydown", {
+					key: "Enter",
+					isComposing: true,
+					bubbles: true,
+				}),
+			);
 		expect(run.sendMessage).not.toHaveBeenCalled();
 	});
 
 	// Tests that a rejected send keeps what the student typed.
 	it("keeps the text when the store declines the message", async () => {
 		run.sendMessage.mockResolvedValue(false);
-		const user = userEvent.setup();
-		render(StudentPage);
-		const box = screen.getByPlaceholderText("Type your message...");
-		await user.type(box, "hello{Enter}");
-		await vi.waitFor(() => expect(box).toHaveValue("hello"));
+		await render(StudentPage);
+		await messageBox().fill("hello");
+		await userEvent.keyboard("{Enter}");
+		await vi.waitFor(() => expect(run.sendMessage).toHaveBeenCalled());
+		await expect.element(messageBox()).toHaveValue("hello");
 	});
 
 	// Tests that a failed reply shows a banner that puts the message back in the box, ahead of anything typed since.
 	it("offers to put a failed message back in the box", async () => {
 		run.failedMessage = "What is the budget?";
-		const user = userEvent.setup();
-		render(StudentPage);
-		const box = screen.getByPlaceholderText("Type your message...");
-		expect(screen.getByRole("alert")).toHaveTextContent("What is the budget?");
+		await render(StudentPage);
+		await expect
+			.element(page.getByRole("alert").getByText(/What is the budget\?/))
+			.toBeVisible();
 
-		await user.type(box, "Also the timeline.");
-		const restore = screen.getByRole("button", {
+		await messageBox().fill("Also the timeline.");
+		const restore = page.getByRole("button", {
 			name: "Put it back in the box",
 		});
-		await user.click(restore);
-		expect(box).toHaveValue("What is the budget?\nAlso the timeline.");
+		await restore.click();
+		await expect
+			.element(messageBox())
+			.toHaveValue("What is the budget?\nAlso the timeline.");
 
-		await user.click(restore);
-		expect(box).toHaveValue("What is the budget?\nAlso the timeline.");
+		await restore.click();
+		await expect
+			.element(messageBox())
+			.toHaveValue("What is the budget?\nAlso the timeline.");
 	});
 
 	// Tests that there is no banner while nothing has failed.
-	it("shows no failure banner when nothing failed", () => {
-		render(StudentPage);
-		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	it("shows no failure banner when nothing failed", async () => {
+		await render(StudentPage);
+		await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
 	});
 
 	// Tests that over-long messages are blocked and the counter warns.
 	it("blocks a message over the word limit", async () => {
-		const user = userEvent.setup();
-		render(StudentPage);
-		const box = screen.getByPlaceholderText("Type your message...");
-		await user.click(box);
-		await user.paste(
+		await render(StudentPage);
+		await messageBox().fill(
 			Array(MAX_MESSAGE_WORDS + 1)
 				.fill("w")
 				.join(" "),
 		);
-		expect(
-			screen.getByText(`${MAX_MESSAGE_WORDS + 1}/${MAX_MESSAGE_WORDS} words`),
-		).toHaveClass("text-brand");
-		expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-		await user.type(box, "{Enter}");
+		await expect
+			.element(
+				page.getByText(`${MAX_MESSAGE_WORDS + 1}/${MAX_MESSAGE_WORDS} words`),
+			)
+			.toHaveClass("text-brand");
+		await expect.element(sendButton()).toBeDisabled();
+		await userEvent.keyboard("{Enter}");
 		expect(run.sendMessage).not.toHaveBeenCalled();
 	});
 
 	// Tests that the composer is locked while a reply is being generated.
-	it("disables the box and shows the sending ring while sending", () => {
+	it("disables the box and shows the sending ring while sending", async () => {
 		run.isSending = true;
-		render(StudentPage);
-		expect(screen.getByPlaceholderText("Type your message...")).toBeDisabled();
-		expect(screen.getByLabelText("Sending")).toBeInTheDocument();
+		await render(StudentPage);
+		await expect.element(messageBox()).toBeDisabled();
+		await expect.element(page.getByLabelText("Sending")).toBeVisible();
 	});
 });
 
@@ -399,52 +432,59 @@ describe("notes and ending", () => {
 	// Tests that typing notes goes to the store.
 	it("passes notes to the store", async () => {
 		run.activePersonaAvailable = false;
-		const user = userEvent.setup();
-		render(StudentPage);
-		const notes = screen.getByPlaceholderText("Write your notes here...");
-		await user.type(notes, "key fact");
+		await render(StudentPage);
+		await page.getByPlaceholder("Write your notes here...").fill("key fact");
 		expect(run.setNotes).toHaveBeenLastCalledWith("key fact");
 	});
 
 	// Tests that the end button ends the simulation.
 	it("ends the simulation from the button", async () => {
-		const user = userEvent.setup();
-		render(StudentPage);
-		await user.click(screen.getByRole("button", { name: "End simulation" }));
+		await render(StudentPage);
+		await page.getByRole("button", { name: "End simulation" }).click();
 		expect(run.endSimulation).toHaveBeenCalledOnce();
 	});
 });
 
 describe("authors", () => {
 	// Tests that the header shows each author's name beside the case name.
-	it("lists the authors beside the case name", () => {
-		render(StudentPage);
-		const line = screen.getByText("Sterling Industries").parentElement!;
-		expect(line).toHaveTextContent("Olive Owner");
-		expect(line).toHaveTextContent("Edith Editor");
+	it("lists the authors beside the case name", async () => {
+		await render(StudentPage);
+		const line = page.elementLocator(
+			page.getByText("Sterling Industries").element().parentElement!,
+		);
+		await expect.element(line.getByText("Olive Owner")).toBeVisible();
+		await expect.element(line.getByText("Edith Editor")).toBeVisible();
 	});
 
 	// Tests that hovering an author's name shows that author's own email.
 	it("shows an author's email on hover", async () => {
-		render(StudentPage);
-		await userEvent.hover(screen.getByText("Edith Editor"));
-		expect((await screen.findAllByText("edith@example.com"))[0]).toBeVisible();
-		expect(screen.queryByText("olive@example.com")).toBeNull();
+		await render(StudentPage);
+		await page.getByText("Edith Editor").hover();
+		await expect
+			.element(page.getByText("edith@example.com").first())
+			.toBeVisible();
+		await expect
+			.element(page.getByText("olive@example.com"))
+			.not.toBeInTheDocument();
 	});
 
 	// Tests that only the case name is shown when the case has no authors to credit.
-	it("shows no authors when there are none", () => {
+	it("shows no authors when there are none", async () => {
 		run.caseData = { ...run.caseData!, authors: [] };
-		render(StudentPage);
-		expect(screen.getByText("Sterling Industries")).toBeInTheDocument();
-		expect(screen.queryByText("Olive Owner")).toBeNull();
+		await render(StudentPage);
+		await expect.element(page.getByText("Sterling Industries")).toBeVisible();
+		await expect.element(page.getByText("Olive Owner")).not.toBeInTheDocument();
 	});
 
 	// Tests that the old floating Authors and Contact buttons are gone.
-	it("no longer shows the Authors and Contact buttons", () => {
-		render(StudentPage);
-		expect(screen.queryByRole("button", { name: "Authors" })).toBeNull();
-		expect(screen.queryByRole("button", { name: "Contact" })).toBeNull();
+	it("no longer shows the Authors and Contact buttons", async () => {
+		await render(StudentPage);
+		await expect
+			.element(page.getByRole("button", { name: "Authors" }))
+			.not.toBeInTheDocument();
+		await expect
+			.element(page.getByRole("button", { name: "Contact" }))
+			.not.toBeInTheDocument();
 	});
 });
 
@@ -462,10 +502,9 @@ describe("PDF export", () => {
 			]),
 		);
 		run.notes = "my notes";
-		const user = userEvent.setup();
-		render(StudentPage);
-		await user.click(screen.getByRole("button", { name: "Export PDF" }));
-		await waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
+		await render(StudentPage);
+		await exportButton().click();
+		await vi.waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
 		expect(exportRun).toHaveBeenCalledWith({ runId: "run-1" });
 		const [blob, filename] = vi.mocked(downloadBlob).mock.calls[0] as [
 			Blob,
@@ -473,53 +512,50 @@ describe("PDF export", () => {
 		];
 		expect(filename).toBe("chats.pdf");
 		expect(blob.type).toBe("application/pdf");
-		expect(screen.getByRole("button", { name: "Export PDF" })).toBeEnabled();
+		await expect.element(exportButton()).toBeEnabled();
 	});
 
 	// Tests that a run with no personas still exports.
 	it("exports when the run has no personas", async () => {
 		exportRun.mockResolvedValue(exportOf([]));
-		const user = userEvent.setup();
-		render(StudentPage);
-		await user.click(screen.getByRole("button", { name: "Export PDF" }));
-		await waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
+		await render(StudentPage);
+		await exportButton().click();
+		await vi.waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
 	});
 
 	// Tests that a failed export toasts and leaves the button usable again.
 	it("toasts and re-enables the button when the export fails", async () => {
 		vi.spyOn(console, "error").mockImplementation(() => {});
 		exportRun.mockRejectedValue(new Error("boom"));
-		const user = userEvent.setup();
-		render(StudentPage);
-		await user.click(screen.getByRole("button", { name: "Export PDF" }));
-		await waitFor(() =>
+		await render(StudentPage);
+		await exportButton().click();
+		await vi.waitFor(() =>
 			expect(toast).toHaveBeenCalledWith(
 				"Unable to export PDF. Please try again.",
 			),
 		);
 		expect(downloadBlob).not.toHaveBeenCalled();
-		expect(screen.getByRole("button", { name: "Export PDF" })).toBeEnabled();
+		await expect.element(exportButton()).toBeEnabled();
 	});
 
 	// Tests that export is unavailable without a run.
-	it("disables export when there is no run", () => {
+	it("disables export when there is no run", async () => {
 		session.clearRun();
-		render(StudentPage);
-		expect(screen.getByRole("button", { name: "Export PDF" })).toBeDisabled();
+		await render(StudentPage);
+		await expect.element(exportButton()).toBeDisabled();
 	});
 
 	// Tests that a second click while exporting does not start another export.
 	it("ignores a second click while an export is running", async () => {
 		let finish: (value: ReturnType<typeof exportOf>) => void = () => {};
 		exportRun.mockReturnValue(new Promise((resolve) => (finish = resolve)));
-		const user = userEvent.setup();
-		render(StudentPage);
-		await user.click(screen.getByRole("button", { name: "Export PDF" }));
-		expect(
-			await screen.findByRole("button", { name: "Exporting…" }),
-		).toBeDisabled();
+		await render(StudentPage);
+		await exportButton().click();
+		await expect
+			.element(page.getByRole("button", { name: "Exporting…" }))
+			.toBeDisabled();
 		finish(exportOf([]));
-		await waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
+		await vi.waitFor(() => expect(downloadBlob).toHaveBeenCalledOnce());
 		expect(exportRun).toHaveBeenCalledOnce();
 	});
 });
